@@ -177,6 +177,11 @@ impl XpProcess {
         let started = std::time::Instant::now();
         let [_, mode, count, kind, address] = arguments::<5>(memory, esp)?;
         let c = self.gl_context_mut(tid, API)?;
+        if c.debug_isolate_texture.is_some_and(|texture| !c.textures.enabled || c.textures.binding != texture) {
+            c.draw_count += 1;
+            c.heartbeat.work.skipped_draws += 1;
+            return Ok(0);
+        }
         if !matches!(mode, GL_TRIANGLES | GL_TRIANGLE_STRIP) || count > 1_000_000 {
             return Err(gl_texture_error(API, "unsupported native GPU topology/count"));
         }
@@ -195,10 +200,10 @@ impl XpProcess {
         if debug_draw {
             c.debug_draws_remaining -= 1;
             logl::emit(level::IMPORTANT, format_args!(
-                "XPAPP DEBUG GPU DRAW seq={} remaining={} indices={} vertex={:?} color={:?} uv={:?} texture={} enabled=0x{:x} viewport={:?}",
+                "XPAPP DEBUG GPU DRAW seq={} remaining={} indices={} vertex={:?} color={:?} uv={:?} texture={} enabled=0x{:x} viewport={:?} uv_array={} first_index={:?}",
                 c.draw_count + 1, c.debug_draws_remaining, indices.len(), c.vertex_pointer,
                 c.color_pointer.filter(|_| c.color_array_enabled), c.textures.coord_pointer,
-                c.textures.binding, c.fixed.enabled, c.viewport,
+                c.textures.binding, c.fixed.enabled, c.viewport, c.textures.coord_array_enabled, indices.first(),
             ));
         }
         let geometry = gl_fixed_gpu_geometry(c, memory, &indices)?;
@@ -253,6 +258,14 @@ impl XpProcess {
         }
         let c = self.gl_context_mut(tid, API)?;
         c.draw_count += 1;
+        if debug_draw {
+            logl::emit(level::IMPORTANT, format_args!(
+                "XPAPP DEBUG GPU COST seq={} texture={} indices={} decode_us={} acquire_us={} submit_us={} wait_us={}",
+                c.draw_count, c.textures.binding, geometry.indices.len(),
+                decoded_at.duration_since(started).as_micros(), phases[1].as_micros(),
+                phases[2].as_micros(), phases[3].as_micros(),
+            ));
+        }
         if !cfg!(feature = "nolog") {
             c.heartbeat.work.draws += 1;
             c.heartbeat.work.triangles += geometry.indices.len() as u64 / 3;
@@ -281,7 +294,8 @@ impl XpProcess {
             c.fixed.is_enabled(FIXED_GL_SCISSOR_TEST).then_some(c.fixed.scissor)) else { return Ok(0); };
         let drawable_size = c.drawable_size;
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
-        let color = gl_rgba8(c.clear_color);
+        let color = if c.debug_isolate_texture.is_some() { u32::from_le_bytes([96, 96, 96, 255]) } else { gl_rgba8(c.clear_color) };
+        let clear_started = std::time::Instant::now();
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
         if runtime.textured_renderer.is_none() {
             runtime.textured_renderer = Some(staticgl_triangle::textured::TexturedRenderer::new(runtime.device)
@@ -298,6 +312,7 @@ impl XpProcess {
             .map_err(|rc| gl_texture_error(API, format!("native GPU clear rc={rc}")))?;
         runtime.device.wait(runtime.queue, point.value)
             .map_err(|rc| gl_texture_error(API, format!("native GPU clear wait rc={rc}")))?;
+        self.gl_context_mut(tid, API)?.heartbeat.work.clear_time += clear_started.elapsed();
         Ok(0)
     }
 }

@@ -1025,6 +1025,11 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 }
 
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    if cfg!(feature = "bypass-critical-sections") && matches!(
+        provider_op(import), ProviderOp::EnterCriticalSection | ProviderOp::LeaveCriticalSection
+    ) {
+        return thunk32::Kind::NoopStdcall(4);
+    }
     if provider_op(import) == ProviderOp::CrtCeil {
         return thunk32::Kind::Ceil;
     }
@@ -1083,6 +1088,25 @@ pub fn external_export_thunk_kind(import: &ProviderImport) -> Option<thunk32::Ki
 
 #[cfg(test)]
 mod beginthreadex_tests {
+    #[test]
+    fn critical_section_bypass_keeps_stdcall_stack_cleanup_without_vmcall() {
+        for name in ["EnterCriticalSection", "LeaveCriticalSection"] {
+            let import = ProviderImport {
+                module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name(name.into()), iat_rva: 0,
+            };
+            let kind = provider_thunk_kind(&import);
+            let mut code = [0; thunk32::THUNK_BYTES];
+            thunk32::write(123, kind, &mut code).unwrap();
+            if cfg!(feature = "bypass-critical-sections") {
+                assert_eq!(kind, thunk32::Kind::NoopStdcall(4));
+                assert_eq!(&code[..3], &[0xc2, 4, 0]);
+                assert!(!code.windows(3).any(|bytes| bytes == [0x0f, 0x01, 0xc1]));
+            } else {
+                assert_eq!(kind, thunk32::Kind::Stdcall(4));
+                assert_eq!(&code[5..8], &[0x0f, 0x01, 0xc1]);
+            }
+        }
+    }
     use super::*;
 
     #[test]

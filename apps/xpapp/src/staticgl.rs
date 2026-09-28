@@ -210,6 +210,15 @@ impl XpProcess {
         Ok(())
     }
 
+    pub fn debug_isolate_gl_texture(&mut self, tid: u32, texture: Option<u32>) -> Result<(), String> {
+        let context = self.gl_context_mut(tid, "debug isolate").map_err(|e| format!("{e:?}"))?;
+        if texture.is_some_and(|name| !context.textures.objects.contains_key(&name)) {
+            return Err("unknown texture in this context".into());
+        }
+        context.debug_isolate_texture = texture;
+        Ok(())
+    }
+
     pub fn gl_light_model_ambient_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
         self.gl_runtime
             .as_ref()?
@@ -818,6 +827,7 @@ impl WglContext {
             raster_frame: None,
             debug_draws_remaining: 0,
             debug_depth_texture: None,
+            debug_isolate_texture: None,
             drawable_size: [0, 0],
             viewport_set: false,
             draw_count: 0,

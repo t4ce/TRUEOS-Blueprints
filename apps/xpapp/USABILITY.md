@@ -2,9 +2,40 @@
 
 ## Required outcome
 
-Readable existing menu text and approximately 30 FPS (33.3 ms/frame), using the
-existing textures, geometry and draw count. Completion requires hardware timing
-and a fresh screenshot. Neither requirement is met yet.
+Current user direction: keep only WC3's existing text and target 60 FPS
+(16.67 ms/frame). No separate guest test program. Completion requires hardware
+timing and a fresh screenshot; 60 FPS is not met.
+
+## Text-only and critical-section bypass experiment
+
+At the user's explicit request, `bypass-critical-sections` is currently enabled
+in the default features. `EnterCriticalSection` and `LeaveCriticalSection`
+provider thunks contain `ret 4` and no VMCALL. Both imported and dynamically
+resolved provider entries use this selection. Initialization and the original
+provider implementation remain available. This disables synchronization; it is
+an experimental bypass, not a synchronization implementation. Remove the feature
+from defaults and rebuild to restore normal calls. The thunk test passed with
+and without the feature.
+
+Deployed Blueprint:
+`eb879549fe60f87f1f411b1ea97a3d4eeeb93a26180e9fb2426f4b22a9dca733`.
+The running log confirms `critical_sections=bypassed enter_leave=guest-ret4`.
+The loading frame interval fell from about 208 seconds to 58.787 seconds.
+
+`debug isolate 2 3 38` is active on this run: retain texture 38 (the observed
+font texture), skip other draws before array decoding, clear to gray. Texture
+IDs vary between runs; identify the font from a bounded draw capture first.
+`debug isolate 2 3 restore` restores all draws. This removes the other rendered
+elements; WC3's guest execution and state calls still run.
+
+Text-only frames contain 16 draws / 484 triangles, skipping about 150 scene
+draws. Representative completed frame: 3627 ms, text work 166 ms (decode 71,
+acquire 24, submit 69), outside draw/swap 3461 ms. Clear is 372 ms **within**
+the outside total. This is about 0.28 FPS, not 60 FPS. The capture confirms only
+game text on gray; desktop overlays remain independently composed. Artifacts:
+TRUEOS `bld/xpapp-usability/text-only-no-critical.log` and
+`text-only-no-critical.png`. The earlier text-filter build passed 389 library
+tests; both feature configurations passed the new bypass thunk test.
 
 ## Current implementation
 
@@ -29,12 +60,44 @@ and a fresh screenshot. Neither requirement is met yet.
   Polling is included in render time; all phases are inside Blueprint submit
   wall time. Clear draws are not in this fixed-shader aggregate.
 
-Current internally published stable Blueprint:
-`4c928a19d683ee31cf4c9aa8fbd491dc9d5ef8be6377dbb8b86a3387b5cd8648`.
-The kernel timing change is checked locally and has not been deployed. A newer
-local Blueprint build adds CPU atlas caching; it is not yet published.
+The kernel timing change and CPU atlas cache are now deployed; see the recovered
+rig evidence below for artifact identities and the current diagnostic build.
 
 ## Hardware evidence
+
+### Recovered rig, 2026-09-28
+
+The user recovered the BIOS boot and rebuilt both repositories (TRUEOS
+`16d474232`, Blueprints `3f7f3be2`). Fresh PXE reads, artifact hashes and a new
+boot marker verified the diagnostic kernel. Blueprint `b81c706f26821b80...`
+loaded WC3 in about 208 seconds. Thirteen warm frames averaged 6491 ms
+(6398–6787 ms); warm texture uploads were zero. The new screenshot still has
+unreadable menu text. Evidence: TRUEOS `bld/xpapp-usability/recovered-run.log`
+and `recovered-run.png`.
+
+Representative warm frame: decode 603 ms, atlas 3 ms, acquire 296 ms,
+submit 1860 ms, explicit wait 1 ms, outside draw/swap 3696 ms. The new kernel
+aggregate attributes most fixed-draw renderer time to completion polling;
+several 128-draw windows contain a single approximately 1.04-second draw.
+Polling measures elapsed CPU waiting, not isolated GPU execution time.
+
+Bounded text diagnostics show black shadow colors followed by gold/white
+foreground colors. The first foreground UV is (0,0), while its shadow has
+glyph coordinates. This is a lead, not a confirmed cause: the initial marker
+did not record UV-array enablement or the first guest index. A diagnostic-only
+Blueprint `667a2a9d8e41c1c9b0b2a6fd01e4752a197feddf4fe67c79a03c473341ca31a6`
+adds those fields and per-captured-draw costs; it was published and launched
+without rebooting the OS.
+
+The second bounded capture completed (`recovered-draw-debug.log`). Foreground
+font draws have `uv_array=false`, first index 0; adjacent shadow draws have
+`uv_array=true`, also first index 0, with the same UV pointer. For example,
+seq 598/599 use texture 39 and 42 indices. The bridge therefore substitutes
+(0,0,0,1) for foreground UVs. Why the enable state changes is still unresolved;
+do not force array enablement globally or treat this as a verified fix.
+The repeated slow submission is texture 27, 4701 indices / 3105 vertices:
+seq 504 took 1061 ms and seq 670 took 1078 ms. Texture 1 / 8103 indices took
+159 ms in both captured frames. This diagnostic build changes no draw state.
 
 Baseline: TRUEOS `abcb4ae0f`, Blueprints `a3ff1f35`. Warm menu frames approximately
 6.49 seconds, 168–169 draws. Representative frame: 614 ms decode, 50 ms atlas,
@@ -84,8 +147,8 @@ The user was asked whether the rig is powered on and what its screen shows.
 
 ## Next evidence needed
 
-Restore rig access, deploy the matched kernel timing build, launch the stable
-Blueprint, capture steady frame timings and bounded debug draws for the text.
+Rig access and diagnostic deployment are verified. Correlate individual slow
+draws with their texture/geometry and resolve the foreground UV discrepancy.
 Every current draw imports/maps/unmaps the complete drawable, creates/releases
 a resident mesh, and submits a synchronous scene. Use the new timings to choose
 which of these costs to remove; do not infer GPU time from the separate wait.

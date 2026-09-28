@@ -1965,6 +1965,7 @@ struct WglContext {
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
     debug_draws_remaining: u32,
     debug_depth_texture: Option<u32>,
+    debug_isolate_texture: Option<u32>,
     drawable_size: [u32; 2],
     viewport_set: bool,
     draw_count: u64,

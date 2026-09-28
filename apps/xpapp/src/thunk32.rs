@@ -343,6 +343,8 @@ pub enum Kind {
     Stop,
     Return,
     Stdcall(u8),
+    /// Explicit synchronization-bypass experiment; return without a VM exit.
+    NoopStdcall(u8),
     /// Cdecl guest-native memory move; no provider trap or temporary buffer.
     Memmove,
     /// Cdecl guest-native x87 ceil(double); result remains in ST(0).
@@ -372,6 +374,10 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("xpapp thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
+    if let Kind::NoopStdcall(bytes) = kind {
+        output[..3].copy_from_slice(&[0xc2, bytes, 0]);
+        return Ok(());
+    }
     if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
@@ -416,6 +422,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
+        Kind::NoopStdcall(_) => unreachable!(),
         Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::Stricmp => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {

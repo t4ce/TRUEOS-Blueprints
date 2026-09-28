@@ -4,6 +4,7 @@ pub enum Command {
     Help,
     State,
     Perf,
+    Isolate { pid: u32, tid: u32, texture: Option<u32> },
     Draws {
         pid: u32,
         tid: u32,
@@ -53,6 +54,12 @@ pub fn parse(line: &str) -> Result<Command, &'static str> {
         ["debug"] | ["debug", "help"] => Command::Help,
         ["debug", "state"] => Command::State,
         ["debug", "perf"] => Command::Perf,
+        ["debug", "isolate", pid, tid, "restore"] => Command::Isolate {
+            pid: number(pid)?, tid: number(tid)?, texture: None,
+        },
+        ["debug", "isolate", pid, tid, texture] => Command::Isolate {
+            pid: number(pid)?, tid: number(tid)?, texture: Some(number(texture)?),
+        },
         ["debug", "draws", pid, tid, count] => {
             let count = number(count)?;
             if count > 256 {

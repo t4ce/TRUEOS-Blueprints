@@ -212,6 +212,11 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
 }
 
 async fn run() -> Result<(), String> {
+    if cfg!(feature = "bypass-critical-sections") {
+        logl::emit(level::IMPORTANT, format_args!(
+            "XPAPP EXPERIMENT critical_sections=bypassed enter_leave=guest-ret4 synchronization=disabled"
+        ));
+    }
     let mut args = std::env::args().skip(1);
     let launcher_path = args.next().unwrap_or_else(|| LAUNCHER_PATH.to_owned());
     if args.next().is_some() {

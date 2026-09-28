@@ -14,7 +14,9 @@ test = false
 bench = false
 
 [features]
-default = []
+default = ["bypass-critical-sections"]
+# Explicit WC3 performance experiment: guest enter/leave return without locking.
+bypass-critical-sections = []
 diagnostics = []
 actor-execution = []
 carrier-selftest = []

@@ -142,6 +142,12 @@ fn execute(
 ) -> Result<(), String> {
     match command {
         Command::Perf => return Err("performance sampling requires the live shell sampler".into()),
+        Command::Isolate { pid, tid, texture } => {
+            session.process_mut(pid).ok_or("unknown process")?.xp.debug_isolate_gl_texture(tid, texture)?;
+            logl::emit(level::IMPORTANT, format_args!(
+                "XPAPP DEBUG ISOLATE pid={pid} tid={tid} texture={texture:?} background=gray guest_execution=unchanged"
+            ));
+        }
         Command::Help => logl::emit(
             level::IMPORTANT,
             format_args!(
