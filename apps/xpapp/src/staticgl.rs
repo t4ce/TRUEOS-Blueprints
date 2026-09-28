@@ -863,6 +863,7 @@ impl WglContext {
             observed_writes: VecDeque::new(),
             fixed: GlFixedState::default(),
             raster_frame: None,
+            draw_scratch: GlDrawScratch::default(),
             #[cfg(feature = "gpu-raster")]
             prepared_draws: Vec::new(),
             present_pixels: Vec::new(),

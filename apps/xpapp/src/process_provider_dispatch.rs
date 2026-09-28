@@ -1731,7 +1731,11 @@ impl XpProcess {
                     && !is_war3_mpq_path(&path)
                     && !is_self_image_path(&path)
                 {
-                    if relative.contains('\\') {
+                    let is_maps_path = relative
+                        .split(['\\', '/'])
+                        .next()
+                        .is_some_and(|part| part.eq_ignore_ascii_case("Maps"));
+                    if relative.contains('\\') && !is_maps_path {
                         return Err(ProviderDispatchError::Frontier {
                             api: "CreateFileA",
                             detail: format!("nested Warcraft path={path:?}"),

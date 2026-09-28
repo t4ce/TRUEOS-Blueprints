@@ -24,6 +24,23 @@ fn gl_assemble_triangles(mode: u32, mut indices: Vec<u32>) -> Result<Vec<u32>, &
     }
 }
 
+// Reuse storage without caching guest indices across draws.
+fn gl_assemble_triangles_into(mode: u32, indices: &[u32], triangles: &mut Vec<u32>) -> Result<(), &'static str> {
+    triangles.clear();
+    match mode {
+        GL_TRIANGLES => triangles.extend_from_slice(&indices[..indices.len() / 3 * 3]),
+        GL_TRIANGLE_STRIP => {
+            triangles.reserve(indices.len().saturating_sub(2) * 3);
+            for (n, tri) in indices.windows(3).enumerate() {
+                if n % 2 == 0 { triangles.extend_from_slice(tri); }
+                else { triangles.extend_from_slice(&[tri[1], tri[0], tri[2]]); }
+            }
+        }
+        _ => return Err("unsupported indexed primitive topology"),
+    }
+    Ok(())
+}
+
 fn gl_read_array(
     memory: &impl GuestMemory,
     pointer: GlArrayPointer,

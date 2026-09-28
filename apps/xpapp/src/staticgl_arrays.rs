@@ -1,3 +1,15 @@
+// Per-context capacity only. Guest bytes and remap entries are refreshed every draw.
+#[derive(Default)]
+struct GlDrawScratch {
+    raw_indices: Vec<u8>,
+    guest_indices: Vec<u32>,
+    triangles: Vec<u32>,
+    vertices: Vec<crate::staticgl_raster::GlRasterVertex>,
+    indices: Vec<u32>,
+    dense_remap: Vec<u32>,
+    snapshot_ranges: Vec<(u32, Vec<u8>)>,
+}
+
 // Draw-local snapshots only: guest arrays may change on the very next draw.
 // Coalesce interleaved attributes before crossing the x86 address-space ABI.
 struct GlArraySnapshot<'a, M> {
@@ -7,10 +19,12 @@ struct GlArraySnapshot<'a, M> {
 
 impl<'a, M: GuestMemory> GlArraySnapshot<'a, M> {
     fn new(memory: &'a M, c: &WglContext, indices: &[u32]) -> Self {
-        let mut snapshot = Self {
-            memory,
-            ranges: Vec::new(),
-        };
+        Self::reusing(memory, c, indices, Vec::new())
+    }
+    fn reusing(memory: &'a M, c: &WglContext, indices: &[u32], ranges: Vec<(u32, Vec<u8>)>) -> Self {
+        let mut snapshot = Self { memory, ranges };
+        // Clear validity even when this draw cannot be snapshotted.
+        for (_, bytes) in &mut snapshot.ranges { bytes.clear(); }
         if cfg!(feature = "replay-arrays") || indices.len() < 3 {
             return snapshot;
         }
@@ -35,7 +49,8 @@ impl<'a, M: GuestMemory> GlArraySnapshot<'a, M> {
                 .coord_pointer
                 .filter(|_| c.textures.enabled && c.textures.coord_array_enabled),
         ];
-        let mut spans = Vec::new();
+        let mut spans = [(0u64, 0u64); 4];
+        let mut span_count = 0;
         for pointer in arrays.into_iter().flatten() {
             let item = match pointer.kind {
                 GL_FLOAT => 4,
@@ -58,27 +73,30 @@ impl<'a, M: GuestMemory> GlArraySnapshot<'a, M> {
             let end =
                 u64::from(pointer.address) + u64::from(hi) * u64::from(stride) + u64::from(bytes);
             if end <= (u32::MAX as u64 + 1) && end - start <= 16 * 1024 * 1024 {
-                spans.push((start, end));
+                spans[span_count] = (start, end);
+                span_count += 1;
             }
         }
+        let spans = &mut spans[..span_count];
         spans.sort_unstable();
-        let mut merged: Vec<(u64, u64)> = Vec::new();
-        for (start, end) in spans {
-            if let Some(last) = merged.last_mut() {
+        let mut merged = [(0u64, 0u64); 4];
+        let mut merged_count = 0;
+        for &(start, end) in spans.iter() {
+            if let Some(last) = merged[..merged_count].last_mut() {
                 if start <= last.1 && end.max(last.1) - last.0 <= 16 * 1024 * 1024 {
                     last.1 = end.max(last.1);
                     continue;
                 }
             }
-            merged.push((start, end));
+            merged[merged_count] = (start, end);
+            merged_count += 1;
         }
-        for (start, end) in merged {
-            let mut bytes = vec![0; (end - start) as usize];
-            // An unmapped unused gap is not a GL error. Retain the original
-            // per-attribute reader as the exact fallback in that case.
-            if memory.read(start as u32, &mut bytes).is_ok() {
-                snapshot.ranges.push((start as u32, bytes));
-            }
+        while snapshot.ranges.len() < merged_count { snapshot.ranges.push((0, Vec::new())); }
+        for (slot, &(start, end)) in snapshot.ranges.iter_mut().zip(&merged[..merged_count]) {
+            slot.0 = start as u32;
+            slot.1.resize((end - start) as usize, 0);
+            // Failed bulk reads must never expose partially copied or stale bytes.
+            if memory.read(slot.0, &mut slot.1).is_err() { slot.1.clear(); }
         }
         snapshot
     }
@@ -111,14 +129,16 @@ enum GlIndexRemap {
 }
 impl GlIndexRemap {
     fn new(indices: &[u32]) -> Self {
+        Self::reusing(indices, Vec::new())
+    }
+    fn reusing(indices: &[u32], mut slots: Vec<u32>) -> Self {
         let first = indices.iter().copied().min().unwrap_or(0);
         let last = indices.iter().copied().max().unwrap_or(0);
         let span = u64::from(last) - u64::from(first) + 1;
         if span <= 1_000_000 && span <= indices.len() as u64 * 4 {
-            Self::Dense {
-                first,
-                slots: vec![u32::MAX; span as usize],
-            }
+            slots.resize(span as usize, u32::MAX);
+            slots.fill(u32::MAX);
+            Self::Dense { first, slots }
         } else {
             Self::Sparse(HashMap::new())
         }

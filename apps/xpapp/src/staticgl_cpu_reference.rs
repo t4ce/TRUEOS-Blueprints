@@ -119,11 +119,22 @@ fn gl_compat_vertices(
     gl_compat_vertices_timed(c, memory, guest_indices, &mut Default::default())
 }
 
+#[cfg(test)]
 fn gl_compat_vertices_timed(
     c: &WglContext,
     memory: &impl GuestMemory,
     guest_indices: &[u32],
     timing: &mut crate::frame_heartbeat::DecodeTiming,
+) -> Result<(Vec<raster::GlRasterVertex>, Vec<u32>), ProviderDispatchError> {
+    gl_compat_vertices_reusing(c, memory, guest_indices, timing, &mut GlDrawScratch::default())
+}
+
+fn gl_compat_vertices_reusing(
+    c: &WglContext,
+    memory: &impl GuestMemory,
+    guest_indices: &[u32],
+    timing: &mut crate::frame_heartbeat::DecodeTiming,
+    scratch: &mut GlDrawScratch,
 ) -> Result<(Vec<raster::GlRasterVertex>, Vec<u32>), ProviderDispatchError> {
     let mut mark = (!cfg!(feature = "nolog")).then(std::time::Instant::now);
     let mut lap = || {
@@ -147,15 +158,20 @@ fn gl_compat_vertices_timed(
             None
         };
     timing.vertex_setup += lap();
-    let memory = &GlArraySnapshot::new(memory, c, guest_indices);
+    let snapshot = GlArraySnapshot::reusing(memory, c, guest_indices, core::mem::take(&mut scratch.snapshot_ranges));
+    let memory = &snapshot;
     timing.snapshot += lap();
     if !cfg!(feature = "nolog") {
         timing.snapshot_bytes += memory.ranges.iter().map(|(_, bytes)| bytes.len() as u64).sum::<u64>();
-        timing.snapshot_ranges += memory.ranges.len() as u64;
+        timing.snapshot_ranges += memory.ranges.iter().filter(|(_, bytes)| !bytes.is_empty()).count() as u64;
     }
-    let mut vertices = Vec::with_capacity(guest_indices.len().min(65536));
-    let mut indices = Vec::with_capacity(guest_indices.len());
-    let mut remap = GlIndexRemap::new(guest_indices);
+    let mut vertices = core::mem::take(&mut scratch.vertices);
+    vertices.clear();
+    vertices.reserve(guest_indices.len().min(65536));
+    let mut indices = core::mem::take(&mut scratch.indices);
+    indices.clear();
+    indices.reserve(guest_indices.len());
+    let mut remap = GlIndexRemap::reusing(guest_indices, core::mem::take(&mut scratch.dense_remap));
     timing.allocation += lap();
     for &index in guest_indices {
         if let Some(mapped) = remap.get(&index) {
@@ -255,6 +271,8 @@ fn gl_compat_vertices_timed(
     timing.unique_vertices += vertices.len() as u64;
     timing.lit_vertices += if c.fixed.is_enabled(0xb50) { vertices.len() as u64 } else { 0 };
     timing.texgen_vertices += if (0xc60..=0xc63).any(|cap| c.fixed.is_enabled(cap)) { vertices.len() as u64 } else { 0 };
+    if let GlIndexRemap::Dense { slots, .. } = remap { scratch.dense_remap = slots; }
+    scratch.snapshot_ranges = snapshot.ranges;
     Ok((vertices, indices))
 }
 
@@ -273,13 +291,15 @@ fn gl_rasterize_elements(
         state.depth.write = false;
     }
     let mut decode = core::mem::take(&mut c.heartbeat.work.decode);
-    let decoded = gl_compat_vertices_timed(c, memory, guest_indices, &mut decode);
+    let mut scratch = core::mem::take(&mut c.draw_scratch);
+    let decoded = gl_compat_vertices_reusing(c, memory, guest_indices, &mut decode, &mut scratch);
+    c.draw_scratch = scratch;
     c.heartbeat.work.decode = decode;
     let (vertices, indices) = decoded?;
     let texture_started = (!cfg!(feature = "nolog")).then(std::time::Instant::now);
     XpProcess::gl_ensure_raster(c)?;
     let object = c.textures.object();
-    let mut levels = Vec::new();
+    let mut levels = [raster::GlRasterLevel { width: 0, height: 0, rgba: &[] }; 32];
     let texture = if c.textures.enabled {
         let base = object
             .levels
@@ -298,14 +318,14 @@ fn gl_rasterize_elements(
             if image.internal != base.internal {
                 return Err(gl_texture_error(API, "inconsistent mip base format"));
             }
-            levels.push(raster::GlRasterLevel {
+            levels[level as usize] = raster::GlRasterLevel {
                 width: image.width,
                 height: image.height,
                 rgba: &image.rgba,
-            });
+            };
         }
         Some(raster::GlRasterTexture {
-            levels: &levels,
+            levels: &levels[..=max_level as usize],
             format: match base.internal {
                 0x1907 => raster::TextureFormat::Rgb,
                 0x1908 => raster::TextureFormat::Rgba,
@@ -400,7 +420,10 @@ fn gl_rasterize_elements(
             ));
         }
     }
-    Ok((stats, vertices.len()))
+    let vertex_count = vertices.len();
+    c.draw_scratch.vertices = vertices;
+    c.draw_scratch.indices = indices;
+    Ok((stats, vertex_count))
 }
 
 fn gl_fill_present_strip(

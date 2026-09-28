@@ -1861,6 +1861,7 @@ pub fn is_system_provider_module(module: &str) -> bool {
             | "imm32.dll"
             | "comdlg32.dll"
             | "comctl32.dll"
+            | "dbghelp.dll"
             | "opengl32.dll"
             | "d3d8.dll"
     )
@@ -1990,6 +1991,7 @@ struct WglContext {
     observed_writes: VecDeque<GlWriteNote>,
     fixed: GlFixedState,
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
+    draw_scratch: GlDrawScratch,
     #[cfg(feature = "gpu-raster")]
     prepared_draws: Vec<staticgl_triangle::prepared::Draw>,
     present_pixels: Vec<u8>,

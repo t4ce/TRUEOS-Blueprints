@@ -509,3 +509,54 @@ fn guest_720p_drawable_replaces_1440p_cpu_storage() {
     assert_eq!(frame.rgba.len(), 1280 * 720 * 4);
     assert_eq!(frame.depth.len(), 1280 * 720);
 }
+
+#[test]
+fn draw_scratch_reuses_capacity_but_refreshes_guest_data_and_remaps() {
+    let (c, source) = scene();
+    let mut memory = CountingArrayMemory {
+        memory: source, reads: core::cell::Cell::new(0), reject_bulk: false,
+    };
+    let mut scratch = GlDrawScratch::default();
+    let mut timing = crate::frame_heartbeat::DecodeTiming::default();
+    let (vertices, indices) = gl_compat_vertices_reusing(&c, &memory, &[0, 1, 2, 0, 2, 1], &mut timing, &mut scratch).unwrap();
+    let old_clip = vertices[0].clip;
+    let vertex_ptr = vertices.as_ptr();
+    let index_ptr = indices.as_ptr();
+    let remap_ptr = scratch.dense_remap.as_ptr();
+    let snapshot_ptrs: Vec<_> = scratch.snapshot_ranges.iter().map(|(_, b)| b.as_ptr()).collect();
+    scratch.vertices = vertices;
+    scratch.indices = indices;
+    memory.memory.0[4..8].copy_from_slice(&0.25f32.to_le_bytes());
+    let (vertices, indices) = gl_compat_vertices_reusing(&c, &memory, &[2, 0, 1], &mut timing, &mut scratch).unwrap();
+    assert_eq!(vertices.as_ptr(), vertex_ptr);
+    assert_eq!(indices.as_ptr(), index_ptr);
+    assert_eq!(scratch.dense_remap.as_ptr(), remap_ptr);
+    assert_eq!(scratch.snapshot_ranges.iter().map(|(_, b)| b.as_ptr()).collect::<Vec<_>>(), snapshot_ptrs);
+    assert_eq!(indices, [0, 1, 2]);
+    assert_ne!(vertices[1].clip, old_clip);
+    scratch.vertices = vertices;
+    scratch.indices = indices;
+    // Failed bulk reads may have written partial bytes; the fallback must read
+    // fresh individual attributes, including when older storage exists.
+    memory.reject_bulk = true;
+    memory.memory.0[4..8].copy_from_slice(&0.75f32.to_le_bytes());
+    let (actual, mapped) = gl_compat_vertices_reusing(&c, &memory, &[0, 1, 2], &mut timing, &mut scratch).unwrap();
+    let (expected, expected_mapped) = gl_compat_vertices(&c, &memory, &[0, 1, 2]).unwrap();
+    assert_eq!(mapped, expected_mapped);
+    for (a, b) in actual.iter().zip(expected) {
+        assert_eq!(a.clip, b.clip);
+        assert_eq!(a.color, b.color);
+        assert_eq!(a.uv, b.uv);
+    }
+}
+
+#[test]
+fn reusable_triangle_assembly_matches_existing_topology() {
+    let mut output = Vec::new();
+    for mode in [GL_TRIANGLES, GL_TRIANGLE_STRIP] {
+        for indices in [vec![0, 1, 1, 2, 3, 4, 5], vec![9, 7, 6], vec![], vec![1, 2]] {
+            gl_assemble_triangles_into(mode, &indices, &mut output).unwrap();
+            assert_eq!(output, gl_assemble_triangles(mode, indices).unwrap());
+        }
+    }
+}

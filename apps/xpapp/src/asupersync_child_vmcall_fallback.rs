@@ -392,16 +392,25 @@
                                 // Maps are admitted only through the selected startup
                                 // catalog. All other Warcraft root files retain the
                                 // existing one-directory resolver.
+                                let is_maps_path = request
+                                    .path
+                                    .split(['\\', '/'])
+                                    .next()
+                                    .is_some_and(|part| part.eq_ignore_ascii_case("Maps"));
                                 let map_backing = session.maps.as_ref().and_then(|catalog| {
                                     catalog.resolve_war3_relative_path(&request.path).map(|entry| {
                                         (catalog.folder.clone(), entry.clone())
                                     })
                                 });
-                                let stored = if let Some((folder, entry)) = map_backing {
-                                    Some((
-                                        format!(r"Maps\{}", entry.relative_path),
-                                        format!("{folder}/{}", entry.relative_path),
-                                    ))
+                                let stored = if is_maps_path {
+                                    // A lookup miss stays a missing map; never reinterpret an
+                                    // unchecked guest Maps path as installation-root content.
+                                    map_backing.map(|(folder, entry)| {
+                                        (
+                                            format!(r"Maps\{}", entry.relative_path),
+                                            format!("{folder}/{}", entry.relative_path),
+                                        )
+                                    })
                                 } else {
                                     let listing = async_fs::list_dir(b"/common/Warcraft III")
                                         .await

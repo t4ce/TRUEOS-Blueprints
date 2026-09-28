@@ -156,27 +156,31 @@ impl XpProcess {
             GL_UNSIGNED_SHORT => 2,
             _ => 4,
         };
-        let mut raw = vec![0; count as usize * bytes];
+        let c = self.gl_context_mut(tid, API)?;
+        let raw = &mut c.draw_scratch.raw_indices;
+        raw.resize(count as usize * bytes, 0);
         if count != 0 {
             address
                 .checked_add(raw.len() as u32 - 1)
                 .ok_or("index address overflow")?;
-            memory.read(address, &mut raw)?;
+            memory.read(address, raw)?;
         }
-        let guest_indices: Vec<u32> = raw
+        c.draw_scratch.guest_indices.clear();
+        c.draw_scratch.guest_indices.extend(raw
             .chunks_exact(bytes)
             .map(|b| match bytes {
                 1 => b[0] as u32,
                 2 => u16::from_le_bytes(b.try_into().unwrap()) as u32,
                 _ => u32::from_le_bytes(b.try_into().unwrap()),
-            })
-            .collect();
-        let guest_indices = gl_assemble_triangles(mode, guest_indices)?;
-        let c = self.gl_context_mut(tid, API)?;
+            }));
+        let mut guest_indices = core::mem::take(&mut c.draw_scratch.triangles);
+        gl_assemble_triangles_into(mode, &c.draw_scratch.guest_indices, &mut guest_indices)?;
         if let Some(started) = draw_started {
             c.heartbeat.work.decode.index += started.elapsed();
         }
-        let (stats, vertex_count) = gl_rasterize_elements(c, memory, &guest_indices)?;
+        let result = gl_rasterize_elements(c, memory, &guest_indices);
+        c.draw_scratch.triangles = guest_indices;
+        let (stats, vertex_count) = result?;
         c.draw_count += 1;
         if let Some(started) = draw_started {
             let work = &mut c.heartbeat.work;
