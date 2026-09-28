@@ -62,6 +62,8 @@ pub const CHILD_STRICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRICMP_OFFSET
 const CHILD_ASCII_FOLD_OFFSET: usize = 0xc00;
 pub const CHILD_FTOL_OFFSET: usize = 0xd00;
 pub const CHILD_FTOL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_FTOL_OFFSET as u32;
+pub const CHILD_ISWSPACE_OFFSET: usize = 0xd80;
+pub const CHILD_ISWSPACE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_ISWSPACE_OFFSET as u32;
 
 // Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
 // then parse 1..9 leading digits. All other cases restore the original stack,
@@ -258,6 +260,19 @@ const CHILD_ISMBCSPACE_CODE: &[u8] = &[
     0x9d, 0xc3, 0xb8, 0x08, 0x00, 0x00, 0x00, 0x9d, 0xc3,
 ];
 
+// Cdecl iswspace uses the personality's low 16-bit wchar_t. ASCII HT..CR
+// and space return C1_SPACE; other bytes and WEOF return zero. For U+0100
+// through U+FFFE, retain the current typed frontier in the Rust provider.
+// Save the import id and flags until the domain decision is made; fallback
+// sees the original cdecl frame, id and flags.
+const CHILD_ISWSPACE_CODE: &[u8] = &[
+    0x50, 0x9c, 0x8b, 0x4c, 0x24, 0x0c, 0x81, 0xe1, 0xff, 0xff, 0x00, 0x00,
+    0x81, 0xf9, 0xff, 0x00, 0x00, 0x00, 0x76, 0x0e, 0x81, 0xf9, 0xff, 0xff,
+    0x00, 0x00, 0x74, 0x13, 0x9d, 0x58, 0x0f, 0x01, 0xc1, 0xc3, 0x83, 0xf9,
+    0x20, 0x74, 0x0d, 0x83, 0xe9, 0x09, 0x83, 0xf9, 0x04, 0x76, 0x05, 0x31,
+    0xc0, 0x9d, 0x59, 0xc3, 0xb8, 0x08, 0x00, 0x00, 0x00, 0x9d, 0x59, 0xc3,
+];
+
 // Cdecl _stricmp for the existing ASCII-only personality.  Preserve EFLAGS,
 // ESI and EDI, limit reads to MAX_C_STRING (1 MiB), and return through the
 // original typed provider if either address would wrap or the compatibility
@@ -307,6 +322,10 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .get_mut(CHILD_FTOL_OFFSET..CHILD_FTOL_OFFSET + CHILD_FTOL_CODE.len())
         .ok_or("ftol helper range")?
         .copy_from_slice(CHILD_FTOL_CODE);
+    output
+        .get_mut(CHILD_ISWSPACE_OFFSET..CHILD_ISWSPACE_OFFSET + CHILD_ISWSPACE_CODE.len())
+        .ok_or("iswspace helper range")?
+        .copy_from_slice(CHILD_ISWSPACE_CODE);
     output
         .get_mut(CHILD_ISDIGIT_OFFSET..CHILD_ISDIGIT_OFFSET + CHILD_ISDIGIT_CODE.len())
         .ok_or("isdigit helper range")?
@@ -402,6 +421,8 @@ pub enum Kind {
     IsDigit,
     /// Initial CP1252 CRT whitespace classification with no provider boundary.
     IsMbcSpace,
+    /// Modeled wchar_t space classification, with typed frontier fallback.
+    IswSpace,
     /// ASCII-only case-insensitive unbounded comparison, with typed fallback.
     Stricmp,
 }
@@ -415,13 +436,14 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[..3].copy_from_slice(&[0xc2, bytes, 0]);
         return Ok(());
     }
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::IswSpace) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
             Kind::QsortDword => CHILD_QSORT_DWORD_ADDRESS,
             Kind::Stricmp => CHILD_STRICMP_ADDRESS,
             Kind::Ftol => CHILD_FTOL_ADDRESS,
+            Kind::IswSpace => CHILD_ISWSPACE_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -461,7 +483,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
     ]);
     match kind {
         Kind::NoopStdcall(_) => unreachable!(),
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::Stricmp => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

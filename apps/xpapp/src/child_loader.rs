@@ -1038,6 +1038,9 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::CrtFtol && !cfg!(feature = "trace-api") {
         return thunk32::Kind::Ftol;
     }
+    if provider_op(import) == ProviderOp::CrtIswSpace && !cfg!(feature = "trace-api") {
+        return thunk32::Kind::IswSpace;
+    }
     if matches!(provider_op(import), ProviderOp::CrtAtoi | ProviderOp::CrtAtol)
         && !cfg!(feature = "host-decimal") {
         return thunk32::Kind::Decimal;
@@ -1385,6 +1388,23 @@ mod beginthreadex_tests {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Floor);
+    }
+
+    #[test]
+    fn crt_iswspace_uses_guest_classification_with_frontier_fallback() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("iswspace".into()),
+            iat_rva: 0,
+        };
+        assert_eq!(provider_op(&import), ProviderOp::CrtIswSpace);
+        assert_eq!(provider_op(&import).stack_cleanup_bytes(), 0);
+        let kind = provider_thunk_kind(&import);
+        assert_eq!(kind, if cfg!(feature = "trace-api") {
+            thunk32::Kind::Return
+        } else {
+            thunk32::Kind::IswSpace
+        });
     }
 
     #[test]
