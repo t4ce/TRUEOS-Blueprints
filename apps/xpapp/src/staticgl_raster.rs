@@ -1171,6 +1171,12 @@ fn sample_texture_uv(
     let a = a.min(tex.levels.len() - 1);
     let b = b.min(tex.levels.len() - 1);
     let ca = sample_level(tex.levels[a], uv, tex.wrap_s, tex.wrap_t, linear);
+    // Nearest-mip filters select one level. Clamping can also collapse a
+    // two-level blend at the end of the chain. Avoid fetching the same texels
+    // again; retain the old non-finite interpolation behavior.
+    if t == 0.0 || (a == b && t.is_finite()) {
+        return ca;
+    }
     let cb = sample_level(tex.levels[b], uv, tex.wrap_s, tex.wrap_t, linear);
     lerp4(ca, cb, t)
 }

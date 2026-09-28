@@ -43,6 +43,64 @@ Evidence in TRUEOS `bld/xpapp-usability/`: `cpu-restored.log`,
 `cpu-restored.png`, `cpu-restored-summary.json`. The summary records the fresh
 capture URL, artifact identity and measured warm frames.
 
+## Removing bring-up overhead, 2026-09-28
+
+Scope remains this WC3 process and the restored CPU scene.
+
+- Execution diagnostics previously used six pthread mutex lock/unlock pairs
+  per guest exit. A local atomic snapshot now retains the same sequence,
+  stage, PID and TID without entering the pthread shim. Its gate covers only
+  three atomic words, with no allocation, callback, await or host operation.
+  Guest scheduling and the native carrier are unchanged.
+- Provider-name construction now runs only with `trace-api`; ordinary logging
+  previously allocated and discarded these tracing labels.
+- The CPU sampler now avoids a second fetch when only one mip contributes.
+  The real scene's costly terrain/grass draws use `LinearMipmapNearest`.
+  Filtering, state and output pixels are preserved.
+- Bounded `debug draws` captures now report decode and raster cost separately;
+  neither phase includes diagnostic output time. Normal draws add no new clocks.
+
+393 library tests pass, including coherent diagnostic snapshots under concurrent
+readers/writers. The binary checks with default features and with API/execution
+tracing. A differential render across 96 filter/wrap/scale combinations produced
+identical bytes before and after the sampler change (SHA-256
+`4d4b832cf66364e2f9cd61a4b6d8eef59b70d80998791bde7a1c5c6b273ebac2`).
+The 14,745,600-pixel host mip benchmark's three-run median fell from 1.043 s to
+0.871 s (16.5%). This fixture is not an end-to-end frame rate.
+
+Published Blueprint:
+`6b4b10659b6c5568fc7ac18a9005ff8b68a3c5d7fd20817937e99f06f08b9009`.
+Hardware frame comparison (swaps 7–9, 166–167 draws, approximately 18 million
+shaded pixels/frame) against the diagnostic-only build:
+
+| Mean phase | Before sampler change | After |
+| --- | ---: | ---: |
+| CPU draw | 7064.7 ms | 6222.3 ms |
+| Upload/publication | 162.3 ms | 162.3 ms |
+| Outside draw/swap | 2936.3 ms | 2934.7 ms |
+| Whole frame | 10163.3 ms | 9319.3 ms |
+
+This is 11.9% less draw time and 8.3% less total frame time. Animation varies;
+these are matching early warm-frame windows, not a deterministic replay. The
+outside-draw cost remains unresolved, and the diagnostic storage change has
+no isolated speedup claim. The game continued publishing more than 25 frames.
+A fresh WD screenshot request remains busy without storing a new file, so
+visual verification of this build is limited to the exact render comparison;
+do not treat the earlier `cpu-restored.png` as a new capture.
+
+Hardware evidence: `cpu-trim.log`, `cpu-sampler.log` and
+`cpu-sampler-summary.json` in TRUEOS `bld/xpapp-usability/`.
+The earlier diagnostic-only build was
+`3337747070a83aaec1543263b75c42a509ab9fe522625c39867df2f9354897f4`.
+
+Reproducible host fixture and results are in TRUEOS `bld/xpapp-usability/`:
+`cpu-sampler-host-benchmark.rs`, `cpu-sampler-host-benchmark.json`,
+`cpu-sampler-baseline-raster.rs` and `xpapp-raster-under-test.rs`. Compile the
+harness with `rustc --edition=2024 -O`, then run with an output RGBA path. For
+the original behavior, copy the baseline source to `xpapp-raster-under-test.rs`
+in a separate temporary directory with the harness. The fixture covers 96
+small renders and times a separate general-path mipmapped quad.
+
 ## Earlier text-only and critical-section bypass experiment
 
 At the user's explicit request, `bypass-critical-sections` is currently enabled

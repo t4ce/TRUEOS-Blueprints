@@ -1197,7 +1197,7 @@
                         .address_space
                         .read(exit.registers.esp, &mut caller_ret)
                         .map_err(|error| error.to_string())?;
-                    if logl::ENABLED {
+                    if cfg!(feature = "trace-api") {
                     let provider_symbol = match &provider.symbol {
                         child_loader::ProviderSymbol::Name(name) => name.clone(),
                         child_loader::ProviderSymbol::Ordinal(ordinal) => format!("#{ordinal}"),

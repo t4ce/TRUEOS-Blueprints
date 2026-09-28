@@ -234,6 +234,7 @@ fn gl_rasterize_elements(
     guest_indices: &[u32],
 ) -> Result<(raster::RasterStats, usize), ProviderDispatchError> {
     const API: &str = "glDrawElements";
+    let timing_started = (c.debug_draws_remaining != 0).then(std::time::Instant::now);
     let mut state = gl_raster_state(c)?;
     // Explicit per-texture A/B experiment. Never mutate GL state or the stored
     // depth buffer while bypassed; restoring resumes the guest's own settings.
@@ -293,6 +294,7 @@ fn gl_rasterize_elements(
     } else {
         None
     };
+    let decoded_at = timing_started.map(|_| std::time::Instant::now());
     // Explicit, bounded observation only. No texture scan or formatting on the
     // normal release path; a zero budget also cancels an unfinished capture.
     let capture = c.debug_draws_remaining != 0;
@@ -320,16 +322,28 @@ fn gl_rasterize_elements(
             &vertices[..vertices.len().min(3)],
         ));
     }
+    let raster_started = timing_started.map(|_| std::time::Instant::now());
     let stats = c.raster_frame.as_mut().unwrap().draw_triangles(
         &vertices,
         &indices,
         &state,
         texture.as_ref(),
     )?;
+    let raster_elapsed = raster_started.map(|started| started.elapsed());
     if capture {
         logl::emit(level::IMPORTANT, format_args!(
             "XPAPP DEBUG DRAW RESULT seq={} stats={stats:?}", c.draw_count + 1,
         ));
+        if let (Some(started), Some(decoded_at), Some(raster_elapsed)) =
+            (timing_started, decoded_at, raster_elapsed)
+        {
+            logl::emit(level::IMPORTANT, format_args!(
+                "XPAPP DEBUG CPU COST seq={} texture={} decode_ms={:.3} raster_ms={:.3}",
+                c.draw_count + 1, c.textures.binding,
+                decoded_at.duration_since(started).as_secs_f64() * 1000.0,
+                raster_elapsed.as_secs_f64() * 1000.0,
+            ));
+        }
     }
     Ok((stats, vertices.len()))
 }

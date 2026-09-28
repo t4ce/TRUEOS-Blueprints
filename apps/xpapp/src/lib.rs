@@ -62,3 +62,5 @@ mod host_test_abi {
 mod test_host_gpu;
 
 pub mod gl_frame;
+#[cfg(test)]
+mod execution_diagnostic;

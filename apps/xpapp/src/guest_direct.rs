@@ -9,6 +9,11 @@ use std::sync::{
 
 use trueos::x86::{Context, DebugRegisters, ExecutionCarrier, Exit, ExitKind, ExtendedState, Registers};
 
+#[path = "execution_diagnostic.rs"]
+mod execution_diagnostic;
+pub use execution_diagnostic::{ExecutionDiagnostic, ExecutionStage};
+use execution_diagnostic::ExecutionSnapshot;
+
 static EXECUTION_CARRIER: Mutex<Weak<ExecutionCarrier>> = Mutex::new(Weak::new());
 
 macro_rules! trace_api {
@@ -19,42 +24,16 @@ macro_rules! trace_api {
     };
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum ExecutionStage {
-    Idle,
-    Submit,
-    Accept,
-    Enter,
-    Exit,
-    Reply,
-    Receive,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ExecutionDiagnostic {
-    pub sequence: u64,
-    pub stage: ExecutionStage,
-    pub pid: u32,
-    pub tid: u32,
-}
-
 static NEXT_EXECUTION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-static LAST_EXECUTION: Mutex<ExecutionDiagnostic> = Mutex::new(ExecutionDiagnostic {
-    sequence: 0,
-    stage: ExecutionStage::Idle,
-    pid: 0,
-    tid: 0,
-});
+static LAST_EXECUTION: ExecutionSnapshot = ExecutionSnapshot::new();
 
 fn record_execution(sequence: u64, stage: ExecutionStage, pid: u32, tid: u32) {
-    *LAST_EXECUTION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = ExecutionDiagnostic {
+    LAST_EXECUTION.store(ExecutionDiagnostic {
         sequence,
         stage,
         pid,
         tid,
-    };
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -113,9 +92,7 @@ impl GuestThreadContext {
     }
 
     pub fn last_execution_diagnostic() -> ExecutionDiagnostic {
-        *LAST_EXECUTION
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        LAST_EXECUTION.load()
     }
 
     pub fn set_execution_provenance(&mut self, provider: String, caller_ret: u32) {
