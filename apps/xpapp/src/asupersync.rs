@@ -2275,7 +2275,7 @@ pub(super) async fn run_loop(
                 ..thunk32::CHILD_LIGHT_BATCH_ADDRESS + thunk32::CHILD_LIGHT_BATCH_CODE_BYTES as u32)
                 .contains(&exit.registers.eip);
         if in_light_helper && exit.kind == ExitKind::Exception {
-            return Err(format!("guest glLightfv capture fault at 0x{:08x}", exit.registers.eip));
+            return Err(format!("guest GL state capture fault at 0x{:08x}", exit.registers.eip));
         }
         if in_light_helper && exit.kind == ExitKind::Other && exit.detail == 52 {
             continue;
