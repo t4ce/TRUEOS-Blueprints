@@ -1245,6 +1245,7 @@
                             cipow_diagnostic_logged: false,
                             get_system_info_consumer_logged: false,
                             seh_handler_dumped: false,
+                            first_null_write_snapshot_logged: false,
                             seh3_diagnostic_logged: false,
                             seh: None,
                             seh3_call: None,

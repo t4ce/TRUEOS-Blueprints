@@ -1891,7 +1891,7 @@ fn validate_child_private_arena_range(
         (
             "child control",
             thunk32::CHILD_CONTROL_BASE,
-            thunk32::CHILD_LIGHT_BATCH_DATA + 0x1000,
+            thunk32::CHILD_LIGHT_BATCH_ADDRESS + 0x1000,
         ),
         (
             "provider thunk",
@@ -2275,6 +2275,7 @@ struct PendingChild {
     cipow_diagnostic_logged: bool,
     get_system_info_consumer_logged: bool,
     seh_handler_dumped: bool,
+    first_null_write_snapshot_logged: bool,
     seh3_diagnostic_logged: bool,
     seh: Option<ChildSehDispatch>,
     seh3_call: Option<ChildSeh3Call>,
@@ -2911,6 +2912,20 @@ fn map_child_controls(address_space: &AddressSpace) -> Result<(), String> {
         .map_err(|error| format!("write child controls: {error}"))?;
     if written != page.len() {
         return Err("short child control write".into());
+    }
+    let mut gl_code = vec![0x90; 0x1000];
+    thunk32::install_child_gl_batch_code(&mut gl_code).map_err(str::to_owned)?;
+    address_space
+        .map(
+            thunk32::CHILD_LIGHT_BATCH_ADDRESS,
+            gl_code.len(),
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
+        .map_err(|error| format!("map child GL batch code: {error}"))?;
+    if address_space.write(thunk32::CHILD_LIGHT_BATCH_ADDRESS, &gl_code)
+        .map_err(|error| format!("write child GL batch code: {error}"))? != gl_code.len()
+    {
+        return Err("short child GL batch code write".into());
     }
     address_space
         .map(

@@ -198,11 +198,31 @@ fn captured_lights_use_modelview_at_replay_barrier() {
     });
     let position = [1.0f32.to_bits(), 2.0f32.to_bits(), 3.0f32.to_bits(), 1.0f32.to_bits()];
     process.replay_gl_lightfv(3, FIXED_GL_LIGHT0, GL_POSITION, position).unwrap();
-    process.gl_context_mut(3, "test").unwrap().modelview_matrix[12] = 10.0;
+    let mut modelview = GL_IDENTITY_MATRIX;
+    modelview[12] = 10.0;
+    process.replay_gl_matrix_mode(3, GL_MODELVIEW).unwrap();
+    process.replay_gl_load_matrixf(3, modelview.map(f32::to_bits)).unwrap();
     process.replay_gl_lightfv(3, FIXED_GL_LIGHT0 + 1, GL_POSITION, position).unwrap();
+    let mut projection = GL_IDENTITY_MATRIX.map(f32::to_bits);
+    projection[0] = 2.0f32.to_bits();
+    process.replay_gl_matrix_mode(3, GL_PROJECTION).unwrap();
+    process.replay_gl_load_matrixf(3, projection).unwrap();
+    let mut texture = GL_IDENTITY_MATRIX.map(f32::to_bits);
+    // Loading matrices is a bit-preserving copy, including signed zero and NaN.
+    texture[1] = 0x80000000;
+    texture[2] = 0x7fc01234;
+    process.replay_gl_matrix_mode(3, GL_TEXTURE).unwrap();
+    process.replay_gl_load_matrixf(3, texture).unwrap();
+    assert!(process.replay_gl_matrix_mode(3, 0xffff).is_err());
+    assert!(process.replay_gl_matrix_mode(99, GL_MODELVIEW).is_err());
+    assert!(process.replay_gl_load_matrixf(99, projection).is_err());
     let context = process.gl_context_mut(3, "test").unwrap();
     assert_eq!(context.fixed.lights[0].position_eye, [6.0, 2.0, 3.0, 1.0]);
     assert_eq!(context.fixed.lights[1].position_eye, [11.0, 2.0, 3.0, 1.0]);
+    assert_eq!(context.modelview_matrix, modelview);
+    assert_eq!(context.projection_matrix.map(f32::to_bits), projection);
+    assert_eq!(context.texture_matrix.map(f32::to_bits), texture);
+    assert_eq!(context.matrix_mode, GL_TEXTURE);
 }
 
 #[test]

@@ -1031,6 +1031,13 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::GlLightfv && !cfg!(feature = "trace-api") {
         return thunk32::Kind::GlLightBatch;
     }
+    if !cfg!(feature = "trace-api") {
+        match provider_op(import) {
+            ProviderOp::GlMatrixMode => return thunk32::Kind::GlMatrixModeBatch,
+            ProviderOp::GlLoadMatrixf => return thunk32::Kind::GlLoadMatrixBatch,
+            _ => {}
+        }
+    }
     if cfg!(feature = "bypass-critical-sections") && matches!(
         provider_op(import), ProviderOp::EnterCriticalSection | ProviderOp::LeaveCriticalSection
     ) {
@@ -1246,6 +1253,8 @@ mod beginthreadex_tests {
                 provider_thunk_kind(&import),
                 if symbol == "glFinish" { thunk32::Kind::Return }
                 else if symbol == "glLightfv" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLightBatch }
+                else if symbol == "glMatrixMode" && !cfg!(feature = "trace-api") { thunk32::Kind::GlMatrixModeBatch }
+                else if symbol == "glLoadMatrixf" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLoadMatrixBatch }
                 else { thunk32::Kind::Stdcall(cleanup) },
                 "{symbol}",
             );

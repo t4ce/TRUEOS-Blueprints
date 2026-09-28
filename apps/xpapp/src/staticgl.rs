@@ -628,6 +628,54 @@ impl XpProcess {
         Ok(0)
     }
 
+    /// Replay a captured matrix-mode call in guest order using the normal
+    /// provider validation and current-context lookup.
+    pub fn replay_gl_matrix_mode(
+        &mut self, tid: u32, mode: u32,
+    ) -> Result<(), ProviderDispatchError> {
+        struct Captured([u8; 8]);
+        impl GuestMemory for Captured {
+            fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+                let start = address as usize;
+                let end = start.checked_add(output.len()).ok_or("captured GL address overflow")?;
+                output.copy_from_slice(self.0.get(start..end).ok_or("captured GL read range")?);
+                Ok(())
+            }
+            fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> {
+                Err("captured GL is read only")
+            }
+        }
+        let mut bytes = [0; 8];
+        bytes[4..8].copy_from_slice(&mode.to_le_bytes());
+        self.gl_matrix_mode_static(tid, 0, &Captured(bytes))?;
+        Ok(())
+    }
+
+    /// Replay the original 64 matrix bytes captured at guest call time.
+    pub fn replay_gl_load_matrixf(
+        &mut self, tid: u32, bits: [u32; 16],
+    ) -> Result<(), ProviderDispatchError> {
+        struct Captured([u8; 72]);
+        impl GuestMemory for Captured {
+            fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+                let start = address as usize;
+                let end = start.checked_add(output.len()).ok_or("captured GL address overflow")?;
+                output.copy_from_slice(self.0.get(start..end).ok_or("captured GL read range")?);
+                Ok(())
+            }
+            fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> {
+                Err("captured GL is read only")
+            }
+        }
+        let mut bytes = [0; 72];
+        bytes[4..8].copy_from_slice(&8u32.to_le_bytes());
+        for (chunk, bit) in bytes[8..].chunks_exact_mut(4).zip(bits) {
+            chunk.copy_from_slice(&bit.to_le_bytes());
+        }
+        self.gl_load_matrixf_static(tid, 0, &Captured(bytes))?;
+        Ok(())
+    }
+
     fn gl_get_string_static(
         &self,
         tid: u32,

@@ -81,7 +81,7 @@ impl FrameAttribution {
             .saturating_add(delta.provider_non_draw).saturating_add(delta.batch_replay);
         let outside_ns = ns(outside);
         crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
-            "XPAPP FRAME OUTSIDE pid={} hwnd=0x{:08x} frame_ms={:.3} outside_draw_swap_ms={:.3} prepare_ms={:.3} carrier_request_ms={:.3} guest_kernel_native_ms={:.3} carrier_reply_ms={:.3} provider_non_draw_ms={:.3} light_batch_replay_ms={:.3} residual_ms={:.3} accounting_excess_ms={:.3} carrier_exits={} provider_non_draw_calls={} scope=single-active-drawable-serial-child-wall-all-threads-provider-excludes-draw-and-swap-residual-includes-scheduling-and-coordinator",
+            "XPAPP FRAME OUTSIDE pid={} hwnd=0x{:08x} frame_ms={:.3} outside_draw_swap_ms={:.3} prepare_ms={:.3} carrier_request_ms={:.3} guest_kernel_native_ms={:.3} carrier_reply_ms={:.3} provider_non_draw_ms={:.3} gl_state_replay_ms={:.3} residual_ms={:.3} accounting_excess_ms={:.3} carrier_exits={} provider_non_draw_calls={} scope=single-active-drawable-serial-child-wall-all-threads-provider-excludes-draw-and-swap-residual-includes-scheduling-and-coordinator",
             pid, hwnd, ns(frame) as f64 / 1e6, outside_ns as f64 / 1e6,
             delta.prepare as f64 / 1e6, delta.request as f64 / 1e6,
             delta.native as f64 / 1e6, delta.reply as f64 / 1e6,

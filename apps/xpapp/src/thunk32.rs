@@ -7,12 +7,17 @@ pub const GUEST_RETURN_OFFSET: usize = 0x0fe0;
 pub const GUEST_RETURN_ADDRESS: u32 = THUNK_BASE + GUEST_RETURN_OFFSET as u32;
 pub const GUEST_RETURN_AFTER_VMCALL: u32 = GUEST_RETURN_ADDRESS + 3;
 pub const CHILD_CONTROL_BASE: u32 = 0x002f_0000;
-pub const CHILD_LIGHT_BATCH_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x0e00;
-pub const CHILD_LIGHT_BATCH_AFTER_VMCALL: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x75;
+pub const CHILD_LIGHT_BATCH_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x2000;
+pub const CHILD_MATRIX_MODE_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x80;
+pub const CHILD_LOAD_MATRIX_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0xab;
+pub const CHILD_LIGHT_BATCH_AFTER_VMCALL: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0xdc;
 pub const CHILD_LIGHT_BATCH_CODE_BYTES: usize = include_bytes!("gl_light_batch.bin").len();
 pub const CHILD_LIGHT_BATCH_DATA: u32 = CHILD_CONTROL_BASE + 0x1000;
 pub const CHILD_LIGHT_BATCH_CAPACITY: usize = 32;
-pub const CHILD_LIGHT_BATCH_RECORD_BYTES: usize = 24;
+pub const CHILD_LIGHT_BATCH_RECORD_BYTES: usize = 72;
+pub const CHILD_GL_BATCH_TAG_LIGHT: u32 = 1;
+pub const CHILD_GL_BATCH_TAG_MATRIX_MODE: u32 = 2;
+pub const CHILD_GL_BATCH_TAG_LOAD_MATRIX: u32 = 3;
 pub const CHILD_DLL_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE;
 pub const CHILD_DLL_RETURN_AFTER_VMCALL: u32 = CHILD_DLL_RETURN_ADDRESS + 3;
 pub const CHILD_THREAD_EXIT_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x10;
@@ -68,7 +73,7 @@ pub const CHILD_STRICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRICMP_OFFSET
 const CHILD_ASCII_FOLD_OFFSET: usize = 0xc00;
 pub const CHILD_STRTOL_ZERO_OFFSET: usize = 0xec0;
 pub const CHILD_STRTOL_ZERO_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRTOL_ZERO_OFFSET as u32;
-const _: () = assert!(0x0e00 + CHILD_LIGHT_BATCH_CODE_BYTES <= CHILD_STRTOL_ZERO_OFFSET);
+const _: () = assert!(CHILD_LIGHT_BATCH_CODE_BYTES <= 0x1000);
 const _: () = assert!(CHILD_STRTOL_ZERO_OFFSET + CHILD_STRTOL_ZERO_CODE.len() <= 0x1000);
 // One process-private seed in the existing writable child control-data page.
 pub const CHILD_RNG_SEED_ADDRESS: u32 = CHILD_LIGHT_BATCH_DATA + 0xff0;
@@ -347,9 +352,6 @@ const CHILD_STRICMP_CODE: &[u8] = &[
 ];
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
-    let code = include_bytes!("gl_light_batch.bin");
-    output.get_mut(0x0e00..0x0e00 + code.len())
-        .ok_or("light batch helper range")?.copy_from_slice(code);
     output.get_mut(CHILD_DECIMAL_OFFSET..CHILD_DECIMAL_OFFSET + CHILD_DECIMAL_CODE.len())
         .ok_or("decimal helper range")?.copy_from_slice(CHILD_DECIMAL_CODE);
     output.get_mut(CHILD_STRNICMP_OFFSET..CHILD_STRNICMP_OFFSET + CHILD_STRNICMP_CODE.len())
@@ -461,6 +463,12 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
+pub fn install_child_gl_batch_code(output: &mut [u8]) -> Result<(), &'static str> {
+    let code = include_bytes!("gl_light_batch.bin");
+    output.get_mut(..code.len()).ok_or("GL batch helper range")?.copy_from_slice(code);
+    Ok(())
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Kind {
     Stop,
@@ -502,6 +510,8 @@ pub enum Kind {
     Stricmp,
     /// Copy glLightfv arguments into the guest queue and return without an exit.
     GlLightBatch,
+    GlMatrixModeBatch,
+    GlLoadMatrixBatch,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -513,7 +523,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[..3].copy_from_slice(&[0xc2, bytes, 0]);
         return Ok(());
     }
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::StrtolZero | Kind::IswSpace | Kind::GlLightBatch) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::StrtolZero | Kind::IswSpace | Kind::GlLightBatch | Kind::GlMatrixModeBatch | Kind::GlLoadMatrixBatch) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
@@ -523,6 +533,8 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
             Kind::StrtolZero => CHILD_STRTOL_ZERO_ADDRESS,
             Kind::IswSpace => CHILD_ISWSPACE_ADDRESS,
             Kind::GlLightBatch => CHILD_LIGHT_BATCH_ADDRESS,
+            Kind::GlMatrixModeBatch => CHILD_MATRIX_MODE_BATCH_ADDRESS,
+            Kind::GlLoadMatrixBatch => CHILD_LOAD_MATRIX_BATCH_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -564,7 +576,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
     ]);
     match kind {
         Kind::NoopStdcall(_) => unreachable!(),
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch | Kind::Rand | Kind::Srand => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch | Kind::GlMatrixModeBatch | Kind::GlLoadMatrixBatch | Kind::Rand | Kind::Srand => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

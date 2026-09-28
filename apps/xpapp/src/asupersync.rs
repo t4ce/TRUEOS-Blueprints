@@ -2134,6 +2134,9 @@ pub(super) async fn run_loop(
     #[cfg(feature = "trace-execution")]
     let mut frame_attribution = crate::exec_timing::FrameAttribution::default();
     let mut gl_light_batch_replayed = 0u64;
+    let mut gl_batch_light_replayed = 0u64;
+    let mut gl_batch_mode_replayed = 0u64;
+    let mut gl_batch_load_replayed = 0u64;
     let mut gl_light_batch_flushes = 0u64;
     let mut gl_light_batch_full_exits = 0u64;
     let mut gl_light_batch_cursor = xpapp::gl_light_batch::Cursor::default();
@@ -2216,9 +2219,26 @@ pub(super) async fn run_loop(
                     .ok_or_else(|| "light batch process missing".to_owned())?;
                 for entry in entries[..bytes].chunks_exact(thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES) {
                     let word = |offset| u32::from_le_bytes(entry[offset..offset + 4].try_into().unwrap());
-                    process.xp.replay_gl_lightfv(active_key.tid, word(0), word(4),
-                        [word(8), word(12), word(16), word(20)])
-                        .map_err(|error| format!("replay child glLightfv: {error}"))?;
+                    match word(0) {
+                        thunk32::CHILD_GL_BATCH_TAG_LIGHT => {
+                            process.xp.replay_gl_lightfv(active_key.tid, word(4), word(8),
+                                [word(12), word(16), word(20), word(24)])
+                                .map_err(|error| format!("replay child glLightfv: {error}"))?;
+                            gl_batch_light_replayed += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_MATRIX_MODE => {
+                            process.xp.replay_gl_matrix_mode(active_key.tid, word(4))
+                                .map_err(|error| format!("replay child glMatrixMode: {error}"))?;
+                            gl_batch_mode_replayed += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_LOAD_MATRIX => {
+                            let bits = core::array::from_fn(|i| word(8 + 4 * i));
+                            process.xp.replay_gl_load_matrixf(active_key.tid, bits)
+                                .map_err(|error| format!("replay child glLoadMatrixf: {error}"))?;
+                            gl_batch_load_replayed += 1;
+                        }
+                        tag => return Err(format!("unknown child GL batch tag {tag}").into()),
+                    }
                 }
                 #[cfg(feature = "trace-execution")]
                 crate::exec_timing::record_light_batch_replay(batch_started.elapsed());
@@ -2226,9 +2246,11 @@ pub(super) async fn run_loop(
                 gl_light_batch_flushes += 1;
                 if gl_light_batch_replayed / 1024 != (gl_light_batch_replayed - new_count as u64) / 1024 {
                     logl::log!(level::IMPORTANT, format_args!(
-                        "XPAPP CHILD GL LIGHT BATCH pid={} replayed={} flushes={} full_exits={} estimated_exits_saved={}",
-                        active_key.pid, gl_light_batch_replayed, gl_light_batch_flushes,
-                        gl_light_batch_full_exits, gl_light_batch_replayed - gl_light_batch_full_exits,
+                        "XPAPP CHILD GL STATE BATCH pid={} replayed={} light={} mode={} load={} flushes={} full_exits={} estimated_exits_saved={}",
+                        active_key.pid, gl_light_batch_replayed,
+                        gl_batch_light_replayed, gl_batch_mode_replayed, gl_batch_load_replayed,
+                        gl_light_batch_flushes, gl_light_batch_full_exits,
+                        gl_light_batch_replayed - gl_light_batch_full_exits,
                     ));
                 }
             }
@@ -2441,6 +2463,48 @@ pub(super) async fn run_loop(
                     .filter(|child| child.pid == active_key.pid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
+                let first_null_write = exception.vector == Some(14)
+                    && exception.fault_linear == Some(0)
+                    && exception.error.is_some_and(|error| error & 2 != 0)
+                    && !child.first_null_write_snapshot_logged;
+                if first_null_write {
+                    let stack = read_guest_words(
+                        &X86Memory(&child.address_space),
+                        registers.esp,
+                        32,
+                    )
+                    .map(|words| format!("{words:08x?}"))
+                    .unwrap_or_else(|error| format!("<unreadable:{error}>"));
+                    let (owner, rva) = child_pc_owner(child, registers.eip)
+                        .unwrap_or(("unmapped-or-stack", 0));
+                    logl::log!(
+                        level::IMPORTANT,
+                        format_args!(
+                            "XPAPP CHILD FIRST NULL WRITE pid={} tid={} vector=14 error=0x{:08x} access=write fault_address=0x00000000 eip=0x{:08x} eip_owner={} eip_rva=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x} seh_head={} execution={:?} scope={:?} code=\"{}\" stack={}",
+                            active_key.pid,
+                            active_key.tid,
+                            exception.error.unwrap_or(0),
+                            registers.eip,
+                            owner,
+                            rva,
+                            registers.esp,
+                            registers.ebp,
+                            registers.eax,
+                            registers.ebx,
+                            registers.ecx,
+                            registers.edx,
+                            registers.esi,
+                            registers.edi,
+                            registers.eflags,
+                            registers.fs_base,
+                            seh_registration_head(&child.address_space, registers.fs_base),
+                            child.execution,
+                            scope,
+                            exception_code_window(&child.address_space, registers.eip),
+                            stack,
+                        ),
+                    );
+                }
                 if exit.registers.eip == 0x0040_1d0b {
                     let eip = exit.registers.eip;
 
@@ -2708,6 +2772,9 @@ pub(super) async fn run_loop(
                     .as_mut()
                     .filter(|child| child.pid == active_key.pid)
                     .ok_or_else(|| "exception child missing mutable pending state".to_owned())?;
+                if first_null_write {
+                    child.first_null_write_snapshot_logged = true;
+                }
                 if null_execute {
                     if let Some(signature) = null_loop_signature {
                         let count = match child.repeated_null_call {
