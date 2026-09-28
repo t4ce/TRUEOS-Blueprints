@@ -1038,6 +1038,13 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::CrtFloor {
         return thunk32::Kind::Floor;
     }
+    if !cfg!(feature = "trace-api") {
+        match provider_op(import) {
+            ProviderOp::CrtRand => return thunk32::Kind::Rand,
+            ProviderOp::CrtSrand => return thunk32::Kind::Srand,
+            _ => {}
+        }
+    }
     if provider_op(import) == ProviderOp::CrtStrtol && !cfg!(feature = "trace-api") {
         return thunk32::Kind::StrtolZero;
     }

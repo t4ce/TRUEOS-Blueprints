@@ -1005,7 +1005,7 @@
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(
             crate::child_loader::provider_thunk_kind(&provider),
-            thunk32::Kind::Return
+            if cfg!(feature = "trace-api") { thunk32::Kind::Return } else { thunk32::Kind::Srand }
         );
 
         let mut xp = XpProcess::new_child();
@@ -1046,12 +1046,19 @@
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(
             crate::child_loader::provider_thunk_kind(&rand),
-            thunk32::Kind::Return
+            if cfg!(feature = "trace-api") { thunk32::Kind::Return } else { thunk32::Kind::Rand }
         );
         let mut thunk = [0u8; thunk32::THUNK_BYTES];
         thunk32::write(813, crate::child_loader::provider_thunk_kind(&rand), &mut thunk)
             .unwrap();
-        assert_eq!(&thunk[8..9], &[0xc3]);
+        if cfg!(feature = "trace-api") {
+            assert_eq!(&thunk[8..9], &[0xc3]);
+        } else {
+            assert_eq!(thunk[0], 0xe9);
+            let displacement = u32::from_le_bytes(thunk[1..5].try_into().unwrap());
+            assert_eq!((thunk32::address(813).unwrap() + 5).wrapping_add(displacement),
+                thunk32::CHILD_RAND_ADDRESS);
+        }
 
         let mut xp = XpProcess::new_child();
         xp.install_provider_surface(vec![srand, rand], Vec::new(), Vec::new());

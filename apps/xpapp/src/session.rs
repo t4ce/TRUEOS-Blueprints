@@ -713,13 +713,14 @@ pub struct CreateMutexRequest {
     pub inheritable: bool,
 }
 
-/// A persistent Warcraft profile-directory operation executed by the async
-/// TRUEOSFS coordinator.
+/// A Warcraft directory operation executed by the async TRUEOSFS coordinator.
+/// Installed content is existing-only; profile directories may be created.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateDirectoryRequest {
     pub key: ThreadKey,
     pub win_path: String,
     pub trueos_path: String,
+    pub create_missing: bool,
 }
 
 /// A read-only file open whose backing must be resolved by the async

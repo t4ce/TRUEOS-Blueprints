@@ -2807,7 +2807,7 @@ impl XpProcess {
                     });
                 }
                 let win_path = read_c_string(memory, path_ptr, 1024)?;
-                let trueos_path = war3_profile_directory_path(&win_path).ok_or_else(|| {
+                let (trueos_path, create_missing) = war3_create_directory_path(&win_path).ok_or_else(|| {
                     ProviderDispatchError::Frontier {
                         api: "CreateDirectoryA",
                         detail: format!("unmodeled path={win_path:?}"),
@@ -2818,6 +2818,7 @@ impl XpProcess {
                         key: ThreadKey { pid, tid },
                         win_path,
                         trueos_path,
+                        create_missing,
                     },
                 )))
             }

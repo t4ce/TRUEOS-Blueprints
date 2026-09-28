@@ -2911,6 +2911,18 @@ fn map_child_controls(address_space: &AddressSpace) -> Result<(), String> {
     {
         return Err("short child light batch initialization".into());
     }
+    // Initialized once with the process controls, never on thread activation.
+    if address_space.write(thunk32::CHILD_RNG_SEED_ADDRESS,
+        &thunk32::CHILD_RNG_INITIAL_SEED.to_le_bytes())
+        .map_err(|error| format!("initialize child RNG: {error}"))? != 4
+    {
+        return Err("short child RNG initialization".into());
+    }
+    logl::log!(level::IMPORTANT, format_args!(
+        "XPAPP CHILD RNG mode={} initial_seed={} state=0x{:08x} reseed=explicit-srand",
+        if cfg!(feature = "trace-api") { "host-traced" } else { "guest-native" },
+        thunk32::CHILD_RNG_INITIAL_SEED, thunk32::CHILD_RNG_SEED_ADDRESS,
+    ));
     Ok(())
 }
 

@@ -1540,7 +1540,7 @@
                                     .set_last_error_for_thread(request.key.tid, 183);
                                 0
                             }
-                            Err(async_fs::ERR_NOT_FOUND) => {
+                            Err(async_fs::ERR_NOT_FOUND) if request.create_missing => {
                                 async_fs::create_dir_all(request.trueos_path.as_bytes())
                                     .await
                                     .map_err(|error| {
@@ -1555,6 +1555,14 @@
                                     .xp
                                     .set_last_error_for_thread(request.key.tid, 0);
                                 1
+                            }
+                            Err(async_fs::ERR_NOT_FOUND) => {
+                                session
+                                    .process_mut(request.key.pid)
+                                    .ok_or_else(|| "CreateDirectoryA process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(request.key.tid, 3);
+                                0
                             }
                             Err(error) => {
                                 return Err(format!(

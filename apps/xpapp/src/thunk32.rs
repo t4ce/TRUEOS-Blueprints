@@ -70,6 +70,19 @@ pub const CHILD_STRTOL_ZERO_OFFSET: usize = 0xec0;
 pub const CHILD_STRTOL_ZERO_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRTOL_ZERO_OFFSET as u32;
 const _: () = assert!(0x0e00 + CHILD_LIGHT_BATCH_CODE_BYTES <= CHILD_STRTOL_ZERO_OFFSET);
 const _: () = assert!(CHILD_STRTOL_ZERO_OFFSET + CHILD_STRTOL_ZERO_CODE.len() <= 0x1000);
+// One process-private seed in the existing writable child control-data page.
+pub const CHILD_RNG_SEED_ADDRESS: u32 = CHILD_LIGHT_BATCH_DATA + 0xff0;
+pub const CHILD_RNG_INITIAL_SEED: u32 = 1;
+pub const CHILD_RAND_OFFSET: usize = 0xf00;
+pub const CHILD_RAND_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_RAND_OFFSET as u32;
+pub const CHILD_SRAND_OFFSET: usize = 0xf40;
+pub const CHILD_SRAND_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_SRAND_OFFSET as u32;
+const _: () = {
+    assert!(CHILD_STRTOL_ZERO_OFFSET + CHILD_STRTOL_ZERO_CODE.len() <= CHILD_RAND_OFFSET);
+    assert!(CHILD_RAND_OFFSET + CHILD_RAND_CODE.len() <= CHILD_SRAND_OFFSET);
+    assert!(CHILD_SRAND_OFFSET + CHILD_SRAND_CODE.len() <= 0x1000);
+    assert!(4 + CHILD_LIGHT_BATCH_CAPACITY * CHILD_LIGHT_BATCH_RECORD_BYTES <= 0xff0);
+};
 pub const CHILD_FTOL_OFFSET: usize = 0xd00;
 pub const CHILD_FTOL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_FTOL_OFFSET as u32;
 pub const CHILD_ISWSPACE_OFFSET: usize = 0xd80;
@@ -224,6 +237,23 @@ const CHILD_FLOOR_CODE: &[u8] = &[
     0xc3,
 ];
 
+// seed = seed * 214013 + 2531011 (wrapping); result = (seed >> 16) & 0x7fff.
+// The compare/exchange keeps the modeled process-wide stream
+// coherent if a guest thread is preempted between reading and updating it.
+const CHILD_RAND_CODE: &[u8] = &[
+    0xa1, 0xf0, 0x1f, 0x2f, 0x00, 0x69, 0xd0, 0xfd,
+    0x43, 0x03, 0x00, 0x81, 0xc2, 0xc3, 0x9e, 0x26,
+    0x00, 0xf0, 0x0f, 0xb1, 0x15, 0xf0, 0x1f, 0x2f,
+    0x00, 0x75, 0xea, 0x89, 0xd0, 0xc1, 0xe8, 0x10,
+    0x25, 0xff, 0x7f, 0x00, 0x00, 0xc3,
+];
+
+// Explicit reseeding replaces the same guest-owned state atomically.
+const CHILD_SRAND_CODE: &[u8] = &[
+    0x8b, 0x44, 0x24, 0x04, 0x87, 0x05, 0xf0, 0x1f,
+    0x2f, 0x00, 0x31, 0xc0, 0xc3,
+];
+
 // The measured strtol("0", NULL, 8) case: identical to the provider fast path.
 // All other shapes retain the provider ID in EAX and take the original trap.
 const CHILD_STRTOL_ZERO_CODE: &[u8] = &[
@@ -349,6 +379,10 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .get_mut(CHILD_FLOOR_OFFSET..CHILD_FLOOR_OFFSET + CHILD_FLOOR_CODE.len())
         .ok_or("floor helper range")?
         .copy_from_slice(CHILD_FLOOR_CODE);
+    output.get_mut(CHILD_RAND_OFFSET..CHILD_RAND_OFFSET + CHILD_RAND_CODE.len())
+        .ok_or("rand helper range")?.copy_from_slice(CHILD_RAND_CODE);
+    output.get_mut(CHILD_SRAND_OFFSET..CHILD_SRAND_OFFSET + CHILD_SRAND_CODE.len())
+        .ok_or("srand helper range")?.copy_from_slice(CHILD_SRAND_CODE);
     output
         .get_mut(CHILD_STRTOL_ZERO_OFFSET..CHILD_STRTOL_ZERO_OFFSET + CHILD_STRTOL_ZERO_CODE.len())
         .ok_or("strtol zero helper range")?
@@ -444,6 +478,10 @@ pub enum Kind {
     Ftol,
     /// Observed octal-zero conversion, otherwise the existing provider.
     StrtolZero,
+    /// Guest-owned process PRNG; no provider exit.
+    Rand,
+    /// Reseed the guest-owned process PRNG.
+    Srand,
     /// Cdecl guest-native unsigned byte comparison.
     Strncmp,
     /// CP1252 case-insensitive bounded guest-native comparison.
@@ -495,7 +533,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[6..10].copy_from_slice(&target.wrapping_sub(next).to_le_bytes());
         return Ok(());
     }
-    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::Ceil | Kind::Floor | Kind::IsDigit | Kind::IsMbcSpace) {
+    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::Ceil | Kind::Floor | Kind::IsDigit | Kind::IsMbcSpace | Kind::Rand | Kind::Srand) {
         let target = match kind {
             Kind::Memmove => CHILD_MEMMOVE_ADDRESS,
             Kind::Strncmp => CHILD_STRNCMP_ADDRESS,
@@ -504,6 +542,8 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
             Kind::Floor => CHILD_FLOOR_ADDRESS,
             Kind::IsDigit => CHILD_ISDIGIT_ADDRESS,
             Kind::IsMbcSpace => CHILD_ISMBCSPACE_ADDRESS,
+            Kind::Rand => CHILD_RAND_ADDRESS,
+            Kind::Srand => CHILD_SRAND_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(5))
@@ -524,7 +564,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
     ]);
     match kind {
         Kind::NoopStdcall(_) => unreachable!(),
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch | Kind::Rand | Kind::Srand => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

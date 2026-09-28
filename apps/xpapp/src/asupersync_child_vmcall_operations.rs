@@ -2543,7 +2543,31 @@
                         };
                         let existed = match async_fs::metadata(request.trueos_path.as_bytes()).await {
                             Ok(_) => true,
-                            Err(async_fs::ERR_NOT_FOUND) => false,
+                            Err(async_fs::ERR_NOT_FOUND) if request.create_missing => false,
+                            Err(async_fs::ERR_NOT_FOUND) => {
+                                session
+                                    .process_mut(request.key.pid)
+                                    .ok_or_else(|| "CreateDirectoryA process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(request.key.tid, 3);
+                                logl::log!(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "XPAPP CHILD CREATEDIRECTORYA RESULT pid={} tid={} win_path={:?} trueos_path={:?} existing_only=1 existed=0 result=0 last_error=3 cleanup=8-by-thunk",
+                                        active_pid,
+                                        active_tid,
+                                        request.win_path,
+                                        request.trueos_path,
+                                    ),
+                                );
+                                let mut registers = exit.registers;
+                                registers.eax = 0;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
                             Err(error) => {
                                 return Err(format!(
                                     "CreateDirectoryA metadata {:?}: TRUEOSFS {error}",
@@ -2577,11 +2601,12 @@
                         logl::log!(
                             level::IMPORTANT,
                             format_args!(
-                                "XPAPP CHILD CREATEDIRECTORYA RESULT pid={} tid={} win_path={:?} trueos_path={:?} existed={} result={} last_error={} cleanup=8-by-thunk",
+                                "XPAPP CHILD CREATEDIRECTORYA RESULT pid={} tid={} win_path={:?} trueos_path={:?} existing_only={} existed={} result={} last_error={} cleanup=8-by-thunk",
                                 active_pid,
                                 active_tid,
                                 request.win_path,
                                 request.trueos_path,
+                                (!request.create_missing) as u8,
                                 existed as u8,
                                 result,
                                 if existed { 183 } else { 0 },

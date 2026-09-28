@@ -1659,11 +1659,11 @@ fn warcraft_drive_relative_path(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The persistent Warcraft III mount itself and guest profile data below its
-/// Save or Replay mounts are admitted. The canonicalized drive-relative path
-/// is deliberately checked segment-by-segment so a guest cannot escape the
-/// TRUEOSFS tree.
-fn war3_profile_directory_path(path: &str) -> Option<String> {
+/// Maps is installed TRUEOSFS content, so it may only be observed as an
+/// existing directory. Save and Replay are the persistent guest-writable
+/// profile trees. The canonicalized drive-relative path is deliberately
+/// checked segment-by-segment so a guest cannot escape the TRUEOSFS tree.
+fn war3_create_directory_path(path: &str) -> Option<(String, bool)> {
     let canonical = canonical_file_path(path);
     let canonical = canonical.trim_end_matches('\\');
     let components = path_components(canonical);
@@ -1671,28 +1671,28 @@ fn war3_profile_directory_path(path: &str) -> Option<String> {
         && components[0].eq_ignore_ascii_case("C:")
         && components[1].eq_ignore_ascii_case("Warcraft III")
     {
-        return Some("/common/Warcraft III".into());
-    }
-    if components.len() == 3
-        && components[0].eq_ignore_ascii_case("C:")
-        && components[1].eq_ignore_ascii_case("Warcraft III")
-        && components[2].eq_ignore_ascii_case("Maps")
-    {
-        return Some("/common/Warcraft III/Maps".into());
+        return Some(("/common/Warcraft III".into(), false));
     }
     let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
-    let mut parts = relative.split('\\');
-    let root = parts.next()?;
-    if !root.eq_ignore_ascii_case("save") && !root.eq_ignore_ascii_case("replay") {
-        return None;
-    }
     if !relative
         .split('\\')
         .all(|part| !part.is_empty() && part != "." && part != "..")
     {
         return None;
     }
-    Some(format!("/common/Warcraft III/{relative}"))
+    if components.len() >= 3
+        && components[0].eq_ignore_ascii_case("C:")
+        && components[1].eq_ignore_ascii_case("Warcraft III")
+        && components[2].eq_ignore_ascii_case("Maps")
+    {
+        return Some((format!("/common/Warcraft III/{relative}"), false));
+    }
+    let mut parts = relative.split('\\');
+    let root = parts.next()?;
+    if !root.eq_ignore_ascii_case("save") && !root.eq_ignore_ascii_case("replay") {
+        return None;
+    }
+    Some((format!("/common/Warcraft III/{relative}"), true))
 }
 
 fn is_war3_scratch_path(path: &str) -> bool {
