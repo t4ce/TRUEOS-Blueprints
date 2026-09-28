@@ -42,6 +42,7 @@ pub enum ProviderOp {
     GetFileType,
     SetHandleCount,
     GetACP,
+    GetLocaleInfoA,
     GetCPInfo,
     GetStringTypeW,
     MultiByteToWideChar,
@@ -466,6 +467,7 @@ impl ProviderOp {
             Self::GetThreadPriority => 4,
             Self::CreateFileA | Self::FormatMessageA => 28,
             Self::CreateDirectoryA => 8,
+            Self::GetLocaleInfoA => 16,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA
             | Self::HeapCreate
@@ -540,6 +542,7 @@ impl ProviderOp {
                 | Self::GetFileType
                 | Self::SetHandleCount
                 | Self::GetACP
+                | Self::GetLocaleInfoA
                 | Self::GetCPInfo
                 | Self::GetStringTypeW
                 | Self::MultiByteToWideChar
@@ -736,6 +739,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetFileType" => ProviderOp::GetFileType,
             "SetHandleCount" => ProviderOp::SetHandleCount,
             "GetACP" => ProviderOp::GetACP,
+            "GetLocaleInfoA" => ProviderOp::GetLocaleInfoA,
             "GetCPInfo" => ProviderOp::GetCPInfo,
             "GetStringTypeW" => ProviderOp::GetStringTypeW,
             "MultiByteToWideChar" => ProviderOp::MultiByteToWideChar,

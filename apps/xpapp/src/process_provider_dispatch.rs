@@ -1164,6 +1164,28 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.get_acp()))
             }
+            ProviderOp::GetLocaleInfoA => {
+                let [caller_ret, lcid, lctype, output, capacity] =
+                    arguments::<5>(memory, esp)?;
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD GETLOCALEINFOA CALL pid={pid} tid={tid} \\
+                         lcid=0x{lcid:08x} lctype=0x{lctype:08x} \\
+                         output=0x{output:08x} capacity={} \\
+                         caller_ret=0x{caller_ret:08x} cleanup=16-by-thunk",
+                        capacity as i32,
+                    ),
+                );
+                Err(ProviderDispatchError::Frontier {
+                    api: "GetLocaleInfoA",
+                    detail: format!(
+                        "lcid=0x{lcid:08x} lctype=0x{lctype:08x} \\
+                         output=0x{output:08x} capacity={}",
+                        capacity as i32,
+                    ),
+                })
+            }
             ProviderOp::GetCPInfo => {
                 self.call_count = self
                     .call_count

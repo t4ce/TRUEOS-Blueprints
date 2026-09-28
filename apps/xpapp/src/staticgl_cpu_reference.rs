@@ -110,11 +110,29 @@ fn gl_raster_state(c: &WglContext) -> Result<raster::GlRasterState, &'static str
     })
 }
 
+#[cfg(test)]
 fn gl_compat_vertices(
     c: &WglContext,
     memory: &impl GuestMemory,
     guest_indices: &[u32],
 ) -> Result<(Vec<raster::GlRasterVertex>, Vec<u32>), ProviderDispatchError> {
+    gl_compat_vertices_timed(c, memory, guest_indices, &mut Default::default())
+}
+
+fn gl_compat_vertices_timed(
+    c: &WglContext,
+    memory: &impl GuestMemory,
+    guest_indices: &[u32],
+    timing: &mut crate::frame_heartbeat::DecodeTiming,
+) -> Result<(Vec<raster::GlRasterVertex>, Vec<u32>), ProviderDispatchError> {
+    let mut mark = (!cfg!(feature = "nolog")).then(std::time::Instant::now);
+    let mut lap = || {
+        mark.map(|previous| {
+            let now = std::time::Instant::now();
+            mark = Some(now);
+            now.duration_since(previous)
+        }).unwrap_or_default()
+    };
     const API: &str = "glDrawElements";
     if !c.vertex_array_enabled {
         return Err(gl_texture_error(API, "vertex array disabled"));
@@ -128,10 +146,17 @@ fn gl_compat_vertices(
         } else {
             None
         };
+    timing.vertex_setup += lap();
     let memory = &GlArraySnapshot::new(memory, c, guest_indices);
+    timing.snapshot += lap();
+    if !cfg!(feature = "nolog") {
+        timing.snapshot_bytes += memory.ranges.iter().map(|(_, bytes)| bytes.len() as u64).sum::<u64>();
+        timing.snapshot_ranges += memory.ranges.len() as u64;
+    }
     let mut vertices = Vec::with_capacity(guest_indices.len().min(65536));
     let mut indices = Vec::with_capacity(guest_indices.len());
     let mut remap = GlIndexRemap::new(guest_indices);
+    timing.allocation += lap();
     for &index in guest_indices {
         if let Some(mapped) = remap.get(&index) {
             indices.push(mapped);
@@ -225,6 +250,11 @@ fn gl_compat_vertices(
         remap.insert(index, mapped);
         indices.push(mapped);
     }
+    timing.vertices += lap();
+    timing.input_indices += guest_indices.len() as u64;
+    timing.unique_vertices += vertices.len() as u64;
+    timing.lit_vertices += if c.fixed.is_enabled(0xb50) { vertices.len() as u64 } else { 0 };
+    timing.texgen_vertices += if (0xc60..=0xc63).any(|cap| c.fixed.is_enabled(cap)) { vertices.len() as u64 } else { 0 };
     Ok((vertices, indices))
 }
 
@@ -242,7 +272,11 @@ fn gl_rasterize_elements(
         state.depth.enabled = false;
         state.depth.write = false;
     }
-    let (vertices, indices) = gl_compat_vertices(c, memory, guest_indices)?;
+    let mut decode = core::mem::take(&mut c.heartbeat.work.decode);
+    let decoded = gl_compat_vertices_timed(c, memory, guest_indices, &mut decode);
+    c.heartbeat.work.decode = decode;
+    let (vertices, indices) = decoded?;
+    let texture_started = (!cfg!(feature = "nolog")).then(std::time::Instant::now);
     XpProcess::gl_ensure_raster(c)?;
     let object = c.textures.object();
     let mut levels = Vec::new();
@@ -294,6 +328,9 @@ fn gl_rasterize_elements(
     } else {
         None
     };
+    if let Some(started) = texture_started {
+        c.heartbeat.work.decode.texture += started.elapsed();
+    }
     let decoded_at = timing_started.map(|_| std::time::Instant::now());
     // Explicit, bounded observation only. No texture scan or formatting on the
     // normal release path; a zero budget also cancels an unfinished capture.

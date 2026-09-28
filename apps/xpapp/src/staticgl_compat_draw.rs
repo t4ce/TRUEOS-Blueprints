@@ -173,6 +173,9 @@ impl XpProcess {
             .collect();
         let guest_indices = gl_assemble_triangles(mode, guest_indices)?;
         let c = self.gl_context_mut(tid, API)?;
+        if let Some(started) = draw_started {
+            c.heartbeat.work.decode.index += started.elapsed();
+        }
         let (stats, vertex_count) = gl_rasterize_elements(c, memory, &guest_indices)?;
         c.draw_count += 1;
         if let Some(started) = draw_started {

@@ -476,8 +476,19 @@
                                     gl_gpu_frames.published(frames.get(&hwnd).ok_or("GL UI4 frame missing")?.window_id());
                                     if result != 0 {
                                         if let Some(started) = swap_started {
+                                            #[cfg(feature = "trace-execution")]
+                                            let outside_sample = {
+                                                let process = session.process(active_pid).ok_or("GL process missing")?;
+                                                let draw = process.xp.gl_frame_draw_time(active_tid)
+                                                    .ok_or("GL frame draw time missing")?;
+                                                (std::time::Instant::now(), draw)
+                                            };
                                             session.process_mut(active_pid).ok_or("GL process missing")?
                                                 .xp.gl_frame_published(active_tid, started);
+                                            #[cfg(feature = "trace-execution")]
+                                            frame_attribution.published(active_pid, hwnd,
+                                                outside_sample.0, outside_sample.1,
+                                                outside_sample.0.saturating_duration_since(started));
                                         }
                                     }
                                 }

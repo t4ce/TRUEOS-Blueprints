@@ -128,6 +128,12 @@ const GL_IDENTITY_MATRIX: [f32; 16] = [
 ];
 
 impl XpProcess {
+    pub fn gl_frame_draw_time(&self, tid: u32) -> Option<std::time::Duration> {
+        self.gl_runtime.as_ref()?.contexts.values()
+            .find(|c| c.current_tid == Some(tid))
+            .map(|c| c.heartbeat.work.draw_time)
+    }
+
     pub fn gl_frame_published(&mut self, tid: u32, swap_started: std::time::Instant) {
         if cfg!(feature = "nolog") { return; }
         if let Some(c) = self.gl_runtime.as_mut().and_then(|r| r.contexts.values_mut().find(|c| c.current_tid == Some(tid))) {

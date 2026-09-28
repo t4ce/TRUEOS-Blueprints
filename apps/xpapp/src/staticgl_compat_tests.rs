@@ -31,7 +31,14 @@ fn interleaved_mesh_batches_reads_and_preserves_sparse_fallback() {
         reject_bulk: false,
     };
     let indices: Vec<u32> = (0..1023).collect();
-    let (vertices, mapped) = gl_compat_vertices(&c, &memory, &indices).unwrap();
+    let mut timing = crate::frame_heartbeat::DecodeTiming::default();
+    let (vertices, mapped) = gl_compat_vertices_timed(&c, &memory, &indices, &mut timing).unwrap();
+    assert_eq!(timing.input_indices, 1023);
+    assert_eq!(timing.unique_vertices, 1023);
+    if !cfg!(feature = "nolog") && !cfg!(feature = "replay-arrays") {
+        assert_eq!(timing.snapshot_ranges, 1);
+        assert!(timing.snapshot_bytes > 0);
+    }
     assert_eq!(vertices.len(), 1023);
     assert_eq!(mapped, indices);
     assert_eq!(

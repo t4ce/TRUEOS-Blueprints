@@ -2131,6 +2131,8 @@ pub(super) async fn run_loop(
 ) -> Result<(), String> {
     let mut debug_shell = crate::debug_shell::DebugShell::new();
     let mut gl_gpu_frames = xpapp::gl_frame::GlFrames::default();
+    #[cfg(feature = "trace-execution")]
+    let mut frame_attribution = crate::exec_timing::FrameAttribution::default();
     let mut gl_light_batch_replayed = 0u64;
     let mut gl_light_batch_flushes = 0u64;
     let mut gl_light_batch_full_exits = 0u64;
@@ -2199,6 +2201,8 @@ pub(super) async fn run_loop(
                 .map_err(str::to_owned)?;
             let new_count = pending.len();
             if new_count != 0 {
+                #[cfg(feature = "trace-execution")]
+                let batch_started = std::time::Instant::now();
                 let mut entries = [0u8; thunk32::CHILD_LIGHT_BATCH_CAPACITY * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES];
                 let bytes = new_count * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES;
                 let start = thunk32::CHILD_LIGHT_BATCH_DATA + 4
@@ -2216,6 +2220,8 @@ pub(super) async fn run_loop(
                         [word(8), word(12), word(16), word(20)])
                         .map_err(|error| format!("replay child glLightfv: {error}"))?;
                 }
+                #[cfg(feature = "trace-execution")]
+                crate::exec_timing::record_light_batch_replay(batch_started.elapsed());
                 gl_light_batch_replayed += new_count as u64;
                 gl_light_batch_flushes += 1;
                 if gl_light_batch_replayed / 1024 != (gl_light_batch_replayed - new_count as u64) / 1024 {

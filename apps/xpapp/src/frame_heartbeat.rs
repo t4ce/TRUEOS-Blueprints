@@ -1,7 +1,30 @@
 use std::time::{Duration, Instant};
 
+// Coarse draw boundaries only: no clock calls inside the vertex loop.
+#[derive(Default)]
+pub(crate) struct DecodeTiming {
+    pub index: Duration,
+    pub vertex_setup: Duration,
+    pub snapshot: Duration,
+    pub allocation: Duration,
+    pub vertices: Duration,
+    pub texture: Duration,
+    pub snapshot_bytes: u64,
+    pub snapshot_ranges: u64,
+    pub input_indices: u64,
+    pub unique_vertices: u64,
+    pub lit_vertices: u64,
+    pub texgen_vertices: u64,
+}
+impl DecodeTiming {
+    pub fn measured(&self) -> Duration {
+        self.index + self.vertex_setup + self.snapshot + self.allocation + self.vertices + self.texture
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct FrameWork {
+    pub decode: DecodeTiming,
     pub draws: u64,
     pub skipped_draws: u64,
     pub clear_time: Duration,
@@ -116,6 +139,13 @@ impl Heartbeat {
             ms(r.copy_in), ms(r.pool.submit), ms(r.pool.join), ms(r.copy_out), ms(r.scalar),
             ms(r.total.saturating_sub(r.prepare + r.capacity + r.copy_in + r.pool.submit + r.pool.join + r.copy_out + r.scalar)),
             r.framebuffer_bytes, r.texture_bytes, r.pool.retries, r.pool.polls));
+        let d = &work.decode;
+        let decode_total = work.draw_time.saturating_sub(r.total);
+        crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
+            "XPAPP FRAME DECODE hwnd=0x{hwnd:08x} swap={} index_ms={:.3} vertex_setup_ms={:.3} snapshot_ms={:.3} allocation_remap_ms={:.3} vertex_loop_ms={:.3} texture_frame_setup_ms={:.3} residual_ms={:.3} accounting_excess_ms={:.3} snapshot_bytes={} snapshot_ranges={} indices={} unique_vertices={} lit_vertices={} texgen_vertices={} scope=draw-wall-partition-includes-descheduling",
+            self.swaps, ms(d.index), ms(d.vertex_setup), ms(d.snapshot), ms(d.allocation), ms(d.vertices), ms(d.texture),
+            ms(decode_total.saturating_sub(d.measured())), ms(d.measured().saturating_sub(decode_total)),
+            d.snapshot_bytes, d.snapshot_ranges, d.input_indices, d.unique_vertices, d.lit_vertices, d.texgen_vertices));
         if work.parallel_draws != 0 {
             for i in 0..2 {
                 crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
