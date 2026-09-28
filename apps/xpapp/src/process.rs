@@ -1659,11 +1659,21 @@ fn warcraft_drive_relative_path(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Guest profile data may only materialize below the persistent Save or Replay
-/// mounts.  The canonicalized drive-relative path is deliberately checked
-/// segment-by-segment so a guest cannot escape the Warcraft III TRUEOSFS tree.
+/// The persistent Warcraft III mount itself and guest profile data below its
+/// Save or Replay mounts are admitted. The canonicalized drive-relative path
+/// is deliberately checked segment-by-segment so a guest cannot escape the
+/// TRUEOSFS tree.
 fn war3_profile_directory_path(path: &str) -> Option<String> {
-    let relative = warcraft_drive_relative_path(path)?;
+    let canonical = canonical_file_path(path);
+    let canonical = canonical.trim_end_matches('\\');
+    let components = path_components(canonical);
+    if components.len() == 2
+        && components[0].eq_ignore_ascii_case("C:")
+        && components[1].eq_ignore_ascii_case("Warcraft III")
+    {
+        return Some("/common/Warcraft III".into());
+    }
+    let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
     let mut parts = relative.split('\\');
     let root = parts.next()?;
     if !root.eq_ignore_ascii_case("save") && !root.eq_ignore_ascii_case("replay") {
