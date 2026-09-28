@@ -14,7 +14,7 @@ test = false
 bench = false
 
 [features]
-default = ["bypass-critical-sections"]
+default = ["bypass-critical-sections", "trace-execution"]
 # Explicit WC3 performance experiment: guest enter/leave return without locking.
 bypass-critical-sections = []
 diagnostics = []
@@ -40,7 +40,7 @@ trace-scan = []
 trace-seh = []
 trace-api = []
 trace-init = []
-# Detailed per-exit/provider clocks perturb Hull execution; opt in to profiling.
+# Aggregate execution timing is enabled for the current performance diagnosis.
 trace-execution = []
 trace-all = ["trace-scan", "trace-seh", "trace-api", "trace-init"]
 

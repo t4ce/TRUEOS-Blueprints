@@ -189,6 +189,20 @@ impl Default for RasterState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DrawTiming {
+    pub total: std::time::Duration,
+    pub prepare: std::time::Duration,
+    pub capacity: std::time::Duration,
+    pub copy_in: std::time::Duration,
+    pub copy_out: std::time::Duration,
+    pub scalar: std::time::Duration,
+    pub texture_bytes: u64,
+    pub framebuffer_bytes: u64,
+    pub parallel: bool,
+    pub pool: crate::staticgl_raster_pool::PoolTiming,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Frame {
     pub width: u32,
@@ -199,6 +213,7 @@ pub(crate) struct Frame {
     storage_bottom: i32,
     pub rgba: Vec<u8>,
     pub depth: Vec<f32>,
+    pub timing: DrawTiming,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -279,6 +294,7 @@ impl Frame {
             storage_bottom: height as i32 - 1,
             rgba: vec![0; pixels.checked_mul(4).ok_or(RasterError::BadExtent)?],
             depth: vec![1.0; pixels],
+            timing: DrawTiming::default(),
         })
     }
 
@@ -322,6 +338,8 @@ impl Frame {
         vertices: &[ClipVertex],
         indices: &[u32],
     ) -> Result<RasterStats, RasterError> {
+        let started = std::time::Instant::now();
+        self.timing = DrawTiming::default();
         if indices.len() % 3 != 0 {
             return Err(RasterError::BadIndex);
         }
@@ -381,17 +399,25 @@ impl Frame {
             clipped_triangles: staged.len() as u32,
             shaded_pixels: 0,
         };
-        if crate::staticgl_raster_pool::has_two_workers() {
+        self.timing.prepare = started.elapsed();
+        let capacity_started = std::time::Instant::now();
+        let parallel = crate::staticgl_raster_pool::has_two_workers();
+        self.timing.capacity = capacity_started.elapsed();
+        self.timing.parallel = parallel;
+        if parallel {
             report_worker_mode(true);
             stats.shaded_pixels = self
                 .draw_staged_banded_pool(*state, texture, staged)
                 .map_err(|_| RasterError::Worker)? as u64;
         } else {
             report_worker_mode(false);
+            let scalar_started = std::time::Instant::now();
             for tri in staged {
                 stats.shaded_pixels += self.draw_triangle(state, texture, tri) as u64;
             }
+            self.timing.scalar = scalar_started.elapsed();
         }
+        self.timing.total = started.elapsed();
         Ok(stats)
     }
 
@@ -858,6 +884,7 @@ impl Frame {
             storage_bottom: bottom,
             rgba,
             depth,
+            timing: DrawTiming::default(),
         }
     }
 
@@ -879,6 +906,9 @@ impl Frame {
         texture: Option<TextureView<'_>>,
         triangles: Vec<[ClipVertex; 3]>,
     ) -> Result<usize, trueos::worker::SpawnError> {
+        let copy_started = std::time::Instant::now();
+        self.timing.texture_bytes = texture.map_or(0, |t| t.levels.iter().map(|l| l.rgba.len() as u64).sum());
+        self.timing.framebuffer_bytes = u64::from(self.width) * u64::from(self.height) * 8 * 2;
         let triangles: std::sync::Arc<[[ClipVertex; 3]]> = triangles.into();
         let texture = texture.map(OwnedTexture::copy_of).map(std::sync::Arc::new);
         let split = (self.height as i32 + 1) / 2;
@@ -898,15 +928,19 @@ impl Frame {
             split,
             self.height as i32 - 1,
         );
-        let (upper, lower) =
+        self.timing.copy_in = copy_started.elapsed();
+        let (upper, lower, pool) =
             crate::staticgl_raster_pool::run_two(upper, lower, RasterBandJob::step)?;
 
         // No parent framebuffer row is replaced before both worker handles
         // complete.  This keeps a failed/tearing-down draw from becoming a
         // partial visible frame.
         let shaded = upper.shaded + lower.shaded;
+        self.timing.pool = pool;
+        let copy_started = std::time::Instant::now();
         self.copy_band_back(&upper);
         self.copy_band_back(&lower);
+        self.timing.copy_out = copy_started.elapsed();
         Ok(shaded)
     }
 
