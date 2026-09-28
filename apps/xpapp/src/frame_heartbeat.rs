@@ -24,7 +24,7 @@ pub(crate) struct FrameWork {
 impl FrameWork {
     pub fn record_raster(&mut self, t: crate::staticgl_raster::DrawTiming) {
         self.parallel_draws += u64::from(t.parallel);
-        self.scalar_draws += u64::from(!t.parallel);
+        self.scalar_draws += u64::from(!t.parallel && !cfg!(all(feature = "gpu-raster", not(test))));
         let r = &mut self.raster;
         r.total += t.total;
         r.prepare += t.prepare;
@@ -81,8 +81,8 @@ impl Heartbeat {
         crate::logl::emit(
             crate::logl::level::IMPORTANT,
             format_args!(
-                "XPAPP FRAME hwnd=0x{hwnd:08x} swap={} draws={} raster_triangles={} shaded_pixels={} renderer=cpu-rust-fixed presentation=gpu-completed ui4=published skipped_draws={}",
-                self.swaps, work.draws, work.triangles, work.pixels, work.skipped_draws,
+                "XPAPP FRAME hwnd=0x{hwnd:08x} swap={} draws={} raster_triangles={} shaded_pixels={} renderer={} presentation=gpu-completed ui4=published skipped_draws={}",
+                self.swaps, work.draws, work.triangles, work.pixels, if cfg!(feature = "gpu-raster") { "cpu-geometry-gpu-raster" } else { "cpu-rust-fixed" }, work.skipped_draws,
             ),
         );
         crate::logl::emit(

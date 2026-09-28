@@ -8,6 +8,8 @@
 
 pub mod textured;
 pub mod fixed;
+#[cfg(feature = "prepared-raster")]
+pub mod prepared;
 
 use trueos::vgpu::{
     self, Buffer, Device, IndexedBatchDrawV2, IndexedDrawBatchV2, Queue, RenderPipeline,

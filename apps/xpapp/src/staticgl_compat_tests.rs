@@ -191,6 +191,8 @@ fn production_clear_draw_and_readback_use_the_cpu_frame() {
         triangle_renderer: None,
         textured_renderer: None,
         fixed_renderer: None,
+        #[cfg(feature = "gpu-raster")]
+        prepared_renderer: None,
     });
     memory.0.resize(1600, 0);
     let write_call = |memory: &mut ArrayMemory, words: &[u32]| {

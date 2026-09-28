@@ -32,6 +32,8 @@ pub mod seh;
 pub mod session;
 pub mod staticstr;
 mod staticgl_raster;
+#[cfg(feature = "gpu-raster")]
+mod staticgl_prepared;
 mod staticgl_raster_pool;
 pub mod thunk32;
 pub mod ui4_retry;

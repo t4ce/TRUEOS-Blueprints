@@ -323,6 +323,24 @@ fn gl_rasterize_elements(
         ));
     }
     let raster_started = timing_started.map(|_| std::time::Instant::now());
+    #[cfg(all(feature = "gpu-raster", not(test)))]
+    let stats = {
+        let frame = c.raster_frame.as_mut().unwrap();
+        let stats = frame.prepare_indexed(&state, texture, &vertices, &indices)
+            .map_err(|e| gl_texture_error(API, format!("prepared geometry: {e:?}")))?;
+        let (pixels, width, height) = if let Some(texture) = texture {
+            gl_gpu_texture_atlas(&c.textures, texture.levels.len() as u32)?
+        } else { (std::sync::Arc::<[u8]>::from([255u8;4]), 1, 1) };
+        if let Some(draw) = crate::staticgl_prepared::draw(c.drawable_size,
+            frame.prepared_triangles(), &state, texture, pixels, [width,height])? {
+            if c.prepared_draws.len() >= trueos::vgpu::MAX_PREPARED_RASTER_DRAWS {
+                return Err(gl_texture_error(API, "prepared frame draw limit"));
+            }
+            c.prepared_draws.push(draw);
+        }
+        stats
+    };
+    #[cfg(any(not(feature = "gpu-raster"), test))]
     let stats = c.raster_frame.as_mut().unwrap().draw_triangles(
         &vertices,
         &indices,
@@ -409,6 +427,8 @@ impl XpProcess {
             .as_ref()
             .is_none_or(|f| f.width != width || f.height != height)
         {
+            #[cfg(feature = "gpu-raster")]
+            if !c.prepared_draws.is_empty() { return Err("resize with pending prepared draws".into()); }
             c.raster_frame = Some(raster::GlRasterFrame::new(width, height)?);
             crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
                 "XPAPP RASTER ALLOC hwnd=0x{:08x} framebuffer={}x{} pixels={} rgba_bytes={} depth_bytes={} viewport={:?} source=guest-window-drawable",

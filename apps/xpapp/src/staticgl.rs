@@ -487,11 +487,17 @@ impl XpProcess {
         let c = self.gl_context_mut(tid, "glClear")?;
         Self::gl_ensure_raster(c)?;
         let scissor = c.fixed.is_enabled(0xc11).then_some(c.fixed.scissor);
-        c.raster_frame.as_mut().unwrap().clear(
-            (mask & GL_COLOR_BUFFER_BIT != 0).then(|| gl_rgba8(c.clear_color).to_le_bytes()),
-            (mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask).then_some(1.0),
-            scissor,
-        );
+        let color = (mask & GL_COLOR_BUFFER_BIT != 0).then(|| gl_rgba8(c.clear_color).to_le_bytes());
+        let depth = (mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask).then_some(1.0);
+        #[cfg(all(feature = "gpu-raster", not(test)))]
+        if let Some(draw) = crate::staticgl_prepared::clear(c.drawable_size, color, depth, scissor) {
+            if c.prepared_draws.len() >= trueos::vgpu::MAX_PREPARED_RASTER_DRAWS {
+                return Err(gl_texture_error("glClear", "prepared frame draw limit"));
+            }
+            c.prepared_draws.push(draw);
+        }
+        #[cfg(any(not(feature = "gpu-raster"), test))]
+        c.raster_frame.as_mut().unwrap().clear(color, depth, scissor);
         if let Some(started) = started {
             c.heartbeat.work.clear_time += started.elapsed();
         }
@@ -535,6 +541,8 @@ impl XpProcess {
         // CPU draws complete before returning. The completed image is uploaded
         // and waited on at the guest's WGL swap boundary.
         self.gl_context_mut(_tid, "glFinish")?;
+        #[cfg(all(feature = "gpu-raster", not(test)))]
+        self.gl_flush_prepared(_tid, "finish")?;
         Ok(0)
     }
 
@@ -801,6 +809,8 @@ impl XpProcess {
                 triangle_renderer: None,
                 textured_renderer: None,
                 fixed_renderer: None,
+        #[cfg(feature = "gpu-raster")]
+        prepared_renderer: None,
             });
         }
 
@@ -845,6 +855,8 @@ impl WglContext {
             observed_writes: VecDeque::new(),
             fixed: GlFixedState::default(),
             raster_frame: None,
+            #[cfg(feature = "gpu-raster")]
+            prepared_draws: Vec::new(),
             present_pixels: Vec::new(),
             debug_draws_remaining: 0,
             debug_depth_texture: None,

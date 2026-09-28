@@ -127,3 +127,19 @@ extern "C" fn trueos_cabi_vgpu_device_info(
 ) -> i32 {
     panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_device_info");
 }
+
+#[cfg(feature = "gpu-raster")]
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_vgpu_ui4_prepared_raster_batch_v1(
+    device: u64, queue: u64,
+    batch: *const trueos::vgpu::PreparedRasterBatchV1,
+    out_point: *mut trueos::vgpu::TimelinePoint,
+) -> i32 {
+    panic!("GPU ABI called by host-only process test: prepared raster batch");
+}
+
+#[cfg(feature = "gpu-raster")]
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_vgpu_render_pipeline_destroy(device: u64, pipeline: u64) -> i32 {
+    panic!("GPU ABI called by host-only process test: pipeline destroy");
+}

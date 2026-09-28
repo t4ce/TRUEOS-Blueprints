@@ -496,10 +496,19 @@ fn gl_fixed_gpu_mip_count(textures: &GlTextures) -> Result<u32, ProviderDispatch
 fn gl_fixed_gpu_texture(
     textures: &GlTextures,
 ) -> Result<(std::sync::Arc<[u8]>, u32, u32), ProviderDispatchError> {
+    let levels = gl_fixed_gpu_mip_count(textures)?;
+    gl_gpu_texture_atlas(textures, levels)
+}
+
+// The prepared path has already validated its decoded TextureView. Keep atlas
+// storage shared without imposing the older renderer's RGB/RGBA restriction.
+fn gl_gpu_texture_atlas(
+    textures: &GlTextures,
+    levels: u32,
+) -> Result<(std::sync::Arc<[u8]>, u32, u32), ProviderDispatchError> {
     if let Some(atlas) = textures.fixed_atlases.borrow().get(&textures.binding) {
         return Ok(atlas.clone());
     }
-    let levels = gl_fixed_gpu_mip_count(textures)?;
     let object = textures.object();
     let base = &object.levels[&0];
     let height = (0..levels).map(|i| (base.height >> i).max(1)).sum::<u32>();

@@ -338,10 +338,9 @@ impl Frame {
         }
     }
 
-    /// Rasterizes one indexed triangle list.  All clipping and bounds checks
-    /// complete before the first framebuffer write, so a rejected draw cannot
-    /// leave a partially rendered frame behind.
-    pub(crate) fn draw_indexed(
+    /// Validate and clip using the same preparation as scalar drawing. The
+    /// returned triangle slice stays owned by this frame until the next draw.
+    pub(crate) fn prepare_indexed(
         &mut self,
         state: &RasterState,
         texture: Option<TextureView<'_>>,
@@ -417,12 +416,35 @@ impl Frame {
                 ]);
             }
         }
-        let mut stats = RasterStats {
+        let stats = RasterStats {
             input_triangles: (indices.len() / 3) as u32,
             clipped_triangles: self.staged.len() as u32,
             shaded_pixels: 0,
         };
         self.timing.prepare = started.elapsed();
+        self.timing.total = self.timing.prepare;
+        Ok(stats)
+    }
+
+    pub(crate) fn prepared_triangles(&self) -> &[[ClipVertex; 3]] {
+        &self.staged
+    }
+
+    /// Rasterizes one indexed triangle list.  All clipping and bounds checks
+    /// complete before the first framebuffer write, so a rejected draw cannot
+    /// leave a partially rendered frame behind.
+    pub(crate) fn draw_indexed(
+        &mut self,
+        state: &RasterState,
+        texture: Option<TextureView<'_>>,
+        vertices: &[ClipVertex],
+        indices: &[u32],
+    ) -> Result<RasterStats, RasterError> {
+        let started = std::time::Instant::now();
+        let mut stats = self.prepare_indexed(state, texture, vertices, indices)?;
+        if state.viewport[2] == 0 || state.viewport[3] == 0 {
+            return Ok(stats);
+        }
         let capacity_started = std::time::Instant::now();
         let parallel = crate::staticgl_raster_pool::has_two_workers();
         self.timing.capacity = capacity_started.elapsed();
@@ -1902,6 +1924,32 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn prepared_handoff_preserves_clipping_and_leaves_pixels_untouched() {
+        let vertices = [
+            v(-2., -1., 0., 1., 0., 0., [1., 0., 0., 1.]),
+            v(2., -1., 0., 1., 1., 0., [0., 1., 0., 1.]),
+            v(0., 2., 0., 2., 0.5, 1., [0., 0., 1., 1.]),
+        ];
+        let mut reference = Frame::new(8, 8).unwrap();
+        let mut prepared = Frame::new(8, 8).unwrap();
+        let rgba = prepared.rgba.clone();
+        let depth = prepared.depth.clone();
+        let expected = reference.draw_indexed(&state(), None, &vertices, &[0, 1, 2]).unwrap();
+        let stats = prepared.prepare_indexed(&state(), None, &vertices, &[0, 1, 2]).unwrap();
+        assert_eq!(stats.clipped_triangles, expected.clipped_triangles);
+        assert_eq!(prepared.rgba, rgba);
+        assert_eq!(prepared.depth, depth);
+        let triangles = prepared.prepared_triangles().to_vec();
+        let pixels: usize = triangles.into_iter()
+            .map(|tri| prepared.draw_triangle(&state(), None, tri)).sum();
+        assert_eq!(pixels as u64, expected.shaded_pixels);
+        assert_eq!(prepared.rgba, reference.rgba);
+        assert_eq!(prepared.depth, reference.depth);
+        assert_eq!(prepared.prepare_indexed(&state(), None, &vertices, &[0, 1, 9]), Err(RasterError::BadIndex));
+        assert!(prepared.prepared_triangles().is_empty());
+    }
+
     #[test]
     fn perspective_clip_and_depth_overlap() {
         let mut f = Frame::new(8, 8).unwrap();

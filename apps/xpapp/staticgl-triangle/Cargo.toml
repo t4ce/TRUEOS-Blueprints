@@ -16,3 +16,5 @@ path = "src/main.rs"
 
 [dependencies]
 trueos = { path = "../../../api", features = ["ui4-scene"] }
+[features]
+prepared-raster = []

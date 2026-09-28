@@ -54,6 +54,8 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
         const API: &str = "glReadPixels";
+        #[cfg(all(feature = "gpu-raster", not(test)))]
+        if cfg!(feature = "gpu-raster") { return Err(gl_texture_error(API, "prepared GPU framebuffer readback is not implemented")); }
         let [_, x, y, width, height, format, kind, output] = arguments::<8>(memory, esp)?;
         let c = self.gl_context_mut(tid, API)?;
         if (width as i32) < 0 || (height as i32) < 0 {
@@ -204,6 +206,8 @@ impl XpProcess {
         Ok(0)
     }
     fn gl_present_raster(&mut self, tid: u32, reason: &str) -> Result<(), ProviderDispatchError> {
+        #[cfg(all(feature = "gpu-raster", not(test)))]
+        if cfg!(feature = "gpu-raster") { return self.gl_flush_prepared(tid, reason); }
         const API: &str = "OpenGL present";
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
         let c = runtime
@@ -301,4 +305,39 @@ impl XpProcess {
 mod staticgl_compat_tests {
     use super::*;
     include!("staticgl_compat_tests.rs");
+}
+
+#[cfg(feature = "gpu-raster")]
+impl XpProcess {
+    fn gl_flush_prepared(&mut self, tid: u32, reason: &str) -> Result<(), ProviderDispatchError> {
+        const API: &str = "prepared raster submit";
+        let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
+        let c = runtime.contexts.values_mut().find(|c| c.current_tid == Some(tid)).ok_or("GL context missing")?;
+        if c.prepared_draws.is_empty() { return Ok(()); }
+        let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
+        if runtime.prepared_renderer.is_none() {
+            runtime.prepared_renderer = Some(staticgl_triangle::prepared::Renderer::new(runtime.device)
+                .map_err(|e| gl_texture_error(API, format!("pipeline: {e}")))?);
+        }
+        let started = std::time::Instant::now();
+        let surface = runtime.device.acquire_ui4_surface(window)
+            .map_err(|e| gl_texture_error(API, format!("acquire: {e}")))?;
+        if [surface.info().width, surface.info().height] != c.drawable_size {
+            return Err(gl_texture_error(API, "prepared drawable size mismatch"));
+        }
+        let acquired = std::time::Instant::now();
+        let renderer = runtime.prepared_renderer.as_mut().unwrap();
+        let point = renderer.submit(runtime.queue, surface, &c.prepared_draws)
+            .map_err(|e| gl_texture_error(API, format!("batch: {e}")))?;
+        let submitted = std::time::Instant::now();
+        runtime.device.wait(runtime.queue, point.value)
+            .map_err(|e| gl_texture_error(API, format!("wait: {e}")))?;
+        logl::emit(level::IMPORTANT, format_args!(
+            "XPAPP GPU RASTER reason={reason} draws={} acquire_us={} upload_submit_us={} wait_us={} geometry_upload_bytes={} texture_upload_bytes={} framebuffer_copy_bytes=0",
+            c.prepared_draws.len(), acquired.duration_since(started).as_micros(),
+            submitted.duration_since(acquired).as_micros(), submitted.elapsed().as_micros(),
+            renderer.last_upload_bytes, renderer.last_texture_upload_bytes));
+        c.prepared_draws.clear();
+        Ok(())
+    }
 }

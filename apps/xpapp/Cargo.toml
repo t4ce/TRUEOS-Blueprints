@@ -44,6 +44,8 @@ trace-init = []
 trace-execution = []
 # Retained experiment; production uses the scalar renderer.
 raster-pool = []
+# CPU geometry with frame-batched GPU rasterization; explicit experiment.
+gpu-raster = ["staticgl-triangle/prepared-raster"]
 trace-all = ["trace-scan", "trace-seh", "trace-api", "trace-init"]
 
 [dependencies]

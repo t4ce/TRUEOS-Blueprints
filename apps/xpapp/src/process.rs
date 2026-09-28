@@ -1973,6 +1973,8 @@ struct WglContext {
     observed_writes: VecDeque<GlWriteNote>,
     fixed: GlFixedState,
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
+    #[cfg(feature = "gpu-raster")]
+    prepared_draws: Vec<staticgl_triangle::prepared::Draw>,
     present_pixels: Vec<u8>,
     debug_draws_remaining: u32,
     debug_depth_texture: Option<u32>,
@@ -2006,6 +2008,8 @@ struct GlRuntime {
     triangle_renderer: Option<staticgl_triangle::TriangleRenderer>,
     textured_renderer: Option<staticgl_triangle::textured::TexturedRenderer>,
     fixed_renderer: Option<staticgl_triangle::fixed::FixedRenderer>,
+    #[cfg(feature = "gpu-raster")]
+    prepared_renderer: Option<staticgl_triangle::prepared::Renderer>,
 }
 
 impl XpProcess {

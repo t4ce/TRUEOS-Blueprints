@@ -214,8 +214,10 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
 
 async fn run() -> Result<(), String> {
     logl::emit(level::IMPORTANT, format_args!(
-        "XPAPP RUNTIME requested_graphics=opengl renderer=cpu execution_timing={} presentation=rgba-strips telemetry=scalar-phases-v1 raster_pool={}",
-        if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" }, cfg!(feature = "raster-pool"),
+        "XPAPP RUNTIME requested_graphics=opengl renderer={} execution_timing={} presentation={} telemetry=scalar-phases-v1 raster_pool={}",
+        if cfg!(feature = "gpu-raster") { "cpu-geometry-gpu-raster" } else { "cpu" },
+        if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" },
+        if cfg!(feature = "gpu-raster") { "prepared-batch" } else { "rgba-strips" }, cfg!(feature = "raster-pool") && !cfg!(feature = "gpu-raster"),
     ));
     logl::emit(level::IMPORTANT, format_args!(
         "XPAPP CHILD ARGS argc={} command_line={:?}",
