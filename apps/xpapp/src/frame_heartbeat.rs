@@ -8,6 +8,9 @@ pub(crate) struct FrameWork {
     pub triangles: u64,
     pub pixels: u64,
     pub draw_time: Duration,
+    pub raster: crate::staticgl_raster::DrawTiming,
+    pub parallel_draws: u64,
+    pub scalar_draws: u64,
     pub decode_time: Duration,
     pub atlas_time: Duration,
     pub acquire_time: Duration,
@@ -16,6 +19,32 @@ pub(crate) struct FrameWork {
     pub texture_hits: u64,
     pub texture_uploads: u64,
     pub texture_upload_bytes: u64,
+}
+
+impl FrameWork {
+    pub fn record_raster(&mut self, t: crate::staticgl_raster::DrawTiming) {
+        self.parallel_draws += u64::from(t.parallel);
+        self.scalar_draws += u64::from(!t.parallel);
+        let r = &mut self.raster;
+        r.total += t.total;
+        r.prepare += t.prepare;
+        r.capacity += t.capacity;
+        r.copy_in += t.copy_in;
+        r.copy_out += t.copy_out;
+        r.scalar += t.scalar;
+        r.texture_bytes += t.texture_bytes;
+        r.framebuffer_bytes += t.framebuffer_bytes;
+        r.pool.submit += t.pool.submit;
+        r.pool.join += t.pool.join;
+        r.pool.retries += t.pool.retries;
+        r.pool.polls += t.pool.polls;
+        for i in 0..2 {
+            r.pool.active[i] += t.pool.active[i];
+            r.pool.queue[i] += t.pool.queue[i];
+            r.pool.gaps[i] += t.pool.gaps[i];
+            r.pool.steps[i] += t.pool.steps[i];
+        }
+    }
 }
 
 pub(crate) struct Heartbeat {
@@ -37,7 +66,7 @@ impl Heartbeat {
         }
     }
 
-    pub fn published(&mut self, now: Instant, swap_time: Duration, hwnd: u32) {
+    pub fn published(&mut self, now: Instant, swap_time: Duration, hwnd: u32, raster_size: [u32; 2], drawable: [u32; 2], viewport: [i32; 4]) {
         let work = core::mem::take(&mut self.work);
         let frame_time = now.duration_since(self.frame_started);
         self.frame_started = now;
@@ -74,5 +103,49 @@ impl Heartbeat {
                 frame_time.saturating_sub(work.draw_time).saturating_sub(swap_time).as_secs_f64() * 1000.0,
             ),
         );
+        let r = work.raster;
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
+            "XPAPP FRAME RASTER hwnd=0x{hwnd:08x} swap={} framebuffer={}x{} drawable={}x{} viewport={:?} framebuffer_pixels={} parallel_draws={} scalar_draws={} trace_execution={} pool_enabled={}",
+            self.swaps, raster_size[0], raster_size[1], drawable[0], drawable[1], viewport,
+            u64::from(raster_size[0]) * u64::from(raster_size[1]), work.parallel_draws, work.scalar_draws,
+            cfg!(feature = "trace-execution"), cfg!(feature = "raster-pool")));
+        crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
+            "XPAPP FRAME DRAW hwnd=0x{hwnd:08x} swap={} decode_setup_ms={:.3} clip_validate_ms={:.3} capacity_ms={:.3} copy_in_ms={:.3} submit_ms={:.3} join_ms={:.3} copy_out_ms={:.3} scalar_ms={:.3} raster_other_ms={:.3} framebuffer_copy_bytes={} texture_copy_bytes={} retries={} join_polls={} scope=draw-wall-partition",
+            self.swaps, ms(work.draw_time.saturating_sub(r.total)), ms(r.prepare), ms(r.capacity),
+            ms(r.copy_in), ms(r.pool.submit), ms(r.pool.join), ms(r.copy_out), ms(r.scalar),
+            ms(r.total.saturating_sub(r.prepare + r.capacity + r.copy_in + r.pool.submit + r.pool.join + r.copy_out + r.scalar)),
+            r.framebuffer_bytes, r.texture_bytes, r.pool.retries, r.pool.polls));
+        if work.parallel_draws != 0 {
+            for i in 0..2 {
+                crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
+                    "XPAPP FRAME BAND hwnd=0x{hwnd:08x} swap={} band={} steps={} step_wall_ms={:.3} admission_to_first_step_ms={:.3} between_steps_ms={:.3} scope=overlaps-submit-join-and-other-band step-wall-includes-descheduling gaps-include-duty-and-scheduling",
+                    self.swaps, i, r.pool.steps[i], ms(r.pool.active[i]), ms(r.pool.queue[i]), ms(r.pool.gaps[i])));
+            }
+        }
+
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn frame_timing_keeps_overlapping_band_work_out_of_draw_partition() {
+        let mut work = FrameWork::default();
+        let mut draw = crate::staticgl_raster::DrawTiming::default();
+        draw.parallel = true;
+        draw.total = Duration::from_millis(10);
+        draw.pool.join = Duration::from_millis(8);
+        draw.pool.active = [Duration::from_millis(6); 2];
+        work.record_raster(draw);
+        draw.parallel = false;
+        draw.pool = Default::default();
+        draw.scalar = Duration::from_millis(10);
+        work.record_raster(draw);
+        assert_eq!((work.parallel_draws, work.scalar_draws), (1, 1));
+        assert_eq!(work.raster.total, Duration::from_millis(20));
+        assert_eq!(work.raster.pool.join, Duration::from_millis(8));
+        assert_eq!(work.raster.pool.active, [Duration::from_millis(6); 2]);
     }
 }

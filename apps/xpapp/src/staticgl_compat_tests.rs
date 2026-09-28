@@ -458,3 +458,19 @@ fn glyph_foreground_replaces_shadow_after_reusing_guest_color_buffer() {
     assert_eq!(gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0.shaded_pixels, 0);
 
 }
+
+#[test]
+fn guest_720p_drawable_replaces_1440p_cpu_storage() {
+    let (mut c, _) = scene();
+    c.drawable_size = [2560, 1440];
+    XpProcess::gl_ensure_raster(&mut c).unwrap();
+    assert_eq!(c.raster_frame.as_ref().unwrap().rgba.len(), 2560 * 1440 * 4);
+    // This is the input bind_gl_ui4_window receives from the guest WindowObject.
+    c.drawable_size = [1280, 720];
+    c.viewport = [0, 0, 1280, 720];
+    XpProcess::gl_ensure_raster(&mut c).unwrap();
+    let frame = c.raster_frame.as_ref().unwrap();
+    assert_eq!((frame.width, frame.height), (1280, 720));
+    assert_eq!(frame.rgba.len(), 1280 * 720 * 4);
+    assert_eq!(frame.depth.len(), 1280 * 720);
+}

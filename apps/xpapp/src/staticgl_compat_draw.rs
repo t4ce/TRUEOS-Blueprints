@@ -177,6 +177,9 @@ impl XpProcess {
             work.triangles += stats.clipped_triangles as u64;
             work.pixels += stats.shaded_pixels as u64;
             work.draw_time += started.elapsed();
+            if let Some(frame) = c.raster_frame.as_ref() {
+                work.record_raster(frame.timing);
+            }
         }
         let preview = cfg!(feature = "preview-first-draw") && c.draw_count == 1;
         if preview || c.draw_count.is_multiple_of(128) {

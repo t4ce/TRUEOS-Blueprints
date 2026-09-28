@@ -132,7 +132,8 @@ impl XpProcess {
         if cfg!(feature = "nolog") { return; }
         if let Some(c) = self.gl_runtime.as_mut().and_then(|r| r.contexts.values_mut().find(|c| c.current_tid == Some(tid))) {
             let now = std::time::Instant::now();
-            c.heartbeat.published(now, now.duration_since(swap_started), c.hwnd);
+            let raster_size = c.raster_frame.as_ref().map_or([0, 0], |f| [f.width, f.height]);
+            c.heartbeat.published(now, now.duration_since(swap_started), c.hwnd, raster_size, c.drawable_size, c.viewport);
         }
     }
 

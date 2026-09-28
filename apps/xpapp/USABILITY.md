@@ -3,10 +3,55 @@
 ## Required outcome
 
 Current user direction: keep `-opengl` and the accurate CPU renderer, expose a
-1280x720 logical guest desktop, and use two shared P-core raster workers with
-a 66% work budget. DirectX bring-up is deferred. The game binary and Gamma's
+1280x720 logical guest desktop, and use the original scalar CPU draw path.
+The shared P-core raster pool remains behind the opt-in `raster-pool` feature. DirectX bring-up is deferred. The game binary and Gamma's
 physical display mode setter remain unchanged. No separate guest program.
 60 FPS (16.67 ms/frame) remains unmet.
+
+## Scalar execution and visible timing, 2026-09-28
+
+The user disabled the copying raster pool after live frames remained around
+8 seconds. Default builds now short-circuit pool admission entirely: no worker
+capacity calls, band snapshots, band dispatch or copy-back. The pool code and
+kernel service remain available for an explicit future experiment.
+
+`trace-execution` is enabled by default for this diagnosis. `XPAPP EXEC TIME`
+reports context gap, preparation, request, native execution (including VMX
+setup/cleanup), and reply wall time. `XPAPP PROVIDER TOP` lists the eight
+providers with greatest aggregate wall time in each provider reporting window.
+These windows overlap frame drawing and other thread activity; do not add them
+as independent phases. Timing calls themselves also remain in this measured
+build.
+
+The frame heartbeat now reports actual CPU framebuffer dimensions, GL drawable
+and viewport, scalar/parallel draw counts, clipping/validation, scalar drawing,
+and decode/setup wall time. For the retained pool experiment it additionally
+reports copy bytes/times, submit/join, admission retries, join polls, per-band
+step counts, step wall time and between-step gaps. Band timings overlap submit,
+join and one another. Between-step gaps include duty cooldown and scheduling;
+step wall time can include descheduling. These are not hardware CPU utilization
+counters. The always-emitted allocation line prints actual color/depth sizes.
+
+398 library tests and the binary check passed. Release Blueprint published and
+launched: `0534a944f9398854611af75dcca68831b0ba6ced5b991e2bc1ccabf87417c22a`.
+Live startup confirms `raster_pool=false`, physical output 2560x1440 and guest
+viewport 1280x720. Actual CPU allocation confirms 1280x720, 921,600 pixels and
+3,686,400 bytes each for color and depth. The source already allocates from the
+guest drawable and rejects a differently sized presentation surface; no Gamma
+mode or game binary edit was needed. A regression test verifies replacing a
+1440p CPU frame with a 720p drawable shrinks both owned allocations.
+
+Live scene frame 7 confirms viewport `[0, 0, 1280, 720]`, 168 scalar draws,
+zero parallel draws, zero band-copy bytes and no worker starts in the new run.
+Frame wall time was 6.683 s: draw decode/setup 0.503 s, validation/clipping and
+triangle staging 1.875 s, scalar rasterization 1.090 s, remaining raster overhead
+0.002 s, presentation 0.056 s, and outside draw/presentation 3.157 s. These are
+wall-time scopes, not CPU-only samples. The preparation scope includes vector
+allocation and clipping, so it does not establish arithmetic alone as the cause.
+
+Evidence is in TRUEOS `bld/xpapp-usability/scalar-telemetry-live.log` and
+`scalar-telemetry-summary.json`; logs for build, test and binary check are under
+`/tmp/xpapp-scalar-telemetry-*.log`. The measured build remains running.
 
 ## 720p guest display, 2026-09-28
 

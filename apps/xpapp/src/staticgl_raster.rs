@@ -247,7 +247,7 @@ fn report_worker_mode(parallel: bool) {
         let description = if parallel {
             "two persistent P-core row-band workers"
         } else {
-            "scalar fallback (fewer than two P-core workers)"
+            "scalar (pool disabled or fewer than two P-core workers)"
         };
         crate::logl::emit(
             crate::logl::level::IMPORTANT,

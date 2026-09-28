@@ -2,6 +2,7 @@
 //! No per-exit output; wall times include time descheduled. Provider time is
 //! also contained in context_gap, so these records must not be added together.
 use std::sync::Mutex;
+use std::collections::BTreeMap;
 use std::time::Duration;
 use trueos::x86::{CarrierTiming, Exit};
 use xpapp::child_loader::ProviderOp;
@@ -45,10 +46,13 @@ impl Window {
 #[derive(Default)]
 struct Providers {
     since: Option<std::time::Instant>, count: u64, total_ns: u64,
+    by_provider: BTreeMap<(u32, u32), ProviderTotal>,
     max_ns: u64, pid: u32, tid: u32, id: u32, eip: u32, op: Option<ProviderOp>,
 }
+#[derive(Default)]
+struct ProviderTotal { count: u64, ns: u64, max_ns: u64, op: Option<ProviderOp> }
 static PROVIDERS: Mutex<Providers> = Mutex::new(Providers {
-    since: None, count: 0, total_ns: 0, max_ns: 0, pid: 0, tid: 0, id: 0, eip: 0, op: None,
+    since: None, count: 0, total_ns: 0, by_provider: BTreeMap::new(), max_ns: 0, pid: 0, tid: 0, id: 0, eip: 0, op: None,
 });
 pub struct ProviderScope { start: std::time::Instant, pid: u32, tid: u32, id: u32, eip: u32, op: Option<ProviderOp> }
 impl ProviderScope {
@@ -65,6 +69,11 @@ impl Drop for ProviderScope {
             let since = *totals.since.get_or_insert(self.start);
             totals.count += 1;
             totals.total_ns = totals.total_ns.saturating_add(ns);
+            let entry = totals.by_provider.entry((self.pid, self.id)).or_default();
+            entry.count += 1;
+            entry.ns = entry.ns.saturating_add(ns);
+            entry.max_ns = entry.max_ns.max(ns);
+            entry.op = self.op;
             if ns >= totals.max_ns {
                 totals.max_ns = ns;
                 totals.pid = self.pid; totals.tid = self.tid;
@@ -78,6 +87,13 @@ impl Drop for ProviderScope {
             crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
                 "XPAPP PROVIDER TIME samples={} total_us={} max_us={} max_pid={} max_tid={} max_id={} max_eip=0x{:08x} max_op={:?} scope=vmcall-dispatch-wall-including-awaits-and-special-traps",
                 t.count, t.total_ns/1000, t.max_ns/1000, t.pid, t.tid, t.id, t.eip, t.op));
+            let mut ranked: Vec<_> = t.by_provider.into_iter().collect();
+            ranked.sort_unstable_by(|a, b| b.1.ns.cmp(&a.1.ns));
+            for ((pid, id), p) in ranked.into_iter().take(8) {
+                crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
+                    "XPAPP PROVIDER TOP pid={} id={} op={:?} calls={} total_us={} max_us={} scope=subset-of-provider-total-overlaps-frame-draw",
+                    pid, id, p.op, p.count, p.ns / 1000, p.max_ns / 1000));
+            }
         }
     }
 }

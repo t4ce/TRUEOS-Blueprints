@@ -41,7 +41,7 @@ use trueos::worker::{self, JoinHandle, SpawnError};
 /// between this check and submission.
 #[inline]
 pub(crate) fn has_two_workers() -> bool {
-    worker::compute_capacity() >= 2
+    cfg!(feature = "raster-pool") && worker::compute_capacity() >= 2
 }
 
 /// Submit two owned resumable jobs.  `step` must process a finite bounded

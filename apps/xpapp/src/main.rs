@@ -214,8 +214,8 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
 
 async fn run() -> Result<(), String> {
     logl::emit(level::IMPORTANT, format_args!(
-        "XPAPP RUNTIME requested_graphics=opengl renderer=cpu execution_timing={} presentation=rgba-strips",
-        if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" },
+        "XPAPP RUNTIME requested_graphics=opengl renderer=cpu execution_timing={} presentation=rgba-strips telemetry=scalar-phases-v1 raster_pool={}",
+        if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" }, cfg!(feature = "raster-pool"),
     ));
     logl::emit(level::IMPORTANT, format_args!(
         "XPAPP CHILD ARGS argc={} command_line={:?}",
@@ -263,7 +263,7 @@ async fn run() -> Result<(), String> {
         .launcher_mut()
         .xp
         .set_desktop_size(GAME_VIEWPORT_SIZE.0, GAME_VIEWPORT_SIZE.1);
-    logl::log!(
+    logl::emit(
         level::IMPORTANT,
         format_args!(
             "XPAPP DISPLAY physical_output={}x{} mode_change=none game_viewport={}x{} guest_contract=desktop+display-settings+gdi+gl-drawable",

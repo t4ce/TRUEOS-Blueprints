@@ -410,6 +410,11 @@ impl XpProcess {
             .is_none_or(|f| f.width != width || f.height != height)
         {
             c.raster_frame = Some(raster::GlRasterFrame::new(width, height)?);
+            crate::logl::emit(crate::logl::level::IMPORTANT, format_args!(
+                "XPAPP RASTER ALLOC hwnd=0x{:08x} framebuffer={}x{} pixels={} rgba_bytes={} depth_bytes={} viewport={:?} source=guest-window-drawable",
+                c.hwnd, width, height, u64::from(width) * u64::from(height),
+                u64::from(width) * u64::from(height) * 4,
+                u64::from(width) * u64::from(height) * 4, c.viewport));
         }
         Ok(())
     }

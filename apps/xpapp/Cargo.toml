@@ -42,6 +42,8 @@ trace-api = []
 trace-init = []
 # Aggregate execution timing is enabled for the current performance diagnosis.
 trace-execution = []
+# Retained experiment; production uses the scalar renderer.
+raster-pool = []
 trace-all = ["trace-scan", "trace-seh", "trace-api", "trace-init"]
 
 [dependencies]
