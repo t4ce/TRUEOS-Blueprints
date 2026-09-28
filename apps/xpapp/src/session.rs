@@ -893,6 +893,10 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
     },
+    DeleteCriticalSection {
+        pid: Pid,
+        address: u32,
+    },
     CreateDirectory(CreateDirectoryRequest),
     SetWindowText {
         pid: Pid,
@@ -1353,6 +1357,36 @@ impl XpappSession {
             .iter()
             .position(|wait| wait.key.pid == pid && wait.address == address)?;
         self.critical_waiters.remove(index)
+    }
+
+    /// Delete only an idle process-local critical section. Guest storage remains
+    /// owned by the guest; this removes the personality's synchronization state.
+    pub fn delete_critical_section(
+        &mut self,
+        pid: Pid,
+        address: u32,
+    ) -> Result<(u32, u32), &'static str> {
+        let (owner, recursion) = self
+            .process(pid)
+            .ok_or("DeleteCriticalSection process missing")?
+            .xp
+            .critical_section_state(address)
+            .ok_or("DeleteCriticalSection unknown critical section")?;
+        if owner != 0 || recursion != 0 {
+            return Err("DeleteCriticalSection owned critical section");
+        }
+        if self
+            .critical_waiters
+            .iter()
+            .any(|wait| wait.key.pid == pid && wait.address == address)
+        {
+            return Err("DeleteCriticalSection critical section has waiters");
+        }
+        self.process_mut(pid)
+            .ok_or("DeleteCriticalSection process missing")?
+            .xp
+            .delete_critical_section_at(address)?;
+        Ok((owner, recursion))
     }
 
     pub fn note(&mut self) -> u64 {

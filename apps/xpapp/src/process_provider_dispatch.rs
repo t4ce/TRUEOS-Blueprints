@@ -2866,6 +2866,13 @@ impl XpProcess {
                     hwnd,
                 }))
             }
+            ProviderOp::DeleteCriticalSection => {
+                let [_, address] = arguments::<2>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::DeleteCriticalSection {
+                    pid,
+                    address,
+                }))
+            }
             ProviderOp::CreateDirectoryA => {
                 let [_, path_ptr, security_attributes] = arguments::<3>(memory, esp)?;
                 if path_ptr == 0 {

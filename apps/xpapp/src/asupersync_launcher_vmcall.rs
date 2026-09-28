@@ -1531,6 +1531,15 @@
                     PersonalityAction::Session(SessionRequest::ImmGetContext { pid, hwnd }) => session
                         .imm_get_context(pid, hwnd)
                         .map_err(str::to_owned)?,
+                    PersonalityAction::Session(SessionRequest::DeleteCriticalSection {
+                        pid,
+                        address,
+                    }) => {
+                        session
+                            .delete_critical_section(pid, address)
+                            .map_err(str::to_owned)?;
+                        0
+                    }
                     PersonalityAction::Session(SessionRequest::CreateDirectory(request)) => {
                         match async_fs::metadata(request.trueos_path.as_bytes()).await {
                             Ok(_) => {

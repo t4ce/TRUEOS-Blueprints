@@ -41,6 +41,11 @@ light_three:
 light_four:
     mov ecx, 4
 light_ready:
+    mov eax, ecx
+    shl eax, 2
+    neg eax
+    cmp esi, eax             ; exact value span must not wrap
+    ja light_fallback
     mov edx, 1
     jmp ready
 

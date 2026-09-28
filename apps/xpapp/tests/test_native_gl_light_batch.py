@@ -1,52 +1,69 @@
 #!/usr/bin/env python3
-"""Execute the emitted IA32 light thunk and verify queue, ABI and capacity."""
+"""Execute emitted IA32 ordered GL state thunks, including matrix capture."""
 from pathlib import Path
 import subprocess
 import tempfile
 
 APP = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix="xpapp-light-batch-") as directory:
+with tempfile.TemporaryDirectory(prefix="xpapp-gl-state-batch-") as directory:
     work = Path(directory)
     (work / "emit.rs").write_text(f'''
 #[path = "{APP / 'src/thunk32.rs'}"] mod thunk32;
 fn main() {{
-    let mut page = vec![0x90; 4096];
-    thunk32::install_child_controls(&mut page).unwrap();
-    std::fs::write("controls.bin", page).unwrap();
-    let mut thunk = [0; thunk32::THUNK_BYTES];
-    thunk32::write(7, thunk32::Kind::GlLightBatch, &mut thunk).unwrap();
-    std::fs::write("thunk.bin", thunk).unwrap();
+    let mut code = vec![0x90; 4096];
+    thunk32::install_child_gl_batch_code(&mut code).unwrap();
+    let trap = (thunk32::CHILD_LIGHT_BATCH_AFTER_VMCALL
+        - thunk32::CHILD_LIGHT_BATCH_ADDRESS - 3) as usize;
+    assert_eq!(&code[trap..trap + 3], &[0x0f, 0x01, 0xc1]);
+    for address in [thunk32::CHILD_MATRIX_MODE_BATCH_ADDRESS,
+        thunk32::CHILD_LOAD_MATRIX_BATCH_ADDRESS] {{
+        assert_eq!(code[(address - thunk32::CHILD_LIGHT_BATCH_ADDRESS) as usize], 0x9c);
+    }}
+    std::fs::write("glcode.bin", code).unwrap();
+    let mut thunks = [0x90; thunk32::THUNK_BYTES * 3];
+    for (n, kind) in [thunk32::Kind::GlLightBatch,
+        thunk32::Kind::GlMatrixModeBatch, thunk32::Kind::GlLoadMatrixBatch]
+        .into_iter().enumerate() {{
+        thunk32::write(7 + n as u32, kind,
+            &mut thunks[n * thunk32::THUNK_BYTES..(n + 1) * thunk32::THUNK_BYTES]).unwrap();
+    }}
+    std::fs::write("thunks.bin", thunks).unwrap();
 }}
 ''')
     subprocess.run(["rustc", "--edition=2024", "-Awarnings", "emit.rs", "-o", "emit"], cwd=work, check=True)
     subprocess.run([str(work / "emit")], cwd=work, check=True)
-    controls = bytearray((work / "controls.bin").read_bytes())
-    assert controls[0xe72:0xe75] == bytes.fromhex("0f01c1")
-    assert controls[0xeb0:0xeb3] == bytes.fromhex("0f01c1")
-    # Native Linux cannot execute VMCALL. Full capacity must fault; typed
-    # fallbacks return with their original provider ID and stdcall cleanup.
-    controls[0xe72:0xe75] = bytes.fromhex("0f0b90")
-    controls[0xeb0:0xeb3] = bytes.fromhex("909090")
-    (work / "controls.bin").write_bytes(controls)
+    code = bytearray((work / "glcode.bin").read_bytes())
+    assert code[0xe8:0xeb] == bytes.fromhex("0f01c1")
+    assert code[0x177:0x17a] == bytes.fromhex("0f01c1")
+    assert code[0x182:0x185] == bytes.fromhex("0f01c1")
+    # Linux cannot execute VMCALL. Leave the full trap fatal; make typed
+    # fallback a no-op so its preserved EAX and stdcall cleanup can be tested.
+    code[0xe8:0xeb] = bytes.fromhex("0f0b90")
+    code[0x177:0x17a] = bytes.fromhex("909090")
+    code[0x182:0x185] = bytes.fromhex("909090")
+    (work / "glcode.bin").write_bytes(code)
     (work / "layout.ld").write_text('''ENTRY(_start)
 SECTIONS {
- . = 0x002f0000; .controls : { *(.controls) }
  . = 0x002f1000; .batch : { *(.batch) }
+ . = 0x002f2000; .glcode : { *(.glcode) }
  . = 0x00300054; .thunks : { *(.thunks) }
  . = 0x08048000; .text : { *(.text) }
  . = ALIGN(4096); .data : { *(.data) }
 }''')
     source = r'''.intel_syntax noprefix
-.section .controls,"ax"
-.incbin "controls.bin"
 .section .batch,"aw"
 batch_count: .long 0
 records: .fill 4092,1,0xcc
+.section .glcode,"ax"
+.incbin "glcode.bin"
 .section .thunks,"ax"
-entry: .incbin "thunk.bin"
+light_entry: .incbin "thunks.bin", 0, 12
+mode_entry: .incbin "thunks.bin", 12, 12
+load_entry: .incbin "thunks.bin", 24, 12
 .section .data
 saved_sp: .long 0
 values: .long 0x3f800000,0x40000000,0x40400000,0x40800000
+matrix: .long 0x80000000,0x7fc01234,2,3,4,5,6,7,8,9,10,11,12,13,14,0xdeadbeef
 .section .text
 .global _start
 _start:
@@ -56,11 +73,9 @@ _start:
  mov edi, 0x3456789a
  mov ebp, 0x456789ab
  std
- push offset values
- push 0x1203
- push 0x4000
- mov eax, 7
- call entry
+ push 0x1700
+ mov eax, 8
+ call mode_entry
  pushfd
  pop edx
  cld
@@ -78,68 +93,103 @@ _start:
  jz fail
  cmp dword ptr [batch_count], 1
  jne fail
- mov dword ptr [values], 0xdeadbeef
- cmp dword ptr [records+8], 0x3f800000
+ cmp dword ptr [records], 2
  jne fail
- cld
+ cmp dword ptr [records+4], 0x1700
+ jne fail
+ push offset matrix
+ mov eax, 9
+ call load_entry
+ cmp dword ptr [batch_count], 2
+ jne fail
+ cmp dword ptr [records+72], 3
+ jne fail
+ cmp dword ptr [records+72+8], 0x80000000
+ jne fail
+ cmp dword ptr [records+72+12], 0x7fc01234
+ jne fail
+ cmp dword ptr [records+72+8+60], 0xdeadbeef
+ jne fail
+ mov dword ptr [matrix], 0
+ mov dword ptr [matrix+60], 0
+ cmp dword ptr [records+72+8], 0x80000000
+ jne fail
+ cmp dword ptr [records+72+8+60], 0xdeadbeef
+ jne fail
+ push offset values
+ push 0x1203
+ push 0x4000
+ mov eax, 7
+ call light_entry
+ cmp dword ptr [batch_count], 3
+ jne fail
+ cmp dword ptr [records+144], 1
+ jne fail
+ cmp dword ptr [records+144+4], 0x4000
+ jne fail
+ cmp dword ptr [records+144+8], 0x1203
+ jne fail
+ cmp dword ptr [records+144+12], 0x3f800000
+ jne fail
+ mov dword ptr [values], 0xdeadbeef
  push offset values
  push 0x1204
  push 0x4001
  mov eax, 7
- call entry
- cmp dword ptr [batch_count], 2
+ call light_entry
+ cmp dword ptr [records+216+12], 0xdeadbeef
  jne fail
- cmp dword ptr [records+24], 0x4001
- jne fail
- cmp dword ptr [records+24+8], 0xdeadbeef
- jne fail
- cmp dword ptr [records+24+8+12], 0xcccccccc
+ cmp dword ptr [records+216+12+12], 0xcccccccc
  jne fail
  push offset values
  push 0x1205
  push 0x4002
  mov eax, 7
- call entry
- cmp dword ptr [batch_count], 3
+ call light_entry
+ cmp dword ptr [records+288+12+4], 0xcccccccc
  jne fail
- cmp dword ptr [records+48+8+4], 0xcccccccc
+ # Typed fallbacks retain the original import id and stdcall cleanup.
+ push 0
+ mov eax, 9
+ call load_entry
+ cmp eax, 9
+ jne fail
+ push 0xffffffd0
+ mov eax, 9
+ call load_entry
+ cmp eax, 9
+ jne fail
+ push 0x9999
+ mov eax, 8
+ call mode_entry
+ cmp eax, 8
  jne fail
  push 0
  push 0x1203
  push 0x4000
  mov eax, 7
- call entry
+ call light_entry
  cmp eax, 7
  jne fail
- cmp dword ptr [batch_count], 3
+ cmp esp, [saved_sp]
  jne fail
- push offset values
- push 0x9999
- push 0x4000
- mov eax, 7
- call entry
- cmp eax, 7
+ cmp dword ptr [batch_count], 5
  jne fail
- cmp dword ptr [batch_count], 3
- jne fail
- mov ecx, 29
+ # Complete the bounded queue, then require the full-capacity trap.
+ mov ecx, 27
 fill:
  push ecx
- push offset values
- push 0x1205
- push 0x4000
- mov eax, 7
- call entry
+ push 0x1701
+ mov eax, 8
+ call mode_entry
  pop ecx
  loop fill
  cmp dword ptr [batch_count], 32
  jne fail
- push offset values
- push 0x1205
- push 0x4000
- mov eax, 7
- call entry
- jmp fail                  # capacity VMCALL was not reached
+ push 0x1702
+ mov eax, 8
+ call mode_entry
+ jmp fail
 fail:
  mov eax, 1
  mov ebx, 2
@@ -149,5 +199,5 @@ fail:
     subprocess.run(["as", "--32", "test.S", "-o", "test.o"], cwd=work, check=True)
     subprocess.run(["ld", "-m", "elf_i386", "-T", "layout.ld", "test.o", "-o", "test"], cwd=work, check=True)
     result = subprocess.run([str(work / "test")], cwd=work, check=False, timeout=10)
-    assert result.returncode == -4, f"IA32 queue test exit {result.returncode}, expected capacity UD2"
-    print("PASS: guest light queue copies at call time, 1/3/4 floats, fallback, ABI and capacity")
+    assert result.returncode == -4, f"IA32 ordered queue exit {result.returncode}, expected capacity UD2"
+    print("PASS: ordered GL state capture, 64-byte matrix, ABI, typed fallback and capacity")

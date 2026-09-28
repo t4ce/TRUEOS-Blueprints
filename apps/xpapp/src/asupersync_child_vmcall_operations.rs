@@ -2620,6 +2620,71 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::DeleteCriticalSection {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::DeleteCriticalSection {
+                            pid,
+                            address,
+                        }) = action
+                        else {
+                            return Err("DeleteCriticalSection produced unexpected action".into());
+                        };
+                        let waiters = session
+                            .critical_waiters
+                            .iter()
+                            .filter(|wait| wait.key.pid == pid && wait.address == address)
+                            .count();
+                        match session.delete_critical_section(pid, address) {
+                            Ok((owner, recursion)) => {
+                                logl::log!(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "XPAPP CHILD DELETECRITICALSECTION pid={} tid={} address=0x{:08x} owner={} recursion={} waiters={} registered_before=1 registered_after=0 caller_ret=0x{:08x} result=void cleanup=4-by-thunk",
+                                        active_pid,
+                                        active_tid,
+                                        address,
+                                        owner,
+                                        recursion,
+                                        waiters,
+                                        u32::from_le_bytes(caller_ret),
+                                    ),
+                                );
+                                let mut registers = exit.registers;
+                                registers.eax = 0;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
+                            Err(reason) => {
+                                logl::log!(
+                                    level::ERROR,
+                                    format_args!(
+                                        "XPAPP CHILD DELETECRITICALSECTION FRONTIER pid={} tid={} address=0x{:08x} waiters={} reason={} caller_ret=0x{:08x}",
+                                        active_pid,
+                                        active_tid,
+                                        address,
+                                        waiters,
+                                        reason,
+                                        u32::from_le_bytes(caller_ret),
+                                    ),
+                                );
+                                return Ok(());
+                            }
+                        }
+                    }
                     if operation == child_loader::ProviderOp::SetWindowTextA {
                         let action = session
                             .process_mut(active_pid)

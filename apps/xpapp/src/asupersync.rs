@@ -2465,7 +2465,6 @@ pub(super) async fn run_loop(
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 let first_null_write = exception.vector == Some(14)
                     && exception.fault_linear == Some(0)
-                    && exception.error.is_some_and(|error| error & 2 != 0)
                     && !child.first_null_write_snapshot_logged;
                 if first_null_write {
                     let stack = read_guest_words(

@@ -547,6 +547,23 @@ impl XpProcess {
         Ok(0)
     }
 
+    pub fn critical_section_state(&self, address: u32) -> Option<(u32, u32)> {
+        self.critical_sections.get(&address).copied()
+    }
+
+    pub fn delete_critical_section_at(&mut self, address: u32) -> Result<(), &'static str> {
+        let (owner, recursion) = self
+            .critical_sections
+            .get(&address)
+            .copied()
+            .ok_or("DeleteCriticalSection unknown critical section")?;
+        if owner != 0 || recursion != 0 {
+            return Err("DeleteCriticalSection owned critical section");
+        }
+        self.critical_sections.remove(&address);
+        Ok(())
+    }
+
     fn enter_critical_section(
         &mut self,
         tid: u32,

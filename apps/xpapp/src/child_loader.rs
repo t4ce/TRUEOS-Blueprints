@@ -126,6 +126,7 @@ pub enum ProviderOp {
     InitializeCriticalSection,
     EnterCriticalSection,
     LeaveCriticalSection,
+    DeleteCriticalSection,
     SetLastError,
     DisableThreadLibraryCalls,
     SetUnhandledExceptionFilter,
@@ -301,6 +302,7 @@ impl ProviderOp {
             Self::InitializeCriticalSection
             | Self::EnterCriticalSection
             | Self::LeaveCriticalSection
+            | Self::DeleteCriticalSection
             | Self::SetUnhandledExceptionFilter
             | Self::UnhandledExceptionFilter
             | Self::ExitProcess
@@ -818,6 +820,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "InitializeCriticalSection" => ProviderOp::InitializeCriticalSection,
             "EnterCriticalSection" => ProviderOp::EnterCriticalSection,
             "LeaveCriticalSection" => ProviderOp::LeaveCriticalSection,
+            "DeleteCriticalSection" => ProviderOp::DeleteCriticalSection,
             "SetLastError" => ProviderOp::SetLastError,
             "DisableThreadLibraryCalls" => ProviderOp::DisableThreadLibraryCalls,
             "SetUnhandledExceptionFilter" => ProviderOp::SetUnhandledExceptionFilter,
