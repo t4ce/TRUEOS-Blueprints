@@ -568,7 +568,6 @@ impl ProviderOp {
                 | Self::Sleep
                 | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
-                | Self::CreateDirectoryA
                 | Self::GetFileSize
                 | Self::SetFilePointer
                 | Self::ReadFile
