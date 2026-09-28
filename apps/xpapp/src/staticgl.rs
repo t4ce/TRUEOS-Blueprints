@@ -484,6 +484,8 @@ impl XpProcess {
             ));
         }
         let started = (!cfg!(feature = "nolog")).then(std::time::Instant::now);
+        #[cfg(all(feature = "gpu-raster", not(test)))]
+        self.gl_flush_prepared_if_full(tid)?;
         let c = self.gl_context_mut(tid, "glClear")?;
         Self::gl_ensure_raster(c)?;
         let scissor = c.fixed.is_enabled(0xc11).then_some(c.fixed.scissor);

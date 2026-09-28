@@ -149,6 +149,8 @@ impl XpProcess {
             self.gl_context_mut(tid, API)?;
             return Ok(0);
         }
+        #[cfg(all(feature = "gpu-raster", not(test)))]
+        self.gl_flush_prepared_if_full(tid)?;
         let bytes = match kind {
             GL_UNSIGNED_BYTE => 1,
             GL_UNSIGNED_SHORT => 2,
@@ -309,6 +311,13 @@ mod staticgl_compat_tests {
 
 #[cfg(feature = "gpu-raster")]
 impl XpProcess {
+    fn gl_flush_prepared_if_full(&mut self, tid: u32) -> Result<(), ProviderDispatchError> {
+        let full = self.gl_context_mut(tid, "prepared raster")?.prepared_draws.len()
+            >= trueos::vgpu::MAX_PREPARED_RASTER_DRAWS;
+        if full { self.gl_flush_prepared(tid, "batch-capacity")?; }
+        Ok(())
+    }
+
     fn gl_flush_prepared(&mut self, tid: u32, reason: &str) -> Result<(), ProviderDispatchError> {
         const API: &str = "prepared raster submit";
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
