@@ -467,6 +467,8 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     const BREAKPOINT_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x300;
     const CEIL_ENTRY: u32 = XSTATE_TEST_CODE_BASE + 0x400;
     const CEIL_AFTER_RETURN: u32 = XSTATE_TEST_CODE_BASE + 0x420;
+    const FTOL_ENTRY: u32 = XSTATE_TEST_CODE_BASE + 0x480;
+    const FTOL_AFTER_RETURN: u32 = XSTATE_TEST_CODE_BASE + 0x4a0;
     const A_PATTERN: u32 = XSTATE_TEST_DATA_BASE;
     const B_PATTERN: u32 = XSTATE_TEST_DATA_BASE + 0x10;
     const A_X87_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x20;
@@ -489,6 +491,14 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     const CEIL_RESULT: u32 = XSTATE_TEST_DATA_BASE + 0xb0;
     const CEIL_ESP_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xb8;
     const CEIL_STACK: u32 = XSTATE_TEST_DATA_BASE + 0xc00;
+    const FTOL_INPUT: u32 = XSTATE_TEST_DATA_BASE + 0xc0;
+    const FTOL_FCW: u32 = XSTATE_TEST_DATA_BASE + 0xc8;
+    const FTOL_FCW_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xca;
+    const FTOL_FSW_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xcc;
+    const FTOL_EAX_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xd0;
+    const FTOL_EDX_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xd4;
+    const FTOL_ESP_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xd8;
+    const FTOL_STACK: u32 = XSTATE_TEST_DATA_BASE + 0xe00;
 
     let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
     address_space
@@ -834,10 +844,98 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
             return Err("x86 native ceil self-test violated cdecl stack shape".into());
         }
     }
+    // `_ftol` has no C arguments: it consumes ST(0), returns a signed qword
+    // in EDX:EAX, and leaves the caller's cdecl return frame intact. Exercise
+    // its guest-native path with a non-default rounding mode, ordinary signs,
+    // a representable large value, negative zero, and masked invalid inputs.
+    let mut ftol_entry = vec![0xd9, 0x2d]; // fldcw word ptr [FTOL_FCW]
+    ftol_entry.extend_from_slice(&FTOL_FCW.to_le_bytes());
+    ftol_entry.extend_from_slice(&[0xdd, 0x05]); // fld qword ptr [FTOL_INPUT]
+    ftol_entry.extend_from_slice(&FTOL_INPUT.to_le_bytes());
+    ftol_entry.push(0xe9);
+    ftol_entry.extend_from_slice(
+        &thunk32::CHILD_FTOL_ADDRESS
+            .wrapping_sub(FTOL_ENTRY + 17)
+            .to_le_bytes(),
+    );
+    address_space
+        .write(FTOL_ENTRY, &ftol_entry)
+        .map_err(|error| error.to_string())?;
+    let mut ftol_after = vec![0x89, 0x25]; // mov [FTOL_ESP_OUT], esp
+    ftol_after.extend_from_slice(&FTOL_ESP_OUT.to_le_bytes());
+    ftol_after.extend_from_slice(&[0xd9, 0x3d]); // fnstcw [FTOL_FCW_OUT]
+    ftol_after.extend_from_slice(&FTOL_FCW_OUT.to_le_bytes());
+    ftol_after.extend_from_slice(&[0xdd, 0x3d]); // fnstsw [FTOL_FSW_OUT]
+    ftol_after.extend_from_slice(&FTOL_FSW_OUT.to_le_bytes());
+    ftol_after.push(0xa3); // mov [FTOL_EAX_OUT], eax
+    ftol_after.extend_from_slice(&FTOL_EAX_OUT.to_le_bytes());
+    ftol_after.extend_from_slice(&[0x89, 0x15]); // mov [FTOL_EDX_OUT], edx
+    ftol_after.extend_from_slice(&FTOL_EDX_OUT.to_le_bytes());
+    emit_vmcall(&mut ftol_after);
+    address_space
+        .write(FTOL_AFTER_RETURN, &ftol_after)
+        .map_err(|error| error.to_string())?;
+    let ftol_fcw = 0x077f_u16; // round-down proves _ftol overrides RC temporarily.
+    for (input, expected, invalid) in [
+        (1.75_f64, 1_i64, false),
+        (-1.75, -1, false),
+        (-0.0, 0, false),
+        ((1_u64 << 62) as f64, 1_i64 << 62, false),
+        (f64::INFINITY, i64::MIN, true),
+        (f64::NAN, i64::MIN, true),
+    ] {
+        address_space
+            .write(FTOL_INPUT, &input.to_bits().to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        address_space
+            .write(FTOL_FCW, &ftol_fcw.to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        address_space
+            .write(FTOL_STACK, &FTOL_AFTER_RETURN.to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        let mut ftol_registers = registers(FTOL_ENTRY);
+        ftol_registers.esp = FTOL_STACK;
+        ftol_registers.eax = 825;
+        ftol_registers.ebx = 0x11bb_22cc;
+        ftol_registers.esi = 0x33dd_44ee;
+        ftol_registers.edi = 0x55ff_6600;
+        ftol_registers.ebp = 0x7788_9900;
+        let mut ftol = Context::create(&address_space, ftol_registers)
+            .map_err(|error| error.to_string())?;
+        let exit = ftol.run().await.map_err(|error| error.to_string())?;
+        require_vmcall(&exit, "native ftol")?;
+        let mut value = [0; 8];
+        read_exact_x86(&address_space, FTOL_EAX_OUT, &mut value)?;
+        if i64::from_le_bytes(value) != expected {
+            return Err(format!(
+                "x86 native ftol self-test input={input:?} expected={expected}"
+            ));
+        }
+        let mut control = [0; 2];
+        read_exact_x86(&address_space, FTOL_FCW_OUT, &mut control)?;
+        if u16::from_le_bytes(control) != ftol_fcw {
+            return Err("x86 native ftol self-test changed x87 control word".into());
+        }
+        let mut status = [0; 2];
+        read_exact_x86(&address_space, FTOL_FSW_OUT, &mut status)?;
+        if (u16::from_le_bytes(status) & 1 != 0) != invalid {
+            return Err(format!("x86 native ftol self-test invalid status input={input:?}"));
+        }
+        let mut esp = [0; 4];
+        read_exact_x86(&address_space, FTOL_ESP_OUT, &mut esp)?;
+        if u32::from_le_bytes(esp) != FTOL_STACK + 4 {
+            return Err("x86 native ftol self-test violated cdecl stack shape".into());
+        }
+        if (exit.registers.ebx, exit.registers.esi, exit.registers.edi, exit.registers.ebp)
+            != (ftol_registers.ebx, ftol_registers.esi, ftol_registers.edi, ftol_registers.ebp)
+        {
+            return Err("x86 native ftol self-test clobbered callee-saved registers".into());
+        }
+    }
     logl::log!(
         level::IMPORTANT,
         format_args!(
-            "XPAPP X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass ceil=pass"
+            "XPAPP X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass ceil=pass ftol=pass"
         ),
     );
     Ok(())

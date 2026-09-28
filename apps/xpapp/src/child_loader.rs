@@ -1035,6 +1035,9 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::CrtFloor {
         return thunk32::Kind::Floor;
     }
+    if provider_op(import) == ProviderOp::CrtFtol && !cfg!(feature = "trace-api") {
+        return thunk32::Kind::Ftol;
+    }
     if matches!(provider_op(import), ProviderOp::CrtAtoi | ProviderOp::CrtAtol)
         && !cfg!(feature = "host-decimal") {
         return thunk32::Kind::Decimal;

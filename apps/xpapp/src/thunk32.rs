@@ -60,6 +60,8 @@ pub const CHILD_ISMBCSPACE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_ISMBCSPACE_
 pub const CHILD_STRICMP_OFFSET: usize = 0xb00;
 pub const CHILD_STRICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRICMP_OFFSET as u32;
 const CHILD_ASCII_FOLD_OFFSET: usize = 0xc00;
+pub const CHILD_FTOL_OFFSET: usize = 0xd00;
+pub const CHILD_FTOL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_FTOL_OFFSET as u32;
 
 // Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
 // then parse 1..9 leading digits. All other cases restore the original stack,
@@ -210,6 +212,35 @@ const CHILD_FLOOR_CODE: &[u8] = &[
     0xc3,
 ];
 
+// Cdecl _ftol: for the normal XP x87 state, where every exception is masked,
+// convert ST(0) to a signed 64-bit integer with truncation toward zero, then
+// pop it. Preserve the caller's control word and return the low/high halves in
+// EAX/EDX. An unmasked exception configuration falls through to the existing
+// typed provider before touching x87 state, retaining that compatibility path.
+const CHILD_FTOL_CODE: &[u8] = &[
+    0x89, 0xc2,                   // mov edx, eax (save provider id)
+    0x83, 0xec, 0x0c,             // sub esp, 12
+    0xd9, 0x3c, 0x24,             // fnstcw word ptr [esp]
+    0x66, 0x8b, 0x04, 0x24,       // mov ax, [esp]
+    0x66, 0x25, 0x3f, 0x00,       // and ax, 0x003f
+    0x66, 0x83, 0xf8, 0x3f,       // cmp ax, 0x003f
+    0x75, 0x24,                   // jne fallback
+    0x66, 0x8b, 0x04, 0x24,       // mov ax, [esp]
+    0x66, 0x0d, 0x00, 0x0c,       // or ax, 0x0c00 (truncate)
+    0x66, 0x89, 0x44, 0x24, 0x02, // mov [esp + 2], ax
+    0xd9, 0x6c, 0x24, 0x02,       // fldcw word ptr [esp + 2]
+    0xdf, 0x7c, 0x24, 0x04,       // fistp qword ptr [esp + 4]
+    0xd9, 0x2c, 0x24,             // fldcw word ptr [esp]
+    0x8b, 0x44, 0x24, 0x04,       // mov eax, [esp + 4]
+    0x8b, 0x54, 0x24, 0x08,       // mov edx, [esp + 8]
+    0x83, 0xc4, 0x0c,             // add esp, 12
+    0xc3,                         // ret
+    0x83, 0xc4, 0x0c,             // fallback: restore stack
+    0x89, 0xd0,                   // mov eax, edx (restore provider id)
+    0x0f, 0x01, 0xc1,             // vmcall
+    0xc3,
+];
+
 // Cdecl isdigit: the modeled initial C locale returns the MSVCRT C1_DIGIT
 // bit (0x04) solely for ASCII decimal digits.  This exact predicate also
 // covers out-of-domain `int` values, which the existing personality returns
@@ -272,6 +303,10 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .get_mut(CHILD_FLOOR_OFFSET..CHILD_FLOOR_OFFSET + CHILD_FLOOR_CODE.len())
         .ok_or("floor helper range")?
         .copy_from_slice(CHILD_FLOOR_CODE);
+    output
+        .get_mut(CHILD_FTOL_OFFSET..CHILD_FTOL_OFFSET + CHILD_FTOL_CODE.len())
+        .ok_or("ftol helper range")?
+        .copy_from_slice(CHILD_FTOL_CODE);
     output
         .get_mut(CHILD_ISDIGIT_OFFSET..CHILD_ISDIGIT_OFFSET + CHILD_ISDIGIT_CODE.len())
         .ok_or("isdigit helper range")?
@@ -351,6 +386,8 @@ pub enum Kind {
     Ceil,
     /// Cdecl guest-native x87 floor(double); result remains in ST(0).
     Floor,
+    /// Cdecl guest-native x87 _ftol for the masked-exception CRT state.
+    Ftol,
     /// Cdecl guest-native unsigned byte comparison.
     Strncmp,
     /// CP1252 case-insensitive bounded guest-native comparison.
@@ -378,12 +415,13 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[..3].copy_from_slice(&[0xc2, bytes, 0]);
         return Ok(());
     }
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
             Kind::QsortDword => CHILD_QSORT_DWORD_ADDRESS,
             Kind::Stricmp => CHILD_STRICMP_ADDRESS,
+            Kind::Ftol => CHILD_FTOL_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -423,7 +461,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
     ]);
     match kind {
         Kind::NoopStdcall(_) => unreachable!(),
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::Stricmp => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::Stricmp => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

@@ -8,6 +8,55 @@ The shared P-core raster pool remains behind the opt-in `raster-pool` feature. D
 physical display mode setter remain unchanged. No separate guest program.
 60 FPS (16.67 ms/frame) remains unmet.
 
+## Small execution and preparation reductions, 2026-09-28
+
+Two focused changes keep the scalar 1280x720 renderer and retain the GPU and
+worker-pool experiments:
+
+- `_ftol` runs as guest x87 instructions when all x87 exceptions are masked.
+  It truncates ST(0) toward zero, pops it, restores the control word and returns
+  the signed 64-bit result in EDX:EAX. This removes the provider exit, context
+  xstate read/write and carrier round trip for each eligible call. `trace-api`
+  retains the original provider thunk; unmasked exception settings fall back
+  to the existing provider. Native FISTP supplies hardware status flags,
+  including precision, which the old software model did not fully reproduce.
+- Scalar `Frame` retains vertex clip codes, staged triangles and two polygon
+  buffers between draws. Clipping swaps the polygon buffers between planes
+  instead of freeing/reallocating on each plane. Draw ordering, validation and
+  clipping arithmetic are unchanged. Capacity grows to each frame's observed
+  high-water mark and is released with that frame.
+
+An independent host fixture compares the previous scalar source with the new
+scalar and two-thread host pool paths across 96 scenes / 768 draws. All
+7,166,722 shaded pixels and exact depth bits match. Allocation/reallocation
+calls within `draw_indexed` fall from 139,437 to 768; requested allocation bytes
+fall from 47,965,380 to 2,222,208. After each frame's first draw, allocation calls
+fall from 122,169 to 30 (remaining capacity growth). These are synthetic fixture
+counts, not measured Warcraft allocations. Host wall timings vary and do not
+establish an end-to-end speedup.
+
+Evidence, source snapshots and the executable fixture are in TRUEOS
+`bld/xpapp-usability/small-overhead/`; `report.json` records allocation counts,
+source hashes and exact scalar/pool parity. The live baseline remains the
+6.683-second scene frame recorded below. On the next comparable live run,
+check total frame time, preparation time, outside-draw time, `_ftol` provider
+calls and carrier execution count. Provider and execution reporting windows
+still overlap frame work and must not be added together.
+
+Validation: 400 library tests pass with default features and with `trace-api`
+(two ignored in each run). The binary check, `raster-pool` compile check and
+`carrier-selftest` compile check pass. The native IA-32 test executes the
+emitted `_ftol` thunk on Linux; the expanded rig selftest has been compiled but
+not run on the rig. Carrier tests pass (three SDK tests and seven standalone
+harness/worker tests); the standalone harness was updated for the existing
+optional clock-sampling API.
+
+Local release artifact: `dist/xpapp.bp`, SHA-256
+`8af4c458d4869e6715eb26ac20fd63e1d884c1ad829436b002d69565d7f847eb`.
+It was built with `TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp apps/xpapp`.
+This batch has not been published or launched; no new live frame measurement
+is claimed. Build/test logs are `/tmp/xpapp-small-*.log`.
+
 ## Scalar execution and visible timing, 2026-09-28
 
 The user disabled the copying raster pool after live frames remained around

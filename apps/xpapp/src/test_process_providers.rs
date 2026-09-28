@@ -957,7 +957,7 @@
     }
 
     #[test]
-    fn child_crt_ftol_is_cdecl_and_emits_a_plain_return_thunk() {
+    fn child_crt_ftol_is_cdecl_and_uses_the_masked_x87_fast_path() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
             symbol: ProviderSymbol::Name("_ftol".into()),
@@ -968,14 +968,27 @@
         assert!(operation.is_modeled());
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert!(!operation.is_generic_process_local());
+        let kind = crate::child_loader::provider_thunk_kind(&provider);
         assert_eq!(
-            crate::child_loader::provider_thunk_kind(&provider),
-            thunk32::Kind::Return
+            kind,
+            if cfg!(feature = "trace-api") {
+                thunk32::Kind::Return
+            } else {
+                thunk32::Kind::Ftol
+            }
         );
         let mut thunk = [0u8; thunk32::THUNK_BYTES];
-        thunk32::write(825, crate::child_loader::provider_thunk_kind(&provider), &mut thunk)
-            .unwrap();
-        assert_eq!(&thunk[..9], &[0xb8, 0x39, 0x03, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+        thunk32::write(825, kind, &mut thunk).unwrap();
+        if cfg!(feature = "trace-api") {
+            assert_eq!(&thunk[..9], &[0xb8, 0x39, 0x03, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+        } else {
+            assert_eq!(&thunk[..6], &[0xb8, 0x39, 0x03, 0, 0, 0xe9]);
+            let displacement = i32::from_le_bytes(thunk[6..10].try_into().unwrap());
+            assert_eq!(
+                thunk32::address(825).unwrap().wrapping_add(10).wrapping_add_signed(displacement),
+                thunk32::CHILD_FTOL_ADDRESS,
+            );
+        }
     }
 
     #[test]

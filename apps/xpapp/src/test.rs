@@ -1846,6 +1846,35 @@ macro_rules! xpapp_thunk32_tests_1 {
                     CHILD_FLOOR_ADDRESS,
                 );
             }
+
+            #[test]
+            fn ftol_uses_a_masked_x87_guest_fast_path_with_provider_fallback() {
+                let mut page = [0x90; 0x1000];
+                install_child_controls(&mut page).unwrap();
+                assert_eq!(
+                    &page[CHILD_FTOL_OFFSET..CHILD_FTOL_OFFSET + 67],
+                    &[
+                        0x89, 0xc2, 0x83, 0xec, 0x0c, 0xd9, 0x3c, 0x24,
+                        0x66, 0x8b, 0x04, 0x24, 0x66, 0x25, 0x3f, 0x00,
+                        0x66, 0x83, 0xf8, 0x3f, 0x75, 0x24, 0x66, 0x8b,
+                        0x04, 0x24, 0x66, 0x0d, 0x00, 0x0c, 0x66, 0x89,
+                        0x44, 0x24, 0x02, 0xd9, 0x6c, 0x24, 0x02, 0xdf,
+                        0x7c, 0x24, 0x04, 0xd9, 0x2c, 0x24, 0x8b, 0x44,
+                        0x24, 0x04, 0x8b, 0x54, 0x24, 0x08, 0x83, 0xc4,
+                        0x0c, 0xc3, 0x83, 0xc4, 0x0c, 0x89, 0xd0, 0x0f,
+                        0x01, 0xc1, 0xc3,
+                    ]
+                );
+
+                let mut thunk = [0; THUNK_BYTES];
+                write(825, Kind::Ftol, &mut thunk).unwrap();
+                assert_eq!(&thunk[..6], &[0xb8, 0x39, 0x03, 0, 0, 0xe9]);
+                let displacement = i32::from_le_bytes(thunk[6..10].try_into().unwrap());
+                assert_eq!(
+                    address(825).unwrap().wrapping_add(10).wrapping_add_signed(displacement),
+                    CHILD_FTOL_ADDRESS,
+                );
+            }
         }
     };
 }
