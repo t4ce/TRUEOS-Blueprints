@@ -969,13 +969,50 @@ pub struct XpappProcess {
     pub exit_code: Option<u32>,
 }
 
+/// A selected Warcraft map's stable TRUEOSFS identity and file metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MapCatalogEntry {
+    /// Case-preserving path relative to /common/Warcraft III/Maps.
+    pub relative_path: String,
+    /// Actual TRUEOSFS file length, without loading its contents.
+    pub byte_len: u64,
+}
+
 /// Startup inventory; paths are relative to the shared TRUEOSFS Maps folder.
 #[derive(Clone, Debug)]
 pub struct MapCatalog {
     pub folder: String,
-    pub paths: Vec<String>,
+    pub entries: Vec<MapCatalogEntry>,
     pub depth_limited: bool,
     pub truncated: bool,
+}
+
+impl MapCatalog {
+    /// Resolves a guest `Maps\\...` path against the selected, case-preserving
+    /// TRUEOSFS catalog. This is an identity lookup only: it never traverses
+    /// unselected files or permits escaping the Maps mount.
+    pub fn resolve_war3_relative_path(&self, guest_relative: &str) -> Option<&MapCatalogEntry> {
+        let guest = guest_relative
+            .split(['\\', '/'])
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if guest.len() < 2 || !guest[0].eq_ignore_ascii_case("Maps") {
+            return None;
+        }
+        let requested = &guest[1..];
+        self.entries.iter().find(|entry| {
+            let stored = entry
+                .relative_path
+                .split(['\\', '/'])
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>();
+            stored.len() == requested.len()
+                && stored
+                    .iter()
+                    .zip(requested)
+                    .all(|(stored, requested)| stored.eq_ignore_ascii_case(requested))
+        })
+    }
 }
 
 pub struct XpappSession {
@@ -1921,14 +1958,14 @@ impl XpappSession {
             },
         );
         let desktop_size = self.launcher().xp.desktop_size();
-        let map_catalog_paths = self
+        let map_catalog_entries = self
             .maps
             .as_ref()
-            .map(|catalog| catalog.paths.clone())
+            .map(|catalog| catalog.entries.clone())
             .unwrap_or_default();
         let mut xp = XpProcess::new_child();
         xp.set_desktop_size(desktop_size.0, desktop_size.1);
-        xp.set_map_catalog_paths(map_catalog_paths);
+        xp.set_map_catalog_entries(map_catalog_entries);
         let registry_base = 0x5743_8001u32.saturating_add(pid.saturating_mul(0x100));
         xp.set_registry_handle_base(registry_base)
             .expect("new process has no registry handles");

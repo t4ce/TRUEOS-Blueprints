@@ -1186,6 +1186,40 @@ impl XpProcess {
         XP_ANSI_CODE_PAGE
     }
 
+    fn get_locale_info_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        const LOCALE_USER_DEFAULT: u32 = 0x0000_0400;
+        const LOCALE_SABBREVCTRYNAME: u32 = 0x0000_0007;
+        const USA: &[u8] = b"USA\0";
+
+        let [_, lcid, lctype, output, capacity] = arguments::<5>(memory, esp)?;
+        if lcid != LOCALE_USER_DEFAULT || lctype != LOCALE_SABBREVCTRYNAME {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetLocaleInfoA",
+                detail: format!(
+                    "lcid=0x{lcid:08x} lctype=0x{lctype:08x} \\
+                     output=0x{output:08x} capacity={capacity}"
+                ),
+            });
+        }
+
+        let required = u32::try_from(USA.len())
+            .map_err(|_| ProviderDispatchError::Fault("GetLocaleInfoA length"))?;
+        if capacity == 0 {
+            return Ok(required);
+        }
+        if output == 0 || capacity < required {
+            self.set_last_error(ERROR_INSUFFICIENT_BUFFER);
+            return Ok(0);
+        }
+
+        memory.write(output, USA)?;
+        Ok(required)
+    }
+
     fn get_cp_info(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
         let [_, code_page, output] = arguments::<3>(memory, esp)?;
         if code_page != XP_ANSI_CODE_PAGE {
@@ -2472,8 +2506,8 @@ impl XpProcess {
         self.desktop_size = (width, height);
     }
 
-    pub fn set_map_catalog_paths(&mut self, paths: Vec<String>) {
-        self.map_catalog_paths = paths;
+    pub fn set_map_catalog_entries(&mut self, entries: Vec<MapCatalogEntry>) {
+        self.map_catalog_entries = entries;
     }
 
     pub fn desktop_size(&self) -> (u32, u32) {

@@ -203,11 +203,25 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
         "XPAPP MAP CATALOG folder={FOLDER:?} type=WARCRAFT3_MAP files={} max_depth=8 depth_limited={} truncated={}",
         selection.files.len(), selection.depth_limited, selection.truncated,
     ));
-    for path in &selection.files {
-        logl::trace!("trace-init", level::IMPORTANT, format_args!("XPAPP MAP FILE path={path:?}"));
+    let mut entries = Vec::with_capacity(selection.files.len());
+    for relative_path in selection.files {
+        let full_path = format!("{FOLDER}/{relative_path}");
+        let metadata = async_fs::metadata(full_path.as_bytes())
+            .await
+            .map_err(|error| format!("map catalog metadata {full_path:?}: TRUEOSFS {error}"))?;
+        if metadata.kind != async_fs::NodeKind::File {
+            return Err(format!("map catalog selected non-file {full_path:?}"));
+        }
+        logl::trace!("trace-init", level::IMPORTANT, format_args!(
+            "XPAPP MAP FILE path={relative_path:?} bytes={}", metadata.len
+        ));
+        entries.push(xpapp::session::MapCatalogEntry {
+            relative_path,
+            byte_len: metadata.len,
+        });
     }
     Ok(Some(xpapp::session::MapCatalog {
-        folder: FOLDER.into(), paths: selection.files,
+        folder: FOLDER.into(), entries,
         depth_limited: selection.depth_limited, truncated: selection.truncated,
     }))
 }

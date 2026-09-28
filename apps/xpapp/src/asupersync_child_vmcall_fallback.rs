@@ -389,21 +389,40 @@
                         };
                         match dispatch {
                             Ok(PersonalityAction::OpenFile(request)) => {
-                                let listing = async_fs::list_dir(b"/common/Warcraft III")
-                                    .await
-                                    .map_err(|error| {
-                                        format!(
-                                            "list Warcraft III directory for CreateFileA: TRUEOSFS {error}"
-                                        )
-                                    })?;
-                                if listing.truncated {
-                                    return Err("Warcraft III directory listing truncated".into());
-                                }
-                                let stored = child_loader::resolve_file(&listing, &request.path)
-                                    .map_err(str::to_owned)?;
+                                // Maps are admitted only through the selected startup
+                                // catalog. All other Warcraft root files retain the
+                                // existing one-directory resolver.
+                                let map_backing = session.maps.as_ref().and_then(|catalog| {
+                                    catalog.resolve_war3_relative_path(&request.path).map(|entry| {
+                                        (catalog.folder.clone(), entry.clone())
+                                    })
+                                });
+                                let stored = if let Some((folder, entry)) = map_backing {
+                                    Some((
+                                        format!(r"Maps\{}", entry.relative_path),
+                                        format!("{folder}/{}", entry.relative_path),
+                                    ))
+                                } else {
+                                    let listing = async_fs::list_dir(b"/common/Warcraft III")
+                                        .await
+                                        .map_err(|error| {
+                                            format!(
+                                                "list Warcraft III directory for CreateFileA: TRUEOSFS {error}"
+                                            )
+                                        })?;
+                                    if listing.truncated {
+                                        return Err("Warcraft III directory listing truncated".into());
+                                    }
+                                    child_loader::resolve_file(&listing, &request.path)
+                                        .map_err(str::to_owned)?
+                                        .map(|stored| {
+                                            let trueos_path =
+                                                format!("/common/Warcraft III/{stored}");
+                                            (stored, trueos_path)
+                                        })
+                                };
                                 let win_path = format!(r"C:\Warcraft III\{}", request.path);
-                                let result = if let Some(stored) = stored {
-                                    let trueos_path = format!("/common/Warcraft III/{stored}");
+                                let result = if let Some((stored, trueos_path)) = stored {
                                     let bytes = async_fs::read_file(trueos_path.as_bytes())
                                         .await
                                         .map_err(|error| {

@@ -83,10 +83,42 @@ fn prefix_eq_ignore_ascii_case(parts: &[&str], prefix: &[String]) -> bool {
             .all(|(part, wanted)| part.eq_ignore_ascii_case(wanted))
 }
 
-fn map_find_entries(paths: &[String], query: &MapFindQuery) -> Vec<FindEntry> {
+fn map_catalog_attributes(entries: &[MapCatalogEntry], path: &str) -> Option<u32> {
+    let parts = path_components(path);
+    if parts.first().is_none_or(|part| !part.eq_ignore_ascii_case("Maps")) {
+        return None;
+    }
+    let requested = &parts[1..];
+    if requested.is_empty() {
+        return Some(FILE_ATTRIBUTE_DIRECTORY);
+    }
+    for stored in entries {
+        let stored_parts = path_components(&stored.relative_path);
+        if stored_parts.len() == requested.len()
+            && stored_parts
+                .iter()
+                .zip(requested)
+                .all(|(stored, requested)| stored.eq_ignore_ascii_case(requested))
+        {
+            return Some(FILE_ATTRIBUTE_NORMAL);
+        }
+        if stored_parts.len() > requested.len()
+            && stored_parts
+                .iter()
+                .take(requested.len())
+                .zip(requested)
+                .all(|(stored, requested)| stored.eq_ignore_ascii_case(requested))
+        {
+            return Some(FILE_ATTRIBUTE_DIRECTORY);
+        }
+    }
+    None
+}
+
+fn map_find_entries(catalog: &[MapCatalogEntry], query: &MapFindQuery) -> Vec<FindEntry> {
     let mut entries = Vec::new();
-    for stored in paths {
-        let parts = path_components(stored);
+    for stored in catalog {
+        let parts = path_components(&stored.relative_path);
         if !prefix_eq_ignore_ascii_case(&parts, &query.folder)
             || parts.len() <= query.folder.len()
         {
@@ -105,7 +137,11 @@ fn map_find_entries(paths: &[String], query: &MapFindQuery) -> Vec<FindEntry> {
             entries.push(FindEntry {
                 name: child.to_owned(),
                 attributes,
-                size: 0,
+                size: if attributes == FILE_ATTRIBUTE_NORMAL {
+                    stored.byte_len
+                } else {
+                    0
+                },
             });
         }
     }
@@ -1177,14 +1213,26 @@ impl XpProcess {
                         capacity as i32,
                     ),
                 );
-                Err(ProviderDispatchError::Frontier {
-                    api: "GetLocaleInfoA",
-                    detail: format!(
-                        "lcid=0x{lcid:08x} lctype=0x{lctype:08x} \\
-                         output=0x{output:08x} capacity={}",
-                        capacity as i32,
+                let result = self.get_locale_info_a(esp, memory)?;
+                let value = if result != 0 && output != 0 {
+                    read_c_string(memory, output, capacity as usize)?
+                } else {
+                    String::new()
+                };
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD GETLOCALEINFOA RESULT pid={pid} tid={tid} \\
+                         lcid=0x{lcid:08x} lctype=0x{lctype:08x} value={value:?} \\
+                         chars={result} result={} cleanup=16-by-thunk",
+                        (result != 0) as u8,
                     ),
-                })
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
             }
             ProviderOp::GetCPInfo => {
                 self.call_count = self
@@ -2235,6 +2283,8 @@ impl XpProcess {
                     || (is_war3_mpq_path(&path) && self.war3_mpq_bytes.is_some())
                 {
                     Some(FILE_ATTRIBUTE_NORMAL)
+                } else if let Some(relative) = warcraft_drive_relative_path(&path) {
+                    map_catalog_attributes(&self.map_catalog_entries, &relative)
                 } else {
                     self.scratch_paths
                         .get(&canonical_file_path(&path))
@@ -2297,7 +2347,7 @@ impl XpProcess {
                 }
                 let pattern = read_c_string(memory, pattern, 1024)?;
                 if let Some(query) = parse_maps_find_pattern(&pattern) {
-                    let entries = map_find_entries(&self.map_catalog_paths, &query);
+                    let entries = map_find_entries(&self.map_catalog_entries, &query);
                     if entries.is_empty() {
                         self.set_last_error(ERROR_FILE_NOT_FOUND);
                         self.call_count = self
