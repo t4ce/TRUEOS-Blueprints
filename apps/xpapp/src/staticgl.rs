@@ -493,7 +493,7 @@ impl XpProcess {
         let depth = (mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask).then_some(1.0);
         #[cfg(all(feature = "gpu-raster", not(test)))]
         if let Some(draw) = crate::staticgl_prepared::clear(c.drawable_size, color, depth, scissor) {
-            if c.prepared_draws.len() >= trueos::vgpu::MAX_PREPARED_RASTER_DRAWS {
+            if c.prepared_draws.len() >= trueos::vgpu::MAX_PREPARED_RASTER_SUBMIT_DRAWS {
                 return Err(gl_texture_error("glClear", "prepared frame draw limit"));
             }
             c.prepared_draws.push(draw);

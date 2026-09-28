@@ -313,7 +313,7 @@ mod staticgl_compat_tests {
 impl XpProcess {
     fn gl_flush_prepared_if_full(&mut self, tid: u32) -> Result<(), ProviderDispatchError> {
         let full = self.gl_context_mut(tid, "prepared raster")?.prepared_draws.len()
-            >= trueos::vgpu::MAX_PREPARED_RASTER_DRAWS;
+            >= trueos::vgpu::MAX_PREPARED_RASTER_SUBMIT_DRAWS;
         if full { self.gl_flush_prepared(tid, "batch-capacity")?; }
         Ok(())
     }

@@ -23,7 +23,8 @@ wake-up correction.
    Completing a render lease does not publish the window; the existing swap
    flow remains responsible for publication.
 
-A batch holds 600 draw/clear commands. Larger frames flush and continue on the
+A batch currently submits up to 340 draw/clear commands, matching the resident
+renderer state slots. The wire ABI retains its 600-entry array. Larger frames flush and continue on the
 same unpublished drawable. Color/depth attachments are not copied through CPU
 framebuffers between draws. CPU framebuffer storage currently remains allocated
 as preparation-owner storage; removing that allocation is not necessary for this

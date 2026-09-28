@@ -109,7 +109,7 @@ impl Renderer {
         surface: Ui4Surface,
         draws: &[Draw],
     ) -> Result<TimelinePoint, i32> {
-        if draws.is_empty() || draws.len() > vgpu::MAX_PREPARED_RASTER_DRAWS {
+        if draws.is_empty() || draws.len() > vgpu::MAX_PREPARED_RASTER_SUBMIT_DRAWS {
             return Err(vgpu::ERR_UNSUPPORTED);
         }
         self.last_upload_bytes = 0;
