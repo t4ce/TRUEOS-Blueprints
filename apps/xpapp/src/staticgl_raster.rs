@@ -214,6 +214,12 @@ pub(crate) struct Frame {
     pub rgba: Vec<u8>,
     pub depth: Vec<f32>,
     pub timing: DrawTiming,
+    // Draw preparation buffers retain their capacity across scalar draws.
+    // Band frames start empty and never use them.
+    clip_codes: Vec<u8>,
+    staged: Vec<[ClipVertex; 3]>,
+    clip_polygon: Vec<ClipVertex>,
+    clip_scratch: Vec<ClipVertex>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -295,6 +301,10 @@ impl Frame {
             rgba: vec![0; pixels.checked_mul(4).ok_or(RasterError::BadExtent)?],
             depth: vec![1.0; pixels],
             timing: DrawTiming::default(),
+            clip_codes: Vec::new(),
+            staged: Vec::new(),
+            clip_polygon: Vec::new(),
+            clip_scratch: Vec::new(),
         })
     }
 
@@ -340,6 +350,10 @@ impl Frame {
     ) -> Result<RasterStats, RasterError> {
         let started = std::time::Instant::now();
         self.timing = DrawTiming::default();
+        self.clip_codes.clear();
+        self.staged.clear();
+        self.clip_polygon.clear();
+        self.clip_scratch.clear();
         if indices.len() % 3 != 0 {
             return Err(RasterError::BadIndex);
         }
@@ -365,17 +379,18 @@ impl Frame {
         // Classify each source vertex once.  Almost all XPAPP geometry is fully
         // inside the canonical volume, so avoid allocating a polygon and
         // running all seven clipping passes for every such triangle.
-        let clip_codes: Vec<u8> = vertices.iter().copied().map(clip_code).collect();
-        let mut staged = Vec::with_capacity(indices.len() / 3);
+        self.clip_codes
+            .extend(vertices.iter().copied().map(clip_code));
+        self.staged.reserve(indices.len() / 3);
         for tri in indices.chunks_exact(3) {
             let codes = [
-                clip_codes[tri[0] as usize],
-                clip_codes[tri[1] as usize],
-                clip_codes[tri[2] as usize],
+                self.clip_codes[tri[0] as usize],
+                self.clip_codes[tri[1] as usize],
+                self.clip_codes[tri[2] as usize],
             ];
             let any_outside = codes[0] | codes[1] | codes[2];
             if any_outside == 0 {
-                staged.push([
+                self.staged.push([
                     vertices[tri[0] as usize],
                     vertices[tri[1] as usize],
                     vertices[tri[2] as usize],
@@ -385,18 +400,26 @@ impl Frame {
             if codes[0] & codes[1] & codes[2] != 0 {
                 continue;
             }
-            let polygon = clip_triangle([
-                vertices[tri[0] as usize],
-                vertices[tri[1] as usize],
-                vertices[tri[2] as usize],
-            ]);
-            for n in 1..polygon.len().saturating_sub(1) {
-                staged.push([polygon[0], polygon[n], polygon[n + 1]]);
+            clip_triangle(
+                [
+                    vertices[tri[0] as usize],
+                    vertices[tri[1] as usize],
+                    vertices[tri[2] as usize],
+                ],
+                &mut self.clip_polygon,
+                &mut self.clip_scratch,
+            );
+            for n in 1..self.clip_polygon.len().saturating_sub(1) {
+                self.staged.push([
+                    self.clip_polygon[0],
+                    self.clip_polygon[n],
+                    self.clip_polygon[n + 1],
+                ]);
             }
         }
         let mut stats = RasterStats {
             input_triangles: (indices.len() / 3) as u32,
-            clipped_triangles: staged.len() as u32,
+            clipped_triangles: self.staged.len() as u32,
             shaded_pixels: 0,
         };
         self.timing.prepare = started.elapsed();
@@ -406,15 +429,21 @@ impl Frame {
         self.timing.parallel = parallel;
         if parallel {
             report_worker_mode(true);
+            // The experimental pool owns its triangle slice through the job
+            // lifetime. Keep that ownership path unchanged; scalar draws
+            // retain and reuse the preparation buffer below.
+            let staged = core::mem::take(&mut self.staged);
             stats.shaded_pixels = self
                 .draw_staged_banded_pool(*state, texture, staged)
                 .map_err(|_| RasterError::Worker)? as u64;
         } else {
             report_worker_mode(false);
             let scalar_started = std::time::Instant::now();
-            for tri in staged {
+            let mut staged = core::mem::take(&mut self.staged);
+            for tri in staged.drain(..) {
                 stats.shaded_pixels += self.draw_triangle(state, texture, tri) as u64;
             }
+            self.staged = staged;
             self.timing.scalar = scalar_started.elapsed();
         }
         self.timing.total = started.elapsed();
@@ -885,6 +914,10 @@ impl Frame {
             rgba,
             depth,
             timing: DrawTiming::default(),
+            clip_codes: Vec::new(),
+            staged: Vec::new(),
+            clip_polygon: Vec::new(),
+            clip_scratch: Vec::new(),
         }
     }
 
@@ -1328,8 +1361,14 @@ fn clip_code(v: ClipVertex) -> u8 {
     }
     code
 }
-fn clip_triangle(input: [ClipVertex; 3]) -> Vec<ClipVertex> {
-    let mut polygon = input.to_vec();
+fn clip_triangle(
+    input: [ClipVertex; 3],
+    polygon: &mut Vec<ClipVertex>,
+    scratch: &mut Vec<ClipVertex>,
+) {
+    polygon.clear();
+    polygon.extend_from_slice(&input);
+    scratch.clear();
     // The six canonical clip half-spaces imply w >= 0.  A point exactly at
     // the homogeneous origin satisfies them all but cannot be divided.  Clip
     // it to a small positive-w plane before the perspective divide; this is
@@ -1338,23 +1377,23 @@ fn clip_triangle(input: [ClipVertex; 3]) -> Vec<ClipVertex> {
         if polygon.is_empty() {
             break;
         }
-        let old = core::mem::take(&mut polygon);
-        for i in 0..old.len() {
-            let a = old[i];
-            let b = old[(i + 1) % old.len()];
+        scratch.clear();
+        for i in 0..polygon.len() {
+            let a = polygon[i];
+            let b = polygon[(i + 1) % polygon.len()];
             let da = plane_distance(a.clip, plane);
             let db = plane_distance(b.clip, plane);
             let ina = da >= 0.0;
             let inb = db >= 0.0;
             if ina {
-                polygon.push(a);
+                scratch.push(a);
             }
             if ina != inb {
-                polygon.push(lerp_vertex(a, b, da / (da - db)));
+                scratch.push(lerp_vertex(a, b, da / (da - db)));
             }
         }
+        core::mem::swap(polygon, scratch);
     }
-    polygon
 }
 fn plane_distance(p: [f32; 4], n: usize) -> f32 {
     match n {
@@ -2043,6 +2082,54 @@ mod tests {
             .unwrap();
         assert!(result.clipped_triangles > 0);
         assert!(frame.depth.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn preparation_scratch_reuses_capacity_and_recovers_after_bad_draw() {
+        let tri = [
+            v(-2.0, -0.7, 0.0, 1.0, 0.0, 0.0, [1.0, 0.0, 0.0, 1.0]),
+            v(0.8, -0.7, 0.0, 1.0, 1.0, 0.0, [0.0, 1.0, 0.0, 1.0]),
+            v(0.0, 0.8, 0.0, 1.0, 0.5, 1.0, [0.0, 0.0, 1.0, 1.0]),
+        ];
+        let mut frame = Frame::new(8, 8).unwrap();
+        frame
+            .draw_indexed(&state(), None, &tri, &[0, 1, 2])
+            .unwrap();
+        let capacities = (
+            frame.clip_codes.capacity(),
+            frame.staged.capacity(),
+            frame.clip_polygon.capacity(),
+            frame.clip_scratch.capacity(),
+        );
+        assert!(capacities.0 >= tri.len());
+        assert!(capacities.1 > 0);
+        assert!(capacities.2 > 0);
+        assert!(capacities.3 > 0);
+
+        assert_eq!(
+            frame.draw_indexed(&state(), None, &tri, &[0, 1, 3]),
+            Err(RasterError::BadIndex)
+        );
+        frame.clear(Some([0; 4]), Some(1.0), None);
+        frame
+            .draw_indexed(&state(), None, &tri, &[0, 1, 2])
+            .unwrap();
+        assert_eq!(
+            (
+                frame.clip_codes.capacity(),
+                frame.staged.capacity(),
+                frame.clip_polygon.capacity(),
+                frame.clip_scratch.capacity(),
+            ),
+            capacities
+        );
+
+        let mut fresh = Frame::new(8, 8).unwrap();
+        fresh
+            .draw_indexed(&state(), None, &tri, &[0, 1, 2])
+            .unwrap();
+        assert_eq!(frame.rgba, fresh.rgba);
+        assert_eq!(frame.depth, fresh.depth);
     }
 
     #[test]
