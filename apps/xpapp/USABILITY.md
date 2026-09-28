@@ -8,6 +8,52 @@ The shared P-core raster pool remains behind the opt-in `raster-pool` feature. D
 physical display mode setter remain unchanged. No separate guest program.
 60 FPS (16.67 ms/frame) remains unmet.
 
+## Provider and carrier allocation reductions, 2026-09-28
+
+The current capture after the previous batch shows a median of 3,649.5 ms
+across its last ten completed frames: 2,237 ms outside drawing/presentation,
+427 ms decode/setup, 2.5 ms clipping/preparation, 948 ms scalar rasterization
+and 34 ms presentation. Frames differ as the scene animates; this is an
+observed baseline, not an exact speedup ratio against the earlier single
+6,683 ms frame. Rasterization is frozen at the user's request.
+
+This batch targets execution/provider overhead only:
+
+- Guest-native `iswspace` implements the existing low-16-bit ASCII/WEOF
+  classification. Other wide characters retain the existing provider frontier;
+  `trace-api` retains the ordinary provider thunk. The emitted IA-32 helper
+  passes 530 cases covering byte values, truncation, fallback, stack, registers
+  and direction flag.
+- `glLightfv`, `glLightModelfv`, `glMaterialfv` and `glFogfv` decode their 1/3/4
+  floats using fixed stack arrays. Each call avoids two temporary vectors.
+  Read lengths, validation, state updates and rasterization are unchanged.
+- The reusable execution carrier now owns one completion slot instead of
+  allocating a oneshot reply channel on every execution. A submit mutex
+  serializes callers; generation tags discard abandoned/late replies. Dropping
+  the worker endpoint wakes a waiting caller with `CarrierLost`. Measured and
+  unmeasured calls retain their existing timing behavior; `request_ns` includes
+  any wait behind another submission as well as worker delivery.
+
+A host allocator fixture reports 4,096 allocations for 4,096 warmed submissions
+before the change, and zero afterward (both measured and unmeasured). It
+excludes carrier construction. This proves removal of the recurring reply
+allocation; live handoff latency and frame impact remain to be measured.
+Reproduce the post-change check from TRUEOS with
+`python3 tools/test_xp_execution_timing.py --allocations`.
+
+Validation: 402 XPApp library tests pass with default features and with
+`trace-api` (two ignored each); 14 x86 SDK tests and seven standalone carrier
+harness/worker tests pass. Execution tests cover actual queued cancellation,
+a late reply after the next request is queued, worker loss, and 32 concurrent
+callers across a separate worker thread. Run SDK tests with
+`cargo test -p trueos --lib --features wc3-x86,tokio-runtime --offline x86::tests`.
+
+Current capture, summary, allocation fixture sources and logs are in TRUEOS
+`bld/xpapp-usability/round2/`; `report.json` records validation and scope.
+Local release `dist/xpapp.bp` SHA-256:
+`c5961a3d3d40012c93c63129d6ab903cbaf1ff7ab0a5a422816cda066d0f1b72`.
+Built with publication skipped; this batch has not been launched by the agent.
+
 ## Small execution and preparation reductions, 2026-09-28
 
 Two focused changes keep the scalar 1280x720 renderer and retain the GPU and

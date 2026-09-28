@@ -325,7 +325,96 @@ struct CarrierRequest {
     handle: u64,
     resume: bool,
     measured: bool,
-    reply: tokio::sync::oneshot::Sender<CarrierReply>,
+    generation: u64,
+}
+
+struct CompletionState {
+    generation: u64,
+    waiting: bool,
+    reply: Option<CarrierReply>,
+    closed: bool,
+}
+
+struct Completion {
+    state: std::sync::Mutex<CompletionState>,
+    changed: tokio::sync::Notify,
+}
+
+impl Completion {
+    fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(CompletionState {
+                generation: 0, waiting: false, reply: None, closed: false,
+            }),
+            changed: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn start(&self) -> Result<u64, Error> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed { return Err(Error::CarrierLost); }
+        let generation = state.generation.checked_add(1).ok_or(Error::CarrierLost)?;
+        state.generation = generation;
+        state.waiting = true;
+        state.reply = None;
+        Ok(generation)
+    }
+
+    fn cancel(&self, generation: u64) {
+        let mut state = self.state.lock().unwrap();
+        if state.generation == generation {
+            state.waiting = false;
+            state.reply = None;
+        }
+    }
+
+    fn is_waiting(&self, generation: u64) -> bool {
+        let state = self.state.lock().unwrap();
+        !state.closed && state.waiting && state.generation == generation
+    }
+
+    fn publish(&self, generation: u64, reply: CarrierReply) {
+        let mut state = self.state.lock().unwrap();
+        let published = state.waiting && state.generation == generation;
+        if published {
+            state.reply = Some(reply);
+        }
+        drop(state);
+        if published { self.changed.notify_one(); }
+    }
+
+    fn take(&self, generation: u64) -> Result<Option<CarrierReply>, Error> {
+        let mut state = self.state.lock().unwrap();
+        if state.generation == generation {
+            if let Some(reply) = state.reply.take() { return Ok(Some(reply)); }
+        }
+        if state.closed { Err(Error::CarrierLost) } else { Ok(None) }
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        drop(state);
+        self.changed.notify_waiters();
+    }
+}
+
+struct CompletionWait<'a> {
+    completion: &'a Completion,
+    generation: u64,
+}
+
+impl Drop for CompletionWait<'_> {
+    fn drop(&mut self) { self.completion.cancel(self.generation); }
+}
+
+struct CarrierEndpoint {
+    requests: tokio::sync::mpsc::Receiver<CarrierRequest>,
+    completion: Arc<Completion>,
+}
+
+impl Drop for CarrierEndpoint {
+    fn drop(&mut self) { self.completion.close(); }
 }
 
 /// One native worker shared by serially scheduled logical x86 contexts.
@@ -333,23 +422,27 @@ struct CarrierRequest {
 /// checked between bounded guest slices and while the worker is idle.
 pub struct ExecutionCarrier {
     requests: tokio::sync::mpsc::Sender<CarrierRequest>,
+    submit_lock: tokio::sync::Mutex<()>,
+    completion: Arc<Completion>,
 }
 
 impl ExecutionCarrier {
     pub fn new() -> Result<Self, Error> {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
         let job = crate::worker::spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_time().build() else {
                 return;
             };
-            runtime.block_on(carrier_requests(receiver, |handle, resume| {
+            runtime.block_on(carrier_requests(endpoint, |handle, resume| {
                 if resume { v::vx86::context_resume(handle) }
                 else { v::vx86::context_run(handle) }
             }, tokio::time::Instant::now));
         }).map_err(|_| Error::CarrierUnavailable)?;
         // The request channel owns the worker lifetime, not an individual exit.
         drop(job);
-        Ok(Self { requests })
+        Ok(Self { requests, submit_lock: tokio::sync::Mutex::new(()), completion })
     }
 
     async fn execute(&self, handle: u64, resume: bool) -> Result<Exit, Error> {
@@ -371,31 +464,39 @@ impl ExecutionCarrier {
     }
 
     async fn submit(&self, handle: u64, resume: bool, measured: bool) -> Result<CarrierReply, Error> {
-        let (reply, response) = tokio::sync::oneshot::channel();
-        self.requests.send(CarrierRequest { handle, resume, measured, reply }).await
+        let _serial = self.submit_lock.lock().await;
+        let generation = self.completion.start()?;
+        let _wait = CompletionWait { completion: &self.completion, generation };
+        self.requests.send(CarrierRequest { handle, resume, measured, generation }).await
             .map_err(|_| Error::CarrierLost)?;
-        response.await.map_err(|_| Error::CarrierLost)
+        loop {
+            let notified = self.completion.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(reply) = self.completion.take(generation)? { return Ok(reply); }
+            notified.await;
+        }
     }
 }
 
 async fn carrier_requests(
-    mut requests: tokio::sync::mpsc::Receiver<CarrierRequest>,
+    mut endpoint: CarrierEndpoint,
     mut execute: impl FnMut(u64, bool) -> Result<v::vx86::Exit, i32>,
     mut now: impl FnMut() -> tokio::time::Instant,
 ) {
     loop {
         if crate::worker::cancellation_requested() { break; }
         let request = tokio::select! {
-            request = requests.recv() => match request { Some(request) => request, None => break },
+            request = endpoint.requests.recv() => match request { Some(request) => request, None => break },
             _ = tokio::time::sleep(core::time::Duration::from_millis(8)) => continue,
         };
         // A cancelled caller must not start a queued context after its owner
         // has dropped it. Already executing slices still retire normally.
-        if !request.reply.is_closed() {
+        if endpoint.completion.is_waiting(request.generation) {
             let accepted = request.measured.then(&mut now);
             let result = execute(request.handle, request.resume);
             let timing = accepted.map(|accepted| (accepted, now()));
-            let _ = request.reply.send(CarrierReply { result, timing });
+            endpoint.completion.publish(request.generation, CarrierReply { result, timing });
         }
     }
 }
@@ -420,9 +521,11 @@ mod tests {
     #[tokio::test]
     async fn reusable_carrier_orders_contexts_propagates_errors_and_retires() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let observed = Arc::clone(&calls);
-        let task = tokio::spawn(carrier_requests(receiver, move |handle, resume| {
+        let task = tokio::spawn(carrier_requests(endpoint, move |handle, resume| {
             observed.lock().unwrap().push((handle, resume));
             if handle == 3 {
                 let mut exit = v::vx86::Exit::default();
@@ -432,7 +535,7 @@ mod tests {
             }
             Err(if handle == 2 { -125 } else { -16 })
         }, || panic!("ordinary execution sampled its clock")));
-        let carrier = ExecutionCarrier { requests };
+        let carrier = ExecutionCarrier { requests, submit_lock: tokio::sync::Mutex::new(()), completion };
         for handle in [1, 2, 1] {
             let error = carrier.execute(handle, handle != 2).await.unwrap_err();
             assert_eq!(error, if handle == 2 { Error::Cancelled } else { Error::Busy });
@@ -448,10 +551,12 @@ mod tests {
     #[tokio::test]
     async fn reusable_carrier_measures_only_requested_executions() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
         let samples = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed = Arc::clone(&samples);
         let epoch = tokio::time::Instant::now();
-        let task = tokio::spawn(carrier_requests(receiver, |handle, resume| {
+        let task = tokio::spawn(carrier_requests(endpoint, |handle, resume| {
             assert_eq!(resume, handle != 1);
             if handle == 3 {
                 return Err(-125);
@@ -464,7 +569,7 @@ mod tests {
             let sample = observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             epoch + core::time::Duration::from_nanos(sample as u64 * 250)
         }));
-        let carrier = ExecutionCarrier { requests };
+        let carrier = ExecutionCarrier { requests, submit_lock: tokio::sync::Mutex::new(()), completion };
         assert_eq!(carrier.execute(1, false).await.unwrap().registers.eax, 1);
         assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 0);
         let (exit, timing) = carrier.execute_measured(2, true).await.unwrap();
@@ -482,12 +587,150 @@ mod tests {
     #[tokio::test]
     async fn reusable_carrier_does_not_enter_abandoned_queued_context() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
-        let (reply, response) = tokio::sync::oneshot::channel();
-        requests.send(CarrierRequest { handle: 1, resume: true, measured: true, reply }).await.unwrap();
-        drop(response);
+        let completion = Arc::new(Completion::new());
+        let generation = completion.start().unwrap();
+        requests.send(CarrierRequest { handle: 1, resume: true, measured: true, generation }).await.unwrap();
+        completion.cancel(generation);
         drop(requests);
-        carrier_requests(receiver, |_, _| panic!("abandoned context entered"),
+        carrier_requests(CarrierEndpoint { requests: receiver, completion }, |_, _| panic!("abandoned context entered"),
             || panic!("abandoned context sampled its clock")).await;
+    }
+
+    #[tokio::test]
+    async fn reusable_carrier_recovers_after_queued_caller_is_abandoned() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let carrier = Arc::new(ExecutionCarrier {
+            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+        });
+        let abandoned = {
+            let carrier = Arc::clone(&carrier);
+            tokio::spawn(async move { carrier.execute(1, false).await })
+        };
+        tokio::time::timeout(core::time::Duration::from_secs(1), async {
+            while carrier.requests.capacity() != 0 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        abandoned.abort();
+        assert!(abandoned.await.is_err());
+
+        let next = {
+            let carrier = Arc::clone(&carrier);
+            tokio::spawn(async move { carrier.execute(2, false).await })
+        };
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = Arc::clone(&calls);
+        let worker = tokio::spawn(carrier_requests(endpoint, move |handle, _| {
+            observed.lock().unwrap().push(handle);
+            let mut exit = v::vx86::Exit::default();
+            exit.registers.eax = handle as u32;
+            Ok(exit)
+        }, tokio::time::Instant::now));
+        assert_eq!(next.await.unwrap().unwrap().registers.eax, 2);
+        drop(carrier);
+        tokio::time::timeout(core::time::Duration::from_secs(1), worker).await.unwrap().unwrap();
+        assert_eq!(*calls.lock().unwrap(), [2]);
+    }
+
+    #[tokio::test]
+    async fn reusable_carrier_discards_late_reply_after_in_flight_abandonment() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let carrier = Arc::new(ExecutionCarrier {
+            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+        });
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+            runtime.block_on(carrier_requests(endpoint, move |handle, _| {
+                if handle == 1 {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                let mut exit = v::vx86::Exit::default();
+                exit.registers.eax = handle as u32;
+                Ok(exit)
+            }, tokio::time::Instant::now));
+        });
+        let abandoned = {
+            let carrier = Arc::clone(&carrier);
+            tokio::spawn(async move { carrier.execute(1, false).await })
+        };
+        tokio::time::timeout(core::time::Duration::from_secs(1),
+            tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())).await.unwrap().unwrap();
+        abandoned.abort();
+        assert!(abandoned.await.is_err());
+        let next = {
+            let carrier = Arc::clone(&carrier);
+            tokio::spawn(async move { carrier.execute(2, false).await })
+        };
+        tokio::time::timeout(core::time::Duration::from_secs(1), async {
+            while carrier.requests.capacity() != 0 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        release_tx.send(()).unwrap();
+        assert_eq!(tokio::time::timeout(core::time::Duration::from_secs(1), next)
+            .await.unwrap().unwrap().unwrap().registers.eax, 2);
+        drop(carrier);
+        worker.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn reusable_carrier_serializes_concurrent_cross_thread_callers() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let carrier = Arc::new(ExecutionCarrier {
+            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+        });
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+            runtime.block_on(carrier_requests(endpoint, |handle, _| {
+                let mut exit = v::vx86::Exit::default();
+                exit.registers.eax = handle as u32;
+                Ok(exit)
+            }, tokio::time::Instant::now));
+        });
+        let mut callers = Vec::new();
+        for handle in 0..32 {
+            let carrier = Arc::clone(&carrier);
+            callers.push(tokio::spawn(async move { carrier.execute(handle, false).await }));
+        }
+        let mut results = Vec::new();
+        for caller in callers {
+            results.push(tokio::time::timeout(core::time::Duration::from_secs(1), caller)
+                .await.unwrap().unwrap().unwrap().registers.eax);
+        }
+        results.sort_unstable();
+        assert_eq!(results, (0..32).collect::<Vec<_>>());
+        drop(carrier);
+        worker.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn reusable_carrier_reports_dropped_worker_to_pending_caller() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let completion = Arc::new(Completion::new());
+        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let worker = tokio::spawn(async move {
+            let _endpoint = endpoint;
+            core::future::pending::<()>().await;
+        });
+        let carrier = Arc::new(ExecutionCarrier {
+            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+        });
+        let pending = {
+            let carrier = Arc::clone(&carrier);
+            tokio::spawn(async move { carrier.execute(1, false).await })
+        };
+        tokio::time::timeout(core::time::Duration::from_secs(1), async {
+            while carrier.requests.capacity() != 0 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        worker.abort();
+        assert!(worker.await.is_err());
+        assert_eq!(tokio::time::timeout(core::time::Duration::from_secs(1), pending)
+            .await.unwrap().unwrap().unwrap_err(), Error::CarrierLost);
     }
 
     #[test]
