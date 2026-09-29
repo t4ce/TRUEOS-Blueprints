@@ -447,7 +447,6 @@ fn present_text(frame: &mut Frame, game: &Tetris, paused: bool) -> Result<(), Er
     let muted = rgba(150, 172, 194, 255);
     let layout = Layout::fit(frame.width(), frame.height());
     let rows = [
-        layout.row("GAMES / TETRIS", 44., 25., 33., white),
         layout.row(&score, 462., 114., 21., white),
         layout.row(&level_text, 462., 155., 21., white),
         layout.row(&rows_text, 462., 196., 21., white),
