@@ -15,6 +15,7 @@ members = [
     "probes/framework_stack",
     "apps/gridpaper",
     "apps/gboi",
+    "apps/games",
     "apps/hello_world",
     "apps/hello_world_replicatable",
     "buildins/img",

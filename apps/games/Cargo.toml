@@ -1,0 +1,16 @@
+[package]
+name = "games"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "games"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+microgames = { path = "../../../MicroGames" }
+trueos = { workspace = true, features = ["ui4-scene", "default-global-allocator", "default-panic-handler"] }
+trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }
