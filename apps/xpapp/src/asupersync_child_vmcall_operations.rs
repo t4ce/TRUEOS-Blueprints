@@ -1627,6 +1627,81 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetCursorPos {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::SetCursorPos { pid, x, y }) =
+                            action
+                        else {
+                            return Err("SetCursorPos produced unexpected action".into());
+                        };
+
+                        let target = session.set_cursor_pos(pid, x, y).map_err(str::to_owned)?;
+                        let mut route_slot = None;
+                        let mut native_result = "none-no-selected-virtual-cursor";
+                        if let Some(hwnd) = target {
+                            if let Some(frame) = frames.get(&hwnd) {
+                                let routes = frame
+                                    .input_routes()
+                                    .map_err(|error| format!("XPAPP UI4 input routes: {error:?}"))?;
+                                if let Some(route) = routes
+                                    .iter()
+                                    .find(|route| route.selected_for_window && route.vcursor)
+                                {
+                                    route_slot = Some(route.cursor.slot_id);
+                                    let buttons_down = hid::hid_hut_mice()
+                                        .into_iter()
+                                        .find(|mouse| {
+                                            mouse.controller_id == route.cursor.controller_id
+                                                && mouse.slot_id == route.cursor.slot_id
+                                                && mouse.ep_target == route.cursor.ep_target
+                                        })
+                                        .map_or(0, |mouse| mouse.buttons_down);
+                                    native_result = match hid::write_cursor(
+                                        route.cursor.slot_id,
+                                        x,
+                                        y,
+                                        buttons_down,
+                                        0,
+                                        0,
+                                    ) {
+                                        Ok(()) => "teleport",
+                                        Err(_) => "write-error",
+                                    };
+                                }
+                            }
+                        }
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "XPAPP CHILD SETCURSORPOS RESULT pid={} tid={} x={} y={} hwnd={} vcursor_slot={} ui4_cursor_action={} guest_cursor_updated=1 result=TRUE cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                x,
+                                y,
+                                target.map_or_else(|| "<none>".to_owned(), |hwnd| format!("0x{hwnd:08x}")),
+                                route_slot.map_or_else(|| "<none>".to_owned(), |slot| format!("{slot}")),
+                                native_result,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::ScreenToClient {
                         let action = session
                             .process_mut(active_pid)

@@ -531,6 +531,14 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::SetCursorPos => {
+                let [_, x, y] = arguments::<3>(memory, esp)?;
+                Ok(PersonalityAction::Session(SessionRequest::SetCursorPos {
+                    pid,
+                    x: x as i32,
+                    y: y as i32,
+                }))
+            }
             ProviderOp::D3D8Release => {
                 let result = self.d3d8_release(esp, memory)?;
                 self.call_count = self

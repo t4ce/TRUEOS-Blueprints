@@ -1480,6 +1480,9 @@
                     PersonalityAction::Session(SessionRequest::ScreenToClient { .. }) => {
                         return Err("launcher requested child-only ScreenToClient".into());
                     }
+                    PersonalityAction::Session(SessionRequest::SetCursorPos { .. }) => {
+                        return Err("launcher requested child-only SetCursorPos".into());
+                    }
                     PersonalityAction::Session(SessionRequest::ClientToScreen { .. }) => {
                         return Err("launcher requested child-only ClientToScreen".into());
                     }

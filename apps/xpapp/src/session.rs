@@ -863,6 +863,11 @@ pub enum SessionRequest {
     ReleaseCapture {
         pid: Pid,
     },
+    SetCursorPos {
+        pid: Pid,
+        x: i32,
+        y: i32,
+    },
     ScreenToClient {
         pid: Pid,
         hwnd: u32,
@@ -1880,6 +1885,39 @@ impl XpappSession {
             .xp
             .set_cursor_position(x, y);
         Ok(())
+    }
+
+    /// Updates the XP virtual desktop cursor and selects the UI4 frame, if
+    /// any, whose virtual cursor may mirror the guest warp.  Physical HID
+    /// devices remain hardware-owned and are never written directly.
+    pub fn set_cursor_pos(
+        &mut self,
+        pid: Pid,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<u32>, &'static str> {
+        let belongs_to = |hwnd| {
+            self.windows
+                .get(&hwnd)
+                .is_some_and(|window| window.owner.pid == pid)
+        };
+        let target = self
+            .mouse_capture
+            .filter(|&hwnd| belongs_to(hwnd))
+            .or_else(|| self.foreground_window.filter(|&hwnd| belongs_to(hwnd)))
+            .or_else(|| self.focused_window.filter(|&hwnd| belongs_to(hwnd)))
+            .or_else(|| {
+                self.windows
+                    .iter()
+                    .find_map(|(&hwnd, window)| (window.owner.pid == pid).then_some(hwnd))
+            });
+
+        self.processes
+            .get_mut(&pid)
+            .ok_or("SetCursorPos process missing")?
+            .xp
+            .set_cursor_position(x, y);
+        Ok(target)
     }
 
     pub fn route_ui4_key_input(
