@@ -67,7 +67,7 @@ const MESSAGE_BOX_MAX_ANSI_BYTES: usize = 4096;
 /// Temporarily bypass Warcraft's front-end map selection and launch the known
 /// TRUEOSFS-backed Booty Bay map directly.  Set this to false to restore the
 /// ordinary front-end command line.
-const DIRECT_BOOTY_BAY_LAUNCH: bool = true;
+const DIRECT_BOOTY_BAY_LAUNCH: bool = false;
 /// Keep the original 1280x720 compatibility viewport available for raster
 /// bring-up, but normally advertise the physical 2560x1440 desktop to War3.
 const DIRECT_1440P_VIRTUAL_DISPLAY: bool = true;
@@ -77,18 +77,20 @@ const VIRTUAL_DISPLAY_SIZE: (u32, u32) = if DIRECT_1440P_VIRTUAL_DISPLAY {
     GAME_VIEWPORT_SIZE
 };
 const BOOTY_BAY_LOADFILE: &[u8] = b"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\0";
-const CHILD_NORMAL_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl\0";
+const CHILD_NORMAL_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound\0";
 const CHILD_BOOTY_BAY_COMMAND_LINE: &[u8] =
-    b"\"war3.exe\" -opengl -loadfile \"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\"\0";
+    b"\"war3.exe\" -opengl -loadfile \"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\" -nosound\0";
 const CHILD_NORMAL_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
     (CRT_ARG0_VA, b"war3.exe\0"),
     (CRT_ARG1_VA, b"-opengl\0"),
+    (CRT_ARG2_VA, b"-nosound\0"),
 ];
 const CHILD_BOOTY_BAY_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
     (CRT_ARG0_VA, b"war3.exe\0"),
     (CRT_ARG1_VA, b"-opengl\0"),
     (CRT_ARG2_VA, b"-loadfile\0"),
     (CRT_ARG3_VA, BOOTY_BAY_LOADFILE),
+    (CRT_ARG4_VA, b"-nosound\0"),
 ];
 const CHILD_COMMAND_LINE: &[u8] = if DIRECT_BOOTY_BAY_LAUNCH {
     CHILD_BOOTY_BAY_COMMAND_LINE
