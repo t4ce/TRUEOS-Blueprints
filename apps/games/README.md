@@ -6,7 +6,8 @@ uses the same retained cube patch mesh and kernel hull/domain shader contract
 as Cubes Key 2. The shader's opaque RGB555 mode preserves MicroGames'
 piece colors. Tetris rules and scoring come from MicroGames; Minesweeper
 reveal, flag, clues, and win/loss rules come from Gamie.
-TRUEOS FontKernel renders the foreground labels. The board layer clears to
+TRUEOS FontKernel renders the sidebar labels; CPU MicroFont stamps the smaller
+Minesweeper digits and markers into a retained UI4 sprite atlas. The board layer clears to
 50% alpha; the cube faces remain opaque. The camera fits the entire playfield,
 and maximizing or restoring the UI4 window scales the board and text together.
 Quarter-size hull cubes frame both the whole UI4 window and the playfield.

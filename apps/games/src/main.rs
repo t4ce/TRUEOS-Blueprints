@@ -14,7 +14,7 @@ use trueos::input;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
     BackgroundLayer, Damage, Error as UiError, Font, FontCanvasRow, Frame, MenuEntry,
-    POINTER_BUTTON_PRIMARY, output_dimensions, rgba,
+    POINTER_BUTTON_PRIMARY, SpriteCorner, SpriteQuad, output_dimensions, rgba,
 };
 use trueos::vgpu::{
     BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ, BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_VERTEX,
@@ -42,6 +42,11 @@ const CUBE_VERTICES: [u8; 12] = [0; 12];
 const CUBE_INDICES: [u8; 44 * 4] = [0; 44 * 4];
 const CUSTOM_RGB555: u32 = 1 << 15;
 const BG: u32 = u32::from_le_bytes([11, 17, 30, 128]);
+const MINE_GLYPH_SPRITE: u32 = 1;
+const MINE_GLYPHS: &[u8; 10] = b"12345678FX";
+const MINE_TILE_WIDTH: usize = 16;
+const MINE_TILE_HEIGHT: usize = 26;
+const MINE_ATLAS_WIDTH: usize = MINE_GLYPHS.len() * MINE_TILE_WIDTH;
 const SCENE_WIDTH: f32 = SCENE_HEIGHT * WIDTH as f32 / HEIGHT as f32;
 const SCENE_HEIGHT: f32 = 25.0;
 
@@ -125,6 +130,7 @@ fn run() -> Result<(), Error> {
         .unwrap_or((80, 60));
     let mut frame =
         Frame::open_layered(x, y, WIDTH, HEIGHT, 60).map_err(|e| Error::Ui("open frame", e))?;
+    upload_mine_glyphs(&mut frame)?;
     let mut background = frame
         .background()
         .map_err(|e| Error::Ui("background layer", e))?;
@@ -666,6 +672,88 @@ fn rgb555(color: Rgb8) -> u32 {
     CUSTOM_RGB555 | quantize(color.r) | (quantize(color.g) << 5) | (quantize(color.b) << 10)
 }
 
+fn upload_mine_glyphs(frame: &mut Frame) -> Result<(), Error> {
+    let mut atlas = alloc::vec![0_u8; MINE_ATLAS_WIDTH * MINE_TILE_HEIGHT * 4];
+    for (index, &glyph) in MINE_GLYPHS.iter().enumerate() {
+        let mut mask = [0_u8; microfont::FWIDTH * microfont::FHEIGHT];
+        microfont::stamp_bytes(
+            &mut mask,
+            microfont::FWIDTH,
+            microfont::FHEIGHT,
+            0,
+            0,
+            core::slice::from_ref(&glyph),
+            1_u8,
+        )
+        .map_err(|_| Error::Ui("stamp mine glyph", UiError::Invalid))?;
+        for y in 0..microfont::FHEIGHT {
+            for x in 0..microfont::FWIDTH {
+                if mask[y * microfont::FWIDTH + x] == 0 {
+                    continue;
+                }
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let px = index * MINE_TILE_WIDTH + 2 + x * 2 + dx;
+                        let py = 2 + y * 2 + dy;
+                        let offset = (py * MINE_ATLAS_WIDTH + px) * 4;
+                        atlas[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+                    }
+                }
+            }
+        }
+    }
+    frame
+        .upload_sprite_rgba8(
+            MINE_GLYPH_SPRITE,
+            MINE_ATLAS_WIDTH as u32,
+            MINE_TILE_HEIGHT as u32,
+            &atlas,
+        )
+        .map_err(|e| Error::Ui("upload mine glyphs", e))
+}
+
+fn mine_glyph_quad(layout: &Layout, glyph: u8, col: usize, row: usize, color: u32) -> SpriteQuad {
+    let index = MINE_GLYPHS
+        .iter()
+        .position(|&candidate| candidate == glyph)
+        .unwrap();
+    let u0 = index as f32 / MINE_GLYPHS.len() as f32;
+    let u1 = (index + 1) as f32 / MINE_GLYPHS.len() as f32;
+    let x0 = layout.offset_x + (106.8 + col as f32 * 31.97) * layout.scale;
+    let y0 = layout.offset_y + (53.6 + row as f32 * 31.97) * layout.scale;
+    let x1 = x0 + MINE_TILE_WIDTH as f32 * layout.scale;
+    let y1 = y0 + MINE_TILE_HEIGHT as f32 * layout.scale;
+    SpriteQuad {
+        sprite_id: MINE_GLYPH_SPRITE,
+        c0: SpriteCorner {
+            x: x0,
+            y: y0,
+            u: u0,
+            v: 0.,
+        },
+        c1: SpriteCorner {
+            x: x1,
+            y: y0,
+            u: u1,
+            v: 0.,
+        },
+        c2: SpriteCorner {
+            x: x1,
+            y: y1,
+            u: u1,
+            v: 1.,
+        },
+        c3: SpriteCorner {
+            x: x0,
+            y: y1,
+            u: u0,
+            v: 1.,
+        },
+        color_rgba: color,
+        source_over: true,
+    }
+}
+
 fn present_text(
     frame: &mut Frame,
     mode: Mode,
@@ -683,7 +771,8 @@ fn present_text(
     let muted = rgba(150, 172, 194, 255);
     let selected = rgba(160, 233, 246, 255);
     let layout = Layout::fit(frame.width(), frame.height());
-    let mut rows = Vec::with_capacity(220);
+    let mut rows = Vec::with_capacity(16);
+    let mut glyph_quads = Vec::with_capacity(200);
     rows.push(layout.row(
         "1  TETRIS",
         462.,
@@ -775,11 +864,11 @@ fn present_text(
                         MineCellStatus::Exploded => white,
                         _ => mine_number_color(cell.adjacent_mine_count()),
                     };
-                    rows.push(layout.row(
-                        label,
-                        109. + col as f32 * 31.97,
-                        53. + row as f32 * 31.97,
-                        23.,
+                    glyph_quads.push(mine_glyph_quad(
+                        &layout,
+                        label.as_bytes()[0],
+                        col,
+                        row,
                         color,
                     ));
                 }
@@ -796,6 +885,11 @@ fn present_text(
     frame
         .draw_font_canvas_view(canvas, (0, 0))
         .map_err(|e| Error::Ui("draw text", e))?;
+    if !glyph_quads.is_empty() {
+        frame
+            .draw_sprite_quads(&glyph_quads)
+            .map_err(|e| Error::Ui("draw mine glyphs", e))?;
+    }
     frame
         .publish(Damage::full(canvas.0, canvas.1))
         .map_err(|e| Error::Ui("publish text", e))
