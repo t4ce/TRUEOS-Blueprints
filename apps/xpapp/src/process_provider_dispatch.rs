@@ -1787,7 +1787,7 @@ impl XpProcess {
                         return Err(ProviderDispatchError::Frontier {
                             api: "CreateFileA",
                             detail: format!(
-                                "Warcraft file disposition=0x{creation_disposition:08x}"
+                                "Warcraft file path={path:?} disposition=0x{creation_disposition:08x}"
                             ),
                         });
                     }
