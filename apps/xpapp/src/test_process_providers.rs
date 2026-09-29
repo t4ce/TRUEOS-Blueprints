@@ -664,6 +664,8 @@
             xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
             Ok(PersonalityAction::OpenFile(OpenFileRequest {
                 key: ThreadKey { pid: 2, tid: 3 },
+                caller_return: 0x0041_08d6,
+                provider_esp: esp,
                 path: "war3x.mpq".into(),
                 desired_access: GENERIC_READ,
                 share_mode: 1,

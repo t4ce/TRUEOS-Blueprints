@@ -3184,6 +3184,22 @@ fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
     }
 }
 
+fn stack_execution_window(address_space: &AddressSpace, eip: u32) -> String {
+    let start = eip.saturating_sub(32);
+    let mut bytes = [0; 96];
+    match address_space.read(start, &mut bytes) {
+        Ok(96) => format!(
+            "start=0x{start:08x} bytes={}",
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => format!("start=0x{start:08x} <unreadable>"),
+    }
+}
+
 use xpapp::process::read_guest_words;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

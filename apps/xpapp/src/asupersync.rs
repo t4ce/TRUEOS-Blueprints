@@ -2529,6 +2529,11 @@ pub(super) async fn run_loop(
                     .unwrap_or_else(|error| format!("<unreadable:{error}>"));
                     let (owner, rva) = child_pc_owner(child, registers.eip)
                         .unwrap_or(("unmapped-or-stack", 0));
+                    let file_operations = session
+                        .process(active_key.pid)
+                        .map(|process| process.xp.file_operation_trace())
+                        .map(|trace| trace.iter().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default();
                     logl::log!(
                         level::IMPORTANT,
                         format_args!(
@@ -2552,8 +2557,17 @@ pub(super) async fn run_loop(
                             seh_registration_head(&child.address_space, registers.fs_base),
                             child.execution,
                             scope,
-                            exception_code_window(&child.address_space, registers.eip),
+                            stack_execution_window(&child.address_space, registers.eip),
                             stack,
+                        ),
+                    );
+                    logl::log!(
+                        level::IMPORTANT,
+                        format_args!(
+                            "XPAPP CHILD FIRST LOW ADDRESS FAULT FILE TRACE pid={} tid={} operations={:?}",
+                            active_key.pid,
+                            active_key.tid,
+                            file_operations,
                         ),
                     );
                 }

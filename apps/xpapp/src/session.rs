@@ -728,6 +728,8 @@ pub struct CreateDirectoryRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenFileRequest {
     pub key: ThreadKey,
+    pub caller_return: u32,
+    pub provider_esp: u32,
     pub path: String,
     pub desired_access: u32,
     pub share_mode: u32,

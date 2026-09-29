@@ -2243,6 +2243,7 @@ pub struct XpProcess {
     token_handles: HashMap<u32, TokenHandle>,
     next_token_handle: u32,
     file_handles: HashMap<u32, FileHandle>,
+    last_file_operations: VecDeque<String>,
     war3_mpq_bytes: Option<Arc<Vec<u8>>>,
     resident_files: HashMap<u32, ResidentFile>,
     next_resident_file: u32,
@@ -2737,6 +2738,7 @@ impl XpProcess {
             token_handles: HashMap::new(),
             next_token_handle: TOKEN_HANDLE_BASE,
             file_handles: HashMap::new(),
+            last_file_operations: VecDeque::new(),
             war3_mpq_bytes: None,
             resident_files: HashMap::new(),
             next_resident_file: 1,
@@ -3110,6 +3112,18 @@ impl XpProcess {
             },
         );
         Ok(handle)
+    }
+
+    pub fn record_file_operation(&mut self, record: String) {
+        const FILE_OPERATION_TRACE_LIMIT: usize = 16;
+        if self.last_file_operations.len() == FILE_OPERATION_TRACE_LIMIT {
+            self.last_file_operations.pop_front();
+        }
+        self.last_file_operations.push_back(record);
+    }
+
+    pub fn file_operation_trace(&self) -> &VecDeque<String> {
+        &self.last_file_operations
     }
 
     pub fn close_registry_handle(&mut self, handle: u32) -> bool {

@@ -456,11 +456,19 @@
                                     logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
-                                            "XPAPP CHILD CREATEFILE TRUEOSFS pid={} tid={} win_path={:?} mount=\"C:\\Warcraft III\" trueos_dir=\"/common/Warcraft III\" stored={:?} trueos_path={:?} bytes={} disposition=OPEN_EXISTING result=0x{:08x} last_error=0",
+                                            "XPAPP CHILD CREATEFILE TRUEOSFS pid={} tid={} win_path={:?} mount=\"C:\\Warcraft III\" trueos_dir=\"/common/Warcraft III\" stored={:?} trueos_path={:?} bytes={} disposition=OPEN_EXISTING caller_ret=0x{:08x} provider_esp=0x{:08x} result=0x{:08x} last_error=0",
                                             active_pid, active_tid, win_path, stored, trueos_path,
-                                            byte_len, handle,
+                                            byte_len, request.caller_return, request.provider_esp, handle,
                                         ),
                                     );
+                                    session.process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .record_file_operation(format!(
+                                            "CreateFileA handle=0x{handle:08x} caller_ret=0x{:08x} entry_esp=0x{:08x} path={win_path:?} result=0x{handle:08x}",
+                                            request.caller_return,
+                                            request.provider_esp,
+                                        ));
                                     handle
                                 } else {
                                     session
@@ -1965,6 +1973,34 @@
                                 active_tid,
                                 running_module_name,
                                 provider_id,
+                                frame[0],
+                                frame[1],
+                                frame[2],
+                                frame[3],
+                                frame[4],
+                                frame[5],
+                                frame[6],
+                                frame[7],
+                            ),
+                        );
+                    }
+                    if provider.module.eq_ignore_ascii_case("WINMM.dll") {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            8,
+                        )?;
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "XPAPP CHILD WINMM AUDIO PROBE pid={} tid={} during=\"{}\" provider_id={} symbol={} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x} frame=[0x{:08x},0x{:08x},0x{:08x},0x{:08x},0x{:08x},0x{:08x},0x{:08x}] action=frontier-before-audio-semantics",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                symbol(),
+                                exit.registers.eip,
+                                exit.registers.esp,
                                 frame[0],
                                 frame[1],
                                 frame[2],

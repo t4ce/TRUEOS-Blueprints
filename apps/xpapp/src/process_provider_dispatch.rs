@@ -1877,6 +1877,8 @@ impl XpProcess {
                         .ok_or("call count overflow")?;
                     return Ok(PersonalityAction::OpenFile(OpenFileRequest {
                         key: ThreadKey { pid, tid },
+                        caller_return,
+                        provider_esp: esp,
                         path: relative,
                         desired_access,
                         share_mode,
@@ -1992,8 +1994,9 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(handle))
             }
             ProviderOp::GetFileSize => {
-                let [_, handle, high] = arguments::<3>(memory, esp)?;
+                let [caller_return, handle, high] = arguments::<3>(memory, esp)?;
                 let file = self.file_handle(handle)?;
+                let cursor = file.cursor;
                 let length = self.file_length(file, self_image_bytes)?;
                 if high != 0 {
                     memory.write(high, &((length >> 32) as u32).to_le_bytes())?;
@@ -2002,12 +2005,17 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                self.record_file_operation(format!(
+                    "GetFileSize handle=0x{handle:08x} caller_ret=0x{caller_return:08x} entry_esp=0x{esp:08x} cursor={cursor} length={length} result=0x{:08x}",
+                    length as u32,
+                ));
                 Ok(PersonalityAction::Return(length as u32))
             }
             ProviderOp::SetFilePointer => {
-                let [_, handle, distance_low, distance_high, move_method] =
+                let [caller_return, handle, distance_low, distance_high, move_method] =
                     arguments::<5>(memory, esp)?;
                 let file = self.file_handle(handle)?;
+                let cursor_before = file.cursor;
                 let high = if distance_high == 0 {
                     0i64
                 } else {
@@ -2048,10 +2056,13 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                self.record_file_operation(format!(
+                    "SetFilePointer handle=0x{handle:08x} caller_ret=0x{caller_return:08x} entry_esp=0x{esp:08x} cursor_before={cursor_before} cursor_after={cursor} move_method={move_method} result=0x{cursor:08x}",
+                ));
                 Ok(PersonalityAction::Return(cursor as u32))
             }
             ProviderOp::ReadFile => {
-                let [_, handle, output, requested, bytes_read, overlapped] =
+                let [caller_return, handle, output, requested, bytes_read, overlapped] =
                     arguments::<6>(memory, esp)?;
                 if overlapped != 0 {
                     return Err(ProviderDispatchError::Frontier {
@@ -2147,6 +2158,13 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                self.record_file_operation(format!(
+                    "ReadFile handle=0x{handle:08x} caller_ret=0x{caller_return:08x} entry_esp=0x{esp:08x} cursor_before={} cursor_after={} requested={} transferred={} result=1",
+                    file.cursor,
+                    file.cursor + transferred as u64,
+                    requested,
+                    transferred,
+                ));
                 Ok(PersonalityAction::Return(1))
             }
             ProviderOp::WriteFile => {
@@ -3109,10 +3127,13 @@ impl XpProcess {
                 }))
             }
             ProviderOp::CloseHandle => {
-                let handle = arguments::<2>(memory, esp)?[1];
+                let [caller_return, handle] = arguments::<2>(memory, esp)?;
                 if self.token_handles.remove(&handle).is_some()
                     || self.file_handles.remove(&handle).is_some()
                 {
+                    self.record_file_operation(format!(
+                        "CloseHandle handle=0x{handle:08x} caller_ret=0x{caller_return:08x} entry_esp=0x{esp:08x} result=1"
+                    ));
                     Some(PersonalityAction::Return(1))
                 } else {
                     Some(PersonalityAction::Session(SessionRequest::CloseHandle {
