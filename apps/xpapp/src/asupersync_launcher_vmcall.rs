@@ -521,6 +521,10 @@
                     PersonalityAction::OpenFile(_) => {
                         return Err("launcher requested child-only async file open".into());
                     }
+                    PersonalityAction::OpenDiagnosticFile(_)
+                    | PersonalityAction::PersistDiagnosticFile(_) => {
+                        return Err("launcher requested child-only diagnostic file operation".into());
+                    }
                     PersonalityAction::Return(value) => {
                         if WinCall::from_import(&import) == WinCall::TlsGetValue {
                             let frame = read_guest_words(&memory, exit.registers.esp, 2)?;

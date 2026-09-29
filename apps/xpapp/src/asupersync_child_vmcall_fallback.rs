@@ -485,6 +485,132 @@
                                     .map_err(|error| error.to_string())?;
                                 continue;
                             }
+                            Ok(PersonalityAction::OpenDiagnosticFile(request)) => {
+                                let (directory, leaf) = request
+                                    .trueos_path
+                                    .rsplit_once('/')
+                                    .ok_or("diagnostic TRUEOSFS path has no parent")?;
+                                let listing = async_fs::list_dir(directory.as_bytes())
+                                    .await
+                                    .map_err(|error| {
+                                        format!(
+                                            "list {directory} for diagnostic CreateFileA: TRUEOSFS {error}"
+                                        )
+                                    })?;
+                                if listing.truncated {
+                                    return Err("diagnostic directory listing truncated".into());
+                                }
+                                let stored = child_loader::resolve_file(&listing, leaf)
+                                    .map_err(str::to_owned)?;
+                                let existing_bytes = if let Some(stored) = stored {
+                                    let path = format!("{directory}/{stored}");
+                                    Some(async_fs::read_file(path.as_bytes()).await.map_err(|error| {
+                                        format!("read {path} for diagnostic CreateFileA: TRUEOSFS {error}")
+                                    })?)
+                                } else {
+                                    None
+                                };
+                                let (handle, existed, initial_bytes) = session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .admit_diagnostic_file(&request, existing_bytes)
+                                    .map_err(|error| error.to_string())?;
+                                if handle != u32::MAX && !existed {
+                                    async_fs::create_dir_all(directory.as_bytes())
+                                        .await
+                                        .map_err(|error| format!("create {directory}: TRUEOSFS {error}"))?;
+                                    async_fs::write_file(request.trueos_path.as_bytes(), &[])
+                                        .await
+                                        .map_err(|error| {
+                                            format!(
+                                                "create {} for diagnostic CreateFileA: TRUEOSFS {error}",
+                                                request.trueos_path
+                                            )
+                                        })?;
+                                }
+                                let last_error = session
+                                    .process(active_pid)
+                                    .ok_or("child process missing")?
+                                    .xp
+                                    .last_error_for_thread(active_tid);
+                                logl::log!(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "XPAPP DIAGNOSTIC FILE OPEN RESULT pid={} tid={} path={:?} backing={:?} access=0x{:08x} share=0x{:08x} disposition=0x{:08x} flags=0x{:08x} existed={} initial_bytes={} handle=0x{:08x} last_error={}",
+                                        active_pid,
+                                        active_tid,
+                                        request.win_path,
+                                        request.trueos_path,
+                                        request.desired_access,
+                                        request.share_mode,
+                                        request.creation_disposition,
+                                        request.flags_and_attributes,
+                                        existed as u8,
+                                        initial_bytes,
+                                        handle,
+                                        last_error,
+                                    ),
+                                );
+                                let mut registers = exit.registers;
+                                registers.eax = handle;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
+                            Ok(PersonalityAction::PersistDiagnosticFile(request)) => {
+                                let (directory, _) = request
+                                    .trueos_path
+                                    .rsplit_once('/')
+                                    .ok_or("diagnostic TRUEOSFS path has no parent")?;
+                                let persisted = async {
+                                    async_fs::create_dir_all(directory.as_bytes()).await?;
+                                    async_fs::write_file(request.trueos_path.as_bytes(), &request.bytes).await
+                                }
+                                .await;
+                                let result = if let Err(error) = persisted {
+                                    session
+                                        .process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .set_last_error_for_thread(active_tid, 29);
+                                    logl::log!(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "XPAPP DIAGNOSTIC FILE WRITE RESULT pid={} tid={} handle=0x{:08x} path={:?} offset=preserved bytes={} result=0 last_error=29 error={}",
+                                            active_pid,
+                                            active_tid,
+                                            request.handle,
+                                            request.win_path,
+                                            request.bytes.len(),
+                                            error,
+                                        ),
+                                    );
+                                    0
+                                } else {
+                                    logl::log!(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "XPAPP DIAGNOSTIC FILE WRITE RESULT pid={} tid={} handle=0x{:08x} path={:?} bytes={} result=1",
+                                            active_pid,
+                                            active_tid,
+                                            request.handle,
+                                            request.win_path,
+                                            request.bytes.len(),
+                                        ),
+                                    );
+                                    1
+                                };
+                                let mut registers = exit.registers;
+                                registers.eax = result;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
                             Ok(PersonalityAction::Return(result)) => {
                                 if operation == child_loader::ProviderOp::WglMakeCurrent && result != 0 {
                                     if let Some((_,hwnd,_))=session.process(active_pid).and_then(|p|p.xp.gl_context_diagnostic(active_tid)) {

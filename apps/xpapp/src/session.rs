@@ -737,6 +737,30 @@ pub struct OpenFileRequest {
     pub template_file: u32,
 }
 
+/// A narrowly admitted crash-reporting file.  Its bytes remain guest-owned in
+/// the XP process, while TRUEOSFS I/O stays at the async coordinator boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticFileOpenRequest {
+    pub key: ThreadKey,
+    pub win_path: String,
+    pub trueos_path: String,
+    pub desired_access: u32,
+    pub share_mode: u32,
+    pub security_attributes: u32,
+    pub creation_disposition: u32,
+    pub flags_and_attributes: u32,
+    pub template_file: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersistDiagnosticFileRequest {
+    pub key: ThreadKey,
+    pub handle: u32,
+    pub win_path: String,
+    pub trueos_path: String,
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GetExitCodeProcessRequest {
     pub pid: Pid,
@@ -964,6 +988,8 @@ pub struct GuestCall {
 pub enum PersonalityAction {
     Return(u32),
     OpenFile(OpenFileRequest),
+    OpenDiagnosticFile(DiagnosticFileOpenRequest),
+    PersistDiagnosticFile(PersistDiagnosticFileRequest),
     Session(SessionRequest),
     WindowBlit(WindowBlitRequest),
     WindowFillRect(WindowFillRectRequest),

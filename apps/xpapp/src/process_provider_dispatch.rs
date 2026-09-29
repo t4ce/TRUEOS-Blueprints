@@ -1673,6 +1673,34 @@ impl XpProcess {
                     });
                 }
                 let path = read_c_string(memory, filename, 1024)?;
+                if let Some(trueos_path) = war3_diagnostic_file_path(&path) {
+                    if security_attributes != 0 || template_file != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!(
+                                "diagnostic security=0x{security_attributes:08x} \
+                                 template=0x{template_file:08x}"
+                            ),
+                        });
+                    }
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::OpenDiagnosticFile(
+                        DiagnosticFileOpenRequest {
+                            key: ThreadKey { pid, tid },
+                            win_path: path,
+                            trueos_path,
+                            desired_access,
+                            share_mode,
+                            security_attributes,
+                            creation_disposition,
+                            flags_and_attributes,
+                            template_file,
+                        },
+                    ));
+                }
                 if is_war3_scratch_path(&path) {
                     if security_attributes != 0 || template_file != 0 {
                         return Err(ProviderDispatchError::Frontier {
@@ -2131,7 +2159,14 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(1))
+                if let Some(request) = self.persist_diagnostic_file_request(
+                    ThreadKey { pid, tid },
+                    handle,
+                )? {
+                    Ok(PersonalityAction::PersistDiagnosticFile(request))
+                } else {
+                    Ok(PersonalityAction::Return(1))
+                }
             }
             ProviderOp::FlushFileBuffers => {
                 let [_, handle] = arguments::<2>(memory, esp)?;
@@ -2168,7 +2203,14 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(1))
+                if let Some(request) = self.persist_diagnostic_file_request(
+                    ThreadKey { pid, tid },
+                    handle,
+                )? {
+                    Ok(PersonalityAction::PersistDiagnosticFile(request))
+                } else {
+                    Ok(PersonalityAction::Return(1))
+                }
             }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self

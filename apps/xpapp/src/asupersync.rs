@@ -2516,10 +2516,10 @@ pub(super) async fn run_loop(
                     .filter(|child| child.pid == active_key.pid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
-                let first_null_write = exception.vector == Some(14)
-                    && exception.fault_linear == Some(0)
+                let first_low_address_fault = exception.vector == Some(14)
+                    && exception.fault_linear.is_some_and(|address| address < 0x1000)
                     && !child.first_null_write_snapshot_logged;
-                if first_null_write {
+                if first_low_address_fault {
                     let stack = read_guest_words(
                         &X86Memory(&child.address_space),
                         registers.esp,
@@ -2532,10 +2532,10 @@ pub(super) async fn run_loop(
                     logl::log!(
                         level::IMPORTANT,
                         format_args!(
-                            "XPAPP CHILD FIRST NULL WRITE pid={} tid={} vector=14 error=0x{:08x} access=write fault_address=0x00000000 eip=0x{:08x} eip_owner={} eip_rva=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x} seh_head={} execution={:?} scope={:?} code=\"{}\" stack={}",
+                            "XPAPP CHILD FIRST LOW ADDRESS FAULT pid={} tid={} vector=14 fault={} eip=0x{:08x} eip_owner={} eip_rva=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x} seh_head={} execution={:?} scope={:?} code=\"{}\" stack={}",
                             active_key.pid,
                             active_key.tid,
-                            exception.error.unwrap_or(0),
+                            child_exception_fault_detail(exception),
                             registers.eip,
                             owner,
                             rva,
@@ -2824,7 +2824,7 @@ pub(super) async fn run_loop(
                     .as_mut()
                     .filter(|child| child.pid == active_key.pid)
                     .ok_or_else(|| "exception child missing mutable pending state".to_owned())?;
-                if first_null_write {
+                if first_low_address_fault {
                     child.first_null_write_snapshot_logged = true;
                 }
                 if null_execute {

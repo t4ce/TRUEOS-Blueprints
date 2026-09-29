@@ -23,7 +23,7 @@ use crate::{
     session::{
         CreateDirectoryRequest, CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
         DuplicateHandleRequest,
-        GetExitCodeProcessRequest, GetQueuedCompletionStatusRequest, LoadImageRequest, MapCatalogEntry, OpenFileRequest, PersonalityAction, SessionRequest,
+        DiagnosticFileOpenRequest, GetExitCodeProcessRequest, GetQueuedCompletionStatusRequest, LoadImageRequest, MapCatalogEntry, OpenFileRequest, PersonalityAction, PersistDiagnosticFileRequest, SessionRequest,
         SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowGammaRampRequest, WindowTextRequest,
     },
     staticstr,
@@ -1599,6 +1599,7 @@ struct ScratchFile {
     path: String,
     bytes: Vec<u8>,
     attributes: u32,
+    trueos_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1708,6 +1709,30 @@ fn is_war3_scratch_path(path: &str) -> bool {
         canonical_file_path(path).as_str(),
         r"c:\windows\sintf16.dll" | r"c:\windows\sintf32.dll" | r"c:\windows\sintfnt.dll"
     )
+}
+
+/// Keep writable installation access constrained to crash reporting.  The
+/// returned TRUEOSFS spelling is intentionally fixed, rather than derived from
+/// arbitrary guest input, and every Errors component is validated first.
+fn war3_diagnostic_file_path(path: &str) -> Option<String> {
+    let canonical = canonical_file_path(path);
+    if canonical == r"c:\warcraft iii\crashsummaries.bin" {
+        return Some("/common/Warcraft III/CrashSummaries.bin".into());
+    }
+    let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
+    let mut components = relative.split('\\');
+    if !components.next()?.eq_ignore_ascii_case("errors") {
+        return None;
+    }
+    let tail: Vec<_> = components.collect();
+    if tail.is_empty()
+        || !tail
+            .iter()
+            .all(|part| !part.is_empty() && *part != "." && *part != "..")
+    {
+        return None;
+    }
+    Some(format!("/common/Warcraft III/errors/{}", tail.join("/")))
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -3183,9 +3208,197 @@ impl XpProcess {
                 path,
                 bytes: Vec::new(),
                 attributes,
+                trueos_path: None,
             },
         );
         Ok(id)
+    }
+
+    pub fn admit_diagnostic_file(
+        &mut self,
+        request: &DiagnosticFileOpenRequest,
+        existing_bytes: Option<Vec<u8>>,
+    ) -> Result<(u32, bool, usize), ProviderDispatchError> {
+        let canonical = canonical_file_path(&request.win_path);
+        let existing = self.scratch_paths.get(&canonical).copied();
+        let existed = existing.is_some() || existing_bytes.is_some();
+        let file_id = match request.creation_disposition {
+            CREATE_NEW => {
+                if existed {
+                    self.set_last_error(ERROR_FILE_EXISTS);
+                    return Ok((u32::MAX, true, 0));
+                }
+                self.create_diagnostic_scratch_file(
+                    canonical,
+                    request.flags_and_attributes,
+                    request.trueos_path.clone(),
+                    Vec::new(),
+                )?
+            }
+            CREATE_ALWAYS => {
+                if let Some(id) = existing {
+                    self.scratch_files
+                        .get_mut(&id)
+                        .ok_or("diagnostic file disappeared")?
+                        .bytes
+                        .clear();
+                    self.set_last_error(ERROR_ALREADY_EXISTS);
+                    id
+                } else {
+                    self.set_last_error(0);
+                    self.create_diagnostic_scratch_file(
+                        canonical,
+                        request.flags_and_attributes,
+                        request.trueos_path.clone(),
+                        Vec::new(),
+                    )?
+                }
+            }
+            OPEN_EXISTING => {
+                match existing {
+                    Some(id) => id,
+                    None => {
+                        let Some(bytes) = existing_bytes else {
+                            self.set_last_error(ERROR_FILE_NOT_FOUND);
+                            return Ok((u32::MAX, false, 0));
+                        };
+                        self.set_last_error(0);
+                        self.create_diagnostic_scratch_file(
+                            canonical,
+                            request.flags_and_attributes,
+                            request.trueos_path.clone(),
+                            bytes,
+                        )?
+                    }
+                }
+            }
+            OPEN_ALWAYS => {
+                if let Some(id) = existing {
+                    self.set_last_error(ERROR_ALREADY_EXISTS);
+                    id
+                } else if let Some(bytes) = existing_bytes {
+                    self.set_last_error(ERROR_ALREADY_EXISTS);
+                    self.create_diagnostic_scratch_file(
+                        canonical,
+                        request.flags_and_attributes,
+                        request.trueos_path.clone(),
+                        bytes,
+                    )?
+                } else {
+                    self.set_last_error(0);
+                    self.create_diagnostic_scratch_file(
+                        canonical,
+                        request.flags_and_attributes,
+                        request.trueos_path.clone(),
+                        Vec::new(),
+                    )?
+                }
+            }
+            TRUNCATE_EXISTING => {
+                if request.desired_access & GENERIC_WRITE == 0 {
+                    self.set_last_error(ERROR_ACCESS_DENIED);
+                    return Ok((u32::MAX, existed, 0));
+                }
+                if let Some(id) = existing {
+                    self.scratch_files
+                        .get_mut(&id)
+                        .ok_or("diagnostic file disappeared")?
+                        .bytes
+                        .clear();
+                    id
+                } else if existing_bytes.is_some() {
+                    self.create_diagnostic_scratch_file(
+                        canonical,
+                        request.flags_and_attributes,
+                        request.trueos_path.clone(),
+                        Vec::new(),
+                    )?
+                } else {
+                    self.set_last_error(ERROR_FILE_NOT_FOUND);
+                    return Ok((u32::MAX, false, 0));
+                }
+            }
+            other => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "CreateFileA",
+                    detail: format!(
+                        "diagnostic disposition={other} access=0x{:08x} share=0x{:08x} flags=0x{:08x}",
+                        request.desired_access, request.share_mode, request.flags_and_attributes,
+                    ),
+                });
+            }
+        };
+        let initial_bytes = self
+            .scratch_files
+            .get(&file_id)
+            .ok_or("diagnostic file disappeared")?
+            .bytes
+            .len();
+        let handle = self.next_file_handle;
+        self.next_file_handle = self
+            .next_file_handle
+            .checked_add(1)
+            .ok_or("file handle overflow")?;
+        self.file_handles.insert(
+            handle,
+            FileHandle {
+                backing: FileBacking::Scratch(file_id),
+                cursor: 0,
+                access: request.desired_access,
+                share: request.share_mode,
+            },
+        );
+        Ok((handle, existed, initial_bytes))
+    }
+
+    fn create_diagnostic_scratch_file(
+        &mut self,
+        path: String,
+        attributes: u32,
+        trueos_path: String,
+        bytes: Vec<u8>,
+    ) -> Result<u32, ProviderDispatchError> {
+        let id = self.next_scratch_file;
+        self.next_scratch_file = self
+            .next_scratch_file
+            .checked_add(1)
+            .ok_or("scratch file overflow")?;
+        self.scratch_paths.insert(path.clone(), id);
+        self.scratch_files.insert(
+            id,
+            ScratchFile {
+                path,
+                bytes,
+                attributes,
+                trueos_path: Some(trueos_path),
+            },
+        );
+        Ok(id)
+    }
+
+    fn persist_diagnostic_file_request(
+        &self,
+        key: ThreadKey,
+        handle: u32,
+    ) -> Result<Option<PersistDiagnosticFileRequest>, ProviderDispatchError> {
+        let file = self.file_handle(handle)?;
+        let FileBacking::Scratch(id) = file.backing else {
+            return Ok(None);
+        };
+        let scratch = self
+            .scratch_files
+            .get(&id)
+            .ok_or("scratch file disappeared")?;
+        let Some(trueos_path) = scratch.trueos_path.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some(PersistDiagnosticFileRequest {
+            key,
+            handle,
+            win_path: scratch.path.clone(),
+            trueos_path: trueos_path.clone(),
+            bytes: scratch.bytes.clone(),
+        }))
     }
 
     fn file_length(

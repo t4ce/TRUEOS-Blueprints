@@ -244,65 +244,53 @@ impl XpProcess {
                     .map_err(|e| gl_texture_error(API, format!("pipeline failed {e}")))?,
             );
         }
-        // The broker needs both the upload buffer and a resident sampler copy.
-        // Keep both bounded; do not allocate two full-resolution textures.
-        let mut strips = 0;
-        for top in (0..height).step_by(256) {
-            let rows = (height - top).min(256);
-            gl_fill_present_strip(&mut c.present_pixels, &frame.rgba, width, height, top, rows);
-            let pixels = &c.present_pixels;
-            let surface = runtime.device.acquire_ui4_surface(window_id).map_err(|e| {
-                gl_texture_error(API, format!("surface acquire failed strip={top} rc={e}"))
-            })?;
-            let info = surface.info();
-            if [info.width, info.height] != [width, height] {
-                return Err(gl_texture_error(API, "drawable/surface size mismatch"));
-            }
-            if top == 0 {
-                logl::log!(
-                    level::IMPORTANT,
-                    format_args!(
-                        "XPAPP GL PRESENT BEGIN tid={tid} reason={reason} hwnd=0x{:08x} ui4_window={window_id} drawable={width}x{height} surface_pitch={} strip_rows=256 upload_bytes={} accounting={:?}",
-                        c.hwnd,
-                        info.pitch,
-                        pixels.len(),
-                        runtime.device.info()
-                    ),
-                );
-            }
-            let renderer = runtime.textured_renderer.as_mut().unwrap();
-            let vertices = gl_present_strip_vertices(height, top, rows);
-            // The owned raster frame is an opaque, full-frame publication.
-            // Every strip, including the first, preserves other rows and
-            // must not allocate an unrelated UI4 depth target.
-            let result = renderer.draw_over(
-                runtime.queue,
-                surface,
-                &vertices,
-                &[0, 1, 2, 0, 2, 3],
-                &pixels,
-                width,
-                rows,
-            );
-            let point = result.map_err(|rc| {
-                let detail = format!("frame publication failed strip_top={top} rows={rows} rc={rc} stage={:?} accounting={:?}", renderer.last_failure(), runtime.device.info());
-                logl::log!(level::IMPORTANT, format_args!("XPAPP GL PRESENT FAIL {detail}"));
-                gl_texture_error(API, detail)
-            })?;
-            // Each submission consumes its surface lease. Wait before reusing
-            // upload storage, then reacquire the same unpublished UI4 frame.
-            runtime
-                .device
-                .wait(runtime.queue, point.value)
-                .map_err(|e| {
-                    gl_texture_error(API, format!("frame wait failed strip={top} rc={e}"))
-                })?;
-            strips += 1;
+        // Present-capable guests have a 128 MiB broker quota, including the
+        // upload buffer and resident sampler copy. Reuse a full-frame upload
+        // instead of repeatedly submitting and waiting on 256-row strips.
+        gl_fill_present_strip(&mut c.present_pixels, &frame.rgba, width, height, 0, height);
+        let surface = runtime.device.acquire_ui4_surface(window_id).map_err(|e| {
+            gl_texture_error(API, format!("surface acquire failed rc={e}"))
+        })?;
+        let info = surface.info();
+        if [info.width, info.height] != [width, height] {
+            return Err(gl_texture_error(API, "drawable/surface size mismatch"));
         }
         logl::log!(
             level::IMPORTANT,
             format_args!(
-                "XPAPP GL FRAME PRESENT tid={tid} reason={reason} draws={} size={width}x{height} strips={strips} nonblack_pixels={nonblack} raster=rust-fixed gpu=completed",
+                "XPAPP GL PRESENT BEGIN tid={tid} reason={reason} hwnd=0x{:08x} ui4_window={window_id} drawable={width}x{height} surface_pitch={} strip_rows={height} upload_bytes={} accounting={:?}",
+                c.hwnd,
+                info.pitch,
+                c.present_pixels.len(),
+                runtime.device.info()
+            ),
+        );
+        let renderer = runtime.textured_renderer.as_mut().unwrap();
+        let vertices = gl_present_strip_vertices(height, 0, height);
+        // Publish opaque color without allocating an unrelated UI4 depth target.
+        let result = renderer.draw_over(
+            runtime.queue,
+            surface,
+            &vertices,
+            &[0, 1, 2, 0, 2, 3],
+            &c.present_pixels,
+            width,
+            height,
+        );
+        let point = result.map_err(|rc| {
+            let detail = format!("frame publication failed rows={height} rc={rc} stage={:?} accounting={:?}", renderer.last_failure(), runtime.device.info());
+            logl::log!(level::IMPORTANT, format_args!("XPAPP GL PRESENT FAIL {detail}"));
+            gl_texture_error(API, detail)
+        })?;
+        // The submission consumes its surface lease. Complete it before the
+        // next frame can overwrite the reusable upload buffer.
+        runtime.device.wait(runtime.queue, point.value).map_err(|e| {
+            gl_texture_error(API, format!("frame wait failed rc={e}"))
+        })?;
+        logl::log!(
+            level::IMPORTANT,
+            format_args!(
+                "XPAPP GL FRAME PRESENT tid={tid} reason={reason} draws={} size={width}x{height} strips=1 nonblack_pixels={nonblack} raster=rust-fixed gpu=completed",
                 c.draw_count
             ),
         );
