@@ -1665,9 +1665,9 @@ fn warcraft_drive_relative_path(path: &str) -> Option<String> {
 }
 
 /// Maps is installed TRUEOSFS content, so it may only be observed as an
-/// existing directory. Save and Replay are the persistent guest-writable
-/// profile trees. The canonicalized drive-relative path is deliberately
-/// checked segment-by-segment so a guest cannot escape the TRUEOSFS tree.
+/// existing directory. Save, Replay, and Errors are persistent guest-writable
+/// trees. The canonicalized drive-relative path is deliberately checked
+/// segment-by-segment so a guest cannot escape the TRUEOSFS tree.
 fn war3_create_directory_path(path: &str) -> Option<(String, bool)> {
     let canonical = canonical_file_path(path);
     let canonical = canonical.trim_end_matches('\\');
@@ -1694,7 +1694,10 @@ fn war3_create_directory_path(path: &str) -> Option<(String, bool)> {
     }
     let mut parts = relative.split('\\');
     let root = parts.next()?;
-    if !root.eq_ignore_ascii_case("save") && !root.eq_ignore_ascii_case("replay") {
+    if !root.eq_ignore_ascii_case("save")
+        && !root.eq_ignore_ascii_case("replay")
+        && !root.eq_ignore_ascii_case("errors")
+    {
         return None;
     }
     Some((format!("/common/Warcraft III/{relative}"), true))

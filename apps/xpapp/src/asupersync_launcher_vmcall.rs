@@ -1480,6 +1480,9 @@
                     PersonalityAction::Session(SessionRequest::ScreenToClient { .. }) => {
                         return Err("launcher requested child-only ScreenToClient".into());
                     }
+                    PersonalityAction::Session(SessionRequest::ClientToScreen { .. }) => {
+                        return Err("launcher requested child-only ClientToScreen".into());
+                    }
                     PersonalityAction::Session(SessionRequest::GetWindowRect {
                         pid: _,
                         hwnd,

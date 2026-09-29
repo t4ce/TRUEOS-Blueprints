@@ -155,6 +155,7 @@ pub enum ProviderOp {
     CrtGetMainArgs,
     CrtOnExit,
     CrtVsnprintf,
+    CrtSprintf,
     CrtMalloc,
     CrtMemmove,
     CrtCeil,
@@ -280,6 +281,7 @@ pub enum ProviderOp {
     LoadCursorA,
     GetCursorPos,
     ScreenToClient,
+    ClientToScreen,
     RegisterClassA,
     RegisterClassExA,
     CreateWindowExA,
@@ -458,7 +460,7 @@ impl ProviderOp {
             Self::LoadImageA => 24,
             Self::LoadCursorA => 8,
             Self::GetCursorPos => 4,
-            Self::ScreenToClient => 8,
+            Self::ScreenToClient | Self::ClientToScreen => 8,
             Self::RegisterClassA | Self::RegisterClassExA => 4,
             Self::CreateWindowExA => 48,
             Self::PeekMessageA => 20,
@@ -500,6 +502,7 @@ impl ProviderOp {
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
             | Self::CrtVsnprintf
+            | Self::CrtSprintf
             | Self::CrtMalloc
             | Self::CrtMemmove
             | Self::CrtCeil
@@ -612,6 +615,7 @@ impl ProviderOp {
                 | Self::CrtGetMainArgs
                 | Self::CrtOnExit
                 | Self::CrtVsnprintf
+                | Self::CrtSprintf
                 | Self::CrtMemmove
                 | Self::CrtCeil
                 | Self::CrtFloor
@@ -870,6 +874,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LoadCursorA" => ProviderOp::LoadCursorA,
             "GetCursorPos" => ProviderOp::GetCursorPos,
             "ScreenToClient" => ProviderOp::ScreenToClient,
+            "ClientToScreen" => ProviderOp::ClientToScreen,
             "RegisterClassA" => ProviderOp::RegisterClassA,
             "RegisterClassExA" => ProviderOp::RegisterClassExA,
             "CreateWindowExA" => ProviderOp::CreateWindowExA,
@@ -990,6 +995,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,
             "_vsnprintf" => ProviderOp::CrtVsnprintf,
+            "sprintf" => ProviderOp::CrtSprintf,
             "malloc" => ProviderOp::CrtMalloc,
             "memmove" => ProviderOp::CrtMemmove,
             "ceil" => ProviderOp::CrtCeil,

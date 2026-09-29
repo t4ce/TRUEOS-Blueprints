@@ -68,21 +68,27 @@ const MESSAGE_BOX_MAX_ANSI_BYTES: usize = 4096;
 /// TRUEOSFS-backed Booty Bay map directly.  Set this to false to restore the
 /// ordinary front-end command line.
 const DIRECT_BOOTY_BAY_LAUNCH: bool = true;
+/// Keep the original 1280x720 compatibility viewport available for raster
+/// bring-up, but normally advertise the physical 2560x1440 desktop to War3.
+const DIRECT_1440P_VIRTUAL_DISPLAY: bool = true;
+const VIRTUAL_DISPLAY_SIZE: (u32, u32) = if DIRECT_1440P_VIRTUAL_DISPLAY {
+    (2560, 1440)
+} else {
+    GAME_VIEWPORT_SIZE
+};
 const BOOTY_BAY_LOADFILE: &[u8] = b"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\0";
-const CHILD_NORMAL_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound\0";
+const CHILD_NORMAL_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl\0";
 const CHILD_BOOTY_BAY_COMMAND_LINE: &[u8] =
-    b"\"war3.exe\" -opengl -nosound -loadfile \"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\"\0";
+    b"\"war3.exe\" -opengl -loadfile \"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\"\0";
 const CHILD_NORMAL_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
     (CRT_ARG0_VA, b"war3.exe\0"),
     (CRT_ARG1_VA, b"-opengl\0"),
-    (CRT_ARG2_VA, b"-nosound\0"),
 ];
 const CHILD_BOOTY_BAY_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
     (CRT_ARG0_VA, b"war3.exe\0"),
     (CRT_ARG1_VA, b"-opengl\0"),
-    (CRT_ARG2_VA, b"-nosound\0"),
-    (CRT_ARG3_VA, b"-loadfile\0"),
-    (CRT_ARG4_VA, BOOTY_BAY_LOADFILE),
+    (CRT_ARG2_VA, b"-loadfile\0"),
+    (CRT_ARG3_VA, BOOTY_BAY_LOADFILE),
 ];
 const CHILD_COMMAND_LINE: &[u8] = if DIRECT_BOOTY_BAY_LAUNCH {
     CHILD_BOOTY_BAY_COMMAND_LINE
@@ -310,15 +316,15 @@ async fn run() -> Result<(), String> {
     session
         .launcher_mut()
         .xp
-        .set_desktop_size(GAME_VIEWPORT_SIZE.0, GAME_VIEWPORT_SIZE.1);
+        .set_desktop_size(VIRTUAL_DISPLAY_SIZE.0, VIRTUAL_DISPLAY_SIZE.1);
     logl::emit(
         level::IMPORTANT,
         format_args!(
             "XPAPP DISPLAY physical_output={}x{} mode_change=none game_viewport={}x{} guest_contract=desktop+display-settings+gdi+gl-drawable",
             physical_output_width,
             physical_output_height,
-            GAME_VIEWPORT_SIZE.0,
-            GAME_VIEWPORT_SIZE.1,
+            VIRTUAL_DISPLAY_SIZE.0,
+            VIRTUAL_DISPLAY_SIZE.1,
         ),
     );
     let address_space = AddressSpace::create().map_err(|error| error.to_string())?;

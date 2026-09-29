@@ -868,6 +868,11 @@ pub enum SessionRequest {
         hwnd: u32,
         point: u32,
     },
+    ClientToScreen {
+        pid: Pid,
+        hwnd: u32,
+        point: u32,
+    },
     GetWindowRect {
         pid: Pid,
         hwnd: u32,
@@ -1807,6 +1812,20 @@ impl XpappSession {
             return Err("ScreenToClient window owner mismatch");
         }
         Ok((x.wrapping_sub(window.x), y.wrapping_sub(window.y)))
+    }
+
+    pub fn client_to_screen(
+        &self,
+        pid: Pid,
+        hwnd: u32,
+        x: i32,
+        y: i32,
+    ) -> Result<(i32, i32), &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("ClientToScreen unknown window")?;
+        if window.owner.pid != pid {
+            return Err("ClientToScreen window owner mismatch");
+        }
+        Ok((x.wrapping_add(window.x), y.wrapping_add(window.y)))
     }
 
     pub fn route_ui4_pointer_input(

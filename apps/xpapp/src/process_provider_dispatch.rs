@@ -799,6 +799,24 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::CrtSprintf => {
+                let [_, output, format] = arguments::<3>(memory, esp)?;
+                let result = wsprintf_a(memory, esp)?;
+                let text = read_c_string(memory, output, 4096)?;
+                let pattern = read_c_string(memory, format, 1024)?;
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD CRT SPRINTF pid={} tid={} output=0x{:08x} format={:?} chars={} text={:?} cleanup=0-by-thunk",
+                        pid, tid, output, pattern, result, text,
+                    ),
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::CrtMemmove => {
                 let [_, destination, source, count] = arguments::<4>(memory, esp)?;
                 let result = crt_memmove(memory, destination, source, count)?;
@@ -2778,6 +2796,20 @@ impl XpProcess {
                     });
                 }
                 Some(PersonalityAction::Session(SessionRequest::ScreenToClient {
+                    pid,
+                    hwnd,
+                    point,
+                }))
+            }
+            ProviderOp::ClientToScreen => {
+                let [_, hwnd, point] = arguments::<3>(memory, esp)?;
+                if point == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "ClientToScreen",
+                        detail: "null POINT".into(),
+                    });
+                }
+                Some(PersonalityAction::Session(SessionRequest::ClientToScreen {
                     pid,
                     hwnd,
                     point,
