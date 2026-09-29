@@ -1042,6 +1042,43 @@ impl XpProcess {
         Ok(1)
     }
 
+    fn get_user_name_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, output, size_ptr] = arguments::<3>(memory, esp)?;
+        if size_ptr == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetUserNameA",
+                detail: "null pcbBuffer".into(),
+            });
+        }
+
+        // GetUserNameA measures both its input capacity and successful output
+        // in ANSI characters including the terminating NUL.
+        let capacity = read_u32(memory, size_ptr)?;
+        let required = u32::try_from(TRUEOS_USER_NAME.len())
+            .map_err(|_| ProviderDispatchError::Fault("GetUserNameA length"))?
+            .checked_add(1)
+            .ok_or(ProviderDispatchError::Fault("GetUserNameA length"))?;
+        if output == 0 || capacity < required {
+            memory.write(size_ptr, &required.to_le_bytes())?;
+            self.set_last_error(ERROR_BUFFER_OVERFLOW);
+            return Ok(0);
+        }
+
+        memory.write(output, TRUEOS_USER_NAME)?;
+        memory.write(
+            output
+                .checked_add(required - 1)
+                .ok_or(ProviderDispatchError::Fault("GetUserNameA output"))?,
+            &[0],
+        )?;
+        memory.write(size_ptr, &required.to_le_bytes())?;
+        Ok(1)
+    }
+
     fn get_windows_directory_a(
         &self,
         esp: u32,

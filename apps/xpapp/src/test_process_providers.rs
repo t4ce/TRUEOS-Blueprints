@@ -676,6 +676,85 @@
     }
 
     #[test]
+    fn child_get_user_name_a_returns_t4ce() {
+        let provider = ProviderImport {
+            module: "ADVAPI32.dll".into(),
+            symbol: ProviderSymbol::Name("GetUserNameA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetUserNameA);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x100;
+        let size = STACK_TOP - 0x104;
+        write_u32(&mut memory, esp, 0x1500_1c45).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        write_u32(&mut memory, esp + 8, size).unwrap();
+        write_u32(&mut memory, size, 5).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut actual = [0; 5];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(&actual, b"t4ce\0");
+        assert_eq!(read_u32(&memory, size).unwrap(), 5);
+    }
+
+    #[test]
+    fn child_create_file_a_routes_timestamped_crash_text_to_diagnostic_output() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("CreateFileA".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let path = STACK_TOP - 0x100;
+        memory
+            .write(path, b"C:\\Warcraft III\\2026-09-29 13.27.34 Crash.txt\0")
+            .unwrap();
+        for (index, value) in [
+            0x1501_6b9c,
+            path,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            0,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::OpenDiagnosticFile(DiagnosticFileOpenRequest {
+                key: ThreadKey { pid: 2, tid: 3 },
+                win_path: "C:\\Warcraft III\\2026-09-29 13.27.34 Crash.txt".into(),
+                trueos_path: "/common/Warcraft III/2026-09-29 13.27.34 Crash.txt".into(),
+                desired_access: GENERIC_READ | GENERIC_WRITE,
+                share_mode: 0,
+                security_attributes: 0,
+                creation_disposition: CREATE_ALWAYS,
+                flags_and_attributes: FILE_ATTRIBUTE_NORMAL,
+                template_file: 0,
+            }))
+        );
+    }
+
+    #[test]
     fn admitted_trueos_file_uses_resident_backing_for_size_and_read() {
         let providers = ["GetFileSize", "ReadFile"].map(|symbol| ProviderImport {
             module: "KERNEL32.dll".into(),

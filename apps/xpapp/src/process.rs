@@ -314,6 +314,7 @@ const CHILD_WORKING_DIRECTORY: &str = "C:\\Warcraft III";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
 pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
 const TRUEOS_COMPUTER_NAME: &[u8] = b"TRUEOS";
+const TRUEOS_USER_NAME: &[u8] = b"t4ce";
 const XP_TEMP_DIRECTORY: &[u8] = b"C:\\WINDOWS\\\0";
 const XP_PERFORMANCE_COUNTER_FREQUENCY: u64 = 1_000_000_000;
 const TIME_ZONE_ID_UNKNOWN: u32 = 0;
@@ -1953,12 +1954,43 @@ fn is_war3_scratch_path(path: &str) -> bool {
 /// Keep writable installation access constrained to crash reporting.  The
 /// returned TRUEOSFS spelling is intentionally fixed, rather than derived from
 /// arbitrary guest input, and every Errors component is validated first.
+fn war3_root_crash_text_name(relative: &str) -> bool {
+    let bytes = relative.as_bytes();
+
+    // YYYY-MM-DD HH.MM.SS Crash.txt
+    if bytes.len() != 29 {
+        return false;
+    }
+
+    for index in [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18] {
+        if !bytes[index].is_ascii_digit() {
+            return false;
+        }
+    }
+
+    bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b' '
+        && bytes[13] == b'.'
+        && bytes[16] == b'.'
+        && bytes[19] == b' '
+        && &bytes[20..] == b"crash.txt"
+}
+
 fn war3_diagnostic_file_path(path: &str) -> Option<String> {
     let canonical = canonical_file_path(path);
     if canonical == r"c:\warcraft iii\crashsummaries.bin" {
         return Some("/common/Warcraft III/CrashSummaries.bin".into());
     }
     let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
+
+    // Blizzard writes its timestamped human-readable report at the install
+    // root.  Keep this admission exact; ordinary root-level writes remain
+    // outside the diagnostic namespace.
+    if !relative.contains('\\') && war3_root_crash_text_name(relative) {
+        return Some(format!("/common/Warcraft III/{relative}"));
+    }
+
     let mut components = relative.split('\\');
     if !components.next()?.eq_ignore_ascii_case("errors") {
         return None;

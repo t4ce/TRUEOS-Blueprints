@@ -50,6 +50,7 @@ pub enum ProviderOp {
     GetModuleFileNameA,
     GetModuleHandleA,
     GetComputerNameA,
+    GetUserNameA,
     LoadLibraryA,
     FreeLibrary,
     GetProcAddress,
@@ -358,6 +359,7 @@ impl ProviderOp {
             | Self::GlobalAlloc
             | Self::InterlockedExchange
             | Self::IsBadWritePtr
+            | Self::GetUserNameA
             | Self::TlsSetValue => 8,
             Self::WaitForMultipleObjects => 16,
             Self::TlsGetValue | Self::InterlockedIncrement | Self::InterlockedDecrement => 4,
@@ -558,6 +560,7 @@ impl ProviderOp {
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
                 | Self::GetComputerNameA
+                | Self::GetUserNameA
                 | Self::InterlockedExchange
                 | Self::InterlockedIncrement
                 | Self::InterlockedDecrement
@@ -757,6 +760,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "GetComputerNameA" => ProviderOp::GetComputerNameA,
+            "GetUserNameA" => ProviderOp::GetUserNameA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "FreeLibrary" => ProviderOp::FreeLibrary,
             "GetProcAddress" => ProviderOp::GetProcAddress,

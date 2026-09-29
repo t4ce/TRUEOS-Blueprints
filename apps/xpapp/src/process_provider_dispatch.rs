@@ -1338,6 +1338,14 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::GetUserNameA => {
+                let result = self.get_user_name_a(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::GetCurrentProcess => {
                 self.call_count = self
                     .call_count
