@@ -1099,6 +1099,245 @@ fn wsprintf_a(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDi
     u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("wsprintfA length"))
 }
 
+const CRT_SPRINTF_MAX_OUTPUT: usize = 65_536;
+
+fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDispatchError> {
+    let [_, output, format] = arguments::<3>(memory, esp)?;
+    if output == 0 || format == 0 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "sprintf",
+            detail: "null output or format".into(),
+        });
+    }
+
+    // Keep this byte-oriented.  MSVCRT sprintf writes ANSI bytes and its return
+    // count is a byte count, so neither format literals nor %s arguments may
+    // acquire an accidental UTF-8 expansion in the shim.
+    let format = read_c_bytes(memory, format)?;
+    let format = format.strip_suffix(&[0]).unwrap_or(&format);
+    let mut argument_index = 0u32;
+    let mut next = || -> Result<u32, ProviderDispatchError> {
+        let address = argument_index
+            .checked_mul(4)
+            .and_then(|offset| esp.checked_add(12).and_then(|base| base.checked_add(offset)))
+            .ok_or(ProviderDispatchError::Fault("sprintf argument overflow"))?;
+        argument_index = argument_index
+            .checked_add(1)
+            .ok_or(ProviderDispatchError::Fault("sprintf argument count"))?;
+        Ok(read_u32(memory, address)?)
+    };
+    let mut rendered = Vec::new();
+    let mut offset = 0usize;
+    while offset < format.len() {
+        if format[offset] != b'%' {
+            rendered.push(format[offset]);
+            offset += 1;
+            if rendered.len() > CRT_SPRINTF_MAX_OUTPUT {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "sprintf",
+                    detail: "rendered output exceeds 65536 bytes".into(),
+                });
+            }
+            continue;
+        }
+
+        let start = offset;
+        offset += 1;
+        if offset == format.len() {
+            return Err(ProviderDispatchError::Frontier {
+                api: "sprintf",
+                detail: format!("format={:?} offset={start} trailing percent", String::from_utf8_lossy(format)),
+            });
+        }
+        if format[offset] == b'%' {
+            rendered.push(b'%');
+            offset += 1;
+            continue;
+        }
+
+        let mut left_justify = false;
+        let mut zero_pad = false;
+        let mut plus = false;
+        let mut space = false;
+        let mut alternate = false;
+        while let Some(&flag) = format.get(offset) {
+            match flag {
+                b'-' => left_justify = true,
+                b'0' => zero_pad = true,
+                b'+' => plus = true,
+                b' ' => space = true,
+                b'#' => alternate = true,
+                _ => break,
+            }
+            offset += 1;
+        }
+
+        let mut width = 0usize;
+        if format.get(offset) == Some(&b'*') {
+            offset += 1;
+            let supplied = next()? as i32;
+            if supplied < 0 {
+                left_justify = true;
+                width = supplied.unsigned_abs() as usize;
+            } else {
+                width = supplied as usize;
+            }
+        } else {
+            while let Some(digit) = format.get(offset).and_then(|value| (*value as char).to_digit(10)) {
+                offset += 1;
+                width = width
+                    .checked_mul(10)
+                    .and_then(|value| value.checked_add(digit as usize))
+                    .ok_or(ProviderDispatchError::Fault("sprintf width overflow"))?;
+            }
+        }
+        if width > CRT_SPRINTF_MAX_OUTPUT {
+            return Err(ProviderDispatchError::Frontier {
+                api: "sprintf",
+                detail: format!("format={:?} offset={start} width={width} exceeds limit", String::from_utf8_lossy(format)),
+            });
+        }
+
+        let mut precision = None;
+        if format.get(offset) == Some(&b'.') {
+            offset += 1;
+            if format.get(offset) == Some(&b'*') {
+                offset += 1;
+                let supplied = next()? as i32;
+                if supplied >= 0 {
+                    precision = Some(supplied as usize);
+                }
+            } else {
+                let mut value = 0usize;
+                while let Some(digit) = format.get(offset).and_then(|value| (*value as char).to_digit(10)) {
+                    offset += 1;
+                    value = value
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit as usize))
+                        .ok_or(ProviderDispatchError::Fault("sprintf precision overflow"))?;
+                }
+                precision = Some(value);
+            }
+            if precision.is_some_and(|value| value > CRT_SPRINTF_MAX_OUTPUT) {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "sprintf",
+                    detail: format!("format={:?} offset={start} precision exceeds limit", String::from_utf8_lossy(format)),
+                });
+            }
+        }
+
+        if matches!(format.get(offset), Some(b'h' | b'l' | b'L' | b'I' | b'w')) {
+            while matches!(format.get(offset), Some(b'h' | b'l' | b'L' | b'I' | b'w' | b'6' | b'4')) {
+                offset += 1;
+            }
+            let token = String::from_utf8_lossy(&format[start..offset.min(format.len())]);
+            return Err(ProviderDispatchError::Frontier {
+                api: "sprintf",
+                detail: format!("format={:?} offset={start} token={token:?} unsupported length modifier", String::from_utf8_lossy(format)),
+            });
+        }
+
+        let Some(&specifier) = format.get(offset) else {
+            return Err(ProviderDispatchError::Frontier {
+                api: "sprintf",
+                detail: format!("format={:?} offset={start} missing conversion", String::from_utf8_lossy(format)),
+            });
+        };
+        offset += 1;
+        let mut prefix = Vec::new();
+        let mut field = match specifier {
+            b's' => {
+                let pointer = next()?;
+                let value = if pointer == 0 { b"(null)".to_vec() } else {
+                    let value = read_c_bytes(memory, pointer)?;
+                    value.strip_suffix(&[0]).unwrap_or(&value).to_vec()
+                };
+                match precision { Some(limit) => value[..value.len().min(limit)].to_vec(), None => value }
+            }
+            b'c' => vec![next()? as u8],
+            b'd' | b'i' => {
+                let value = next()? as i32;
+                let magnitude = value.unsigned_abs();
+                if value < 0 { prefix.push(b'-'); }
+                else if plus { prefix.push(b'+'); }
+                else if space { prefix.push(b' '); }
+                let mut digits = magnitude.to_string().into_bytes();
+                if precision == Some(0) && magnitude == 0 { digits.clear(); }
+                if let Some(precision) = precision {
+                    if digits.len() < precision {
+                        let mut padded = vec![b'0'; precision - digits.len()];
+                        padded.extend(digits);
+                        digits = padded;
+                    }
+                }
+                digits
+            }
+            b'u' | b'x' | b'X' | b'p' => {
+                let value = next()?;
+                let mut digits = match specifier {
+                    b'u' => value.to_string().into_bytes(),
+                    b'x' | b'p' => format!("{value:x}").into_bytes(),
+                    b'X' => format!("{value:X}").into_bytes(),
+                    _ => unreachable!(),
+                };
+                if precision == Some(0) && value == 0 { digits.clear(); }
+                if let Some(precision) = precision {
+                    if digits.len() < precision {
+                        let mut padded = vec![b'0'; precision - digits.len()];
+                        padded.extend(digits);
+                        digits = padded;
+                    }
+                }
+                if (alternate && value != 0 && matches!(specifier, b'x' | b'X')) || specifier == b'p' {
+                    prefix.extend_from_slice(if specifier == b'X' { b"0X" } else { b"0x" });
+                }
+                digits
+            }
+            _ => {
+                let token = String::from_utf8_lossy(&format[start..offset]);
+                return Err(ProviderDispatchError::Frontier {
+                    api: "sprintf",
+                    detail: format!("format={:?} offset={start} token={token:?} unsupported conversion", String::from_utf8_lossy(format)),
+                });
+            }
+        };
+
+        // For numeric fields, zero padding goes after the sign/prefix.  A
+        // precision or left justification suppresses the zero flag.
+        let numeric = matches!(specifier, b'd' | b'i' | b'u' | b'x' | b'X' | b'p');
+        let field_len = prefix.len().checked_add(field.len()).ok_or(ProviderDispatchError::Fault("sprintf field length"))?;
+        if width > field_len {
+            let padding = width - field_len;
+            if !left_justify && zero_pad && precision.is_none() && numeric {
+                prefix.extend(std::iter::repeat_n(b'0', padding));
+            } else if left_justify {
+                field.extend(std::iter::repeat_n(b' ', padding));
+            } else {
+                let mut padded = vec![b' '; padding];
+                padded.extend(prefix);
+                prefix = padded;
+            }
+        }
+        rendered.extend(prefix);
+        rendered.extend(field);
+        if rendered.len() > CRT_SPRINTF_MAX_OUTPUT {
+            return Err(ProviderDispatchError::Frontier {
+                api: "sprintf",
+                detail: "rendered output exceeds 65536 bytes".into(),
+            });
+        }
+    }
+
+    memory.write(output, &rendered)?;
+    memory.write(
+        output
+            .checked_add(u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("sprintf length"))?)
+            .ok_or(ProviderDispatchError::Fault("sprintf output overflow"))?,
+        &[0],
+    )?;
+    u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("sprintf length"))
+}
+
 fn crt_vsnprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDispatchError> {
     let [_, output, count, format, va_list] = arguments::<5>(memory, esp)?;
     if format == 0 || va_list == 0 {

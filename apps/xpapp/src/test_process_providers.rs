@@ -1220,6 +1220,51 @@
     }
 
     #[test]
+    fn child_crt_sprintf_parses_zero_padding_width_and_sign_as_cdecl() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("sprintf".into()),
+            iat_rva: 0,
+        };
+        assert_eq!(provider_op(&provider), ProviderOp::CrtSprintf);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Return);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x100;
+        let output = STACK_TOP - 0x500;
+        let format = STACK_TOP - 0x300;
+        let string = STACK_TOP - 0x200;
+        let expected = b"07/0000002A/-0007/7    /123/%:07:ok";
+        memory.write(format, b"%02u/%08X/%05d/%-5u/%02u/%%:%02u:%s\0").unwrap();
+        memory.write(string, b"ok\0").unwrap();
+        memory.write(output + expected.len() as u32 + 1, &[0xa5]).unwrap();
+        write_u32(&mut memory, esp, 0x1501_6aff).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        write_u32(&mut memory, esp + 8, format).unwrap();
+        for (index, value) in [7, 0x2a, (-7i32) as u32, 7, 123, 7, string]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + 12 + (index as u32) * 4, value).unwrap();
+        }
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(expected.len() as u32))
+        );
+        let mut actual = vec![0; expected.len() + 1];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(&actual[..expected.len()], expected);
+        assert_eq!(actual[expected.len()], 0);
+        let mut guard = [0];
+        memory.read(output + expected.len() as u32 + 1, &mut guard).unwrap();
+        assert_eq!(guard, [0xa5]);
+        assert_eq!(read_u32(&memory, esp).unwrap(), 0x1501_6aff);
+    }
+
+    #[test]
     fn child_load_string_a_uses_stdcall_sixteen_and_process_dispatch() {
         let provider = ProviderImport {
             module: "USER32.dll".into(),

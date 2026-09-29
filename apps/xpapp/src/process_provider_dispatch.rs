@@ -808,15 +808,28 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtSprintf => {
-                let [_, output, format] = arguments::<3>(memory, esp)?;
-                let result = wsprintf_a(memory, esp)?;
-                let text = read_c_string(memory, output, 4096)?;
+                let [caller_return, output, format] = arguments::<3>(memory, esp)?;
                 let pattern = read_c_string(memory, format, 1024)?;
+                let args_base = esp
+                    .checked_add(12)
+                    .ok_or(ProviderDispatchError::Fault("sprintf arguments base"))?;
                 logl::log!(
                     level::IMPORTANT,
                     format_args!(
-                        "XPAPP CHILD CRT SPRINTF pid={} tid={} output=0x{:08x} format={:?} chars={} text={:?} cleanup=0-by-thunk",
-                        pid, tid, output, pattern, result, text,
+                        "XPAPP CHILD CRT SPRINTF CALL pid={pid} tid={tid} \
+                         output=0x{output:08x} format_ptr=0x{format:08x} \
+                         format={pattern:?} args_base=0x{args_base:08x} \
+                         caller_ret=0x{caller_return:08x}",
+                    ),
+                );
+                let result = crt_sprintf(memory, esp)?;
+                let text = read_c_string(memory, output, 4096)?;
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD CRT SPRINTF RESULT pid={pid} tid={tid} \
+                         output=0x{output:08x} bytes={result} text={text:?} \
+                         cleanup=0-by-thunk",
                     ),
                 );
                 self.call_count = self
