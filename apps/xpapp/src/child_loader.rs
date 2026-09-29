@@ -760,7 +760,6 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "GetComputerNameA" => ProviderOp::GetComputerNameA,
-            "GetUserNameA" => ProviderOp::GetUserNameA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "FreeLibrary" => ProviderOp::FreeLibrary,
             "GetProcAddress" => ProviderOp::GetProcAddress,
@@ -974,6 +973,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     }
     if import.module.eq_ignore_ascii_case("ADVAPI32.dll") {
         return match symbol.as_str() {
+            "GetUserNameA" => ProviderOp::GetUserNameA,
             "RegOpenKeyExA" => ProviderOp::RegOpenKeyExA,
             "RegQueryValueExA" => ProviderOp::RegQueryValueExA,
             "RegCloseKey" => ProviderOp::RegCloseKey,
