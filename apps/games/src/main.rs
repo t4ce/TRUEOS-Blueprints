@@ -26,17 +26,56 @@ const ROWS: usize = 24;
 const HIDDEN: usize = 4;
 const VISIBLE: usize = ROWS - HIDDEN;
 const CELL: f32 = 1.08;
-const MAX_SEEDS: usize = COLS * VISIBLE;
+const GAME_CUBE_SCALE: f32 = 0.46;
+const BORDER_CUBE_SCALE: f32 = GAME_CUBE_SCALE / 4.0;
+const BORDER_STEP: f32 = CELL / 4.0;
+const MAX_BORDER_SEGMENTS: usize = 600;
+const MAX_SEEDS: usize = 4096;
 const CUBE_VERTICES: [u8; 12] = [0; 12];
 const CUBE_INDICES: [u8; 44 * 4] = [0; 44 * 4];
 const CUSTOM_RGB555: u32 = 1 << 15;
-const BG: u32 = u32::from_le_bytes([11, 17, 30, 255]);
+const BG: u32 = u32::from_le_bytes([11, 17, 30, 128]);
+const SCENE_WIDTH: f32 = SCENE_HEIGHT * WIDTH as f32 / HEIGHT as f32;
+const SCENE_HEIGHT: f32 = 25.0;
 
 type Tetris = Game<COLS, ROWS, HIDDEN>;
 
 enum Error {
     Ui(&'static str, UiError),
     Gpu(&'static str, i32),
+}
+
+struct Layout {
+    scale: f32,
+    offset_x: f32,
+    offset_y: f32,
+    scene_width: f32,
+    scene_height: f32,
+}
+
+impl Layout {
+    fn fit(width: u32, height: u32) -> Self {
+        let scale = (width as f32 / WIDTH as f32)
+            .min(height as f32 / HEIGHT as f32)
+            .max(0.01);
+        Self {
+            scale,
+            offset_x: (width as f32 - WIDTH as f32 * scale) * 0.5,
+            offset_y: (height as f32 - HEIGHT as f32 * scale) * 0.5,
+            scene_width: SCENE_WIDTH * width as f32 / (WIDTH as f32 * scale),
+            scene_height: SCENE_HEIGHT * height as f32 / (HEIGHT as f32 * scale),
+        }
+    }
+
+    fn row<'a>(&self, text: &'a str, x: f32, y: f32, pixels: f32, color: u32) -> FontCanvasRow<'a> {
+        FontCanvasRow {
+            text,
+            x: self.offset_x + x * self.scale,
+            y: self.offset_y + y * self.scale,
+            font_pixels: pixels * self.scale,
+            color_rgba: color,
+        }
+    }
 }
 
 struct HullBoard {
@@ -85,8 +124,31 @@ fn run() -> Result<(), Error> {
     let mut gravity_ms = 0_u64;
     let mut paint = true;
     let mut text = true;
+    let mut pending_resize = None;
 
     loop {
+        while let Some(event) = frame
+            .take_resize_event()
+            .map_err(|e| Error::Ui("resize event", e))?
+        {
+            pending_resize = Some(event);
+        }
+        if let Some(event) = pending_resize {
+            if (event.width, event.height) == (frame.width(), frame.height()) {
+                pending_resize = None;
+            } else {
+                match frame.resize(event.width, event.height) {
+                    Ok(()) => {
+                        pending_resize = None;
+                        board.previous_view_projection = [0.; 16];
+                        paint = true;
+                        text = true;
+                    }
+                    Err(UiError::Busy) => {}
+                    Err(error) => return Err(Error::Ui("resize frame", error)),
+                }
+            }
+        }
         let previous_hud = (
             game.level.total_points,
             game.level.current_level,
@@ -165,8 +227,11 @@ fn run() -> Result<(), Error> {
             }
         }
         if text {
-            present_text(&mut frame, &game, paused)?;
-            text = false;
+            match present_text(&mut frame, &game, paused) {
+                Ok(()) => text = false,
+                Err(Error::Ui(_, UiError::Busy)) => {}
+                Err(error) => return Err(error),
+            }
         }
         vsys::poll_once();
         vsys::sleep_ms(16);
@@ -231,40 +296,43 @@ impl HullBoard {
         width: u32,
         height: u32,
     ) -> Result<(), Error> {
-        let mut bytes = Vec::with_capacity(MAX_SEEDS * 64);
+        let layout = Layout::fit(width, height);
+        let mut bytes = Vec::with_capacity(1200 * 64);
         for row in 0..VISIBLE {
             for col in 0..COLS {
                 let Some(cell) = game.cell_view_at(col, row + HIDDEN, false) else {
                     continue;
                 };
-                let color = rgb555(cell.color);
-                let seed = RetainedTransformSeed {
-                    translation: [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.],
-                    previous_translation: [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.],
-                    scale: [0.46, 0.46, 0.46],
-                    rotation: [0., 0., 0., 1.],
-                    local_radius: 1.74,
-                    draw_group: 0,
-                    flags: ((bytes.len() / 64) as u32) << 16 | color,
-                };
-                encode_seed(seed, &mut bytes);
+                append_cube(
+                    &mut bytes,
+                    [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
+                    GAME_CUBE_SCALE,
+                    rgb555(cell.color),
+                );
             }
         }
-        // A fresh game can have every active cell in its four hidden rows.
-        // V3 still needs one valid patch seed to clear and present that frame.
-        if bytes.is_empty() {
-            encode_seed(
-                RetainedTransformSeed {
-                    translation: [0., 0., 100.],
-                    previous_translation: [0., 0., 100.],
-                    scale: [0.0001; 3],
-                    rotation: [0., 0., 0., 1.],
-                    local_radius: 1.74,
-                    draw_group: 0,
-                    flags: CUSTOM_RGB555,
-                },
-                &mut bytes,
-            );
+        // The outer border follows the whole UI4 window on maximize/restore.
+        // The inner border encloses the fixed 10 x 20 playfield.
+        let outer_x = layout.scene_width * 0.5 - 0.35;
+        let outer_y = layout.scene_height * 0.5 - 0.35;
+        append_border(
+            &mut bytes,
+            -outer_x,
+            outer_x,
+            -outer_y,
+            outer_y,
+            rgb555(Rgb8::new(82, 143, 177)),
+        );
+        append_border(
+            &mut bytes,
+            -7.95,
+            3.47,
+            -11.1,
+            11.1,
+            rgb555(Rgb8::new(105, 205, 235)),
+        );
+        if bytes.len() / 64 > MAX_SEEDS {
+            return Err(Error::Gpu("cube border seed budget", trueos::vgpu::ERR_IO));
         }
         write_exact(self.device, self.seeds, &bytes)?;
         background
@@ -278,8 +346,8 @@ impl HullBoard {
             position: [0., 0., 35.],
             rotation: Quaternion::IDENTITY,
             projection: Projection::Orthographic {
-                xmag: 11.9,
-                ymag: 13.55,
+                xmag: layout.scene_width,
+                ymag: layout.scene_height,
                 znear: 0.1,
                 zfar: 100.,
             },
@@ -329,6 +397,36 @@ impl HullBoard {
     }
 }
 
+fn append_border(bytes: &mut Vec<u8>, left: f32, right: f32, bottom: f32, top: f32, color: u32) {
+    let across = (((right - left) / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
+    let down = (((top - bottom) / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
+    for i in 0..=across {
+        let x = left + (right - left) * i as f32 / across as f32;
+        append_cube(bytes, [x, top, 0.03], BORDER_CUBE_SCALE, color);
+        append_cube(bytes, [x, bottom, 0.03], BORDER_CUBE_SCALE, color);
+    }
+    for i in 1..down {
+        let y = bottom + (top - bottom) * i as f32 / down as f32;
+        append_cube(bytes, [left, y, 0.03], BORDER_CUBE_SCALE, color);
+        append_cube(bytes, [right, y, 0.03], BORDER_CUBE_SCALE, color);
+    }
+}
+
+fn append_cube(bytes: &mut Vec<u8>, center: [f32; 3], scale: f32, color: u32) {
+    encode_seed(
+        RetainedTransformSeed {
+            translation: center,
+            previous_translation: center,
+            scale: [scale; 3],
+            rotation: [0., 0., 0., 1.],
+            local_radius: 1.74,
+            draw_group: 0,
+            flags: ((bytes.len() / 64) as u32) << 16 | color,
+        },
+        bytes,
+    );
+}
+
 fn rgb555(color: Rgb8) -> u32 {
     let quantize = |channel: u8| (u32::from(channel) * 31 + 127) / 255;
     CUSTOM_RGB555 | quantize(color.r) | (quantize(color.g) << 5) | (quantize(color.b) << 10)
@@ -347,91 +445,20 @@ fn present_text(frame: &mut Frame, game: &Tetris, paused: bool) -> Result<(), Er
     };
     let white = rgba(230, 240, 250, 255);
     let muted = rgba(150, 172, 194, 255);
+    let layout = Layout::fit(frame.width(), frame.height());
     let rows = [
-        FontCanvasRow {
-            text: "GAMES / TETRIS",
-            x: 44.,
-            y: 25.,
-            font_pixels: 27.,
-            color_rgba: white,
-        },
-        FontCanvasRow {
-            text: &score,
-            x: 462.,
-            y: 114.,
-            font_pixels: 17.,
-            color_rgba: white,
-        },
-        FontCanvasRow {
-            text: &level_text,
-            x: 462.,
-            y: 150.,
-            font_pixels: 17.,
-            color_rgba: white,
-        },
-        FontCanvasRow {
-            text: &rows_text,
-            x: 462.,
-            y: 186.,
-            font_pixels: 17.,
-            color_rgba: white,
-        },
-        FontCanvasRow {
-            text: status,
-            x: 462.,
-            y: 238.,
-            font_pixels: 18.,
-            color_rgba: white,
-        },
-        FontCanvasRow {
-            text: "LEFT / RIGHT",
-            x: 462.,
-            y: 327.,
-            font_pixels: 15.,
-            color_rgba: muted,
-        },
-        FontCanvasRow {
-            text: "MOVE",
-            x: 462.,
-            y: 348.,
-            font_pixels: 14.,
-            color_rgba: muted,
-        },
-        FontCanvasRow {
-            text: "UP  ROTATE",
-            x: 462.,
-            y: 395.,
-            font_pixels: 15.,
-            color_rgba: muted,
-        },
-        FontCanvasRow {
-            text: "DOWN  DROP",
-            x: 462.,
-            y: 427.,
-            font_pixels: 15.,
-            color_rgba: muted,
-        },
-        FontCanvasRow {
-            text: "SPACE  FALL",
-            x: 462.,
-            y: 459.,
-            font_pixels: 15.,
-            color_rgba: muted,
-        },
-        FontCanvasRow {
-            text: "P  PAUSE",
-            x: 462.,
-            y: 523.,
-            font_pixels: 15.,
-            color_rgba: muted,
-        },
-        FontCanvasRow {
-            text: "R  RESTART",
-            x: 462.,
-            y: 555.,
-            font_pixels: 15.,
-            color_rgba: muted,
-        },
+        layout.row("GAMES / TETRIS", 44., 25., 33., white),
+        layout.row(&score, 462., 114., 21., white),
+        layout.row(&level_text, 462., 155., 21., white),
+        layout.row(&rows_text, 462., 196., 21., white),
+        layout.row(status, 462., 255., 22., white),
+        layout.row("LEFT / RIGHT", 462., 340., 19., muted),
+        layout.row("MOVE", 462., 365., 18., muted),
+        layout.row("UP  ROTATE", 462., 414., 19., muted),
+        layout.row("DOWN  DROP", 462., 452., 19., muted),
+        layout.row("SPACE  FALL", 462., 490., 19., muted),
+        layout.row("P  PAUSE", 462., 565., 19., muted),
+        layout.row("R  RESTART", 462., 603., 19., muted),
     ];
     let canvas = (frame.width(), frame.height());
     frame
