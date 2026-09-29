@@ -1710,12 +1710,17 @@ impl XpProcess {
                         ),
                     );
                 }
-                if let Some(trueos_path) = war3_diagnostic_file_path(&path) {
+                // Writable access is admitted only when the guest pathname is
+                // contained by the Warcraft TRUEOSFS mount. Read-only asset
+                // opens retain the existing TRUEOSFS resolver below.
+                let mutable_open = desired_access & GENERIC_WRITE != 0
+                    || creation_disposition != OPEN_EXISTING;
+                if mutable_open && let Some(trueos_path) = war3_trueos_path(&path) {
                     if security_attributes != 0 || template_file != 0 {
                         return Err(ProviderDispatchError::Frontier {
                             api: "CreateFileA",
                             detail: format!(
-                                "diagnostic security=0x{security_attributes:08x} \
+                                "contained writable security=0x{security_attributes:08x} \
                                  template=0x{template_file:08x}"
                             ),
                         });

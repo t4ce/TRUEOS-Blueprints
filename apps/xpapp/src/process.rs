@@ -1905,10 +1905,23 @@ fn warcraft_drive_relative_path(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Maps is installed TRUEOSFS content, so it may only be observed as an
-/// existing directory. Save, Replay, and Errors are persistent guest-writable
-/// trees. The canonicalized drive-relative path is deliberately checked
-/// segment-by-segment so a guest cannot escape the TRUEOSFS tree.
+/// Resolve only paths contained by Warcraft's mounted TRUEOSFS tree. The
+/// canonicalized guest spelling is checked segment-by-segment: this is an
+/// admission boundary, not a general host-filesystem path conversion.
+fn war3_trueos_path(path: &str) -> Option<String> {
+    let canonical = canonical_file_path(path);
+    let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
+    if !relative
+        .split('\\')
+        .all(|part| !part.is_empty() && part != "." && part != "..")
+    {
+        return None;
+    }
+    Some(format!("/common/Warcraft III/{}", relative.replace('\\', "/")))
+}
+
+/// Directories within the mounted Warcraft tree may be created by the guest;
+/// the mount root itself is existing-only.
 fn war3_create_directory_path(path: &str) -> Option<(String, bool)> {
     let canonical = canonical_file_path(path);
     let canonical = canonical.trim_end_matches('\\');
@@ -1919,29 +1932,7 @@ fn war3_create_directory_path(path: &str) -> Option<(String, bool)> {
     {
         return Some(("/common/Warcraft III".into(), false));
     }
-    let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
-    if !relative
-        .split('\\')
-        .all(|part| !part.is_empty() && part != "." && part != "..")
-    {
-        return None;
-    }
-    if components.len() >= 3
-        && components[0].eq_ignore_ascii_case("C:")
-        && components[1].eq_ignore_ascii_case("Warcraft III")
-        && components[2].eq_ignore_ascii_case("Maps")
-    {
-        return Some((format!("/common/Warcraft III/{relative}"), false));
-    }
-    let mut parts = relative.split('\\');
-    let root = parts.next()?;
-    if !root.eq_ignore_ascii_case("save")
-        && !root.eq_ignore_ascii_case("replay")
-        && !root.eq_ignore_ascii_case("errors")
-    {
-        return None;
-    }
-    Some((format!("/common/Warcraft III/{relative}"), true))
+    Some((war3_trueos_path(canonical)?, true))
 }
 
 fn is_war3_scratch_path(path: &str) -> bool {
@@ -1949,61 +1940,6 @@ fn is_war3_scratch_path(path: &str) -> bool {
         canonical_file_path(path).as_str(),
         r"c:\windows\sintf16.dll" | r"c:\windows\sintf32.dll" | r"c:\windows\sintfnt.dll"
     )
-}
-
-/// Keep writable installation access constrained to crash reporting.  The
-/// returned TRUEOSFS spelling is intentionally fixed, rather than derived from
-/// arbitrary guest input, and every Errors component is validated first.
-fn war3_root_crash_text_name(relative: &str) -> bool {
-    let bytes = relative.as_bytes();
-
-    // YYYY-MM-DD HH.MM.SS Crash.txt
-    if bytes.len() != 29 {
-        return false;
-    }
-
-    for index in [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18] {
-        if !bytes[index].is_ascii_digit() {
-            return false;
-        }
-    }
-
-    bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[10] == b' '
-        && bytes[13] == b'.'
-        && bytes[16] == b'.'
-        && bytes[19] == b' '
-        && &bytes[20..] == b"crash.txt"
-}
-
-fn war3_diagnostic_file_path(path: &str) -> Option<String> {
-    let canonical = canonical_file_path(path);
-    if canonical == r"c:\warcraft iii\crashsummaries.bin" {
-        return Some("/common/Warcraft III/CrashSummaries.bin".into());
-    }
-    let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
-
-    // Blizzard writes its timestamped human-readable report at the install
-    // root.  Keep this admission exact; ordinary root-level writes remain
-    // outside the diagnostic namespace.
-    if !relative.contains('\\') && war3_root_crash_text_name(relative) {
-        return Some(format!("/common/Warcraft III/{relative}"));
-    }
-
-    let mut components = relative.split('\\');
-    if !components.next()?.eq_ignore_ascii_case("errors") {
-        return None;
-    }
-    let tail: Vec<_> = components.collect();
-    if tail.is_empty()
-        || !tail
-            .iter()
-            .all(|part| !part.is_empty() && *part != "." && *part != "..")
-    {
-        return None;
-    }
-    Some(format!("/common/Warcraft III/errors/{}", tail.join("/")))
 }
 
 /// Keep the persistence investigation observable without admitting Save as a
@@ -3539,7 +3475,7 @@ impl XpProcess {
                     self.set_last_error(ERROR_ALREADY_EXISTS);
                     id
                 } else {
-                    self.set_last_error(0);
+                    self.set_last_error(if existed { ERROR_ALREADY_EXISTS } else { 0 });
                     self.create_diagnostic_scratch_file(
                         canonical,
                         request.flags_and_attributes,
