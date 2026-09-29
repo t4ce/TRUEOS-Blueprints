@@ -1735,6 +1735,15 @@ fn war3_diagnostic_file_path(path: &str) -> Option<String> {
     Some(format!("/common/Warcraft III/errors/{}", tail.join("/")))
 }
 
+/// Keep the persistence investigation observable without admitting Save as a
+/// writable namespace yet.  The game-created profile is a stable, narrow
+/// probe target; its actual CreateFileA contract decides the next change.
+fn is_war3_profile1_path(path: &str) -> bool {
+    let canonical = canonical_file_path(path);
+    canonical == r"c:\warcraft iii\save\profile1"
+        || canonical.starts_with(r"c:\warcraft iii\save\profile1\\")
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CrtAllocation {
     pub pointer: u32,

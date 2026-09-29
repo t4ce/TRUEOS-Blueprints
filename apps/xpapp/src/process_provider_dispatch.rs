@@ -1438,7 +1438,7 @@ impl XpProcess {
             }
             ProviderOp::GetTokenInformation => {
                 let [
-                    _,
+                    caller_return,
                     token,
                     information_class,
                     information,
@@ -1657,7 +1657,7 @@ impl XpProcess {
             }
             ProviderOp::CreateFileA => {
                 let [
-                    _,
+                    caller_return,
                     filename,
                     desired_access,
                     share_mode,
@@ -1673,6 +1673,22 @@ impl XpProcess {
                     });
                 }
                 let path = read_c_string(memory, filename, 1024)?;
+                if is_war3_profile1_path(&path) {
+                    logl::log!(
+                        level::IMPORTANT,
+                        format_args!(
+                            "XPAPP PROFILE1 FILE OPEN PROBE \\
+                             pid={pid} tid={tid} path={path:?} \\
+                             access=0x{desired_access:08x} share=0x{share_mode:08x} \\
+                             security=0x{security_attributes:08x} \\
+                             disposition=0x{creation_disposition:08x} \\
+                             flags=0x{flags_and_attributes:08x} \\
+                             template=0x{template_file:08x} \\
+                             caller_ret=0x{:08x}",
+                            caller_return,
+                        ),
+                    );
+                }
                 if let Some(trueos_path) = war3_diagnostic_file_path(&path) {
                     if security_attributes != 0 || template_file != 0 {
                         return Err(ProviderDispatchError::Frontier {

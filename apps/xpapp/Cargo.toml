@@ -14,7 +14,7 @@ test = false
 bench = false
 
 [features]
-default = ["bypass-critical-sections", "trace-execution"]
+default = ["bypass-critical-sections", "trace-execution", "gpu-raster"]
 # Explicit WC3 performance experiment: guest enter/leave return without locking.
 bypass-critical-sections = []
 diagnostics = []
