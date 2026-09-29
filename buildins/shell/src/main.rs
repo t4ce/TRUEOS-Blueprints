@@ -36,9 +36,9 @@ const FRAME_WIDTH: u32 =
     CHARACTERS_PER_ROW_SOFT_CAP as u32 * DEFAULT_FONT_PIXELS * MONO_GLYPH_ADVANCE_NUMERATOR
         / MONO_GLYPH_ADVANCE_DENOMINATOR
         + FRAME_PADDING_PX * 2;
-// Leave the slot-4 cell outline its full bottom stroke without changing the
-// terminal grid or the already-correct horizontal frame extent.
-const FRAME_HEIGHT: u32 = 579;
+// Leave enough rows for terminal apps such as termdir (minimum 27 rows),
+// including the larger font step that previously reduced this frame to 18.
+const FRAME_HEIGHT: u32 = DEFAULT_ROW_HEIGHT_PX * 32 + FRAME_PADDING_PX * 2;
 const FRAME_PADDING_PX: u32 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

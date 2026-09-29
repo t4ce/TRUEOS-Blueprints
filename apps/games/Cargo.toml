@@ -11,6 +11,9 @@ test = false
 bench = false
 
 [dependencies]
+libm.workspace = true
+gamie = { git = "https://github.com/t4ce/gamie", rev = "052906c7036e21c35d019962aefc123bbfd41ea2", default-features = false, features = ["minesweeper"] }
+rand = { version = "0.10.1", default-features = false }
 microgames = { path = "../../../MicroGames" }
 trueos = { workspace = true, features = ["ui4-scene", "default-global-allocator", "default-panic-handler"] }
 trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }

@@ -2,12 +2,19 @@
 
 extern crate alloc;
 
+mod audio;
+mod mines;
+
 use alloc::{format, vec::Vec};
+use audio::Audio;
+use gamie::minesweeper::{CellStatus as MineCellStatus, Status as MineStatus};
 use microgames::{Game, Lcg32, NoopEvents, Rgb8, Rotation};
+use mines::Minefield;
 use trueos::input;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    BackgroundLayer, Damage, Error as UiError, Font, FontCanvasRow, Frame, output_dimensions, rgba,
+    BackgroundLayer, Damage, Error as UiError, Font, FontCanvasRow, Frame, MenuEntry,
+    POINTER_BUTTON_PRIMARY, output_dimensions, rgba,
 };
 use trueos::vgpu::{
     BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ, BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_VERTEX,
@@ -39,6 +46,12 @@ const SCENE_WIDTH: f32 = SCENE_HEIGHT * WIDTH as f32 / HEIGHT as f32;
 const SCENE_HEIGHT: f32 = 25.0;
 
 type Tetris = Game<COLS, ROWS, HIDDEN>;
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Mode {
+    Tetris,
+    Minesweeper,
+}
 
 enum Error {
     Ui(&'static str, UiError),
@@ -119,12 +132,16 @@ fn run() -> Result<(), Error> {
     let mut rng = Lcg32::new((clock::monotonic_millis() as u32) ^ 0xC11C_7E75);
     let mut events = NoopEvents;
     let mut game = Tetris::new(&mut rng, &mut events);
+    let mut minefield = Minefield::new(clock::monotonic_millis());
+    let mut mode = Mode::Tetris;
     let mut paused = false;
     let mut last_tick = clock::monotonic_millis();
     let mut gravity_ms = 0_u64;
     let mut paint = true;
     let mut text = true;
     let mut pending_resize = None;
+    let mut audio = Audio::new();
+    let mut menu_target: Option<(u64, usize, usize)> = None;
 
     loop {
         while let Some(event) = frame
@@ -161,31 +178,88 @@ fn run() -> Result<(), Error> {
         {
             if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
                 && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
+                && !paused
             {
-                match event.key_code {
-                    input::KEYBOARD_KEY_ARROW_LEFT if !paused && !game.is_game_over() => {
-                        game.move_left();
-                    }
-                    input::KEYBOARD_KEY_ARROW_RIGHT if !paused && !game.is_game_over() => {
-                        game.move_right();
-                    }
-                    input::KEYBOARD_KEY_ARROW_UP if !paused && !game.is_game_over() => {
-                        game.rotate(Rotation::Cw);
-                    }
-                    input::KEYBOARD_KEY_ARROW_DOWN if !paused && !game.is_game_over() => {
-                        game.soft_drop(&mut rng, &mut events);
-                    }
-                    input::KEYBOARD_KEY_SPACE if !paused && !game.is_game_over() => {
-                        game.hard_drop(&mut rng, &mut events);
+                match mode {
+                    Mode::Tetris if !game.is_game_over() => match event.key_code {
+                        input::KEYBOARD_KEY_ARROW_LEFT => {
+                            game.move_left();
+                        }
+                        input::KEYBOARD_KEY_ARROW_RIGHT => {
+                            game.move_right();
+                        }
+                        input::KEYBOARD_KEY_ARROW_UP => {
+                            game.rotate(Rotation::Cw);
+                        }
+                        input::KEYBOARD_KEY_ARROW_DOWN => {
+                            game.soft_drop(&mut rng, &mut events);
+                        }
+                        input::KEYBOARD_KEY_SPACE => {
+                            game.hard_drop(&mut rng, &mut events);
+                        }
+                        _ => {}
+                    },
+                    Mode::Minesweeper if *minefield.status() == MineStatus::Ongoing => {
+                        match event.key_code {
+                            input::KEYBOARD_KEY_ARROW_LEFT => {
+                                minefield.move_cursor(-1, 0);
+                                paint = true;
+                            }
+                            input::KEYBOARD_KEY_ARROW_RIGHT => {
+                                minefield.move_cursor(1, 0);
+                                paint = true;
+                            }
+                            input::KEYBOARD_KEY_ARROW_UP => {
+                                minefield.move_cursor(0, -1);
+                                paint = true;
+                            }
+                            input::KEYBOARD_KEY_ARROW_DOWN => {
+                                minefield.move_cursor(0, 1);
+                                paint = true;
+                            }
+                            input::KEYBOARD_KEY_SPACE | input::KEYBOARD_KEY_ENTER => {
+                                if minefield.reveal() {
+                                    paint = true;
+                                    text = true;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     _ => {}
                 }
             } else if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT {
                 match char::from_u32(event.codepoint) {
+                    Some('1') if mode != Mode::Tetris => {
+                        frame
+                            .clear_context_menu()
+                            .map_err(|e| Error::Ui("clear mine menu", e))?;
+                        menu_target = None;
+                        mode = Mode::Tetris;
+                        paused = false;
+                        paint = true;
+                        text = true;
+                    }
+                    Some('2') if mode != Mode::Minesweeper => {
+                        frame
+                            .register_dynamic_context_menu()
+                            .map_err(|e| Error::Ui("mine menu", e))?;
+                        mode = Mode::Minesweeper;
+                        paused = false;
+                        paint = true;
+                        text = true;
+                    }
                     Some('r' | 'R') => {
-                        rng = Lcg32::new((clock::monotonic_millis() as u32) ^ 0xC11C_7E75);
-                        game = Tetris::new(&mut rng, &mut events);
-                        gravity_ms = 0;
+                        match mode {
+                            Mode::Tetris => {
+                                rng = Lcg32::new((clock::monotonic_millis() as u32) ^ 0xC11C_7E75);
+                                game = Tetris::new(&mut rng, &mut events);
+                                gravity_ms = 0;
+                            }
+                            Mode::Minesweeper => {
+                                minefield.reset(clock::monotonic_millis());
+                            }
+                        }
                         paused = false;
                         paint = true;
                         text = true;
@@ -194,14 +268,90 @@ fn run() -> Result<(), Error> {
                         paused = !paused;
                         text = true;
                     }
+                    Some('f' | 'F') if mode == Mode::Minesweeper && !paused => {
+                        if minefield.flag() {
+                            paint = true;
+                            text = true;
+                        }
+                    }
                     _ => {}
+                }
+            }
+        }
+        while let Some(event) = frame
+            .take_pointer_event()
+            .map_err(|e| Error::Ui("pointer", e))?
+        {
+            if mode != Mode::Minesweeper || paused || *minefield.status() != MineStatus::Ongoing {
+                continue;
+            }
+            let buttons = event.buttons_pressed & POINTER_BUTTON_PRIMARY;
+            if buttons == 0 {
+                continue;
+            }
+            if let Some((row, col)) =
+                mine_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
+            {
+                minefield.select(row, col);
+                paint = true;
+                if minefield.reveal() {
+                    text = true;
+                }
+            }
+        }
+        while let Some(event) = frame
+            .take_dynamic_context_menu_event()
+            .map_err(|e| Error::Ui("mine menu event", e))?
+        {
+            let entries = [
+                MenuEntry::new("Flag / unflag", menu_flag),
+                MenuEntry::new("Reveal", menu_reveal),
+            ];
+            if event.closed.is_none() {
+                if mode == Mode::Minesweeper
+                    && !paused
+                    && *minefield.status() == MineStatus::Ongoing
+                {
+                    if let Some((row, col)) =
+                        mine_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
+                    {
+                        if frame
+                            .resolve_context_menu(event.serial, &entries)
+                            .map_err(|e| Error::Ui("resolve mine menu", e))?
+                        {
+                            menu_target = Some((event.serial, row, col));
+                        }
+                    } else {
+                        let empty = [MenuEntry::<Minefield>::disabled("Minefield cells only")];
+                        let _ = frame
+                            .resolve_context_menu(event.serial, &empty)
+                            .map_err(|e| Error::Ui("resolve empty menu", e))?;
+                    }
+                } else {
+                    let unavailable = [MenuEntry::<Minefield>::disabled("Game paused or finished")];
+                    let _ = frame
+                        .resolve_context_menu(event.serial, &unavailable)
+                        .map_err(|e| Error::Ui("resolve unavailable menu", e))?;
+                }
+            } else if let Some((serial, row, col)) = menu_target {
+                if serial == event.serial {
+                    menu_target = None;
+                    if mode == Mode::Minesweeper
+                        && !paused
+                        && *minefield.status() == MineStatus::Ongoing
+                    {
+                        minefield.select(row, col);
+                        event.dispatch(&entries, &mut minefield);
+                        paint = true;
+                        text = true;
+                    }
                 }
             }
         }
         let now = clock::monotonic_millis();
         let elapsed = now.saturating_sub(last_tick).min(100);
         last_tick = now;
-        if !paused && !game.is_game_over() {
+        if mode == Mode::Tetris && !paused && !game.is_game_over() {
             gravity_ms += elapsed;
             let interval = u64::from(game.level.level_speed_seconds());
             if gravity_ms >= interval {
@@ -209,25 +359,39 @@ fn run() -> Result<(), Error> {
                 game.soft_drop(&mut rng, &mut events);
             }
         }
-        if game.consume_changed() {
+        let playing = !paused
+            && match mode {
+                Mode::Tetris => !game.is_game_over(),
+                Mode::Minesweeper => *minefield.status() == MineStatus::Ongoing,
+            };
+        audio.update(playing, now);
+        if game.consume_changed() && mode == Mode::Tetris {
             paint = true;
         }
-        text |= previous_hud
-            != (
-                game.level.total_points,
-                game.level.current_level,
-                game.level.rows_deleted,
-                game.is_game_over(),
-            );
+        text |= mode == Mode::Tetris
+            && previous_hud
+                != (
+                    game.level.total_points,
+                    game.level.current_level,
+                    game.level.rows_deleted,
+                    game.is_game_over(),
+                );
         if paint {
-            match board.render(&mut background, &game, frame.width(), frame.height()) {
+            match board.render(
+                &mut background,
+                mode,
+                &game,
+                &minefield,
+                frame.width(),
+                frame.height(),
+            ) {
                 Ok(()) => paint = false,
                 Err(Error::Ui(_, UiError::Busy)) => {}
                 Err(error) => return Err(error),
             }
         }
         if text {
-            match present_text(&mut frame, &game, paused) {
+            match present_text(&mut frame, mode, &game, &minefield, paused) {
                 Ok(()) => text = false,
                 Err(Error::Ui(_, UiError::Busy)) => {}
                 Err(error) => return Err(error),
@@ -235,6 +399,27 @@ fn run() -> Result<(), Error> {
         }
         vsys::poll_once();
         vsys::sleep_ms(16);
+    }
+}
+
+fn menu_flag(minefield: &mut Minefield) {
+    let _ = minefield.flag();
+}
+
+fn menu_reveal(minefield: &mut Minefield) {
+    let _ = minefield.reveal();
+}
+
+fn mine_cell_at(local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
+    let layout = Layout::fit(width, height);
+    let world_x = (local_x as f32 / width as f32 - 0.5) * layout.scene_width;
+    let world_y = (0.5 - local_y as f32 / height as f32) * layout.scene_height;
+    let col = (world_x - (-7.1 - CELL * 0.5)) / CELL;
+    let row = (10.25 + CELL * 0.5 - world_y) / CELL;
+    if col >= 0.0 && col < mines::COLS as f32 && row >= 0.0 && row < mines::ROWS as f32 {
+        Some((row as usize, col as usize))
+    } else {
+        None
     }
 }
 
@@ -292,23 +477,72 @@ impl HullBoard {
     fn render(
         &mut self,
         background: &mut BackgroundLayer,
+        mode: Mode,
         game: &Tetris,
+        minefield: &Minefield,
         width: u32,
         height: u32,
     ) -> Result<(), Error> {
         let layout = Layout::fit(width, height);
         let mut bytes = Vec::with_capacity(1200 * 64);
-        for row in 0..VISIBLE {
-            for col in 0..COLS {
-                let Some(cell) = game.cell_view_at(col, row + HIDDEN, false) else {
-                    continue;
-                };
-                append_cube(
-                    &mut bytes,
-                    [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
-                    GAME_CUBE_SCALE,
-                    rgb555(cell.color),
-                );
+        match mode {
+            Mode::Tetris => {
+                for row in 0..VISIBLE {
+                    for col in 0..COLS {
+                        let Some(cell) = game.cell_view_at(col, row + HIDDEN, false) else {
+                            continue;
+                        };
+                        append_cube(
+                            &mut bytes,
+                            [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
+                            GAME_CUBE_SCALE,
+                            rgb555(cell.color),
+                        );
+                    }
+                }
+            }
+            Mode::Minesweeper => {
+                for row in 0..mines::ROWS {
+                    for col in 0..mines::COLS {
+                        let cell = minefield.cell(row, col);
+                        let (color, scale) = match cell.status() {
+                            MineCellStatus::Flagged => (Rgb8::new(245, 166, 63), GAME_CUBE_SCALE),
+                            MineCellStatus::Exploded => (Rgb8::new(255, 67, 75), GAME_CUBE_SCALE),
+                            MineCellStatus::Revealed => {
+                                if cell.adjacent_mine_count() == 0 {
+                                    (Rgb8::new(31, 62, 79), 0.38)
+                                } else {
+                                    (Rgb8::new(40, 83, 105), 0.40)
+                                }
+                            }
+                            MineCellStatus::Hidden
+                                if *minefield.status() != MineStatus::Ongoing && cell.is_mine() =>
+                            {
+                                (Rgb8::new(180, 61, 77), GAME_CUBE_SCALE)
+                            }
+                            MineCellStatus::Hidden => (Rgb8::new(60, 112, 150), GAME_CUBE_SCALE),
+                        };
+                        append_cube(
+                            &mut bytes,
+                            [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
+                            scale,
+                            rgb555(color),
+                        );
+                    }
+                }
+                let (col, row) = minefield.cursor;
+                let center_x = -7.1 + col as f32 * CELL;
+                let center_y = 10.25 - row as f32 * CELL;
+                for dx in [-0.43, 0.43] {
+                    for dy in [-0.43, 0.43] {
+                        append_cube(
+                            &mut bytes,
+                            [center_x + dx, center_y + dy, 0.10],
+                            BORDER_CUBE_SCALE,
+                            rgb555(Rgb8::new(238, 244, 190)),
+                        );
+                    }
+                }
             }
         }
         // The outer border follows the whole UI4 window on maximize/restore.
@@ -432,33 +666,126 @@ fn rgb555(color: Rgb8) -> u32 {
     CUSTOM_RGB555 | quantize(color.r) | (quantize(color.g) << 5) | (quantize(color.b) << 10)
 }
 
-fn present_text(frame: &mut Frame, game: &Tetris, paused: bool) -> Result<(), Error> {
+fn present_text(
+    frame: &mut Frame,
+    mode: Mode,
+    game: &Tetris,
+    minefield: &Minefield,
+    paused: bool,
+) -> Result<(), Error> {
     let score = format!("SCORE  {}", game.level.total_points);
     let level_text = format!("LEVEL  {}", game.level.current_level);
     let rows_text = format!("LINES  {}", game.level.rows_deleted);
-    let status = if game.is_game_over() {
-        "GAME OVER"
-    } else if paused {
-        "PAUSED"
-    } else {
-        "PLAYING"
-    };
+    let mines_text = format!("MINES  {}", mines::MINES);
+    let flags_text = format!("FLAGS  {}", minefield.flag_count());
+    let clear_text = format!("CLEAR  {}", minefield.revealed_count());
     let white = rgba(230, 240, 250, 255);
     let muted = rgba(150, 172, 194, 255);
+    let selected = rgba(160, 233, 246, 255);
     let layout = Layout::fit(frame.width(), frame.height());
-    let rows = [
-        layout.row(&score, 462., 114., 21., white),
-        layout.row(&level_text, 462., 155., 21., white),
-        layout.row(&rows_text, 462., 196., 21., white),
-        layout.row(status, 462., 255., 22., white),
-        layout.row("LEFT / RIGHT", 462., 340., 19., muted),
-        layout.row("MOVE", 462., 365., 18., muted),
-        layout.row("UP  ROTATE", 462., 414., 19., muted),
-        layout.row("DOWN  DROP", 462., 452., 19., muted),
-        layout.row("SPACE  FALL", 462., 490., 19., muted),
-        layout.row("P  PAUSE", 462., 565., 19., muted),
-        layout.row("R  RESTART", 462., 603., 19., muted),
-    ];
+    let mut rows = Vec::with_capacity(220);
+    rows.push(layout.row(
+        "1  TETRIS",
+        462.,
+        28.,
+        19.,
+        if mode == Mode::Tetris {
+            selected
+        } else {
+            muted
+        },
+    ));
+    rows.push(layout.row(
+        "2  MINES",
+        462.,
+        57.,
+        19.,
+        if mode == Mode::Minesweeper {
+            selected
+        } else {
+            muted
+        },
+    ));
+    match mode {
+        Mode::Tetris => {
+            let status = if game.is_game_over() {
+                "GAME OVER"
+            } else if paused {
+                "PAUSED"
+            } else {
+                "PLAYING"
+            };
+            rows.extend([
+                layout.row(&score, 462., 114., 21., white),
+                layout.row(&level_text, 462., 155., 21., white),
+                layout.row(&rows_text, 462., 196., 21., white),
+                layout.row(status, 462., 255., 22., white),
+                layout.row("LEFT / RIGHT", 462., 340., 19., muted),
+                layout.row("MOVE", 462., 365., 18., muted),
+                layout.row("UP  ROTATE", 462., 414., 19., muted),
+                layout.row("DOWN  DROP", 462., 452., 19., muted),
+                layout.row("SPACE  FALL", 462., 490., 19., muted),
+                layout.row("P  PAUSE", 462., 565., 19., muted),
+                layout.row("R  RESTART", 462., 603., 19., muted),
+            ]);
+        }
+        Mode::Minesweeper => {
+            let status = if paused {
+                "PAUSED"
+            } else {
+                match minefield.status() {
+                    MineStatus::Ongoing => "SWEEPING",
+                    MineStatus::Exploded => "BOOM",
+                    MineStatus::Finished => "CLEARED",
+                }
+            };
+            rows.extend([
+                layout.row(&mines_text, 462., 114., 21., white),
+                layout.row(&flags_text, 462., 155., 21., white),
+                layout.row(&clear_text, 462., 196., 21., white),
+                layout.row(status, 462., 255., 22., white),
+                layout.row("CLICK  REVEAL", 462., 340., 18., muted),
+                layout.row("RIGHT  MENU", 462., 379., 18., muted),
+                layout.row("ARROWS MOVE", 462., 432., 18., muted),
+                layout.row("SPACE OPEN", 462., 470., 18., muted),
+                layout.row("F  FLAG", 462., 508., 18., muted),
+                layout.row("P  PAUSE", 462., 565., 19., muted),
+                layout.row("R  RESTART", 462., 603., 19., muted),
+            ]);
+            const DIGITS: [&str; 9] = ["", "1", "2", "3", "4", "5", "6", "7", "8"];
+            for row in 0..mines::ROWS {
+                for col in 0..mines::COLS {
+                    let cell = minefield.cell(row, col);
+                    let label = match cell.status() {
+                        MineCellStatus::Revealed => DIGITS[cell.adjacent_mine_count()],
+                        MineCellStatus::Flagged => "F",
+                        MineCellStatus::Exploded => "X",
+                        MineCellStatus::Hidden
+                            if *minefield.status() != MineStatus::Ongoing && cell.is_mine() =>
+                        {
+                            "X"
+                        }
+                        MineCellStatus::Hidden => "",
+                    };
+                    if label.is_empty() {
+                        continue;
+                    }
+                    let color = match cell.status() {
+                        MineCellStatus::Flagged => rgba(32, 31, 43, 255),
+                        MineCellStatus::Exploded => white,
+                        _ => mine_number_color(cell.adjacent_mine_count()),
+                    };
+                    rows.push(layout.row(
+                        label,
+                        109. + col as f32 * 31.97,
+                        53. + row as f32 * 31.97,
+                        23.,
+                        color,
+                    ));
+                }
+            }
+        }
+    }
     let canvas = (frame.width(), frame.height());
     frame
         .retain_font_canvas(Font::Inconsolata, canvas, &rows)
@@ -472,6 +799,17 @@ fn present_text(frame: &mut Frame, game: &Tetris, paused: bool) -> Result<(), Er
     frame
         .publish(Damage::full(canvas.0, canvas.1))
         .map_err(|e| Error::Ui("publish text", e))
+}
+
+fn mine_number_color(number: usize) -> u32 {
+    match number {
+        1 => rgba(154, 205, 255, 255),
+        2 => rgba(138, 234, 172, 255),
+        3 => rgba(255, 175, 154, 255),
+        4 => rgba(194, 178, 255, 255),
+        5 => rgba(255, 219, 142, 255),
+        _ => rgba(242, 226, 244, 255),
+    }
 }
 
 fn write_exact(device: Device, buffer: trueos::vgpu::Buffer, bytes: &[u8]) -> Result<(), Error> {
