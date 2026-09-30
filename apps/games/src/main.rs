@@ -54,7 +54,7 @@ const TIC_Y: f32 = 3.6;
 const SUD_STEP: f32 = 1.2;
 const SUD_X: f32 = -7.15;
 const SUD_Y: f32 = 4.8;
-const CHESS_STEP: f32 = 1.35;
+const CHESS_PIECE_SCALE: f32 = 0.85;
 const GAME_CUBE_SCALE: f32 = 0.46;
 const BORDER_CUBE_SCALE: f32 = GAME_CUBE_SCALE / 4.0;
 const BORDER_STEP: f32 = CELL / 4.0;
@@ -118,6 +118,17 @@ impl Layout {
             font_pixels: pixels * self.scale,
             color_rgba: color,
         }
+    }
+}
+
+fn chess_hud_row<'a>(text: &'a str, width: u32, height: u32, y: f32, pixels: f32, color: u32) -> FontCanvasRow<'a> {
+    let scale = (height as f32 / HEIGHT as f32).clamp(0.75, 2.0);
+    FontCanvasRow {
+        text,
+        x: (width as f32 - 200.0 * scale).max(12.0),
+        y: (14.0 + y) * scale,
+        font_pixels: pixels * scale,
+        color_rgba: color,
     }
 }
 
@@ -370,7 +381,7 @@ fn run() -> Result<(), Error> {
                 }
             } else if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
                 && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
-                && !paused
+                && (!paused || mode == Mode::Chess)
             {
                 match mode {
                     Mode::Tetris if !game.is_game_over() => match event.key_code {
@@ -528,7 +539,7 @@ fn run() -> Result<(), Error> {
                         paint = true;
                         text = true;
                     }
-                    Some('p' | 'P') => {
+                    Some('p' | 'P') if mode != Mode::Chess => {
                         paused = !paused;
                         text = true;
                     }
@@ -631,8 +642,7 @@ fn run() -> Result<(), Error> {
                         frame.height(),
                     ) {
                         paint |= chess.select_cursor(row, col);
-                        if !paused
-                            && event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
+                        if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
                             && chess.activate()
                         {
                             paint = true;
@@ -811,15 +821,7 @@ fn chess_cell_at(
     width: u32,
     height: u32,
 ) -> Option<(usize, usize)> {
-    let layout = Layout::fit(width, height);
-    view.pick(
-        local_x,
-        local_y,
-        width,
-        height,
-        layout.scene_width,
-        layout.scene_height,
-    )
+    view.pick(local_x, local_y, width, height)
 }
 
 fn sudoku_cell_at(local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
@@ -1002,17 +1004,13 @@ impl HullBoard {
                 Mode::Chess => {
                     // Keep the expensive hull-shader work bounded at all window sizes.
                     // A fixed per-piece quota also avoids a large burst on promotion.
-                    let across =
-                        ((outer_x * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-                    let down =
-                        ((outer_y * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-                    let outer_seeds = 2 * (across / 2 + 1 + down / 2);
-                    let overhead = outer_seeds + 164 + 64 * 9 + 256 + 8;
+                    let overhead = 64 + 256 + 8;
                     let piece_limit = settings
                         .full()
                         .min(settings.seeds())
                         .saturating_sub(overhead)
                         / 32;
+                    let piece_limit = piece_limit.min(80);
                     for row in 0..8 {
                         for col in 0..8 {
                             let square = Chess::square(row, col);
@@ -1022,25 +1020,15 @@ impl HullBoard {
                             } else {
                                 Rgb8::new(32, 62, 82)
                             };
-                            // Hull patches require uniform scale. A shallow 3x3
-                            // layer reads as one flat square without stretching a
-                            // cube in the unsupported seed transform.
-                            for ix in -1..=1 {
-                                for iz in -1..=1 {
-                                    append_cube(
-                                        &mut bytes,
-                                        [x + ix as f32 * 0.445, 0.0, z + iz as f32 * 0.445],
-                                        0.205,
-                                        rgb555(tile),
-                                    );
-                                }
-                            }
+                            // One uniform hull cube per square. Its side is
+                            // twice the former small subcube's side.
+                            append_cube(&mut bytes, [x, 0.0, z], chess_view::TILE_SCALE, rgb555(tile));
                             if chess.legal_at(row, col) {
-                                for dx in [-0.52, 0.52] {
-                                    for dz in [-0.52, 0.52] {
+                                for dx in [-0.32, 0.32] {
+                                    for dz in [-0.32, 0.32] {
                                         append_cube(
                                             &mut bytes,
-                                            [x + dx, 0.27, z + dz],
+                                            [x + dx, chess_view::TILE_SCALE + 0.12, z + dz],
                                             BORDER_CUBE_SCALE,
                                             rgb555(Rgb8::new(110, 236, 153)),
                                         );
@@ -1050,7 +1038,7 @@ impl HullBoard {
                             if let Some(piece) = chess.board().piece_on(square) {
                                 let side = chess.board().color_on(square).unwrap();
                                 if let Some(asset) = chess_assets.piece(piece as usize) {
-                                    let factor = CHESS_STEP * 0.70;
+                                    let factor = CHESS_PIECE_SCALE;
                                     let count = asset.len().min(piece_limit);
                                     for i in 0..count {
                                         // Sample across the whole sculpture. Source records are
@@ -1061,7 +1049,7 @@ impl HullBoard {
                                             &mut bytes,
                                             [
                                                 x + cube.center[0] * factor,
-                                                0.205 + (cube.center[1] + 0.5) * factor,
+                                                chess_view::TILE_SCALE + (cube.center[1] + 0.47) * factor,
                                                 z + cube.center[2] * factor,
                                             ],
                                             cube.scale * factor,
@@ -1078,8 +1066,8 @@ impl HullBoard {
                                                 append_cube(
                                                     &mut bytes,
                                                     [
-                                                        x + (c as f32 - 1.0) * 0.25,
-                                                        0.71 + (2.0 - r as f32) * 0.22,
+                                                        x + (c as f32 - 1.0) * 0.20,
+                                                        chess_view::TILE_SCALE + 0.13 + (2.0 - r as f32) * 0.18,
                                                         z,
                                                     ],
                                                     0.105,
@@ -1103,7 +1091,6 @@ impl HullBoard {
                         chess.cursor.0,
                         Rgb8::new(240, 247, 188),
                     );
-                    append_chess_board_border(&mut bytes);
                 }
                 Mode::Sudoku => {
                     let violations = sudoku.violations();
@@ -1229,15 +1216,7 @@ impl HullBoard {
         }
         // The outer border follows the whole UI4 window on maximize/restore.
         // The inner border encloses the fixed 10 x 20 playfield.
-        if mode == Mode::Chess && !gallery.open {
-            append_chess_outer_border(
-                &mut bytes,
-                chess_view,
-                outer_x,
-                outer_y,
-                rgb555(Rgb8::new(82, 143, 177)),
-            );
-        } else {
+        if mode != Mode::Chess || gallery.open {
             append_border(
                 &mut bytes,
                 -outer_x,
@@ -1269,7 +1248,7 @@ impl HullBoard {
             .acquire_ui4_surface(background.render_target())
             .map_err(|c| Error::Gpu("board surface", c))?;
         let camera_spec = if mode == Mode::Chess && !gallery.open {
-            chess_view.camera(layout.scene_width, layout.scene_height)
+            chess_view.camera(width, height)
         } else {
             Camera {
                 position: [0., 0., 35.],
@@ -1357,71 +1336,15 @@ fn chess_tint(color: Rgb8, side: ChessColor) -> Rgb8 {
 
 fn append_chess_corners(bytes: &mut Vec<u8>, row: usize, col: usize, color: Rgb8) {
     let [x, _, z] = ChessView::cell(row, col);
-    for dx in [-0.56, 0.56] {
-        for dz in [-0.56, 0.56] {
+    for dx in [-0.32, 0.32] {
+        for dz in [-0.32, 0.32] {
             append_cube(
                 bytes,
-                [x + dx, 0.29, z + dz],
+                [x + dx, chess_view::TILE_SCALE + 0.13, z + dz],
                 BORDER_CUBE_SCALE,
                 rgb555(color),
             );
         }
-    }
-}
-
-fn append_chess_board_border(bytes: &mut Vec<u8>) {
-    let color = rgb555(Rgb8::new(105, 205, 235));
-    let left = chess_view::CENTER_X - 4.0 * CHESS_STEP;
-    let right = chess_view::CENTER_X + 4.0 * CHESS_STEP;
-    let edge = 4.0 * CHESS_STEP;
-    for i in (0..=80).step_by(2) {
-        let x = left + (right - left) * i as f32 / 80.0;
-        append_cube(bytes, [x, 0.02, -edge], BORDER_CUBE_SCALE, color);
-        append_cube(bytes, [x, 0.02, edge], BORDER_CUBE_SCALE, color);
-        let z = -edge + 2.0 * edge * i as f32 / 80.0;
-        append_cube(bytes, [left, 0.02, z], BORDER_CUBE_SCALE, color);
-        append_cube(bytes, [right, 0.02, z], BORDER_CUBE_SCALE, color);
-    }
-}
-
-fn append_chess_outer_border(
-    bytes: &mut Vec<u8>,
-    view: &ChessView,
-    outer_x: f32,
-    outer_y: f32,
-    color: u32,
-) {
-    let across = ((outer_x * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-    let down = ((outer_y * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-    for i in (0..=across).step_by(2) {
-        let x = -outer_x + 2.0 * outer_x * i as f32 / across as f32;
-        append_cube(
-            bytes,
-            view.screen_point(x, outer_y),
-            BORDER_CUBE_SCALE,
-            color,
-        );
-        append_cube(
-            bytes,
-            view.screen_point(x, -outer_y),
-            BORDER_CUBE_SCALE,
-            color,
-        );
-    }
-    for i in (1..down).step_by(2) {
-        let y = -outer_y + 2.0 * outer_y * i as f32 / down as f32;
-        append_cube(
-            bytes,
-            view.screen_point(-outer_x, y),
-            BORDER_CUBE_SCALE,
-            color,
-        );
-        append_cube(
-            bytes,
-            view.screen_point(outer_x, y),
-            BORDER_CUBE_SCALE,
-            color,
-        );
     }
 }
 
@@ -1637,6 +1560,17 @@ fn present_text(
         };
     {
         if settings.open {
+            if mode == Mode::Chess {
+                let hud = |label, y, size, color| chess_hud_row(label, frame.width(), frame.height(), y, size, color);
+                rows.extend([
+                    hud("RENDER LIMITS", 0., 21., white),
+                    hud(&full_label, 40., 18., if settings.selected == 0 { selected } else { muted }),
+                    hud(&seeds_label, 70., 18., if settings.selected == 1 { selected } else { muted }),
+                    hud("UP/DOWN SELECT", 112., 16., muted),
+                    hud("LEFT/RIGHT SET", 136., 16., muted),
+                    hud("F9 CLOSE", 170., 17., muted),
+                ]);
+            } else {
             rows.extend([
                 layout.row("RENDER LIMITS", 462., 145., 22., white),
                 layout.row(
@@ -1665,6 +1599,7 @@ fn present_text(
                 layout.row("LEFT/RIGHT SET", 462., 430., 18., muted),
                 layout.row("F9 CLOSE", 462., 520., 19., muted),
             ]);
+            }
         } else {
             match mode {
                 Mode::Tetris => {
@@ -1752,32 +1687,40 @@ fn present_text(
                         ChessColor::White => "WHITE TURN",
                         ChessColor::Black => "BLACK TURN",
                     };
-                    let status = if paused {
-                        "PAUSED"
-                    } else {
-                        match chess.status() {
-                            ChessStatus::Ongoing => turn,
-                            ChessStatus::Drawn => "DRAW",
-                            ChessStatus::Won if chess.side() == ChessColor::White => "BLACK WINS",
-                            ChessStatus::Won => "WHITE WINS",
-                        }
+                    let status = match chess.status() {
+                        ChessStatus::Ongoing => turn,
+                        ChessStatus::Drawn => "DRAW",
+                        ChessStatus::Won if chess.side() == ChessColor::White => "BLACK WINS",
+                        ChessStatus::Won => "WHITE WINS",
                     };
+                    let hud = |label, y, size, color| chess_hud_row(label, frame.width(), frame.height(), y, size, color);
+                    if frame.width() < frame.height() {
+                        rows.extend([
+                            hud(status, 0., 19., white),
+                            hud(&chess_assets_text, 28., 15., muted),
+                            hud(&view_label, 50., 15., muted),
+                            hud(&zoom_label, 72., 15., muted),
+                            hud("CLICK / SPACE SELECT", 100., 14., muted),
+                            hud("A/D ROTATE W/S TILT", 124., 14., muted),
+                            hud("WHEEL ZOOM", 148., 14., muted),
+                            hud("R RESTART  F8/F9", 172., 14., muted),
+                        ]);
+                    } else {
                     rows.extend([
-                        layout.row(status, 462., 144., 21., white),
-                        layout.row(&chess_assets_text, 462., 195., 19., muted),
-                        layout.row("CLICK PIECE", 462., 290., 18., muted),
-                        layout.row("CLICK TARGET", 462., 327., 18., muted),
-                        layout.row("GREEN LEGAL", 462., 365., 18., muted),
-                        layout.row("A/D ROTATE", 462., 420., 18., muted),
-                    layout.row("W/S TILT 15", 462., 456., 18., muted),
-                    layout.row("WHEEL ZOOM", 462., 550., 16., muted),
-                        layout.row("ARROWS MOVE", 462., 492., 18., muted),
-                        layout.row("SPACE SELECT", 462., 528., 18., muted),
-                        layout.row("P PAUSE", 462., 613., 19., muted),
-                        layout.row("R RESTART", 462., 651., 19., muted),
+                        hud(status, 0., 21., white),
+                        hud(&chess_assets_text, 34., 17., muted),
+                        hud(&view_label, 58., 16., muted),
+                        hud(&zoom_label, 82., 16., muted),
+                        hud("CLICK SELECT", 120., 17., muted),
+                        hud("GREEN LEGAL", 144., 16., muted),
+                        hud("A/D ROTATE", 168., 16., muted),
+                        hud("W/S TILT 15", 192., 16., muted),
+                        hud("WHEEL ZOOM", 216., 16., muted),
+                        hud("ARROWS / SPACE", 240., 16., muted),
+                        hud("R RESTART", 264., 16., muted),
+                        hud("F8 GAMES  F9 SETTINGS", 288., 15., muted),
                     ]);
-                rows.push(layout.row(&view_label, 462., 236., 17., muted));
-                rows.push(layout.row(&zoom_label, 462., 266., 17., muted));
+                    }
                 }
                 Mode::Sudoku => {
                     let status = if paused {
@@ -1837,8 +1780,10 @@ fn present_text(
                     ]);
                 }
             }
-            rows.push(layout.row("F9 SETTINGS", 462., 690., 17., muted));
-            rows.push(layout.row("F8 GAMES", 462., 716., 16., muted));
+            if mode != Mode::Chess {
+                rows.push(layout.row("F9 SETTINGS", 462., 690., 17., muted));
+                rows.push(layout.row("F8 GAMES", 462., 716., 16., muted));
+            }
         }
     }
     let canvas = (frame.width(), frame.height());
