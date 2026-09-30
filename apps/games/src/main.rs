@@ -1,20 +1,30 @@
-#![no_std]
+// trueos-blueprint: features = ["tokio-runtime"]
 
 extern crate alloc;
 
 mod audio;
+mod chess;
+mod chess_assets;
 mod mines;
+mod sudoku;
+mod tic;
 
 use alloc::{format, vec::Vec};
 use audio::Audio;
+use chess::Chess;
+use chess_assets::ChessAssets;
+use cozy_chess::{Color as ChessColor, GameStatus as ChessStatus};
 use gamie::minesweeper::{CellStatus as MineCellStatus, Status as MineStatus};
+use gamie::tictactoe::{Player as TicPlayer, Status as TicStatus};
 use microgames::{Game, Lcg32, NoopEvents, Rgb8, Rotation};
 use mines::Minefield;
+use sudoku::Sudoku;
+use tic::TicTacToe;
 use trueos::input;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    BackgroundLayer, Damage, Error as UiError, Font, FontCanvasRow, Frame, MenuEntry,
-    POINTER_BUTTON_PRIMARY, SpriteCorner, SpriteQuad, output_dimensions, rgba,
+    BackgroundLayer, Damage, Error as UiError, Font, FontCanvasRow, Frame, POINTER_BUTTON_PRIMARY,
+    SpriteCorner, SpriteQuad, output_dimensions, rgba,
 };
 use trueos::vgpu::{
     BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ, BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_VERTEX,
@@ -33,19 +43,28 @@ const ROWS: usize = 24;
 const HIDDEN: usize = 4;
 const VISIBLE: usize = ROWS - HIDDEN;
 const CELL: f32 = 1.08;
+const TIC_STEP: f32 = 3.6;
+const TIC_X: f32 = -5.9;
+const TIC_Y: f32 = 3.6;
+const SUD_STEP: f32 = 1.2;
+const SUD_X: f32 = -7.15;
+const SUD_Y: f32 = 4.8;
+const CHESS_STEP: f32 = 1.35;
+const CHESS_X: f32 = -7.15;
+const CHESS_Y: f32 = 4.725;
 const GAME_CUBE_SCALE: f32 = 0.46;
 const BORDER_CUBE_SCALE: f32 = GAME_CUBE_SCALE / 4.0;
 const BORDER_STEP: f32 = CELL / 4.0;
 const MAX_BORDER_SEGMENTS: usize = 600;
-const MAX_SEEDS: usize = 4096;
+const MAX_SEEDS: usize = 8192;
 const CUBE_VERTICES: [u8; 12] = [0; 12];
 const CUBE_INDICES: [u8; 44 * 4] = [0; 44 * 4];
 const CUSTOM_RGB555: u32 = 1 << 15;
 const BG: u32 = u32::from_le_bytes([11, 17, 30, 128]);
 const MINE_GLYPH_SPRITE: u32 = 1;
 const MINE_GLYPHS: &[u8; 10] = b"12345678FX";
-const MINE_TILE_WIDTH: usize = 16;
-const MINE_TILE_HEIGHT: usize = 26;
+const MINE_TILE_WIDTH: usize = microfont::FWIDTH + 4;
+const MINE_TILE_HEIGHT: usize = microfont::FHEIGHT + 4;
 const MINE_ATLAS_WIDTH: usize = MINE_GLYPHS.len() * MINE_TILE_WIDTH;
 const SCENE_WIDTH: f32 = SCENE_HEIGHT * WIDTH as f32 / HEIGHT as f32;
 const SCENE_HEIGHT: f32 = 25.0;
@@ -56,6 +75,9 @@ type Tetris = Game<COLS, ROWS, HIDDEN>;
 enum Mode {
     Tetris,
     Minesweeper,
+    TicTacToe,
+    Sudoku,
+    Chess,
 }
 
 enum Error {
@@ -139,6 +161,10 @@ fn run() -> Result<(), Error> {
     let mut events = NoopEvents;
     let mut game = Tetris::new(&mut rng, &mut events);
     let mut minefield = Minefield::new(clock::monotonic_millis());
+    let mut tic = TicTacToe::new();
+    let mut sudoku = Sudoku::new(clock::monotonic_millis());
+    let mut chess = Chess::new();
+    let chess_assets = ChessAssets::new();
     let mut mode = Mode::Tetris;
     let mut paused = false;
     let mut last_tick = clock::monotonic_millis();
@@ -146,8 +172,9 @@ fn run() -> Result<(), Error> {
     let mut paint = true;
     let mut text = true;
     let mut pending_resize = None;
+    let mut resize_foreground_pending = false;
+    let mut resize_refresh_pending = false;
     let mut audio = Audio::new();
-    let mut menu_target: Option<(u64, usize, usize)> = None;
 
     loop {
         while let Some(event) = frame
@@ -164,6 +191,10 @@ fn run() -> Result<(), Error> {
                     Ok(()) => {
                         pending_resize = None;
                         board.previous_view_projection = [0.; 16];
+                        // UI4 commits the layered resize after each replacement
+                        // layer has published once. Refresh again after commit.
+                        resize_foreground_pending = true;
+                        resize_refresh_pending = true;
                         paint = true;
                         text = true;
                     }
@@ -178,11 +209,42 @@ fn run() -> Result<(), Error> {
             game.level.rows_deleted,
             game.is_game_over(),
         );
+        let tic_routes = if mode == Mode::TicTacToe {
+            let routes = frame
+                .input_routes()
+                .map_err(|e| Error::Ui("input routes", e))?;
+            if tic.sync_routes(&routes) {
+                paint = true;
+                text = true;
+            }
+            routes
+        } else {
+            Vec::new()
+        };
         while let Some(event) = frame
             .take_keyboard_event()
             .map_err(|e| Error::Ui("keyboard", e))?
         {
             if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
+                && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
+                && matches!(
+                    event.key_code,
+                    input::KEYBOARD_KEY_F1..=input::KEYBOARD_KEY_F5
+                )
+            {
+                let next = match event.key_code {
+                    input::KEYBOARD_KEY_F1 => Mode::Tetris,
+                    input::KEYBOARD_KEY_F2 => Mode::Minesweeper,
+                    input::KEYBOARD_KEY_F3 => Mode::TicTacToe,
+                    input::KEYBOARD_KEY_F4 => Mode::Sudoku,
+                    _ => Mode::Chess,
+                };
+                if select_mode(&mut frame, &mut mode, next)? {
+                    paused = false;
+                    paint = true;
+                    text = true;
+                }
+            } else if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
                 && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
                 && !paused
             {
@@ -232,28 +294,87 @@ fn run() -> Result<(), Error> {
                             _ => {}
                         }
                     }
+                    Mode::Chess => {
+                        let changed = match event.key_code {
+                            input::KEYBOARD_KEY_ARROW_LEFT => chess.move_cursor(-1, 0),
+                            input::KEYBOARD_KEY_ARROW_RIGHT => chess.move_cursor(1, 0),
+                            input::KEYBOARD_KEY_ARROW_UP => chess.move_cursor(0, -1),
+                            input::KEYBOARD_KEY_ARROW_DOWN => chess.move_cursor(0, 1),
+                            input::KEYBOARD_KEY_SPACE | input::KEYBOARD_KEY_ENTER => {
+                                chess.activate()
+                            }
+                            _ => false,
+                        };
+                        if changed {
+                            paint = true;
+                            text = true;
+                        }
+                    }
+                    Mode::Sudoku => {
+                        let changed = match event.key_code {
+                            input::KEYBOARD_KEY_ARROW_LEFT => sudoku.move_cursor(-1, 0),
+                            input::KEYBOARD_KEY_ARROW_RIGHT => sudoku.move_cursor(1, 0),
+                            input::KEYBOARD_KEY_ARROW_UP => sudoku.move_cursor(0, -1),
+                            input::KEYBOARD_KEY_ARROW_DOWN => sudoku.move_cursor(0, 1),
+                            input::KEYBOARD_KEY_BACKSPACE | input::KEYBOARD_KEY_DELETE => {
+                                sudoku.erase()
+                            }
+                            _ => false,
+                        };
+                        if changed {
+                            paint = true;
+                            text = true;
+                        }
+                    }
+                    Mode::TicTacToe => {
+                        if let Some(player) = tic.keyboard_player(&event, &tic_routes) {
+                            let moved = match event.key_code {
+                                input::KEYBOARD_KEY_ARROW_LEFT => tic.move_cursor(player, -1, 0),
+                                input::KEYBOARD_KEY_ARROW_RIGHT => tic.move_cursor(player, 1, 0),
+                                input::KEYBOARD_KEY_ARROW_UP => tic.move_cursor(player, 0, -1),
+                                input::KEYBOARD_KEY_ARROW_DOWN => tic.move_cursor(player, 0, 1),
+                                input::KEYBOARD_KEY_SPACE | input::KEYBOARD_KEY_ENTER => {
+                                    if tic.play_selected(player) {
+                                        text = true;
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                _ => false,
+                            };
+                            paint |= moved;
+                        }
+                    }
                     _ => {}
                 }
             } else if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT {
                 match char::from_u32(event.codepoint) {
-                    Some('1') if mode != Mode::Tetris => {
-                        frame
-                            .clear_context_menu()
-                            .map_err(|e| Error::Ui("clear mine menu", e))?;
-                        menu_target = None;
-                        mode = Mode::Tetris;
-                        paused = false;
-                        paint = true;
-                        text = true;
+                    Some(c @ '1'..='9') if mode == Mode::Sudoku && !paused => {
+                        if sudoku.set_digit(c as u8 - b'0') {
+                            paint = true;
+                            text = true;
+                        }
                     }
-                    Some('2') if mode != Mode::Minesweeper => {
-                        frame
-                            .register_dynamic_context_menu()
-                            .map_err(|e| Error::Ui("mine menu", e))?;
-                        mode = Mode::Minesweeper;
-                        paused = false;
-                        paint = true;
-                        text = true;
+                    Some('0') if mode == Mode::Sudoku && !paused => {
+                        if sudoku.erase() {
+                            paint = true;
+                            text = true;
+                        }
+                    }
+                    Some(c @ '1'..='5') if mode != Mode::Sudoku => {
+                        let next = match c {
+                            '1' => Mode::Tetris,
+                            '2' => Mode::Minesweeper,
+                            '3' => Mode::TicTacToe,
+                            '4' => Mode::Sudoku,
+                            _ => Mode::Chess,
+                        };
+                        if select_mode(&mut frame, &mut mode, next)? {
+                            paused = false;
+                            paint = true;
+                            text = true;
+                        }
                     }
                     Some('r' | 'R') => {
                         match mode {
@@ -265,6 +386,9 @@ fn run() -> Result<(), Error> {
                             Mode::Minesweeper => {
                                 minefield.reset(clock::monotonic_millis());
                             }
+                            Mode::TicTacToe => tic.reset(),
+                            Mode::Sudoku => sudoku.reset(clock::monotonic_millis()),
+                            Mode::Chess => chess.reset(),
                         }
                         paused = false;
                         paint = true;
@@ -288,69 +412,92 @@ fn run() -> Result<(), Error> {
             .take_pointer_event()
             .map_err(|e| Error::Ui("pointer", e))?
         {
-            if mode != Mode::Minesweeper || paused || *minefield.status() != MineStatus::Ongoing {
-                continue;
-            }
-            let buttons = event.buttons_pressed & POINTER_BUTTON_PRIMARY;
-            if buttons == 0 {
-                continue;
-            }
-            if let Some((row, col)) =
-                mine_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
-            {
-                minefield.select(row, col);
-                paint = true;
-                if minefield.reveal() {
-                    text = true;
+            match mode {
+                Mode::Minesweeper => {
+                    if let Some((row, col)) =
+                        mine_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
+                    {
+                        if minefield.cursor != (col, row) {
+                            minefield.select(row, col);
+                            paint = true;
+                        }
+                        if !paused
+                            && *minefield.status() == MineStatus::Ongoing
+                            && event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
+                            && minefield.reveal()
+                        {
+                            paint = true;
+                            text = true;
+                        }
+                    }
                 }
+                Mode::TicTacToe => {
+                    if let Some(player) = tic.pointer_player(event.source)
+                        && let Some((row, col)) =
+                            tic_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
+                    {
+                        paint |= tic.select(player, row, col);
+                        if !paused
+                            && event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
+                            && tic.play(player, row, col)
+                        {
+                            paint = true;
+                            text = true;
+                        }
+                    }
+                }
+                Mode::Chess => {
+                    if let Some((row, col)) =
+                        chess_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
+                    {
+                        paint |= chess.select_cursor(row, col);
+                        if !paused
+                            && event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
+                            && chess.activate()
+                        {
+                            paint = true;
+                            text = true;
+                        }
+                    }
+                }
+                Mode::Sudoku => {
+                    if let Some((row, col)) =
+                        sudoku_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
+                    {
+                        if sudoku.select(row, col) {
+                            paint = true;
+                        }
+                    }
+                }
+                Mode::Tetris => {}
             }
         }
         while let Some(event) = frame
             .take_dynamic_context_menu_event()
-            .map_err(|e| Error::Ui("mine menu event", e))?
+            .map_err(|e| Error::Ui("mine right click", e))?
         {
-            let entries = [
-                MenuEntry::new("Flag / unflag", menu_flag),
-                MenuEntry::new("Reveal", menu_reveal),
-            ];
             if event.closed.is_none() {
                 if mode == Mode::Minesweeper
                     && !paused
                     && *minefield.status() == MineStatus::Ongoing
-                {
-                    if let Some((row, col)) =
+                    && let Some((row, col)) =
                         mine_cell_at(event.local_x, event.local_y, frame.width(), frame.height())
-                    {
-                        if frame
-                            .resolve_context_menu(event.serial, &entries)
-                            .map_err(|e| Error::Ui("resolve mine menu", e))?
-                        {
-                            menu_target = Some((event.serial, row, col));
-                        }
-                    } else {
-                        let empty = [MenuEntry::<Minefield>::disabled("Minefield cells only")];
-                        let _ = frame
-                            .resolve_context_menu(event.serial, &empty)
-                            .map_err(|e| Error::Ui("resolve empty menu", e))?;
-                    }
-                } else {
-                    let unavailable = [MenuEntry::<Minefield>::disabled("Game paused or finished")];
-                    let _ = frame
-                        .resolve_context_menu(event.serial, &unavailable)
-                        .map_err(|e| Error::Ui("resolve unavailable menu", e))?;
-                }
-            } else if let Some((serial, row, col)) = menu_target {
-                if serial == event.serial {
-                    menu_target = None;
-                    if mode == Mode::Minesweeper
-                        && !paused
-                        && *minefield.status() == MineStatus::Ongoing
-                    {
-                        minefield.select(row, col);
-                        event.dispatch(&entries, &mut minefield);
-                        paint = true;
+                {
+                    minefield.select(row, col);
+                    paint = true;
+                    if minefield.flag() {
                         text = true;
                     }
+                }
+                // Cancel the pending dynamic menu before UI4 draws it, then
+                // rearm secondary clicks for the next cell.
+                frame
+                    .clear_context_menu()
+                    .map_err(|e| Error::Ui("dismiss mine menu", e))?;
+                if mode == Mode::Minesweeper {
+                    frame
+                        .register_dynamic_context_menu()
+                        .map_err(|e| Error::Ui("rearm mine right click", e))?;
                 }
             }
         }
@@ -365,12 +512,7 @@ fn run() -> Result<(), Error> {
                 game.soft_drop(&mut rng, &mut events);
             }
         }
-        let playing = !paused
-            && match mode {
-                Mode::Tetris => !game.is_game_over(),
-                Mode::Minesweeper => *minefield.status() == MineStatus::Ongoing,
-            };
-        audio.update(playing, now);
+        audio.update(now);
         if game.consume_changed() && mode == Mode::Tetris {
             paint = true;
         }
@@ -382,12 +524,16 @@ fn run() -> Result<(), Error> {
                     game.level.rows_deleted,
                     game.is_game_over(),
                 );
-        if paint {
+        if paint && pending_resize.is_none() {
             match board.render(
                 &mut background,
                 mode,
                 &game,
                 &minefield,
+                &tic,
+                &sudoku,
+                &chess,
+                &chess_assets,
                 frame.width(),
                 frame.height(),
             ) {
@@ -396,24 +542,94 @@ fn run() -> Result<(), Error> {
                 Err(error) => return Err(error),
             }
         }
-        if text {
-            match present_text(&mut frame, mode, &game, &minefield, paused) {
-                Ok(()) => text = false,
+        if text && !paint && pending_resize.is_none() {
+            match present_text(
+                &mut frame,
+                mode,
+                &game,
+                &minefield,
+                &tic,
+                &sudoku,
+                &chess,
+                &chess_assets,
+                paused,
+            ) {
+                Ok(()) => {
+                    resize_foreground_pending = false;
+                    if resize_refresh_pending {
+                        resize_refresh_pending = false;
+                        paint = true;
+                        text = true;
+                    } else {
+                        text = false;
+                    }
+                }
                 Err(Error::Ui(_, UiError::Busy)) => {}
                 Err(error) => return Err(error),
             }
         }
         vsys::poll_once();
-        vsys::sleep_ms(16);
+        vsys::sleep_ms(if pending_resize.is_some() || resize_foreground_pending {
+            1
+        } else {
+            16
+        });
     }
 }
 
-fn menu_flag(minefield: &mut Minefield) {
-    let _ = minefield.flag();
+fn select_mode(frame: &mut Frame, mode: &mut Mode, next: Mode) -> Result<bool, Error> {
+    if *mode == next {
+        return Ok(false);
+    }
+    frame
+        .clear_context_menu()
+        .map_err(|e| Error::Ui("clear game menu", e))?;
+    if next == Mode::Minesweeper {
+        frame
+            .register_dynamic_context_menu()
+            .map_err(|e| Error::Ui("mine menu", e))?;
+    }
+    *mode = next;
+    Ok(true)
 }
 
-fn menu_reveal(minefield: &mut Minefield) {
-    let _ = minefield.reveal();
+fn chess_cell_at(local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
+    let layout = Layout::fit(width, height);
+    let world_x = (local_x as f32 / width as f32 - 0.5) * layout.scene_width;
+    let world_y = (0.5 - local_y as f32 / height as f32) * layout.scene_height;
+    let col = (world_x - (CHESS_X - CHESS_STEP * 0.5)) / CHESS_STEP;
+    let row = ((CHESS_Y + CHESS_STEP * 0.5) - world_y) / CHESS_STEP;
+    if col >= 0.0 && col < 8.0 && row >= 0.0 && row < 8.0 {
+        Some((row as usize, col as usize))
+    } else {
+        None
+    }
+}
+
+fn sudoku_cell_at(local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
+    let layout = Layout::fit(width, height);
+    let world_x = (local_x as f32 / width as f32 - 0.5) * layout.scene_width;
+    let world_y = (0.5 - local_y as f32 / height as f32) * layout.scene_height;
+    let col = (world_x - (SUD_X - SUD_STEP * 0.5)) / SUD_STEP;
+    let row = ((SUD_Y + SUD_STEP * 0.5) - world_y) / SUD_STEP;
+    if col >= 0.0 && col < 9.0 && row >= 0.0 && row < 9.0 {
+        Some((row as usize, col as usize))
+    } else {
+        None
+    }
+}
+
+fn tic_cell_at(local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
+    let layout = Layout::fit(width, height);
+    let world_x = (local_x as f32 / width as f32 - 0.5) * layout.scene_width;
+    let world_y = (0.5 - local_y as f32 / height as f32) * layout.scene_height;
+    let col = (world_x - (TIC_X - TIC_STEP * 0.5)) / TIC_STEP;
+    let row = ((TIC_Y + TIC_STEP * 0.5) - world_y) / TIC_STEP;
+    if col >= 0.0 && col < 3.0 && row >= 0.0 && row < 3.0 {
+        Some((row as usize, col as usize))
+    } else {
+        None
+    }
 }
 
 fn mine_cell_at(local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
@@ -486,6 +702,10 @@ impl HullBoard {
         mode: Mode,
         game: &Tetris,
         minefield: &Minefield,
+        tic: &TicTacToe,
+        sudoku: &Sudoku,
+        chess: &Chess,
+        chess_assets: &ChessAssets,
         width: u32,
         height: u32,
     ) -> Result<(), Error> {
@@ -550,6 +770,202 @@ impl HullBoard {
                     }
                 }
             }
+            Mode::Chess => {
+                for row in 0..8 {
+                    for col in 0..8 {
+                        let square = Chess::square(row, col);
+                        let x = CHESS_X + col as f32 * CHESS_STEP;
+                        let y = CHESS_Y - row as f32 * CHESS_STEP;
+                        let tile = if (row + col) % 2 == 0 {
+                            Rgb8::new(98, 129, 144)
+                        } else {
+                            Rgb8::new(32, 62, 82)
+                        };
+                        append_cube(&mut bytes, [x, y, -0.17], 0.57, rgb555(tile));
+                        if chess.legal_at(row, col) {
+                            for dx in [-0.52, 0.52] {
+                                for dy in [-0.52, 0.52] {
+                                    append_cube(
+                                        &mut bytes,
+                                        [x + dx, y + dy, 0.26],
+                                        BORDER_CUBE_SCALE,
+                                        rgb555(Rgb8::new(110, 236, 153)),
+                                    );
+                                }
+                            }
+                        }
+                        if let Some(piece) = chess.board().piece_on(square) {
+                            let side = chess.board().color_on(square).unwrap();
+                            if let Some(asset) = chess_assets.piece(piece as usize) {
+                                for cube in asset {
+                                    let color = chess_tint(cube.color, side);
+                                    append_cube(
+                                        &mut bytes,
+                                        [
+                                            x + cube.center[0] * CHESS_STEP * 0.70,
+                                            y + cube.center[1] * CHESS_STEP * 0.70,
+                                            0.67 + cube.center[2] * CHESS_STEP * 0.70,
+                                        ],
+                                        cube.scale * CHESS_STEP * 0.70,
+                                        rgb555(color),
+                                    );
+                                }
+                            } else {
+                                let color = chess_tint(Rgb8::new(190, 200, 205), side);
+                                for (r, bits) in
+                                    CHESS_GLYPHS[piece as usize].into_iter().enumerate()
+                                {
+                                    for c in 0..3 {
+                                        if bits & (1 << (2 - c)) != 0 {
+                                            append_cube(
+                                                &mut bytes,
+                                                [
+                                                    x + (c as f32 - 1.0) * 0.25,
+                                                    y + (2.0 - r as f32) * 0.22,
+                                                    0.50,
+                                                ],
+                                                0.105,
+                                                rgb555(color),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(selected) = chess.selected {
+                    let col = selected.file() as usize;
+                    let row = 7 - selected.rank() as usize;
+                    append_chess_corners(&mut bytes, row, col, Rgb8::new(255, 201, 94));
+                }
+                append_chess_corners(
+                    &mut bytes,
+                    chess.cursor.1,
+                    chess.cursor.0,
+                    Rgb8::new(240, 247, 188),
+                );
+            }
+            Mode::Sudoku => {
+                let violations = sudoku.violations();
+                for row in 0..9 {
+                    for col in 0..9 {
+                        let index = row * 9 + col;
+                        let x = SUD_X + col as f32 * SUD_STEP;
+                        let y = SUD_Y - row as f32 * SUD_STEP;
+                        let box_light = ((row / 3) + (col / 3)) % 2 == 0;
+                        let tile = if box_light {
+                            Rgb8::new(38, 68, 84)
+                        } else {
+                            Rgb8::new(27, 51, 69)
+                        };
+                        append_cube(&mut bytes, [x, y, -0.10], 0.49, rgb555(tile));
+                        let digit = sudoku.game().digit(index);
+                        if digit == 0 {
+                            continue;
+                        }
+                        let color = if violations.get(index) {
+                            Rgb8::new(255, 83, 96)
+                        } else if sudoku.game().frozen().get(index) {
+                            Rgb8::new(167, 225, 244)
+                        } else {
+                            Rgb8::new(255, 191, 116)
+                        };
+                        let glyph = SUD_DIGITS[(digit - 1) as usize];
+                        for (r, bits) in glyph.into_iter().enumerate() {
+                            for c in 0..3 {
+                                if bits & (1 << (2 - c)) != 0 {
+                                    append_cube(
+                                        &mut bytes,
+                                        [
+                                            x + (c as f32 - 1.0) * 0.22,
+                                            y + (2.0 - r as f32) * 0.20,
+                                            0.47,
+                                        ],
+                                        0.085,
+                                        rgb555(color),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                for n in [3.0_f32, 6.0] {
+                    let x = SUD_X + (n - 0.5) * SUD_STEP;
+                    let y = SUD_Y - (n - 0.5) * SUD_STEP;
+                    for i in 0..=36 {
+                        let delta = -5.4 + i as f32 * 0.3;
+                        append_cube(
+                            &mut bytes,
+                            [x, delta, 0.18],
+                            BORDER_CUBE_SCALE,
+                            rgb555(Rgb8::new(101, 161, 187)),
+                        );
+                        append_cube(
+                            &mut bytes,
+                            [SUD_X + 4.0 * SUD_STEP + delta, y, 0.18],
+                            BORDER_CUBE_SCALE,
+                            rgb555(Rgb8::new(101, 161, 187)),
+                        );
+                    }
+                }
+                let x = SUD_X + sudoku.cursor.0 as f32 * SUD_STEP;
+                let y = SUD_Y - sudoku.cursor.1 as f32 * SUD_STEP;
+                for dx in [-0.48, 0.48] {
+                    for dy in [-0.48, 0.48] {
+                        append_cube(
+                            &mut bytes,
+                            [x + dx, y + dy, 0.48],
+                            BORDER_CUBE_SCALE,
+                            rgb555(Rgb8::new(255, 239, 149)),
+                        );
+                    }
+                }
+            }
+            Mode::TicTacToe => {
+                for row in 0..3 {
+                    for col in 0..3 {
+                        let x = TIC_X + col as f32 * TIC_STEP;
+                        let y = TIC_Y - row as f32 * TIC_STEP;
+                        append_cube(
+                            &mut bytes,
+                            [x, y, -0.16],
+                            1.48,
+                            rgb555(Rgb8::new(32, 59, 77)),
+                        );
+                        let mark = tic.game().get(row, col);
+                        let color = match mark {
+                            Some(TicPlayer::Player0) => Rgb8::new(89, 221, 242),
+                            Some(TicPlayer::Player1) => Rgb8::new(255, 166, 87),
+                            None => continue,
+                        };
+                        for (dx, dy) in tic_mark_points(mark.unwrap()) {
+                            append_cube(
+                                &mut bytes,
+                                [x + dx, y + dy, 0.35],
+                                GAME_CUBE_SCALE,
+                                rgb555(color),
+                            );
+                        }
+                    }
+                }
+                for seat in tic.seats().iter().flatten().filter(|seat| seat.selected) {
+                    let x = TIC_X + seat.cell.0 as f32 * TIC_STEP;
+                    let y = TIC_Y - seat.cell.1 as f32 * TIC_STEP;
+                    let [r, g, b, _] = seat.color_rgba.to_le_bytes();
+                    let color = rgb555(Rgb8::new(r, g, b));
+                    for dx in [-1.37, 1.37] {
+                        for dy in [-1.37, 1.37] {
+                            append_cube(
+                                &mut bytes,
+                                [x + dx, y + dy, 0.44],
+                                BORDER_CUBE_SCALE,
+                                color,
+                            );
+                        }
+                    }
+                }
+            }
         }
         // The outer border follows the whole UI4 window on maximize/restore.
         // The inner border encloses the fixed 10 x 20 playfield.
@@ -582,7 +998,7 @@ impl HullBoard {
             .device
             .acquire_ui4_surface(background.render_target())
             .map_err(|c| Error::Gpu("board surface", c))?;
-        let camera = Camera {
+        let mut camera = Camera {
             position: [0., 0., 35.],
             rotation: Quaternion::IDENTITY,
             projection: Projection::Orthographic {
@@ -593,6 +1009,9 @@ impl HullBoard {
             },
         }
         .retained(width, height, self.previous_view_projection);
+        if self.previous_view_projection == [0.; 16] {
+            camera.previous_view_projection = camera.view_projection;
+        }
         let point = self
             .device
             .submit_retained_frame_v3(
@@ -637,15 +1056,91 @@ impl HullBoard {
     }
 }
 
+const CHESS_GLYPHS: [[u8; 5]; 6] = [
+    [0b110, 0b101, 0b110, 0b100, 0b100], // P
+    [0b101, 0b111, 0b111, 0b111, 0b101], // N
+    [0b110, 0b101, 0b110, 0b101, 0b110], // B
+    [0b110, 0b101, 0b110, 0b101, 0b101], // R
+    [0b111, 0b101, 0b101, 0b111, 0b001], // Q
+    [0b101, 0b110, 0b100, 0b110, 0b101], // K
+];
+
+fn chess_tint(color: Rgb8, side: ChessColor) -> Rgb8 {
+    let mix = |v: u8, base: u16, weight: u16| (base + u16::from(v) * weight / 255).min(255) as u8;
+    match side {
+        ChessColor::White => Rgb8::new(
+            mix(color.r, 142, 105),
+            mix(color.g, 138, 103),
+            mix(color.b, 125, 98),
+        ),
+        ChessColor::Black => Rgb8::new(
+            mix(color.r, 24, 77),
+            mix(color.g, 42, 93),
+            mix(color.b, 61, 106),
+        ),
+    }
+}
+
+fn append_chess_corners(bytes: &mut Vec<u8>, row: usize, col: usize, color: Rgb8) {
+    let x = CHESS_X + col as f32 * CHESS_STEP;
+    let y = CHESS_Y - row as f32 * CHESS_STEP;
+    for dx in [-0.56, 0.56] {
+        for dy in [-0.56, 0.56] {
+            append_cube(
+                bytes,
+                [x + dx, y + dy, 0.50],
+                BORDER_CUBE_SCALE,
+                rgb555(color),
+            );
+        }
+    }
+}
+
+const SUD_DIGITS: [[u8; 5]; 9] = [
+    [0b010, 0b110, 0b010, 0b010, 0b111],
+    [0b111, 0b001, 0b111, 0b100, 0b111],
+    [0b111, 0b001, 0b111, 0b001, 0b111],
+    [0b101, 0b101, 0b111, 0b001, 0b001],
+    [0b111, 0b100, 0b111, 0b001, 0b111],
+    [0b111, 0b100, 0b111, 0b101, 0b111],
+    [0b111, 0b001, 0b001, 0b001, 0b001],
+    [0b111, 0b101, 0b111, 0b101, 0b111],
+    [0b111, 0b101, 0b111, 0b001, 0b111],
+];
+
+fn tic_mark_points(player: TicPlayer) -> &'static [(f32, f32)] {
+    const X: &[(f32, f32)] = &[
+        (-0.82, -0.82),
+        (-0.82, 0.82),
+        (0.0, 0.0),
+        (0.82, -0.82),
+        (0.82, 0.82),
+    ];
+    const O: &[(f32, f32)] = &[
+        (-0.82, -0.82),
+        (-0.82, 0.0),
+        (-0.82, 0.82),
+        (0.0, -0.82),
+        (0.0, 0.82),
+        (0.82, -0.82),
+        (0.82, 0.0),
+        (0.82, 0.82),
+    ];
+    match player {
+        TicPlayer::Player0 => X,
+        TicPlayer::Player1 => O,
+    }
+}
+
 fn append_border(bytes: &mut Vec<u8>, left: f32, right: f32, bottom: f32, top: f32, color: u32) {
     let across = (((right - left) / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
     let down = (((top - bottom) / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-    for i in 0..=across {
+    for i in (0..=across).step_by(2) {
         let x = left + (right - left) * i as f32 / across as f32;
         append_cube(bytes, [x, top, 0.03], BORDER_CUBE_SCALE, color);
         append_cube(bytes, [x, bottom, 0.03], BORDER_CUBE_SCALE, color);
     }
-    for i in 1..down {
+    for i in (1..down).step_by(2) {
         let y = bottom + (top - bottom) * i as f32 / down as f32;
         append_cube(bytes, [left, y, 0.03], BORDER_CUBE_SCALE, color);
         append_cube(bytes, [right, y, 0.03], BORDER_CUBE_SCALE, color);
@@ -691,14 +1186,10 @@ fn upload_mine_glyphs(frame: &mut Frame) -> Result<(), Error> {
                 if mask[y * microfont::FWIDTH + x] == 0 {
                     continue;
                 }
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let px = index * MINE_TILE_WIDTH + 2 + x * 2 + dx;
-                        let py = 2 + y * 2 + dy;
-                        let offset = (py * MINE_ATLAS_WIDTH + px) * 4;
-                        atlas[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
-                    }
-                }
+                let px = index * MINE_TILE_WIDTH + 2 + x;
+                let py = 2 + y;
+                let offset = (py * MINE_ATLAS_WIDTH + px) * 4;
+                atlas[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
             }
         }
     }
@@ -712,17 +1203,28 @@ fn upload_mine_glyphs(frame: &mut Frame) -> Result<(), Error> {
         .map_err(|e| Error::Ui("upload mine glyphs", e))
 }
 
-fn mine_glyph_quad(layout: &Layout, glyph: u8, col: usize, row: usize, color: u32) -> SpriteQuad {
+fn mine_glyph_quad(
+    layout: &Layout,
+    glyph: u8,
+    col: usize,
+    row: usize,
+    color: u32,
+    glyph_scale: f32,
+) -> SpriteQuad {
     let index = MINE_GLYPHS
         .iter()
         .position(|&candidate| candidate == glyph)
         .unwrap();
     let u0 = index as f32 / MINE_GLYPHS.len() as f32;
     let u1 = (index + 1) as f32 / MINE_GLYPHS.len() as f32;
-    let x0 = layout.offset_x + (106.8 + col as f32 * 31.97) * layout.scale;
-    let y0 = layout.offset_y + (53.6 + row as f32 * 31.97) * layout.scale;
-    let x1 = x0 + MINE_TILE_WIDTH as f32 * layout.scale;
-    let y1 = y0 + MINE_TILE_HEIGHT as f32 * layout.scale;
+    let center_x = layout.offset_x + (114.8 + col as f32 * 31.97) * layout.scale;
+    let center_y = layout.offset_y + (66.6 + row as f32 * 31.97) * layout.scale;
+    let half_width = MINE_TILE_WIDTH as f32 * glyph_scale * 0.5;
+    let half_height = MINE_TILE_HEIGHT as f32 * glyph_scale * 0.5;
+    let x0 = center_x - half_width;
+    let y0 = center_y - half_height;
+    let x1 = center_x + half_width;
+    let y1 = center_y + half_height;
     SpriteQuad {
         sprite_id: MINE_GLYPH_SPRITE,
         c0: SpriteCorner {
@@ -759,6 +1261,10 @@ fn present_text(
     mode: Mode,
     game: &Tetris,
     minefield: &Minefield,
+    tic: &TicTacToe,
+    sudoku: &Sudoku,
+    chess: &Chess,
+    chess_assets: &ChessAssets,
     paused: bool,
 ) -> Result<(), Error> {
     let score = format!("SCORE  {}", game.level.total_points);
@@ -767,34 +1273,30 @@ fn present_text(
     let mines_text = format!("MINES  {}", mines::MINES);
     let flags_text = format!("FLAGS  {}", minefield.flag_count());
     let clear_text = format!("CLEAR  {}", minefield.revealed_count());
+    let sudoku_filled = format!("FILLED  {}/81", sudoku.game().board().filled());
+    let sudoku_errors = format!("ERRORS  {}", sudoku.violations().count());
+    let chess_assets_text = format!("ASSETS  {}/6", chess_assets.loaded());
     let white = rgba(230, 240, 250, 255);
     let muted = rgba(150, 172, 194, 255);
     let selected = rgba(160, 233, 246, 255);
     let layout = Layout::fit(frame.width(), frame.height());
-    let mut rows = Vec::with_capacity(16);
+    let mut rows = Vec::with_capacity(20);
     let mut glyph_quads = Vec::with_capacity(200);
-    rows.push(layout.row(
-        "1  TETRIS",
-        462.,
-        28.,
-        19.,
-        if mode == Mode::Tetris {
-            selected
+    let glyph_scale =
+        if output_dimensions().is_ok_and(|extent| extent == (frame.width(), frame.height())) {
+            2.
         } else {
-            muted
-        },
-    ));
-    rows.push(layout.row(
-        "2  MINES",
-        462.,
-        57.,
-        19.,
-        if mode == Mode::Minesweeper {
-            selected
-        } else {
-            muted
-        },
-    ));
+            1.
+        };
+    for (label, x, y, active) in [
+        ("1 TETRIS", 462., 28., mode == Mode::Tetris),
+        ("2 MINES", 462., 57., mode == Mode::Minesweeper),
+        ("3 TIC", 556., 28., mode == Mode::TicTacToe),
+        ("4 SUDOKU", 556., 57., mode == Mode::Sudoku),
+        ("5 CHESS", 462., 86., mode == Mode::Chess),
+    ] {
+        rows.push(layout.row(label, x, y, 17., if active { selected } else { muted }));
+    }
     match mode {
         Mode::Tetris => {
             let status = if game.is_game_over() {
@@ -834,7 +1336,7 @@ fn present_text(
                 layout.row(&clear_text, 462., 196., 21., white),
                 layout.row(status, 462., 255., 22., white),
                 layout.row("CLICK  REVEAL", 462., 340., 18., muted),
-                layout.row("RIGHT  MENU", 462., 379., 18., muted),
+                layout.row("RIGHT  FLAG", 462., 379., 18., muted),
                 layout.row("ARROWS MOVE", 462., 432., 18., muted),
                 layout.row("SPACE OPEN", 462., 470., 18., muted),
                 layout.row("F  FLAG", 462., 508., 18., muted),
@@ -870,9 +1372,96 @@ fn present_text(
                         col,
                         row,
                         color,
+                        glyph_scale,
                     ));
                 }
             }
+        }
+        Mode::Chess => {
+            let turn = match chess.side() {
+                ChessColor::White => "WHITE TURN",
+                ChessColor::Black => "BLACK TURN",
+            };
+            let status = if paused {
+                "PAUSED"
+            } else {
+                match chess.status() {
+                    ChessStatus::Ongoing => turn,
+                    ChessStatus::Drawn => "DRAW",
+                    ChessStatus::Won if chess.side() == ChessColor::White => "BLACK WINS",
+                    ChessStatus::Won => "WHITE WINS",
+                }
+            };
+            rows.extend([
+                layout.row(status, 462., 144., 21., white),
+                layout.row(&chess_assets_text, 462., 195., 19., muted),
+                layout.row("CLICK PIECE", 462., 320., 18., muted),
+                layout.row("CLICK TARGET", 462., 358., 18., muted),
+                layout.row("GREEN LEGAL", 462., 398., 18., muted),
+                layout.row("ARROWS MOVE", 462., 455., 18., muted),
+                layout.row("SPACE SELECT", 462., 493., 18., muted),
+                layout.row("F1-F5 MODES", 462., 531., 18., muted),
+                layout.row("P PAUSE", 462., 586., 19., muted),
+                layout.row("R RESTART", 462., 624., 19., muted),
+            ]);
+        }
+        Mode::Sudoku => {
+            let status = if paused {
+                "PAUSED"
+            } else if sudoku.game().is_complete() {
+                "SOLVED"
+            } else {
+                "EASY"
+            };
+            rows.extend([
+                layout.row(&sudoku_filled, 462., 114., 20., white),
+                layout.row(&sudoku_errors, 462., 155., 20., white),
+                layout.row(status, 462., 233., 22., white),
+                layout.row("HOVER SELECT", 462., 326., 18., muted),
+                layout.row("ARROWS MOVE", 462., 365., 18., muted),
+                layout.row("1-9  ENTER", 462., 414., 18., muted),
+                layout.row("0 / DEL ERASE", 462., 453., 18., muted),
+                layout.row("F1-F4  MODES", 462., 508., 18., muted),
+                layout.row("P  PAUSE", 462., 565., 19., muted),
+                layout.row("R  NEW PUZZLE", 462., 603., 19., muted),
+            ]);
+        }
+        Mode::TicTacToe => {
+            let status = if paused {
+                "PAUSED"
+            } else {
+                match tic.game().status() {
+                    TicStatus::Ongoing => match tic.game().next_player() {
+                        TicPlayer::Player0 => "P1 TURN",
+                        TicPlayer::Player1 => "P2 TURN",
+                    },
+                    TicStatus::Draw => "DRAW",
+                    TicStatus::Win(TicPlayer::Player0) => "P1 WINS",
+                    TicStatus::Win(TicPlayer::Player1) => "P2 WINS",
+                }
+            };
+            let p1 = if tic.seats()[0].is_some_and(|seat| seat.selected) {
+                "P1 X  READY"
+            } else {
+                "P1 X  WAIT"
+            };
+            let p2 = if tic.seats()[1].is_some_and(|seat| seat.selected) {
+                "P2 O  READY"
+            } else {
+                "P2 O  WAIT"
+            };
+            rows.extend([
+                layout.row(p1, 462., 114., 20., white),
+                layout.row(p2, 462., 155., 20., white),
+                layout.row(status, 462., 233., 22., white),
+                layout.row("2 CURSORS", 462., 327., 19., muted),
+                layout.row("EACH SELECTS", 462., 355., 18., muted),
+                layout.row("CLICK TO PLAY", 462., 414., 18., muted),
+                layout.row("ARROWS MOVE", 462., 469., 18., muted),
+                layout.row("SPACE / ENTER", 462., 497., 18., muted),
+                layout.row("P  PAUSE", 462., 565., 19., muted),
+                layout.row("R  RESTART", 462., 603., 19., muted),
+            ]);
         }
     }
     let canvas = (frame.width(), frame.height());
@@ -882,14 +1471,16 @@ fn present_text(
     frame
         .begin_sprite_frame(rgba(0, 0, 0, 0))
         .map_err(|e| Error::Ui("begin text", e))?;
-    frame
-        .draw_font_canvas_view(canvas, (0, 0))
-        .map_err(|e| Error::Ui("draw text", e))?;
-    if !glyph_quads.is_empty() {
+    let mut quads = Vec::with_capacity(glyph_quads.len() + 1);
+    quads.push(
         frame
-            .draw_sprite_quads(&glyph_quads)
-            .map_err(|e| Error::Ui("draw mine glyphs", e))?;
-    }
+            .font_canvas_quad(canvas, (0, 0))
+            .map_err(|e| Error::Ui("font canvas quad", e))?,
+    );
+    quads.extend(glyph_quads);
+    frame
+        .draw_sprite_quads(&quads)
+        .map_err(|e| Error::Ui("draw text and mine glyphs", e))?;
     frame
         .publish(Damage::full(canvas.0, canvas.1))
         .map_err(|e| Error::Ui("publish text", e))

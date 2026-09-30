@@ -13,8 +13,10 @@ bench = false
 [dependencies]
 libm.workspace = true
 microfont = "3.7.8"
-gamie = { git = "https://github.com/t4ce/gamie", rev = "052906c7036e21c35d019962aefc123bbfd41ea2", default-features = false, features = ["minesweeper"] }
+gamie = { git = "https://github.com/t4ce/gamie", rev = "052906c7036e21c35d019962aefc123bbfd41ea2", default-features = false, features = ["minesweeper", "tictactoe"] }
 rand = { version = "0.10.1", default-features = false }
+sudokitty-core = { git = "https://github.com/eduardorittner/sudokitty", rev = "e68b088df1f13df6523928c4c679108313a4450a" }
+cozy-chess = { git = "https://github.com/analog-hors/cozy-chess", rev = "1d8a04d1510071931132ce11e988ced0d41807c8", default-features = false }
 microgames = { path = "../../../MicroGames" }
-trueos = { workspace = true, features = ["ui4-scene", "default-global-allocator", "default-panic-handler"] }
+trueos = { workspace = true, features = ["ui4-scene", "tokio-runtime", "default-global-allocator"] }
 trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }

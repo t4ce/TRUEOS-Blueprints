@@ -1,13 +1,19 @@
 //! Procedural Games soundscape, adapted from the supplied Garden Collective
 //! studio's F warm-horizon palette. All clocks advance in rendered audio frames,
-//! so pause and stream backpressure also pause the composition.
+//! so stream backpressure also pauses the composition clock.
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, Ordering};
 use trueos::audio::{self, PlaybackParams, Stream};
 use trueos::logl::{self, level};
+use trueos::{clock, runtime, time, worker};
 
 const RATE: u64 = 48_000;
 const RATE_F: f32 = RATE as f32;
 const BLOCK_FRAMES: usize = 960;
-const QUEUE_FRAMES: usize = BLOCK_FRAMES * 4;
+// The device accepts 30 seconds; keep one second ahead of render stalls.
+const QUEUE_FRAMES: usize = RATE as usize;
+const FEED_BLOCK_BUDGET: usize = 8;
+const WORKER_TICK_MS: u64 = 5;
 const RETRY_MS: u64 = 5_000;
 const TABLE_SIZE: usize = 1024;
 const TAU: f32 = core::f32::consts::TAU;
@@ -21,13 +27,86 @@ const CHORDS: [[i32; 5]; 4] = [
 const BELLS: [i32; 5] = [19, 21, 24, 26, 28];
 
 pub struct Audio {
+    worker: Option<worker::JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
+    inline: Option<AudioPump>,
+}
+
+impl Audio {
+    pub fn new() -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let worker = match worker::spawn(move || run_audio_worker(worker_stop)) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                logl::log(
+                    level::WARN,
+                    format_args!("Games: audio worker unavailable ({error}); using inline pump"),
+                );
+                None
+            }
+        };
+        let inline = worker.is_none().then(AudioPump::new);
+        Self {
+            worker,
+            stop,
+            inline,
+        }
+    }
+
+    pub fn update(&mut self, now_ms: u64) {
+        if self
+            .worker
+            .as_mut()
+            .is_some_and(|handle| handle.try_take().is_some())
+        {
+            logl::log(
+                level::WARN,
+                "Games: audio worker stopped; using inline pump",
+            );
+            self.worker = None;
+            self.inline = Some(AudioPump::new());
+        }
+        if let Some(inline) = self.inline.as_mut() {
+            inline.update(now_ms);
+        }
+    }
+}
+
+impl Drop for Audio {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
+}
+
+fn run_audio_worker(stop: Arc<AtomicBool>) {
+    let runtime = match runtime::current_thread().build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            logl::log(
+                level::WARN,
+                format_args!("Games: audio worker runtime failed ({error})"),
+            );
+            return;
+        }
+    };
+    runtime.block_on(async {
+        let mut pump = AudioPump::new();
+        while !stop.load(Ordering::Acquire) && !worker::cancellation_requested() {
+            pump.update(clock::monotonic_millis());
+            time::sleep(time::Duration::from_millis(WORKER_TICK_MS)).await;
+        }
+    });
+}
+
+struct AudioPump {
     soundscape: Option<Soundscape>,
     next_retry: u64,
     error_logged: bool,
 }
 
-impl Audio {
-    pub const fn new() -> Self {
+impl AudioPump {
+    const fn new() -> Self {
         Self {
             soundscape: None,
             next_retry: 0,
@@ -35,8 +114,8 @@ impl Audio {
         }
     }
 
-    pub fn update(&mut self, playing: bool, now_ms: u64) {
-        if self.soundscape.is_none() && playing && now_ms >= self.next_retry {
+    fn update(&mut self, now_ms: u64) {
+        if self.soundscape.is_none() && now_ms >= self.next_retry {
             match Soundscape::open(now_ms as u32) {
                 Ok(soundscape) => {
                     self.soundscape = Some(soundscape);
@@ -55,7 +134,7 @@ impl Audio {
             }
         }
         if let Some(soundscape) = self.soundscape.as_mut() {
-            if let Err(code) = soundscape.update(playing) {
+            if let Err(code) = soundscape.feed() {
                 logl::log(
                     level::ERROR,
                     format_args!("Games: audio stream failed ({code})"),
@@ -71,7 +150,6 @@ struct Soundscape {
     stream: Stream,
     samples: [i16; BLOCK_FRAMES * 2],
     cursor: usize,
-    active: bool,
     sine: [f32; TABLE_SIZE],
     frame: u64,
     left_phase: f32,
@@ -124,7 +202,6 @@ impl Soundscape {
             stream,
             samples: [0; BLOCK_FRAMES * 2],
             cursor: BLOCK_FRAMES * 2,
-            active: true,
             sine,
             frame: 0,
             left_phase: 0.,
@@ -150,19 +227,8 @@ impl Soundscape {
         Ok(soundscape)
     }
 
-    fn update(&mut self, playing: bool) -> Result<(), i32> {
-        if playing != self.active {
-            self.stream.set_paused(!playing)?;
-            self.active = playing;
-        }
-        if playing {
-            self.feed()?;
-        }
-        Ok(())
-    }
-
     fn feed(&mut self) -> Result<(), i32> {
-        for _ in 0..4 {
+        for _ in 0..FEED_BLOCK_BUDGET {
             if self.stream.queued_frames()? >= QUEUE_FRAMES {
                 break;
             }
