@@ -883,6 +883,13 @@ fn parse_usb_snapshot(text: &str) -> UsbSnapshot {
                     }
                 }
             }
+            Some("hub") if fields.len() >= 3 => {
+                if let Some(device) = devices.iter_mut().find(|device| {
+                    device.get("stableId").and_then(serde_json::Value::as_str) == Some(fields[1])
+                }) {
+                    device["hubPorts"] = parse_u64(fields[2]).into();
+                }
+            }
             Some("interface") if fields.len() >= 8 => {
                 if let Some(configuration) =
                     usb_configuration_mut(&mut devices, fields[1], fields[2])
@@ -1346,5 +1353,29 @@ pub async fn serve() -> Result<(), io::Error> {
         let result = axum::serve(listener, app).await;
         WEBDEVICES_HTTP_PORT.store(0, Ordering::Release);
         return result;
+    }
+}
+
+#[cfg(test)]
+mod usb_topology_tests {
+    use super::parse_usb_snapshot;
+
+    #[test]
+    fn preserves_hub_ports_and_child_location_across_controllers() {
+        let snapshot = parse_usb_snapshot(concat!(
+            "device\tAABBCCDD\t1\t3\t2\t2\t0x00000\thigh\t2109\t2813\t09\t00\t01\t0210\t9011\t1\t64\t-\t\t\t\t2\n",
+            "hub\tAABBCCDD\t4\n",
+            "device\t11223344\t1\t4\t2\t1\t0x00001\thigh\t1234\t5678\t02\t06\t00\t0200\t0100\t1\t64\t3\t\t\t\t2.1\n",
+        ));
+        assert_eq!(snapshot.devices.len(), 2);
+        let hub = &snapshot.devices[0];
+        let child = &snapshot.devices[1];
+        assert_eq!(hub["hubPorts"], 4);
+        assert!(hub["parentHubSlotId"].is_null());
+        assert_eq!(child["controllerId"], 1);
+        assert_eq!(child["parentHubSlotId"], hub["slotId"]);
+        assert_eq!(child["path"], serde_json::json!([2, 1]));
+        assert_eq!(child["route"], "0x00001");
+        assert!(child.get("hubPorts").is_none());
     }
 }

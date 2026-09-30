@@ -181,7 +181,21 @@
       return [...pci, ...controllers, ...usb, ...printers];
     }
 
+    function usbNetworkKind(device) {
+      const hex = (value) => parseInt(String(value || '0'), 16);
+      for (const config of device.configurations || []) {
+        for (const iface of config.interfaces || []) {
+          const cls = hex(iface.class), sub = hex(iface.subclass), proto = hex(iface.protocol);
+          if (cls === 2 && sub === 6) return 'CDC Ethernet candidate';
+          if (cls === 2 && sub === 13) return 'CDC NCM candidate';
+          if (cls === 0xe0 && sub === 1 && proto === 3) return 'RNDIS candidate';
+        }
+      }
+      return '';
+    }
+
     function usbRole(device) {
+      if (usbNetworkKind(device)) return 'network';
       const cls = String(device.className || '').toLowerCase();
       if (cls.includes('storage')) return 'storage';
       if (cls.includes('keyboard') || cls.includes('mouse') || cls.includes('hid')) return 'input';
@@ -478,6 +492,10 @@
     }
 
     function renderUsbDetails(device) {
+      const children = (state.snapshot?.usb?.devices || []).filter((child) =>
+        child.controllerId === device.controllerId && child.parentHubSlotId === device.slotId
+      ).sort((a, b) => a.portId - b.portId);
+      const isHub = String(device.class).toUpperCase() === '09' || device.hubPorts != null;
       const configurations = device.configurations || [];
       const interfaces = configurations.flatMap((configuration) =>
         (configuration.interfaces || []).map((interface) => ({ configuration, interface }))
@@ -496,10 +514,21 @@
         ['Endpoints', device.endpointCount],
         ['EP0 packet', device.maxPacketSize0],
         ['Path', (device.path || []).join('.') || '-'],
+        ['Parent hub slot', device.parentHubSlotId ?? '-'],
+        ...(isHub ? [['Downstream ports', device.hubPorts ?? 'unknown'], ['Enumerated children', children.length]] : []),
+        ...(usbNetworkKind(device) ? [['Network interface', usbNetworkKind(device)], ['Network status', 'Link status unavailable']] : []),
         ['Manufacturer', device.manufacturer || '-'],
         ['Serial', device.serial || '-']
       ]);
       $('detail-extra').innerHTML = `
+        ${isHub ? `<div class="panel" style="margin-top:12px">
+          <div class="panel-head"><h2>Downstream devices</h2><span class="tag">${children.length}</span></div>
+          <div class="bars">${children.length ? children.map((child) => `
+            <div class="mini"><strong>Port ${esc(child.portId)} / ${esc(child.vendorId)}:${esc(child.productId)}</strong>
+            <span>Slot ${esc(child.slotId)} / ${esc(child.speed)} / ${esc(usbNetworkKind(child) || child.className || 'USB device')}</span></div>
+          `).join('') : '<div class="empty">No children enumerated in this snapshot.</div>'}</div>
+          <div class="empty">Port count includes internal connections. Unlisted ports may be empty or not yet enumerated. Vendor-specific NICs require chipset identification.</div>
+        </div>` : ''}
         <div class="panel" style="margin-top:12px">
           <div class="panel-head"><h2>Configurations and interfaces</h2><span class="tag">${interfaces.length}</span></div>
           <div class="bars">${interfaces.length ? interfaces.map(({ configuration, interface }) => `

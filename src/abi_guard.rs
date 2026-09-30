@@ -250,6 +250,9 @@ fn verify_launchable_imports(imports: &BTreeSet<String>) -> Result<(), String> {
             "trueos_tokio_tls_current_slot" => {
                 Some("legacy TLS import; rebuild against the WLS SDK")
             }
+            "trueos_gl_get_proc_address" => Some(
+                "TRUEOS GLES procedure bridge is not implemented; glutin can compile but Alacritty cannot load or render",
+            ),
             name if name.starts_with("trueos_cabi_fs_")
                 || name.starts_with("trueos_cabi_trueosfs_") =>
             {
@@ -461,6 +464,15 @@ mod tests {
             ]))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn loader_gate_rejects_the_unimplemented_gles_bridge() {
+        let error = verify_launchable_imports(&BTreeSet::from([
+            "trueos_gl_get_proc_address".into(),
+        ]))
+        .unwrap_err();
+        assert!(error.contains("Alacritty cannot load or render"));
     }
 
     #[test]
