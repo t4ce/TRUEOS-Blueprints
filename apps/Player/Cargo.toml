@@ -8,6 +8,7 @@ readme = "README.md"
 documentation = "https://docs.rs/player-scope"
 keywords = ["tui", "audio", "player", "ratatui"]
 categories = ["command-line-utilities"]
+
 include = [
     "Cargo.toml",
     "Cargo.lock",
@@ -17,6 +18,9 @@ include = [
     "demo/**/*",
     "doc/Screenshot.png",
 ]
+
+[package.metadata.trueos-blueprint]
+fs-scope = "trueosfs"
 
 [lib]
 name = "player_scope"

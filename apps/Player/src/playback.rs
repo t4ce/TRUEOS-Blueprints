@@ -467,5 +467,9 @@ fn audio_error(err: i32) -> io::Error {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn vfs_error(err: i32) -> io::Error {
-    io::Error::from_raw_os_error(-err)
+    if err == trueos::async_fs::ERR_NOT_FOUND {
+        io::Error::new(io::ErrorKind::NotFound, "file not found in TRUEOSFS")
+    } else {
+        io::Error::from_raw_os_error(-err)
+    }
 }

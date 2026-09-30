@@ -1479,7 +1479,7 @@ impl App {
         let loaded = self
             .playback
             .load_path(&path)
-            .map_err(|err| format!("load: {err}"))?;
+            .map_err(|err| format!("load {path}: {err}"))?;
 
         self.file_path = loaded.path;
         self.track.file = loaded.file_name;
@@ -1625,7 +1625,14 @@ impl control::ControlEventHandler for App {
         }
     }
 
-    fn on_play(&mut self, _event: &control::ParsedCommand) {
+    fn on_play(&mut self, event: &control::ParsedCommand) {
+        let path = event.rest();
+        if !path.is_empty() {
+            if let Err(err) = self.load_path(path) {
+                self.respond(err);
+                return;
+            }
+        }
         self.play_loaded();
     }
 
@@ -1866,7 +1873,7 @@ impl control::ControlEventHandler for App {
 
     fn on_help(&mut self, _event: &control::ParsedCommand) {
         self.respond(
-            "commands: load <path> | play/start | pause/stop | next | prev | goto <time> | volume [0-100] | mute | unmute | playlist/list | help/commands/? | quit | terminate",
+            "commands: load <path> | play [path] | pause/stop | next | prev | goto <time> | volume [0-100] | mute | unmute | playlist/list (demo) | help | quit | terminate; root file: play /aud.m4a",
         );
     }
 }

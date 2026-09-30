@@ -7,7 +7,7 @@ pub(crate) fn install(blueprint_root: &Path) -> Result<(), String> {
     let kernel = crate::abi_guard::locate_kernel_repo(blueprint_root)?
         .ok_or("TRUEOS std backend requires a sibling TRUEOS checkout or TRUEOS_REPO_ROOT")?;
     let source_root = crate::toolchain::rust_sysroot()?.join("lib/rustlib/src/rust");
-    let contract_check = kernel.join("tools/check_native_worker_contract.py");
+    let contract_check = kernel.join("tools/testpy/check_native_worker_contract.py");
     let status = Command::new("python3")
         .arg(&contract_check)
         .arg("--kernel")
@@ -19,7 +19,7 @@ pub(crate) fn install(blueprint_root: &Path) -> Result<(), String> {
     if !status.success() {
         return Err("native worker source ABI verification failed".into());
     }
-    let installer = kernel.join("tools/apply_trueos_rust_std_thread_backend.py");
+    let installer = kernel.join("tools/testpy/apply_trueos_rust_std_thread_backend.py");
     let output = Command::new("python3")
         .arg(&installer)
         .arg(&source_root)
