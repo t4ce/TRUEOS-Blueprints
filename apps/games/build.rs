@@ -7,16 +7,7 @@ fn main() {
     let directory = env::var_os("GAMES_CHESS_ASSETS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-            let workspace = manifest
-                .ancestors()
-                .filter(|root| {
-                    root.join("api/Cargo.toml").is_file()
-                        && root.join("crates/cubes-protocol/Cargo.toml").is_file()
-                })
-                .last()
-                .expect("cannot locate TRUEOS-Blueprints workspace");
-            workspace.parent().unwrap().join("Cubes/Cube/Assets")
+            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("assets")
         });
     println!("cargo:rerun-if-changed={}", directory.display());
     let mut generated = String::from("pub const CHESS_ASSET_BYTES: [Option<&[u8]>; 6] = [\n");

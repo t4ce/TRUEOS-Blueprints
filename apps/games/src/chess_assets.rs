@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use microgames::Rgb8;
 
 include!(concat!(env!("OUT_DIR"), "/chess_assets.rs"));
@@ -18,11 +18,44 @@ pub struct ChessAssets {
 
 impl ChessAssets {
     pub fn new() -> Self {
-        Self {
-            pieces: core::array::from_fn(|i| {
-                CHESS_ASSET_BYTES[i].and_then(|bytes| decode(bytes).ok())
-            }),
+        let mut pieces: [Option<Vec<AssetCube>>; 6] =
+            core::array::from_fn(|i| CHESS_ASSET_BYTES[i].and_then(|bytes| decode(bytes).ok()));
+        // Use one scale for the collection so the king remains taller than
+        // the pawn. Align every piece's base on the same board baseline.
+        let mut bounds = [[f32::INFINITY; 3]; 6];
+        let mut tops = [[f32::NEG_INFINITY; 3]; 6];
+        let mut extent = 0.0f32;
+        for (i, piece) in pieces.iter().enumerate() {
+            if let Some(cubes) = piece {
+                for cube in cubes {
+                    for a in 0..3 {
+                        bounds[i][a] = bounds[i][a].min(cube.center[a] - cube.scale);
+                        tops[i][a] = tops[i][a].max(cube.center[a] + cube.scale);
+                    }
+                }
+                for a in 0..3 {
+                    extent = extent.max(tops[i][a] - bounds[i][a]);
+                }
+            }
         }
+        if extent.is_finite() && extent > 0.0 {
+            let factor = 0.94 / extent;
+            for (i, piece) in pieces.iter_mut().enumerate() {
+                if let Some(cubes) = piece {
+                    let x = (bounds[i][0] + tops[i][0]) * 0.5;
+                    let z = (bounds[i][2] + tops[i][2]) * 0.5;
+                    for cube in cubes {
+                        cube.center = [
+                            (cube.center[0] - x) * factor,
+                            (cube.center[1] - bounds[i][1]) * factor - 0.47,
+                            (cube.center[2] - z) * factor,
+                        ];
+                        cube.scale *= factor;
+                    }
+                }
+            }
+        }
+        Self { pieces }
     }
 
     pub fn piece(&self, index: usize) -> Option<&[AssetCube]> {
@@ -141,24 +174,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<AssetCube>, &'static str> {
     if cubes.is_empty() {
         return Err("chess asset empty");
     }
-    let mut lo = [f32::INFINITY; 3];
-    let mut hi = [f32::NEG_INFINITY; 3];
-    for cube in &cubes {
-        for a in 0..3 {
-            lo[a] = lo[a].min(cube.center[a] - cube.scale);
-            hi[a] = hi[a].max(cube.center[a] + cube.scale);
-        }
-    }
-    let extent = (0..3).map(|a| hi[a] - lo[a]).fold(0.0f32, f32::max);
-    if !extent.is_finite() || extent <= 0.0 {
-        return Err("chess asset bounds");
-    }
-    let factor = 0.94 / extent;
-    for cube in &mut cubes {
-        for a in 0..3 {
-            cube.center[a] = (cube.center[a] - (lo[a] + hi[a]) * 0.5) * factor;
-        }
-        cube.scale *= factor;
+    if cubes.len() > MAX_PER_PIECE {
+        cubes = coarse_surface(&cubes, unit);
     }
     if cubes.len() > MAX_PER_PIECE {
         let len = cubes.len();
@@ -167,4 +184,38 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<AssetCube>, &'static str> {
             .collect();
     }
     Ok(cubes)
+}
+
+/// Coarsen the authored solid to c3 cells, then keep only exposed cells.
+/// At board scale the interior is invisible; this retains the silhouette
+/// instead of scattering 192 individual c1 samples through the shape.
+fn coarse_surface(source: &[AssetCube], unit: f32) -> Vec<AssetCube> {
+    let cell = unit * 3.0;
+    let mut occupied = BTreeMap::<[i32; 3], Rgb8>::new();
+    for cube in source {
+        let index = cube.center.map(|v| libm::floorf(v / cell) as i32);
+        occupied.entry(index).or_insert(cube.color);
+    }
+    const NEIGHBORS: [[i32; 3]; 6] = [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ];
+    occupied
+        .iter()
+        .filter_map(|(&index, &color)| {
+            let exposed = NEIGHBORS.iter().any(|delta| {
+                let next = core::array::from_fn(|a| index[a] + delta[a]);
+                !occupied.contains_key(&next)
+            });
+            exposed.then_some(AssetCube {
+                center: index.map(|v| (v as f32 + 0.5) * cell),
+                scale: (cell - unit * 0.01) * 0.5,
+                color,
+            })
+        })
+        .collect()
 }

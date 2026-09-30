@@ -30,8 +30,9 @@ TRUEOS native worker and keeps one second of PCM queued to absorb long
 shader frames. Games retries the TRUEOS audio device if it is temporarily
 unavailable and uses the main loop if no native worker lane is available.
 
-Select the frame and press 1 for Tetris, 2 for Minesweeper, 3 for Tic-Tac-Toe,
-4 for Sudoku, or 5 for chess. In Tetris,
+Select the frame and press F1 for Tetris, F2 for Minesweeper, F3 for Tic-Tac-Toe,
+F4 for Sudoku, or F5 for chess. F9 opens the two hullshader render limits:
+Up/Down chooses FULL or SEEDS, and Left/Right adjusts its budget. In Tetris,
 Left/Right move, Up rotates, Down drops one row, and Space hard drops. In
 Minesweeper, hovering selects a cube, left click reveals it, and right click
 toggles its flag. Arrows also move the selection; Space/Enter reveals and F flags. In Tic-Tac-Toe, the first two cursors to select the Games frame claim P1 (X)
@@ -41,11 +42,13 @@ to select a square and Space or Enter to play it. A departing cursor releases
 its seat when a new selected cursor joins. In Sudoku, hover or use the
 arrow keys to select a square, type 1–9 to fill it, and use 0, Backspace, or
 Delete to erase. Given digits cannot be changed; conflicting entries appear
-red. The digits themselves are made from hullshader cubes. F1–F5 switch
-games while Sudoku uses the plain number keys. All games use P to pause and R
+red. The digits themselves are made from hullshader cubes. Only F1–F5 switch
+games; plain number keys remain available to each game. All games use P to pause and R
 to restart; R generates a fresh Sudoku puzzle. In chess, click a piece and
-then a highlighted legal destination. Arrows move the square cursor; Space or
-Enter selects or plays. Pawn promotion automatically chooses a queen. Escape closes the frame. The first Minesweeper reveal is safe, and
+then a highlighted legal destination. The flat chessboard is viewed at an angle;
+A/D rotates it and W/S changes its elevation by 15 degrees. Arrows move the
+square cursor; Space or Enter selects or plays. Pawn promotion automatically
+chooses a queen. Escape closes the frame. The first Minesweeper reveal is safe, and
 switching modes preserves each game.
 
 Build locally from the TRUEOS-Blueprints root with
@@ -54,13 +57,12 @@ the sibling MicroGames and TRUEOS-Picasso repos and the pinned t4ce/gamie
 crate's Minesweeper and Tic-Tac-Toe modules, the pinned Sudokitty core
 crate, and pinned cozy-chess.
 
-Chess pieces are imported at build time from the sibling Cubes repository's
-`Cube/Assets/chess_pawn.cubes`, `chess_knight.cubes`,
-`chess_bishop.cubes`, `chess_rook.cubes`, `chess_queen.cubes`, and
-`chess_king.cubes`. Both CUBES v1 and v2 are supported. Rebuild Games after
-exporting the files; the importer embeds whichever pieces are present.
-`GAMES_CHESS_ASSETS_DIR` can override that directory. Missing or invalid
-assets use small hullshader cube letter markers, so chess remains playable
-before the exports land. The sidebar reports how many of the six pieces
-were loaded. Each authored shape is scaled into one board square and tinted
-for the white and black sides.
+The six Deco chess sculptures are stored in this Blueprint's
+`assets/chess_{pawn,knight,bishop,rook,queen,king}.cubes` files and embedded in
+the packaged app. `tools/export_chess_deco.cjs` reproduces the exports from
+Cubes' chess rubric. Its Horse model serves the chess knight, and its armored
+Knight model serves the bishop because the rubric has no Bishop entry. Each
+file keeps the full authored solid with one neutral placeholder color. Games
+uses a compact exposed-cube view at board scale, preserves relative piece
+heights, and applies distinct side tints until the two custom materials arrive.
+`GAMES_CHESS_ASSETS_DIR` can override the asset directory for build checks.
