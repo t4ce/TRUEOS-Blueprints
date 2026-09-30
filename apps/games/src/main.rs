@@ -6,6 +6,8 @@ mod audio;
 mod chess;
 mod chess_assets;
 mod chess_view;
+mod dialog;
+mod gallery;
 mod mines;
 mod sudoku;
 mod tic;
@@ -16,6 +18,7 @@ use chess::Chess;
 use chess_assets::ChessAssets;
 use chess_view::ChessView;
 use cozy_chess::{Color as ChessColor, GameStatus as ChessStatus};
+use gallery::Gallery;
 use gamie::minesweeper::{CellStatus as MineCellStatus, Status as MineStatus};
 use gamie::tictactoe::{Player as TicPlayer, Status as TicStatus};
 use microgames::{Game, Lcg32, NoopEvents, Rgb8, Rotation};
@@ -196,6 +199,7 @@ fn run() -> Result<(), Error> {
     let chess_assets = ChessAssets::new();
     let mut chess_view = ChessView::new();
     let mut settings = RenderSettings::new();
+    let mut gallery = Gallery::new();
     let mut mode = Mode::Tetris;
     let mut paused = false;
     let mut last_tick = clock::monotonic_millis();
@@ -258,9 +262,23 @@ fn run() -> Result<(), Error> {
         {
             if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
                 && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
+                && event.key_code == input::KEYBOARD_KEY_F8
+            {
+                gallery.open = !gallery.open;
+                if gallery.open {
+                    settings.open = false;
+                }
+                board.previous_view_projection = [0.; 16];
+                paint = true;
+                text = true;
+            } else if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
+                && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
                 && event.key_code == input::KEYBOARD_KEY_F9
             {
                 settings.open = !settings.open;
+                if settings.open {
+                    gallery.open = false;
+                }
                 paint = true;
                 text = true;
             } else if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
@@ -282,6 +300,54 @@ fn run() -> Result<(), Error> {
                     paused = false;
                     paint = true;
                     text = true;
+                }
+                if gallery.open {
+                    gallery.open = false;
+                    board.previous_view_projection = [0.; 16];
+                    paint = true;
+                    text = true;
+                }
+            } else if gallery.open
+                && event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
+                && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
+            {
+                match event.key_code {
+                    input::KEYBOARD_KEY_ARROW_LEFT
+                    | input::KEYBOARD_KEY_ARROW_RIGHT
+                    | input::KEYBOARD_KEY_ARROW_UP
+                    | input::KEYBOARD_KEY_ARROW_DOWN => {
+                        if gallery.move_selection(event.key_code, frame.width(), frame.height()) {
+                            text = true;
+                        }
+                    }
+                    input::KEYBOARD_KEY_SPACE if gallery.selected < 5 => {
+                        gallery.toggle_fresh();
+                        text = true;
+                    }
+                    input::KEYBOARD_KEY_ENTER => {
+                        if let Some(next) = gallery.selected_mode() {
+                            if gallery.fresh[gallery.selected] {
+                                reset_game(
+                                    next,
+                                    &mut game,
+                                    &mut minefield,
+                                    &mut tic,
+                                    &mut sudoku,
+                                    &mut chess,
+                                    &mut rng,
+                                    &mut events,
+                                    &mut gravity_ms,
+                                );
+                            }
+                            select_mode(&mut frame, &mut mode, next)?;
+                            gallery.open = false;
+                            paused = false;
+                            board.previous_view_projection = [0.; 16];
+                            paint = true;
+                            text = true;
+                        }
+                    }
+                    _ => {}
                 }
             } else if settings.open
                 && event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
@@ -406,7 +472,7 @@ fn run() -> Result<(), Error> {
                     }
                     _ => {}
                 }
-            } else if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT {
+            } else if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT && !gallery.open {
                 match char::from_u32(event.codepoint) {
                     Some(c @ '1'..='9') if mode == Mode::Sudoku && !paused => {
                         if sudoku.set_digit(c as u8 - b'0') {
@@ -480,6 +546,48 @@ fn run() -> Result<(), Error> {
             .take_pointer_event()
             .map_err(|e| Error::Ui("pointer", e))?
         {
+            if gallery.open {
+                let (changed, launch) = gallery.pointer(
+                    event.local_x,
+                    event.local_y,
+                    frame.width(),
+                    frame.height(),
+                    event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0,
+                );
+                if changed {
+                    text = true;
+                }
+                if let Some(next) = launch {
+                    if gallery.fresh[gallery.selected] {
+                        reset_game(
+                            next,
+                            &mut game,
+                            &mut minefield,
+                            &mut tic,
+                            &mut sudoku,
+                            &mut chess,
+                            &mut rng,
+                            &mut events,
+                            &mut gravity_ms,
+                        );
+                    }
+                    select_mode(&mut frame, &mut mode, next)?;
+                    gallery.open = false;
+                    paused = false;
+                    board.previous_view_projection = [0.; 16];
+                    paint = true;
+                    text = true;
+                }
+                continue;
+            }
+            if mode == Mode::Chess
+                && event.wheel != 0
+                && chess_view.wheel_zoom(i32::from(event.wheel))
+            {
+                board.previous_view_projection = [0.; 16];
+                paint = true;
+                text = true;
+            }
             match mode {
                 Mode::Minesweeper => {
                     if let Some((row, col)) =
@@ -550,6 +658,7 @@ fn run() -> Result<(), Error> {
         {
             if event.closed.is_none() {
                 if mode == Mode::Minesweeper
+                    && !gallery.open
                     && !paused
                     && *minefield.status() == MineStatus::Ongoing
                     && let Some((row, col)) =
@@ -576,7 +685,7 @@ fn run() -> Result<(), Error> {
         let now = clock::monotonic_millis();
         let elapsed = now.saturating_sub(last_tick).min(100);
         last_tick = now;
-        if mode == Mode::Tetris && !paused && !game.is_game_over() {
+        if mode == Mode::Tetris && !gallery.open && !paused && !game.is_game_over() {
             gravity_ms += elapsed;
             let interval = u64::from(game.level.level_speed_seconds());
             if gravity_ms >= interval {
@@ -608,6 +717,7 @@ fn run() -> Result<(), Error> {
                 &chess_assets,
                 &chess_view,
                 &settings,
+                &gallery,
                 frame.width(),
                 frame.height(),
             ) {
@@ -628,6 +738,7 @@ fn run() -> Result<(), Error> {
                 &chess_assets,
                 &chess_view,
                 &settings,
+                &mut gallery,
                 paused,
             ) {
                 Ok(()) => {
@@ -667,6 +778,30 @@ fn select_mode(frame: &mut Frame, mode: &mut Mode, next: Mode) -> Result<bool, E
     }
     *mode = next;
     Ok(true)
+}
+
+fn reset_game(
+    mode: Mode,
+    game: &mut Tetris,
+    minefield: &mut Minefield,
+    tic: &mut TicTacToe,
+    sudoku: &mut Sudoku,
+    chess: &mut Chess,
+    rng: &mut Lcg32,
+    events: &mut NoopEvents,
+    gravity_ms: &mut u64,
+) {
+    match mode {
+        Mode::Tetris => {
+            *rng = Lcg32::new((clock::monotonic_millis() as u32) ^ 0xC11C_7E75);
+            *game = Tetris::new(rng, events);
+            *gravity_ms = 0;
+        }
+        Mode::Minesweeper => minefield.reset(clock::monotonic_millis()),
+        Mode::TicTacToe => tic.reset(),
+        Mode::Sudoku => sudoku.reset(clock::monotonic_millis()),
+        Mode::Chess => chess.reset(),
+    }
 }
 
 fn chess_cell_at(
@@ -789,6 +924,7 @@ impl HullBoard {
         chess_assets: &ChessAssets,
         chess_view: &ChessView,
         settings: &RenderSettings,
+        gallery: &Gallery,
         width: u32,
         height: u32,
     ) -> Result<(), Error> {
@@ -796,281 +932,296 @@ impl HullBoard {
         let outer_x = layout.scene_width * 0.5 - 0.35;
         let outer_y = layout.scene_height * 0.5 - 0.35;
         let mut bytes = Vec::with_capacity(1200 * 64);
-        match mode {
-            Mode::Tetris => {
-                for row in 0..VISIBLE {
-                    for col in 0..COLS {
-                        let Some(cell) = game.cell_view_at(col, row + HIDDEN, false) else {
-                            continue;
-                        };
-                        append_cube(
-                            &mut bytes,
-                            [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
-                            GAME_CUBE_SCALE,
-                            rgb555(cell.color),
-                        );
-                    }
-                }
-            }
-            Mode::Minesweeper => {
-                for row in 0..mines::ROWS {
-                    for col in 0..mines::COLS {
-                        let cell = minefield.cell(row, col);
-                        let (color, scale) = match cell.status() {
-                            MineCellStatus::Flagged => (Rgb8::new(245, 166, 63), GAME_CUBE_SCALE),
-                            MineCellStatus::Exploded => (Rgb8::new(255, 67, 75), GAME_CUBE_SCALE),
-                            MineCellStatus::Revealed => {
-                                if cell.adjacent_mine_count() == 0 {
-                                    (Rgb8::new(31, 62, 79), 0.38)
-                                } else {
-                                    (Rgb8::new(40, 83, 105), 0.40)
-                                }
-                            }
-                            MineCellStatus::Hidden
-                                if *minefield.status() != MineStatus::Ongoing && cell.is_mine() =>
-                            {
-                                (Rgb8::new(180, 61, 77), GAME_CUBE_SCALE)
-                            }
-                            MineCellStatus::Hidden => (Rgb8::new(60, 112, 150), GAME_CUBE_SCALE),
-                        };
-                        append_cube(
-                            &mut bytes,
-                            [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
-                            scale,
-                            rgb555(color),
-                        );
-                    }
-                }
-                let (col, row) = minefield.cursor;
-                let center_x = -7.1 + col as f32 * CELL;
-                let center_y = 10.25 - row as f32 * CELL;
-                for dx in [-0.43, 0.43] {
-                    for dy in [-0.43, 0.43] {
-                        append_cube(
-                            &mut bytes,
-                            [center_x + dx, center_y + dy, 0.10],
-                            BORDER_CUBE_SCALE,
-                            rgb555(Rgb8::new(238, 244, 190)),
-                        );
-                    }
-                }
-            }
-            Mode::Chess => {
-                // Keep the expensive hull-shader work bounded at all window sizes.
-                // A fixed per-piece quota also avoids a large burst on promotion.
-                let across =
-                    ((outer_x * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-                let down =
-                    ((outer_y * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
-                let outer_seeds = 2 * (across / 2 + 1 + down / 2);
-                let overhead = outer_seeds + 164 + 64 + 256 + 8;
-                let piece_limit = settings
-                    .full()
-                    .min(settings.seeds())
-                    .saturating_sub(overhead)
-                    / 32;
-                for row in 0..8 {
-                    for col in 0..8 {
-                        let square = Chess::square(row, col);
-                        let [x, _, z] = ChessView::cell(row, col);
-                        let tile = if (row + col) % 2 == 0 {
-                            Rgb8::new(98, 129, 144)
-                        } else {
-                            Rgb8::new(32, 62, 82)
-                        };
-                        append_box(&mut bytes, [x, 0.0, z], [0.655, 0.065, 0.655], rgb555(tile));
-                        if chess.legal_at(row, col) {
-                            for dx in [-0.52, 0.52] {
-                                for dz in [-0.52, 0.52] {
-                                    append_cube(
-                                        &mut bytes,
-                                        [x + dx, 0.15, z + dz],
-                                        BORDER_CUBE_SCALE,
-                                        rgb555(Rgb8::new(110, 236, 153)),
-                                    );
-                                }
-                            }
+        if !gallery.open {
+            match mode {
+                Mode::Tetris => {
+                    for row in 0..VISIBLE {
+                        for col in 0..COLS {
+                            let Some(cell) = game.cell_view_at(col, row + HIDDEN, false) else {
+                                continue;
+                            };
+                            append_cube(
+                                &mut bytes,
+                                [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
+                                GAME_CUBE_SCALE,
+                                rgb555(cell.color),
+                            );
                         }
-                        if let Some(piece) = chess.board().piece_on(square) {
-                            let side = chess.board().color_on(square).unwrap();
-                            if let Some(asset) = chess_assets.piece(piece as usize) {
-                                let factor = CHESS_STEP * 0.70;
-                                let count = asset.len().min(piece_limit);
-                                for i in 0..count {
-                                    // Sample across the whole sculpture. Source records are
-                                    // spatially sorted, so taking a prefix cuts one side off.
-                                    let cube = &asset[i * asset.len() / count];
-                                    let color = chess_tint(cube.color, side);
+                    }
+                }
+                Mode::Minesweeper => {
+                    for row in 0..mines::ROWS {
+                        for col in 0..mines::COLS {
+                            let cell = minefield.cell(row, col);
+                            let (color, scale) = match cell.status() {
+                                MineCellStatus::Flagged => {
+                                    (Rgb8::new(245, 166, 63), GAME_CUBE_SCALE)
+                                }
+                                MineCellStatus::Exploded => {
+                                    (Rgb8::new(255, 67, 75), GAME_CUBE_SCALE)
+                                }
+                                MineCellStatus::Revealed => {
+                                    if cell.adjacent_mine_count() == 0 {
+                                        (Rgb8::new(31, 62, 79), 0.38)
+                                    } else {
+                                        (Rgb8::new(40, 83, 105), 0.40)
+                                    }
+                                }
+                                MineCellStatus::Hidden
+                                    if *minefield.status() != MineStatus::Ongoing
+                                        && cell.is_mine() =>
+                                {
+                                    (Rgb8::new(180, 61, 77), GAME_CUBE_SCALE)
+                                }
+                                MineCellStatus::Hidden => {
+                                    (Rgb8::new(60, 112, 150), GAME_CUBE_SCALE)
+                                }
+                            };
+                            append_cube(
+                                &mut bytes,
+                                [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
+                                scale,
+                                rgb555(color),
+                            );
+                        }
+                    }
+                    let (col, row) = minefield.cursor;
+                    let center_x = -7.1 + col as f32 * CELL;
+                    let center_y = 10.25 - row as f32 * CELL;
+                    for dx in [-0.43, 0.43] {
+                        for dy in [-0.43, 0.43] {
+                            append_cube(
+                                &mut bytes,
+                                [center_x + dx, center_y + dy, 0.10],
+                                BORDER_CUBE_SCALE,
+                                rgb555(Rgb8::new(238, 244, 190)),
+                            );
+                        }
+                    }
+                }
+                Mode::Chess => {
+                    // Keep the expensive hull-shader work bounded at all window sizes.
+                    // A fixed per-piece quota also avoids a large burst on promotion.
+                    let across =
+                        ((outer_x * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
+                    let down =
+                        ((outer_y * 2.0 / BORDER_STEP) as usize + 1).clamp(1, MAX_BORDER_SEGMENTS);
+                    let outer_seeds = 2 * (across / 2 + 1 + down / 2);
+                    let overhead = outer_seeds + 164 + 64 * 9 + 256 + 8;
+                    let piece_limit = settings
+                        .full()
+                        .min(settings.seeds())
+                        .saturating_sub(overhead)
+                        / 32;
+                    for row in 0..8 {
+                        for col in 0..8 {
+                            let square = Chess::square(row, col);
+                            let [x, _, z] = ChessView::cell(row, col);
+                            let tile = if (row + col) % 2 == 0 {
+                                Rgb8::new(98, 129, 144)
+                            } else {
+                                Rgb8::new(32, 62, 82)
+                            };
+                            // Hull patches require uniform scale. A shallow 3x3
+                            // layer reads as one flat square without stretching a
+                            // cube in the unsupported seed transform.
+                            for ix in -1..=1 {
+                                for iz in -1..=1 {
                                     append_cube(
                                         &mut bytes,
-                                        [
-                                            x + cube.center[0] * factor,
-                                            0.065 + (cube.center[1] + 0.5) * factor,
-                                            z + cube.center[2] * factor,
-                                        ],
-                                        cube.scale * factor,
-                                        rgb555(color),
+                                        [x + ix as f32 * 0.445, 0.0, z + iz as f32 * 0.445],
+                                        0.205,
+                                        rgb555(tile),
                                     );
                                 }
-                            } else {
-                                let color = chess_tint(Rgb8::new(190, 200, 205), side);
-                                for (r, bits) in
-                                    CHESS_GLYPHS[piece as usize].into_iter().enumerate()
-                                {
-                                    for c in 0..3 {
-                                        if bits & (1 << (2 - c)) != 0 {
-                                            append_cube(
-                                                &mut bytes,
-                                                [
-                                                    x + (c as f32 - 1.0) * 0.25,
-                                                    0.57 + (2.0 - r as f32) * 0.22,
-                                                    z,
-                                                ],
-                                                0.105,
-                                                rgb555(color),
-                                            );
+                            }
+                            if chess.legal_at(row, col) {
+                                for dx in [-0.52, 0.52] {
+                                    for dz in [-0.52, 0.52] {
+                                        append_cube(
+                                            &mut bytes,
+                                            [x + dx, 0.27, z + dz],
+                                            BORDER_CUBE_SCALE,
+                                            rgb555(Rgb8::new(110, 236, 153)),
+                                        );
+                                    }
+                                }
+                            }
+                            if let Some(piece) = chess.board().piece_on(square) {
+                                let side = chess.board().color_on(square).unwrap();
+                                if let Some(asset) = chess_assets.piece(piece as usize) {
+                                    let factor = CHESS_STEP * 0.70;
+                                    let count = asset.len().min(piece_limit);
+                                    for i in 0..count {
+                                        // Sample across the whole sculpture. Source records are
+                                        // spatially sorted, so taking a prefix cuts one side off.
+                                        let cube = &asset[i * asset.len() / count];
+                                        let color = chess_tint(cube.color, side);
+                                        append_cube(
+                                            &mut bytes,
+                                            [
+                                                x + cube.center[0] * factor,
+                                                0.205 + (cube.center[1] + 0.5) * factor,
+                                                z + cube.center[2] * factor,
+                                            ],
+                                            cube.scale * factor,
+                                            rgb555(color),
+                                        );
+                                    }
+                                } else {
+                                    let color = chess_tint(Rgb8::new(190, 200, 205), side);
+                                    for (r, bits) in
+                                        CHESS_GLYPHS[piece as usize].into_iter().enumerate()
+                                    {
+                                        for c in 0..3 {
+                                            if bits & (1 << (2 - c)) != 0 {
+                                                append_cube(
+                                                    &mut bytes,
+                                                    [
+                                                        x + (c as f32 - 1.0) * 0.25,
+                                                        0.71 + (2.0 - r as f32) * 0.22,
+                                                        z,
+                                                    ],
+                                                    0.105,
+                                                    rgb555(color),
+                                                );
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    if let Some(selected) = chess.selected {
+                        let col = selected.file() as usize;
+                        let row = 7 - selected.rank() as usize;
+                        append_chess_corners(&mut bytes, row, col, Rgb8::new(255, 201, 94));
+                    }
+                    append_chess_corners(
+                        &mut bytes,
+                        chess.cursor.1,
+                        chess.cursor.0,
+                        Rgb8::new(240, 247, 188),
+                    );
+                    append_chess_board_border(&mut bytes);
                 }
-                if let Some(selected) = chess.selected {
-                    let col = selected.file() as usize;
-                    let row = 7 - selected.rank() as usize;
-                    append_chess_corners(&mut bytes, row, col, Rgb8::new(255, 201, 94));
-                }
-                append_chess_corners(
-                    &mut bytes,
-                    chess.cursor.1,
-                    chess.cursor.0,
-                    Rgb8::new(240, 247, 188),
-                );
-                append_chess_board_border(&mut bytes);
-            }
-            Mode::Sudoku => {
-                let violations = sudoku.violations();
-                for row in 0..9 {
-                    for col in 0..9 {
-                        let index = row * 9 + col;
-                        let x = SUD_X + col as f32 * SUD_STEP;
-                        let y = SUD_Y - row as f32 * SUD_STEP;
-                        let box_light = ((row / 3) + (col / 3)) % 2 == 0;
-                        let tile = if box_light {
-                            Rgb8::new(38, 68, 84)
-                        } else {
-                            Rgb8::new(27, 51, 69)
-                        };
-                        append_cube(&mut bytes, [x, y, -0.10], 0.49, rgb555(tile));
-                        let digit = sudoku.game().digit(index);
-                        if digit == 0 {
-                            continue;
+                Mode::Sudoku => {
+                    let violations = sudoku.violations();
+                    for row in 0..9 {
+                        for col in 0..9 {
+                            let index = row * 9 + col;
+                            let x = SUD_X + col as f32 * SUD_STEP;
+                            let y = SUD_Y - row as f32 * SUD_STEP;
+                            let box_light = ((row / 3) + (col / 3)) % 2 == 0;
+                            let tile = if box_light {
+                                Rgb8::new(38, 68, 84)
+                            } else {
+                                Rgb8::new(27, 51, 69)
+                            };
+                            append_cube(&mut bytes, [x, y, -0.10], 0.49, rgb555(tile));
+                            let digit = sudoku.game().digit(index);
+                            if digit == 0 {
+                                continue;
+                            }
+                            let color = if violations.get(index) {
+                                Rgb8::new(255, 83, 96)
+                            } else if sudoku.game().frozen().get(index) {
+                                Rgb8::new(167, 225, 244)
+                            } else {
+                                Rgb8::new(255, 191, 116)
+                            };
+                            let glyph = SUD_DIGITS[(digit - 1) as usize];
+                            for (r, bits) in glyph.into_iter().enumerate() {
+                                for c in 0..3 {
+                                    if bits & (1 << (2 - c)) != 0 {
+                                        append_cube(
+                                            &mut bytes,
+                                            [
+                                                x + (c as f32 - 1.0) * 0.22,
+                                                y + (2.0 - r as f32) * 0.20,
+                                                0.47,
+                                            ],
+                                            0.085,
+                                            rgb555(color),
+                                        );
+                                    }
+                                }
+                            }
                         }
-                        let color = if violations.get(index) {
-                            Rgb8::new(255, 83, 96)
-                        } else if sudoku.game().frozen().get(index) {
-                            Rgb8::new(167, 225, 244)
-                        } else {
-                            Rgb8::new(255, 191, 116)
-                        };
-                        let glyph = SUD_DIGITS[(digit - 1) as usize];
-                        for (r, bits) in glyph.into_iter().enumerate() {
-                            let mut c = 0;
-                            while c < 3 {
-                                if bits & (1 << (2 - c)) == 0 {
-                                    c += 1;
-                                    continue;
-                                }
-                                let start = c;
-                                while c < 3 && bits & (1 << (2 - c)) != 0 {
-                                    c += 1;
-                                }
-                                let last = c - 1;
-                                append_box(
+                    }
+                    for n in [3.0_f32, 6.0] {
+                        let x = SUD_X + (n - 0.5) * SUD_STEP;
+                        let y = SUD_Y - (n - 0.5) * SUD_STEP;
+                        for i in 0..=36 {
+                            let delta = -5.4 + i as f32 * 0.3;
+                            append_cube(
+                                &mut bytes,
+                                [x, delta, 0.18],
+                                BORDER_CUBE_SCALE,
+                                rgb555(Rgb8::new(101, 161, 187)),
+                            );
+                            append_cube(
+                                &mut bytes,
+                                [SUD_X + 4.0 * SUD_STEP + delta, y, 0.18],
+                                BORDER_CUBE_SCALE,
+                                rgb555(Rgb8::new(101, 161, 187)),
+                            );
+                        }
+                    }
+                    let x = SUD_X + sudoku.cursor.0 as f32 * SUD_STEP;
+                    let y = SUD_Y - sudoku.cursor.1 as f32 * SUD_STEP;
+                    for dx in [-0.48, 0.48] {
+                        for dy in [-0.48, 0.48] {
+                            append_cube(
+                                &mut bytes,
+                                [x + dx, y + dy, 0.48],
+                                BORDER_CUBE_SCALE,
+                                rgb555(Rgb8::new(255, 239, 149)),
+                            );
+                        }
+                    }
+                }
+                Mode::TicTacToe => {
+                    for row in 0..3 {
+                        for col in 0..3 {
+                            let x = TIC_X + col as f32 * TIC_STEP;
+                            let y = TIC_Y - row as f32 * TIC_STEP;
+                            append_cube(
+                                &mut bytes,
+                                [x, y, -0.16],
+                                1.48,
+                                rgb555(Rgb8::new(32, 59, 77)),
+                            );
+                            let mark = tic.game().get(row, col);
+                            let color = match mark {
+                                Some(TicPlayer::Player0) => Rgb8::new(89, 221, 242),
+                                Some(TicPlayer::Player1) => Rgb8::new(255, 166, 87),
+                                None => continue,
+                            };
+                            for (dx, dy) in tic_mark_points(mark.unwrap()) {
+                                append_cube(
                                     &mut bytes,
-                                    [
-                                        x + ((start + last) as f32 * 0.5 - 1.0) * 0.22,
-                                        y + (2.0 - r as f32) * 0.20,
-                                        0.47,
-                                    ],
-                                    [0.085 + (last - start) as f32 * 0.11, 0.085, 0.085],
+                                    [x + dx, y + dy, 0.35],
+                                    GAME_CUBE_SCALE,
                                     rgb555(color),
                                 );
                             }
                         }
                     }
-                }
-                for n in [3.0_f32, 6.0] {
-                    let x = SUD_X + (n - 0.5) * SUD_STEP;
-                    let y = SUD_Y - (n - 0.5) * SUD_STEP;
-                    let color = rgb555(Rgb8::new(101, 161, 187));
-                    append_box(
-                        &mut bytes,
-                        [x, 0.0, 0.18],
-                        [BORDER_CUBE_SCALE, 5.4, BORDER_CUBE_SCALE],
-                        color,
-                    );
-                    append_box(
-                        &mut bytes,
-                        [SUD_X + 4.0 * SUD_STEP, y, 0.18],
-                        [5.4, BORDER_CUBE_SCALE, BORDER_CUBE_SCALE],
-                        color,
-                    );
-                }
-                let x = SUD_X + sudoku.cursor.0 as f32 * SUD_STEP;
-                let y = SUD_Y - sudoku.cursor.1 as f32 * SUD_STEP;
-                for dx in [-0.48, 0.48] {
-                    for dy in [-0.48, 0.48] {
-                        append_cube(
-                            &mut bytes,
-                            [x + dx, y + dy, 0.48],
-                            BORDER_CUBE_SCALE,
-                            rgb555(Rgb8::new(255, 239, 149)),
-                        );
-                    }
-                }
-            }
-            Mode::TicTacToe => {
-                for row in 0..3 {
-                    for col in 0..3 {
-                        let x = TIC_X + col as f32 * TIC_STEP;
-                        let y = TIC_Y - row as f32 * TIC_STEP;
-                        append_cube(
-                            &mut bytes,
-                            [x, y, -0.16],
-                            1.48,
-                            rgb555(Rgb8::new(32, 59, 77)),
-                        );
-                        let mark = tic.game().get(row, col);
-                        let color = match mark {
-                            Some(TicPlayer::Player0) => Rgb8::new(89, 221, 242),
-                            Some(TicPlayer::Player1) => Rgb8::new(255, 166, 87),
-                            None => continue,
-                        };
-                        for (dx, dy) in tic_mark_points(mark.unwrap()) {
-                            append_cube(
-                                &mut bytes,
-                                [x + dx, y + dy, 0.35],
-                                GAME_CUBE_SCALE,
-                                rgb555(color),
-                            );
-                        }
-                    }
-                }
-                for seat in tic.seats().iter().flatten().filter(|seat| seat.selected) {
-                    let x = TIC_X + seat.cell.0 as f32 * TIC_STEP;
-                    let y = TIC_Y - seat.cell.1 as f32 * TIC_STEP;
-                    let [r, g, b, _] = seat.color_rgba.to_le_bytes();
-                    let color = rgb555(Rgb8::new(r, g, b));
-                    for dx in [-1.37, 1.37] {
-                        for dy in [-1.37, 1.37] {
-                            append_cube(
-                                &mut bytes,
-                                [x + dx, y + dy, 0.44],
-                                BORDER_CUBE_SCALE,
-                                color,
-                            );
+                    for seat in tic.seats().iter().flatten().filter(|seat| seat.selected) {
+                        let x = TIC_X + seat.cell.0 as f32 * TIC_STEP;
+                        let y = TIC_Y - seat.cell.1 as f32 * TIC_STEP;
+                        let [r, g, b, _] = seat.color_rgba.to_le_bytes();
+                        let color = rgb555(Rgb8::new(r, g, b));
+                        for dx in [-1.37, 1.37] {
+                            for dy in [-1.37, 1.37] {
+                                append_cube(
+                                    &mut bytes,
+                                    [x + dx, y + dy, 0.44],
+                                    BORDER_CUBE_SCALE,
+                                    color,
+                                );
+                            }
                         }
                     }
                 }
@@ -1078,7 +1229,7 @@ impl HullBoard {
         }
         // The outer border follows the whole UI4 window on maximize/restore.
         // The inner border encloses the fixed 10 x 20 playfield.
-        if mode == Mode::Chess {
+        if mode == Mode::Chess && !gallery.open {
             append_chess_outer_border(
                 &mut bytes,
                 chess_view,
@@ -1095,14 +1246,16 @@ impl HullBoard {
                 outer_y,
                 rgb555(Rgb8::new(82, 143, 177)),
             );
-            append_border(
-                &mut bytes,
-                -7.95,
-                3.47,
-                -11.1,
-                11.1,
-                rgb555(Rgb8::new(105, 205, 235)),
-            );
+            if !gallery.open && mode != Mode::Sudoku {
+                append_border(
+                    &mut bytes,
+                    -7.95,
+                    3.47,
+                    -11.1,
+                    11.1,
+                    rgb555(Rgb8::new(105, 205, 235)),
+                );
+            }
         }
         // A resize can change the frame border's seed count. Keep the frame
         // within the selected GPU limit instead of ejecting the app.
@@ -1115,7 +1268,7 @@ impl HullBoard {
             .device
             .acquire_ui4_surface(background.render_target())
             .map_err(|c| Error::Gpu("board surface", c))?;
-        let camera_spec = if mode == Mode::Chess {
+        let camera_spec = if mode == Mode::Chess && !gallery.open {
             chess_view.camera(layout.scene_width, layout.scene_height)
         } else {
             Camera {
@@ -1208,7 +1361,7 @@ fn append_chess_corners(bytes: &mut Vec<u8>, row: usize, col: usize, color: Rgb8
         for dz in [-0.56, 0.56] {
             append_cube(
                 bytes,
-                [x + dx, 0.17, z + dz],
+                [x + dx, 0.29, z + dz],
                 BORDER_CUBE_SCALE,
                 rgb555(color),
             );
@@ -1324,15 +1477,11 @@ fn append_border(bytes: &mut Vec<u8>, left: f32, right: f32, bottom: f32, top: f
 }
 
 fn append_cube(bytes: &mut Vec<u8>, center: [f32; 3], scale: f32, color: u32) {
-    append_box(bytes, center, [scale; 3], color);
-}
-
-fn append_box(bytes: &mut Vec<u8>, center: [f32; 3], scale: [f32; 3], color: u32) {
     encode_seed(
         RetainedTransformSeed {
             translation: center,
             previous_translation: center,
-            scale,
+            scale: [scale; 3],
             rotation: [0., 0., 0., 1.],
             local_radius: 1.74,
             draw_group: 0,
@@ -1447,8 +1596,12 @@ fn present_text(
     chess_assets: &ChessAssets,
     chess_view: &ChessView,
     settings: &RenderSettings,
+    gallery: &mut Gallery,
     paused: bool,
 ) -> Result<(), Error> {
+    if gallery.open {
+        return gallery.present(frame).map_err(|e| Error::Ui("cube dialogs", e));
+    }
     let score = format!("SCORE  {}", game.level.total_points);
     let level_text = format!("LEVEL  {}", game.level.current_level);
     let rows_text = format!("LINES  {}", game.level.rows_deleted);
@@ -1469,14 +1622,11 @@ fn present_text(
         settings.seeds()
     );
     let view_label = format!("VIEW {} / {}", chess_view.yaw, chess_view.elevation);
+    let zoom_label = format!("ZOOM {}%", (chess_view.zoom * 100.0) as u32);
     let white = rgba(230, 240, 250, 255);
     let muted = rgba(150, 172, 194, 255);
     let selected = rgba(160, 233, 246, 255);
-    // Keep the retained font texture at the design resolution. Maximizing a
-    // layered frame already replaces five large UI4 backing surfaces; a second
-    // full-resolution font canvas adds avoidable GPU and memory pressure.
-    let layout = Layout::fit(WIDTH, HEIGHT);
-    let screen_layout = Layout::fit(frame.width(), frame.height());
+    let layout = Layout::fit(frame.width(), frame.height());
     let mut rows = Vec::with_capacity(20);
     let mut glyph_quads = Vec::with_capacity(200);
     let glyph_scale =
@@ -1485,218 +1635,213 @@ fn present_text(
         } else {
             1.
         };
-    for (label, x, y, active) in [
-        ("F1 TETRIS", 462., 28., mode == Mode::Tetris),
-        ("F2 MINES", 462., 57., mode == Mode::Minesweeper),
-        ("F3 TIC", 556., 28., mode == Mode::TicTacToe),
-        ("F4 SUDOKU", 556., 57., mode == Mode::Sudoku),
-        ("F5 CHESS", 462., 86., mode == Mode::Chess),
-    ] {
-        rows.push(layout.row(label, x, y, 17., if active { selected } else { muted }));
-    }
-    if settings.open {
-        rows.extend([
-            layout.row("RENDER LIMITS", 462., 145., 22., white),
-            layout.row(
-                &full_label,
-                462.,
-                220.,
-                20.,
-                if settings.selected == 0 {
-                    selected
-                } else {
-                    muted
-                },
-            ),
-            layout.row(
-                &seeds_label,
-                462.,
-                270.,
-                20.,
-                if settings.selected == 1 {
-                    selected
-                } else {
-                    muted
-                },
-            ),
-            layout.row("UP/DOWN SELECT", 462., 390., 18., muted),
-            layout.row("LEFT/RIGHT SET", 462., 430., 18., muted),
-            layout.row("F9 CLOSE", 462., 520., 19., muted),
-        ]);
-    } else {
-        match mode {
-            Mode::Tetris => {
-                let status = if game.is_game_over() {
-                    "GAME OVER"
-                } else if paused {
-                    "PAUSED"
-                } else {
-                    "PLAYING"
-                };
-                rows.extend([
-                    layout.row(&score, 462., 114., 21., white),
-                    layout.row(&level_text, 462., 155., 21., white),
-                    layout.row(&rows_text, 462., 196., 21., white),
-                    layout.row(status, 462., 255., 22., white),
-                    layout.row("LEFT / RIGHT", 462., 340., 19., muted),
-                    layout.row("MOVE", 462., 365., 18., muted),
-                    layout.row("UP  ROTATE", 462., 414., 19., muted),
-                    layout.row("DOWN  DROP", 462., 452., 19., muted),
-                    layout.row("SPACE  FALL", 462., 490., 19., muted),
-                    layout.row("P  PAUSE", 462., 565., 19., muted),
-                    layout.row("R  RESTART", 462., 603., 19., muted),
-                ]);
-            }
-            Mode::Minesweeper => {
-                let status = if paused {
-                    "PAUSED"
-                } else {
-                    match minefield.status() {
-                        MineStatus::Ongoing => "SWEEPING",
-                        MineStatus::Exploded => "BOOM",
-                        MineStatus::Finished => "CLEARED",
-                    }
-                };
-                rows.extend([
-                    layout.row(&mines_text, 462., 114., 21., white),
-                    layout.row(&flags_text, 462., 155., 21., white),
-                    layout.row(&clear_text, 462., 196., 21., white),
-                    layout.row(status, 462., 255., 22., white),
-                    layout.row("CLICK  REVEAL", 462., 340., 18., muted),
-                    layout.row("RIGHT  FLAG", 462., 379., 18., muted),
-                    layout.row("ARROWS MOVE", 462., 432., 18., muted),
-                    layout.row("SPACE OPEN", 462., 470., 18., muted),
-                    layout.row("F  FLAG", 462., 508., 18., muted),
-                    layout.row("P  PAUSE", 462., 565., 19., muted),
-                    layout.row("R  RESTART", 462., 603., 19., muted),
-                ]);
-                const DIGITS: [&str; 9] = ["", "1", "2", "3", "4", "5", "6", "7", "8"];
-                for row in 0..mines::ROWS {
-                    for col in 0..mines::COLS {
-                        let cell = minefield.cell(row, col);
-                        let label = match cell.status() {
-                            MineCellStatus::Revealed => DIGITS[cell.adjacent_mine_count()],
-                            MineCellStatus::Flagged => "F",
-                            MineCellStatus::Exploded => "X",
-                            MineCellStatus::Hidden
-                                if *minefield.status() != MineStatus::Ongoing && cell.is_mine() =>
-                            {
-                                "X"
-                            }
-                            MineCellStatus::Hidden => "",
-                        };
-                        if label.is_empty() {
-                            continue;
+    {
+        if settings.open {
+            rows.extend([
+                layout.row("RENDER LIMITS", 462., 145., 22., white),
+                layout.row(
+                    &full_label,
+                    462.,
+                    220.,
+                    20.,
+                    if settings.selected == 0 {
+                        selected
+                    } else {
+                        muted
+                    },
+                ),
+                layout.row(
+                    &seeds_label,
+                    462.,
+                    270.,
+                    20.,
+                    if settings.selected == 1 {
+                        selected
+                    } else {
+                        muted
+                    },
+                ),
+                layout.row("UP/DOWN SELECT", 462., 390., 18., muted),
+                layout.row("LEFT/RIGHT SET", 462., 430., 18., muted),
+                layout.row("F9 CLOSE", 462., 520., 19., muted),
+            ]);
+        } else {
+            match mode {
+                Mode::Tetris => {
+                    let status = if game.is_game_over() {
+                        "GAME OVER"
+                    } else if paused {
+                        "PAUSED"
+                    } else {
+                        "PLAYING"
+                    };
+                    rows.extend([
+                        layout.row(&score, 462., 114., 21., white),
+                        layout.row(&level_text, 462., 155., 21., white),
+                        layout.row(&rows_text, 462., 196., 21., white),
+                        layout.row(status, 462., 255., 22., white),
+                        layout.row("LEFT / RIGHT", 462., 340., 19., muted),
+                        layout.row("MOVE", 462., 365., 18., muted),
+                        layout.row("UP  ROTATE", 462., 414., 19., muted),
+                        layout.row("DOWN  DROP", 462., 452., 19., muted),
+                        layout.row("SPACE  FALL", 462., 490., 19., muted),
+                        layout.row("P  PAUSE", 462., 565., 19., muted),
+                        layout.row("R  RESTART", 462., 603., 19., muted),
+                    ]);
+                }
+                Mode::Minesweeper => {
+                    let status = if paused {
+                        "PAUSED"
+                    } else {
+                        match minefield.status() {
+                            MineStatus::Ongoing => "SWEEPING",
+                            MineStatus::Exploded => "BOOM",
+                            MineStatus::Finished => "CLEARED",
                         }
-                        let color = match cell.status() {
-                            MineCellStatus::Flagged => rgba(32, 31, 43, 255),
-                            MineCellStatus::Exploded => white,
-                            _ => mine_number_color(cell.adjacent_mine_count()),
-                        };
-                        glyph_quads.push(mine_glyph_quad(
-                            &screen_layout,
-                            label.as_bytes()[0],
-                            col,
-                            row,
-                            color,
-                            glyph_scale,
-                        ));
+                    };
+                    rows.extend([
+                        layout.row(&mines_text, 462., 114., 21., white),
+                        layout.row(&flags_text, 462., 155., 21., white),
+                        layout.row(&clear_text, 462., 196., 21., white),
+                        layout.row(status, 462., 255., 22., white),
+                        layout.row("CLICK  REVEAL", 462., 340., 18., muted),
+                        layout.row("RIGHT  FLAG", 462., 379., 18., muted),
+                        layout.row("ARROWS MOVE", 462., 432., 18., muted),
+                        layout.row("SPACE OPEN", 462., 470., 18., muted),
+                        layout.row("F  FLAG", 462., 508., 18., muted),
+                        layout.row("P  PAUSE", 462., 565., 19., muted),
+                        layout.row("R  RESTART", 462., 603., 19., muted),
+                    ]);
+                    const DIGITS: [&str; 9] = ["", "1", "2", "3", "4", "5", "6", "7", "8"];
+                    for row in 0..mines::ROWS {
+                        for col in 0..mines::COLS {
+                            let cell = minefield.cell(row, col);
+                            let label = match cell.status() {
+                                MineCellStatus::Revealed => DIGITS[cell.adjacent_mine_count()],
+                                MineCellStatus::Flagged => "F",
+                                MineCellStatus::Exploded => "X",
+                                MineCellStatus::Hidden
+                                    if *minefield.status() != MineStatus::Ongoing
+                                        && cell.is_mine() =>
+                                {
+                                    "X"
+                                }
+                                MineCellStatus::Hidden => "",
+                            };
+                            if label.is_empty() {
+                                continue;
+                            }
+                            let color = match cell.status() {
+                                MineCellStatus::Flagged => rgba(32, 31, 43, 255),
+                                MineCellStatus::Exploded => white,
+                                _ => mine_number_color(cell.adjacent_mine_count()),
+                            };
+                            glyph_quads.push(mine_glyph_quad(
+                                &layout,
+                                label.as_bytes()[0],
+                                col,
+                                row,
+                                color,
+                                glyph_scale,
+                            ));
+                        }
                     }
                 }
-            }
-            Mode::Chess => {
-                let turn = match chess.side() {
-                    ChessColor::White => "WHITE TURN",
-                    ChessColor::Black => "BLACK TURN",
-                };
-                let status = if paused {
-                    "PAUSED"
-                } else {
-                    match chess.status() {
-                        ChessStatus::Ongoing => turn,
-                        ChessStatus::Drawn => "DRAW",
-                        ChessStatus::Won if chess.side() == ChessColor::White => "BLACK WINS",
-                        ChessStatus::Won => "WHITE WINS",
-                    }
-                };
-                rows.extend([
-                    layout.row(status, 462., 144., 21., white),
-                    layout.row(&chess_assets_text, 462., 195., 19., muted),
-                    layout.row("CLICK PIECE", 462., 290., 18., muted),
-                    layout.row("CLICK TARGET", 462., 327., 18., muted),
-                    layout.row("GREEN LEGAL", 462., 365., 18., muted),
-                    layout.row("A/D ROTATE", 462., 420., 18., muted),
+                Mode::Chess => {
+                    let turn = match chess.side() {
+                        ChessColor::White => "WHITE TURN",
+                        ChessColor::Black => "BLACK TURN",
+                    };
+                    let status = if paused {
+                        "PAUSED"
+                    } else {
+                        match chess.status() {
+                            ChessStatus::Ongoing => turn,
+                            ChessStatus::Drawn => "DRAW",
+                            ChessStatus::Won if chess.side() == ChessColor::White => "BLACK WINS",
+                            ChessStatus::Won => "WHITE WINS",
+                        }
+                    };
+                    rows.extend([
+                        layout.row(status, 462., 144., 21., white),
+                        layout.row(&chess_assets_text, 462., 195., 19., muted),
+                        layout.row("CLICK PIECE", 462., 290., 18., muted),
+                        layout.row("CLICK TARGET", 462., 327., 18., muted),
+                        layout.row("GREEN LEGAL", 462., 365., 18., muted),
+                        layout.row("A/D ROTATE", 462., 420., 18., muted),
                     layout.row("W/S TILT 15", 462., 456., 18., muted),
-                    layout.row("ARROWS MOVE", 462., 492., 18., muted),
-                    layout.row("SPACE SELECT", 462., 528., 18., muted),
-                    layout.row("F1-F5 MODES", 462., 575., 18., muted),
-                    layout.row("P PAUSE", 462., 613., 19., muted),
-                    layout.row("R RESTART", 462., 651., 19., muted),
-                ]);
+                    layout.row("WHEEL ZOOM", 462., 550., 16., muted),
+                        layout.row("ARROWS MOVE", 462., 492., 18., muted),
+                        layout.row("SPACE SELECT", 462., 528., 18., muted),
+                        layout.row("P PAUSE", 462., 613., 19., muted),
+                        layout.row("R RESTART", 462., 651., 19., muted),
+                    ]);
                 rows.push(layout.row(&view_label, 462., 236., 17., muted));
+                rows.push(layout.row(&zoom_label, 462., 266., 17., muted));
+                }
+                Mode::Sudoku => {
+                    let status = if paused {
+                        "PAUSED"
+                    } else if sudoku.game().is_complete() {
+                        "SOLVED"
+                    } else {
+                        "EASY"
+                    };
+                    rows.extend([
+                        layout.row(&sudoku_filled, 462., 114., 20., white),
+                        layout.row(&sudoku_errors, 462., 155., 20., white),
+                        layout.row(status, 462., 233., 22., white),
+                        layout.row("HOVER SELECT", 462., 326., 18., muted),
+                        layout.row("ARROWS MOVE", 462., 365., 18., muted),
+                        layout.row("1-9  ENTER", 462., 414., 18., muted),
+                        layout.row("0 / DEL ERASE", 462., 453., 18., muted),
+                        layout.row("P  PAUSE", 462., 565., 19., muted),
+                        layout.row("R  NEW PUZZLE", 462., 603., 19., muted),
+                    ]);
+                }
+                Mode::TicTacToe => {
+                    let status = if paused {
+                        "PAUSED"
+                    } else {
+                        match tic.game().status() {
+                            TicStatus::Ongoing => match tic.game().next_player() {
+                                TicPlayer::Player0 => "P1 TURN",
+                                TicPlayer::Player1 => "P2 TURN",
+                            },
+                            TicStatus::Draw => "DRAW",
+                            TicStatus::Win(TicPlayer::Player0) => "P1 WINS",
+                            TicStatus::Win(TicPlayer::Player1) => "P2 WINS",
+                        }
+                    };
+                    let p1 = if tic.seats()[0].is_some_and(|seat| seat.selected) {
+                        "P1 X  READY"
+                    } else {
+                        "P1 X  WAIT"
+                    };
+                    let p2 = if tic.seats()[1].is_some_and(|seat| seat.selected) {
+                        "P2 O  READY"
+                    } else {
+                        "P2 O  WAIT"
+                    };
+                    rows.extend([
+                        layout.row(p1, 462., 114., 20., white),
+                        layout.row(p2, 462., 155., 20., white),
+                        layout.row(status, 462., 233., 22., white),
+                        layout.row("2 CURSORS", 462., 327., 19., muted),
+                        layout.row("EACH SELECTS", 462., 355., 18., muted),
+                        layout.row("CLICK TO PLAY", 462., 414., 18., muted),
+                        layout.row("ARROWS MOVE", 462., 469., 18., muted),
+                        layout.row("SPACE / ENTER", 462., 497., 18., muted),
+                        layout.row("P  PAUSE", 462., 565., 19., muted),
+                        layout.row("R  RESTART", 462., 603., 19., muted),
+                    ]);
+                }
             }
-            Mode::Sudoku => {
-                let status = if paused {
-                    "PAUSED"
-                } else if sudoku.game().is_complete() {
-                    "SOLVED"
-                } else {
-                    "EASY"
-                };
-                rows.extend([
-                    layout.row(&sudoku_filled, 462., 114., 20., white),
-                    layout.row(&sudoku_errors, 462., 155., 20., white),
-                    layout.row(status, 462., 233., 22., white),
-                    layout.row("HOVER SELECT", 462., 326., 18., muted),
-                    layout.row("ARROWS MOVE", 462., 365., 18., muted),
-                    layout.row("1-9  ENTER", 462., 414., 18., muted),
-                    layout.row("0 / DEL ERASE", 462., 453., 18., muted),
-                    layout.row("F1-F5  MODES", 462., 508., 18., muted),
-                    layout.row("P  PAUSE", 462., 565., 19., muted),
-                    layout.row("R  NEW PUZZLE", 462., 603., 19., muted),
-                ]);
-            }
-            Mode::TicTacToe => {
-                let status = if paused {
-                    "PAUSED"
-                } else {
-                    match tic.game().status() {
-                        TicStatus::Ongoing => match tic.game().next_player() {
-                            TicPlayer::Player0 => "P1 TURN",
-                            TicPlayer::Player1 => "P2 TURN",
-                        },
-                        TicStatus::Draw => "DRAW",
-                        TicStatus::Win(TicPlayer::Player0) => "P1 WINS",
-                        TicStatus::Win(TicPlayer::Player1) => "P2 WINS",
-                    }
-                };
-                let p1 = if tic.seats()[0].is_some_and(|seat| seat.selected) {
-                    "P1 X  READY"
-                } else {
-                    "P1 X  WAIT"
-                };
-                let p2 = if tic.seats()[1].is_some_and(|seat| seat.selected) {
-                    "P2 O  READY"
-                } else {
-                    "P2 O  WAIT"
-                };
-                rows.extend([
-                    layout.row(p1, 462., 114., 20., white),
-                    layout.row(p2, 462., 155., 20., white),
-                    layout.row(status, 462., 233., 22., white),
-                    layout.row("2 CURSORS", 462., 327., 19., muted),
-                    layout.row("EACH SELECTS", 462., 355., 18., muted),
-                    layout.row("CLICK TO PLAY", 462., 414., 18., muted),
-                    layout.row("ARROWS MOVE", 462., 469., 18., muted),
-                    layout.row("SPACE / ENTER", 462., 497., 18., muted),
-                    layout.row("P  PAUSE", 462., 565., 19., muted),
-                    layout.row("R  RESTART", 462., 603., 19., muted),
-                ]);
-            }
+            rows.push(layout.row("F9 SETTINGS", 462., 690., 17., muted));
+            rows.push(layout.row("F8 GAMES", 462., 716., 16., muted));
         }
-        rows.push(layout.row("F9 SETTINGS", 462., 690., 17., muted));
     }
-    let canvas = (WIDTH, HEIGHT);
+    let canvas = (frame.width(), frame.height());
     frame
         .retain_font_canvas(Font::Inconsolata, canvas, &rows)
         .map_err(|e| Error::Ui("font canvas", e))?;
@@ -1704,36 +1849,17 @@ fn present_text(
         .begin_sprite_frame(rgba(0, 0, 0, 0))
         .map_err(|e| Error::Ui("begin text", e))?;
     let mut quads = Vec::with_capacity(glyph_quads.len() + 1);
-    let mut font_quad = frame
-        .font_canvas_quad(canvas, (0, 0))
-        .map_err(|e| Error::Ui("font canvas quad", e))?;
-    let left = screen_layout.offset_x;
-    let top = screen_layout.offset_y;
-    let right = left + WIDTH as f32 * screen_layout.scale;
-    let bottom = top + HEIGHT as f32 * screen_layout.scale;
-    font_quad.c0.x = left;
-    font_quad.c0.y = top;
-    font_quad.c0.u = 0.;
-    font_quad.c0.v = 0.;
-    font_quad.c1.x = right;
-    font_quad.c1.y = top;
-    font_quad.c1.u = 1.;
-    font_quad.c1.v = 0.;
-    font_quad.c2.x = right;
-    font_quad.c2.y = bottom;
-    font_quad.c2.u = 1.;
-    font_quad.c2.v = 1.;
-    font_quad.c3.x = left;
-    font_quad.c3.y = bottom;
-    font_quad.c3.u = 0.;
-    font_quad.c3.v = 1.;
-    quads.push(font_quad);
+    quads.push(
+        frame
+            .font_canvas_quad(canvas, (0, 0))
+            .map_err(|e| Error::Ui("font canvas quad", e))?,
+    );
     quads.extend(glyph_quads);
     frame
         .draw_sprite_quads(&quads)
         .map_err(|e| Error::Ui("draw text and mine glyphs", e))?;
     frame
-        .publish(Damage::full(frame.width(), frame.height()))
+        .publish(Damage::full(canvas.0, canvas.1))
         .map_err(|e| Error::Ui("publish text", e))
 }
 

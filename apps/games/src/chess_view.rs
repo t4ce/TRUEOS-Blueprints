@@ -9,6 +9,8 @@ const RAD: f32 = core::f32::consts::PI / 180.0;
 pub struct ChessView {
     pub yaw: i32,
     pub elevation: i32,
+    /// Orthographic magnification: 1.0 is the original board size.
+    pub zoom: f32,
 }
 
 impl ChessView {
@@ -16,6 +18,7 @@ impl ChessView {
         Self {
             yaw: 0,
             elevation: 60,
+            zoom: 1.0,
         }
     }
 
@@ -25,6 +28,15 @@ impl ChessView {
 
     pub fn tilt(&mut self, degrees: i32) {
         self.elevation = (self.elevation + degrees).clamp(30, 75);
+    }
+
+    pub fn wheel_zoom(&mut self, wheel: i32) -> bool {
+        if wheel == 0 {
+            return false;
+        }
+        let old = self.zoom;
+        self.zoom = (self.zoom + wheel.signum() as f32 * 0.1).clamp(0.5, 1.5);
+        self.zoom != old
     }
 
     pub fn cell(row: usize, col: usize) -> [f32; 3] {
@@ -61,9 +73,9 @@ impl ChessView {
         let (right, up, forward) = self.basis();
         let eye = self.position();
         [
-            eye[0] + forward[0] * DISTANCE + right[0] * x + up[0] * y,
-            eye[1] + forward[1] * DISTANCE + right[1] * x + up[1] * y,
-            eye[2] + forward[2] * DISTANCE + right[2] * x + up[2] * y,
+            eye[0] + forward[0] * DISTANCE + (right[0] * x + up[0] * y) / self.zoom,
+            eye[1] + forward[1] * DISTANCE + (right[1] * x + up[1] * y) / self.zoom,
+            eye[2] + forward[2] * DISTANCE + (right[2] * x + up[2] * y) / self.zoom,
         ]
     }
 
@@ -74,8 +86,8 @@ impl ChessView {
             position: self.position(),
             rotation: (yaw * tilt).normalized(),
             projection: Projection::Orthographic {
-                xmag: scene_width,
-                ymag: scene_height,
+                xmag: scene_width / self.zoom,
+                ymag: scene_height / self.zoom,
                 znear: 0.1,
                 zfar: 100.0,
             },
@@ -95,8 +107,8 @@ impl ChessView {
             return None;
         }
         let (right, up, forward) = self.basis();
-        let screen_x = (local_x as f32 / width as f32 - 0.5) * scene_width;
-        let screen_y = (0.5 - local_y as f32 / height as f32) * scene_height;
+        let screen_x = (local_x as f32 / width as f32 - 0.5) * scene_width / self.zoom;
+        let screen_y = (0.5 - local_y as f32 / height as f32) * scene_height / self.zoom;
         let position = self.position();
         let origin = [
             position[0] + right[0] * screen_x + up[0] * screen_y,
@@ -127,7 +139,11 @@ mod tests {
     fn chess_board_cells_are_picked_after_rotation_and_tilt() {
         for yaw in [0, 45, 90, 180, 270] {
             for elevation in [30, 45, 60, 75] {
-                let view = ChessView { yaw, elevation };
+                let view = ChessView {
+                    yaw,
+                    elevation,
+                    zoom: 1.0,
+                };
                 let (right, up, forward) = view.basis();
                 let rotation = view.camera(21.96, 25.0).rotation;
                 for (basis, axis) in [
