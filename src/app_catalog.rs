@@ -202,7 +202,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
 fn virtual_package_app_alias(app_name: &str) -> bool {
     matches!(
         app_name,
-        "fd" | "helix" | "matrix" | "scope_tui" | "aud_player_scope_tui" | "yazi"
+        "helix" | "matrix" | "scope_tui" | "aud_player_scope_tui" | "yazi"
     )
 }
 
