@@ -66,10 +66,8 @@
       "path": "../QuadTexture"
     },
     "esp32_stt",
-    "ferris-says-nix",
     "flight_controller_sim",
     "prismq",
-    "particle",
     "PlotTwist",
     "shadertoy",
     {
