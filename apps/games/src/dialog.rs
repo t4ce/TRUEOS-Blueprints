@@ -197,7 +197,7 @@ fn raster(def: &Definition, checked: bool, hover: Option<Widget>, selected: bool
 
 pub fn atlas(
     definitions: &[Definition; 12],
-    checked: &[bool; 5],
+    checked: &[bool],
     hover: Option<(usize, Widget)>,
     selected: usize,
 ) -> Vec<u8> {

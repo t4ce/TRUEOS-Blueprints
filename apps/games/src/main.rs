@@ -6,6 +6,7 @@ mod audio;
 mod chess;
 mod chess_assets;
 mod chess_view;
+mod cut_tetris;
 mod dialog;
 mod gallery;
 mod mines;
@@ -73,9 +74,11 @@ const SCENE_WIDTH: f32 = SCENE_HEIGHT * WIDTH as f32 / HEIGHT as f32;
 const SCENE_HEIGHT: f32 = 25.0;
 
 type Tetris = Game<COLS, ROWS, HIDDEN>;
+type CutTetris = cut_tetris::Game<COLS, VISIBLE>;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Mode {
+    CutTetris,
     Tetris,
     Minesweeper,
     TicTacToe,
@@ -121,7 +124,14 @@ impl Layout {
     }
 }
 
-fn chess_hud_row<'a>(text: &'a str, width: u32, height: u32, y: f32, pixels: f32, color: u32) -> FontCanvasRow<'a> {
+fn chess_hud_row<'a>(
+    text: &'a str,
+    width: u32,
+    height: u32,
+    y: f32,
+    pixels: f32,
+    color: u32,
+) -> FontCanvasRow<'a> {
     let scale = (height as f32 / HEIGHT as f32).clamp(0.75, 2.0);
     FontCanvasRow {
         text,
@@ -203,6 +213,7 @@ fn run() -> Result<(), Error> {
     let mut rng = Lcg32::new((clock::monotonic_millis() as u32) ^ 0xC11C_7E75);
     let mut events = NoopEvents;
     let mut game = Tetris::new(&mut rng, &mut events);
+    let mut cut_game = CutTetris::new(clock::monotonic_millis() as u32);
     let mut minefield = Minefield::new(clock::monotonic_millis());
     let mut tic = TicTacToe::new();
     let mut sudoku = Sudoku::new(clock::monotonic_millis());
@@ -296,7 +307,7 @@ fn run() -> Result<(), Error> {
                 && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
                 && matches!(
                     event.key_code,
-                    input::KEYBOARD_KEY_F1..=input::KEYBOARD_KEY_F5
+                    input::KEYBOARD_KEY_F1..=input::KEYBOARD_KEY_F6
                 )
             {
                 let next = match event.key_code {
@@ -304,7 +315,8 @@ fn run() -> Result<(), Error> {
                     input::KEYBOARD_KEY_F2 => Mode::Minesweeper,
                     input::KEYBOARD_KEY_F3 => Mode::TicTacToe,
                     input::KEYBOARD_KEY_F4 => Mode::Sudoku,
-                    _ => Mode::Chess,
+                    input::KEYBOARD_KEY_F5 => Mode::Chess,
+                    _ => Mode::CutTetris,
                 };
                 if select_mode(&mut frame, &mut mode, next)? {
                     board.previous_view_projection = [0.; 16];
@@ -331,7 +343,7 @@ fn run() -> Result<(), Error> {
                             text = true;
                         }
                     }
-                    input::KEYBOARD_KEY_SPACE if gallery.selected < 5 => {
+                    input::KEYBOARD_KEY_SPACE if gallery.selected < gallery.fresh.len() => {
                         gallery.toggle_fresh();
                         text = true;
                     }
@@ -341,6 +353,7 @@ fn run() -> Result<(), Error> {
                                 reset_game(
                                     next,
                                     &mut game,
+                                    &mut cut_game,
                                     &mut minefield,
                                     &mut tic,
                                     &mut sudoku,
@@ -384,6 +397,28 @@ fn run() -> Result<(), Error> {
                 && (!paused || mode == Mode::Chess)
             {
                 match mode {
+                    Mode::CutTetris => match event.key_code {
+                        input::KEYBOARD_KEY_ARROW_LEFT => {
+                            cut_game.move_left();
+                        }
+                        input::KEYBOARD_KEY_ARROW_RIGHT => {
+                            cut_game.move_right();
+                        }
+                        input::KEYBOARD_KEY_ARROW_UP => {
+                            cut_game.rotate(cut_tetris::Rotation::Cw);
+                        }
+                        input::KEYBOARD_KEY_ARROW_DOWN => {
+                            cut_game.rotate(cut_tetris::Rotation::Ccw);
+                        }
+                        input::KEYBOARD_KEY_SPACE | input::KEYBOARD_KEY_ENTER => {
+                            if cut_game.is_game_over() {
+                                cut_game = CutTetris::new(clock::monotonic_millis() as u32);
+                            } else {
+                                cut_game.cut();
+                            }
+                        }
+                        _ => {}
+                    },
                     Mode::Tetris if !game.is_game_over() => match event.key_code {
                         input::KEYBOARD_KEY_ARROW_LEFT => {
                             game.move_left();
@@ -521,6 +556,24 @@ fn run() -> Result<(), Error> {
                         paint = true;
                         text = true;
                     }
+                    Some(c @ ('a' | 'A' | 'd' | 'D' | 'w' | 'W' | 's' | 'S'))
+                        if mode == Mode::CutTetris && !paused && !settings.open =>
+                    {
+                        match c.to_ascii_lowercase() {
+                            'a' => {
+                                cut_game.move_left();
+                            }
+                            'd' => {
+                                cut_game.move_right();
+                            }
+                            'w' => {
+                                cut_game.rotate(cut_tetris::Rotation::Cw);
+                            }
+                            _ => {
+                                cut_game.rotate(cut_tetris::Rotation::Ccw);
+                            }
+                        }
+                    }
                     Some('r' | 'R') => {
                         match mode {
                             Mode::Tetris => {
@@ -534,6 +587,9 @@ fn run() -> Result<(), Error> {
                             Mode::TicTacToe => tic.reset(),
                             Mode::Sudoku => sudoku.reset(clock::monotonic_millis()),
                             Mode::Chess => chess.reset(),
+                            Mode::CutTetris => {
+                                cut_game = CutTetris::new(clock::monotonic_millis() as u32)
+                            }
                         }
                         paused = false;
                         paint = true;
@@ -573,6 +629,7 @@ fn run() -> Result<(), Error> {
                         reset_game(
                             next,
                             &mut game,
+                            &mut cut_game,
                             &mut minefield,
                             &mut tic,
                             &mut sudoku,
@@ -642,9 +699,7 @@ fn run() -> Result<(), Error> {
                         frame.height(),
                     ) {
                         paint |= chess.select_cursor(row, col);
-                        if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
-                            && chess.activate()
-                        {
+                        if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0 && chess.activate() {
                             paint = true;
                             text = true;
                         }
@@ -659,7 +714,7 @@ fn run() -> Result<(), Error> {
                         }
                     }
                 }
-                Mode::Tetris => {}
+                Mode::Tetris | Mode::CutTetris => {}
             }
         }
         while let Some(event) = frame
@@ -703,6 +758,14 @@ fn run() -> Result<(), Error> {
                 game.soft_drop(&mut rng, &mut events);
             }
         }
+        if mode == Mode::CutTetris && !gallery.open && !paused {
+            cut_game.tick(elapsed as u32);
+            text |= now / 100 != now.saturating_sub(elapsed) / 100;
+        }
+        if cut_game.consume_changed() && mode == Mode::CutTetris {
+            paint = true;
+            text = true;
+        }
         audio.update(now);
         if game.consume_changed() && mode == Mode::Tetris {
             paint = true;
@@ -720,6 +783,7 @@ fn run() -> Result<(), Error> {
                 &mut background,
                 mode,
                 &game,
+                &cut_game,
                 &minefield,
                 &tic,
                 &sudoku,
@@ -741,6 +805,7 @@ fn run() -> Result<(), Error> {
                 &mut frame,
                 mode,
                 &game,
+                &cut_game,
                 &minefield,
                 &tic,
                 &sudoku,
@@ -793,6 +858,7 @@ fn select_mode(frame: &mut Frame, mode: &mut Mode, next: Mode) -> Result<bool, E
 fn reset_game(
     mode: Mode,
     game: &mut Tetris,
+    cut_game: &mut CutTetris,
     minefield: &mut Minefield,
     tic: &mut TicTacToe,
     sudoku: &mut Sudoku,
@@ -811,6 +877,7 @@ fn reset_game(
         Mode::TicTacToe => tic.reset(),
         Mode::Sudoku => sudoku.reset(clock::monotonic_millis()),
         Mode::Chess => chess.reset(),
+        Mode::CutTetris => *cut_game = CutTetris::new(clock::monotonic_millis() as u32),
     }
 }
 
@@ -919,6 +986,7 @@ impl HullBoard {
         background: &mut BackgroundLayer,
         mode: Mode,
         game: &Tetris,
+        cut_game: &CutTetris,
         minefield: &Minefield,
         tic: &TicTacToe,
         sudoku: &Sudoku,
@@ -936,6 +1004,69 @@ impl HullBoard {
         let mut bytes = Vec::with_capacity(1200 * 64);
         if !gallery.open {
             match mode {
+                Mode::CutTetris => {
+                    let target = cut_game
+                        .cut_ready()
+                        .then(|| cut_game.target_cells())
+                        .flatten();
+                    for row in 0..VISIBLE {
+                        for col in 0..COLS {
+                            let Some(band) = cut_game.cell_at(col, row) else {
+                                continue;
+                            };
+                            let color = if target
+                                .as_ref()
+                                .is_some_and(|cells| cells.contains(&(col, row)))
+                            {
+                                cut_piece_color(cut_game.cutter().kind)
+                            } else {
+                                let colors = [
+                                    (45, 111, 149),
+                                    (41, 127, 159),
+                                    (49, 139, 147),
+                                    (53, 118, 171),
+                                    (61, 104, 157),
+                                    (43, 133, 132),
+                                ];
+                                let (r, g, b) = colors[band as usize % colors.len()];
+                                Rgb8::new(r, g, b)
+                            };
+                            append_cube(
+                                &mut bytes,
+                                [-7.1 + col as f32 * CELL, 10.25 - row as f32 * CELL, 0.0],
+                                GAME_CUBE_SCALE,
+                                rgb555(color),
+                            );
+                        }
+                    }
+                    let cutter = cut_game.cutter();
+                    for col in cutter.x..cutter.x + cutter.dimensions().0 {
+                        append_cube(
+                            &mut bytes,
+                            [-7.1 + col as f32 * CELL, -11.0, 0.0],
+                            0.15,
+                            rgb555(cut_piece_color(cutter.kind)),
+                        );
+                    }
+                    for (kind, rotation, top) in [
+                        (cutter.kind, cutter.rotation, 8.0),
+                        (cut_game.next_piece(), 0, 4.0),
+                    ] {
+                        let (_, height) = cut_tetris::piece_dimensions(kind, rotation);
+                        for (x, y) in cut_tetris::piece_cells(kind, rotation) {
+                            append_cube(
+                                &mut bytes,
+                                [
+                                    4.5 + x as f32 * 0.65,
+                                    top - (height - 1 - y as usize) as f32 * 0.65,
+                                    0.0,
+                                ],
+                                0.26,
+                                rgb555(cut_piece_color(kind)),
+                            );
+                        }
+                    }
+                }
                 Mode::Tetris => {
                     for row in 0..VISIBLE {
                         for col in 0..COLS {
@@ -1022,7 +1153,12 @@ impl HullBoard {
                             };
                             // One uniform hull cube per square. Its side is
                             // twice the former small subcube's side.
-                            append_cube(&mut bytes, [x, 0.0, z], chess_view::TILE_SCALE, rgb555(tile));
+                            append_cube(
+                                &mut bytes,
+                                [x, 0.0, z],
+                                chess_view::TILE_SCALE,
+                                rgb555(tile),
+                            );
                             if chess.legal_at(row, col) {
                                 for dx in [-0.32, 0.32] {
                                     for dz in [-0.32, 0.32] {
@@ -1049,7 +1185,8 @@ impl HullBoard {
                                             &mut bytes,
                                             [
                                                 x + cube.center[0] * factor,
-                                                chess_view::TILE_SCALE + (cube.center[1] + 0.47) * factor,
+                                                chess_view::TILE_SCALE
+                                                    + (cube.center[1] + 0.47) * factor,
                                                 z + cube.center[2] * factor,
                                             ],
                                             cube.scale * factor,
@@ -1067,7 +1204,9 @@ impl HullBoard {
                                                     &mut bytes,
                                                     [
                                                         x + (c as f32 - 1.0) * 0.20,
-                                                        chess_view::TILE_SCALE + 0.13 + (2.0 - r as f32) * 0.18,
+                                                        chess_view::TILE_SCALE
+                                                            + 0.13
+                                                            + (2.0 - r as f32) * 0.18,
                                                         z,
                                                     ],
                                                     0.105,
@@ -1512,6 +1651,7 @@ fn present_text(
     frame: &mut Frame,
     mode: Mode,
     game: &Tetris,
+    cut_game: &CutTetris,
     minefield: &Minefield,
     tic: &TicTacToe,
     sudoku: &Sudoku,
@@ -1523,8 +1663,19 @@ fn present_text(
     paused: bool,
 ) -> Result<(), Error> {
     if gallery.open {
-        return gallery.present(frame).map_err(|e| Error::Ui("cube dialogs", e));
+        return gallery
+            .present(frame)
+            .map_err(|e| Error::Ui("cube dialogs", e));
     }
+    let cut_labels = [
+        format!("SCORE {}", cut_game.score()),
+        format!("CUTS {}", cut_game.cuts()),
+        format!("LIVES {}/{}", cut_game.lives_remaining(), COLS),
+        format!(
+            "ROW {}%",
+            cut_game.row_elapsed_ms() * 100 / cut_game.row_interval_ms()
+        ),
+    ];
     let score = format!("SCORE  {}", game.level.total_points);
     let level_text = format!("LEVEL  {}", game.level.current_level);
     let rows_text = format!("LINES  {}", game.level.rows_deleted);
@@ -1561,47 +1712,93 @@ fn present_text(
     {
         if settings.open {
             if mode == Mode::Chess {
-                let hud = |label, y, size, color| chess_hud_row(label, frame.width(), frame.height(), y, size, color);
+                let hud = |label, y, size, color| {
+                    chess_hud_row(label, frame.width(), frame.height(), y, size, color)
+                };
                 rows.extend([
                     hud("RENDER LIMITS", 0., 21., white),
-                    hud(&full_label, 40., 18., if settings.selected == 0 { selected } else { muted }),
-                    hud(&seeds_label, 70., 18., if settings.selected == 1 { selected } else { muted }),
+                    hud(
+                        &full_label,
+                        40.,
+                        18.,
+                        if settings.selected == 0 {
+                            selected
+                        } else {
+                            muted
+                        },
+                    ),
+                    hud(
+                        &seeds_label,
+                        70.,
+                        18.,
+                        if settings.selected == 1 {
+                            selected
+                        } else {
+                            muted
+                        },
+                    ),
                     hud("UP/DOWN SELECT", 112., 16., muted),
                     hud("LEFT/RIGHT SET", 136., 16., muted),
                     hud("F9 CLOSE", 170., 17., muted),
                 ]);
             } else {
-            rows.extend([
-                layout.row("RENDER LIMITS", 462., 145., 22., white),
-                layout.row(
-                    &full_label,
-                    462.,
-                    220.,
-                    20.,
-                    if settings.selected == 0 {
-                        selected
-                    } else {
-                        muted
-                    },
-                ),
-                layout.row(
-                    &seeds_label,
-                    462.,
-                    270.,
-                    20.,
-                    if settings.selected == 1 {
-                        selected
-                    } else {
-                        muted
-                    },
-                ),
-                layout.row("UP/DOWN SELECT", 462., 390., 18., muted),
-                layout.row("LEFT/RIGHT SET", 462., 430., 18., muted),
-                layout.row("F9 CLOSE", 462., 520., 19., muted),
-            ]);
+                rows.extend([
+                    layout.row("RENDER LIMITS", 462., 145., 22., white),
+                    layout.row(
+                        &full_label,
+                        462.,
+                        220.,
+                        20.,
+                        if settings.selected == 0 {
+                            selected
+                        } else {
+                            muted
+                        },
+                    ),
+                    layout.row(
+                        &seeds_label,
+                        462.,
+                        270.,
+                        20.,
+                        if settings.selected == 1 {
+                            selected
+                        } else {
+                            muted
+                        },
+                    ),
+                    layout.row("UP/DOWN SELECT", 462., 390., 18., muted),
+                    layout.row("LEFT/RIGHT SET", 462., 430., 18., muted),
+                    layout.row("F9 CLOSE", 462., 520., 19., muted),
+                ]);
             }
         } else {
             match mode {
+                Mode::CutTetris => {
+                    let status = if cut_game.is_game_over() {
+                        "GAME OVER"
+                    } else if paused {
+                        "PAUSED"
+                    } else if !cut_game.cut_ready() {
+                        "COOLDOWN"
+                    } else if cut_game.target_cells().is_some() {
+                        "FIT"
+                    } else {
+                        "WAIT"
+                    };
+                    rows.extend([
+                        layout.row("CUT TETRIS", 462., 38., 22., white),
+                        layout.row("CUTTER", 462., 90., 19., muted),
+                        layout.row("NEXT", 462., 210., 19., muted),
+                        layout.row(status, 462., 320., 19., selected),
+                        layout.row("ARROWS / WASD", 462., 460., 17., muted),
+                        layout.row("SPACE / ENTER CUT", 462., 490., 16., muted),
+                        layout.row("P  PAUSE", 462., 565., 19., muted),
+                        layout.row("R  RESTART", 462., 603., 19., muted),
+                    ]);
+                    for (label, y) in cut_labels.iter().zip([355., 380., 405., 430.]) {
+                        rows.push(layout.row(label, 462., y, 18., white));
+                    }
+                }
                 Mode::Tetris => {
                     let status = if game.is_game_over() {
                         "GAME OVER"
@@ -1693,7 +1890,9 @@ fn present_text(
                         ChessStatus::Won if chess.side() == ChessColor::White => "BLACK WINS",
                         ChessStatus::Won => "WHITE WINS",
                     };
-                    let hud = |label, y, size, color| chess_hud_row(label, frame.width(), frame.height(), y, size, color);
+                    let hud = |label, y, size, color| {
+                        chess_hud_row(label, frame.width(), frame.height(), y, size, color)
+                    };
                     if frame.width() < frame.height() {
                         rows.extend([
                             hud(status, 0., 19., white),
@@ -1706,20 +1905,20 @@ fn present_text(
                             hud("R RESTART  F8/F9", 172., 14., muted),
                         ]);
                     } else {
-                    rows.extend([
-                        hud(status, 0., 21., white),
-                        hud(&chess_assets_text, 34., 17., muted),
-                        hud(&view_label, 58., 16., muted),
-                        hud(&zoom_label, 82., 16., muted),
-                        hud("CLICK SELECT", 120., 17., muted),
-                        hud("GREEN LEGAL", 144., 16., muted),
-                        hud("A/D ROTATE", 168., 16., muted),
-                        hud("W/S TILT 15", 192., 16., muted),
-                        hud("WHEEL ZOOM", 216., 16., muted),
-                        hud("ARROWS / SPACE", 240., 16., muted),
-                        hud("R RESTART", 264., 16., muted),
-                        hud("F8 GAMES  F9 SETTINGS", 288., 15., muted),
-                    ]);
+                        rows.extend([
+                            hud(status, 0., 21., white),
+                            hud(&chess_assets_text, 34., 17., muted),
+                            hud(&view_label, 58., 16., muted),
+                            hud(&zoom_label, 82., 16., muted),
+                            hud("CLICK SELECT", 120., 17., muted),
+                            hud("GREEN LEGAL", 144., 16., muted),
+                            hud("A/D ROTATE", 168., 16., muted),
+                            hud("W/S TILT 15", 192., 16., muted),
+                            hud("WHEEL ZOOM", 216., 16., muted),
+                            hud("ARROWS / SPACE", 240., 16., muted),
+                            hud("R RESTART", 264., 16., muted),
+                            hud("F8 GAMES  F9 SETTINGS", 288., 15., muted),
+                        ]);
                     }
                 }
                 Mode::Sudoku => {
@@ -1843,4 +2042,18 @@ fn encode_seed(seed: RetainedTransformSeed, bytes: &mut Vec<u8>) {
     }
     bytes.extend_from_slice(&seed.draw_group.to_le_bytes());
     bytes.extend_from_slice(&seed.flags.to_le_bytes());
+}
+
+fn cut_piece_color(kind: cut_tetris::PieceKind) -> Rgb8 {
+    use cut_tetris::PieceKind::*;
+    let (r, g, b) = match kind {
+        I => (69, 218, 235),
+        O => (250, 211, 80),
+        T => (187, 111, 239),
+        S => (91, 212, 120),
+        Z => (244, 91, 105),
+        J => (83, 132, 239),
+        L => (247, 155, 69),
+    };
+    Rgb8::new(r, g, b)
 }

@@ -47,12 +47,12 @@ const DEFINITIONS: [dialog::Definition; 12] = [
         enabled: true,
     },
     dialog::Definition {
-        title: "GAME 06",
-        text: "COMING SOON",
-        button: "LOCKED",
+        title: "CUT TETRIS",
+        text: "CARVE THE BLOCKS",
+        button: "LAUNCH",
         theme: 2,
-        checkbox: false,
-        enabled: false,
+        checkbox: true,
+        enabled: true,
     },
     dialog::Definition {
         title: "GAME 07",
@@ -103,12 +103,13 @@ const DEFINITIONS: [dialog::Definition; 12] = [
         enabled: false,
     },
 ];
-const MODES: [Mode; 5] = [
+const MODES: [Mode; 6] = [
     Mode::Tetris,
     Mode::Minesweeper,
     Mode::TicTacToe,
     Mode::Sudoku,
     Mode::Chess,
+    Mode::CutTetris,
 ];
 
 #[derive(Clone, Copy)]
@@ -128,7 +129,7 @@ impl Rect {
 pub struct Gallery {
     pub open: bool,
     pub selected: usize,
-    pub fresh: [bool; 5],
+    pub fresh: [bool; 6],
     hover: Option<(usize, dialog::Widget)>,
     revision: u64,
     uploaded: u64,
@@ -139,7 +140,7 @@ impl Gallery {
         Self {
             open: false,
             selected: 0,
-            fresh: [false; 5],
+            fresh: [false; 6],
             hover: None,
             revision: 1,
             uploaded: 0,

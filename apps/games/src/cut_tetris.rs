@@ -1,4 +1,3 @@
-#![no_std]
 //! Subtractive Tetris rules.
 //!
 //! Full rows enter at the top and push the field toward the bottom. The active

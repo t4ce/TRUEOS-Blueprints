@@ -1,6 +1,6 @@
 # Games
 
-A small TRUEOS Blueprint with MicroGames Tetris, Gamie Minesweeper and
+A small TRUEOS Blueprint with MicroGames Tetris, Cut Tetris, Gamie Minesweeper and
 Tic-Tac-Toe, Sudokitty Sudoku, and cozy-chess in a UI4 frame. The playfield
 uses the same retained cube patch mesh and kernel hull/domain shader contract
 as Cubes Key 2. The shader's opaque RGB555 mode preserves MicroGames'
@@ -31,7 +31,7 @@ shader frames. Games retries the TRUEOS audio device if it is temporarily
 unavailable and uses the main loop if no native worker lane is available.
 
 Select the frame and press F1 for Tetris, F2 for Minesweeper, F3 for Tic-Tac-Toe,
-F4 for Sudoku, or F5 for chess. F9 opens the two hullshader render limits:
+F4 for Sudoku, F5 for chess, or F6 for Cut Tetris. F8 opens the game gallery. F9 opens the two hullshader render limits:
 Up/Down chooses FULL or SEEDS, and Left/Right adjusts its budget. In Tetris,
 Left/Right move, Up rotates, Down drops one row, and Space hard drops. In
 Minesweeper, hovering selects a cube, left click reveals it, and right click
@@ -42,7 +42,7 @@ to select a square and Space or Enter to play it. A departing cursor releases
 its seat when a new selected cursor joins. In Sudoku, hover or use the
 arrow keys to select a square, type 1–9 to fill it, and use 0, Backspace, or
 Delete to erase. Given digits cannot be changed; conflicting entries appear
-red. The digits themselves are made from hullshader cubes. Only F1–F5 switch
+red. The digits themselves are made from hullshader cubes. Only F1–F6 switch
 games; plain number keys remain available to each game. All games use P to pause and R
 to restart; R generates a fresh Sudoku puzzle. In chess, click a piece and
 then a highlighted legal destination. The flat chessboard is viewed at an angle;
@@ -66,3 +66,15 @@ file keeps the full authored solid with one neutral placeholder color. Games
 uses a compact exposed-cube view at board scale, preserves relative piece
 heights, and applies distinct side tints until the two custom materials arrive.
 `GAMES_CHESS_ASSETS_DIR` can override the asset directory for build checks.
+
+Cut Tetris uses the same 10×20 hullshader cube board as Tetris. Full rows enter
+from the top; the cutter removes the lowest intact tetromino at the selected
+column only if the remaining material stays connected to the top. Arrows or
+A/D move and W/S or Up/Down rotate clockwise/counter-clockwise. Space or Enter
+cuts; either restarts after game over. R restarts and P pauses. The highlighted
+cubes show a valid cut when ready, and the marker below the field shows the
+cutter columns. The sidebar shows the current and next cutters, score, cuts,
+lives, and incoming-row progress. Rows begin six seconds apart and accelerate;
+cuts share the original cooldown and ten cumulative bottom-block lives.
+Switching games or opening the gallery suspends Cut Tetris and preserves it;
+the gallery's fresh-game checkbox resets it.
