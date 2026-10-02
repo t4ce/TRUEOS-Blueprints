@@ -16,6 +16,12 @@ Launching without a source opens the first inferred image in
 `apps/common/images`; if that folder has no supported image, img opens a
 640×480 neutral-gray frame instead.
 
+Native 1:1 views that fill the viewport upload the decoded image once as a
+retained opaque sprite. Later pans send crop coordinates; UI4 uses BCS0
+`XY_FAST_COPY_BLT` to copy the visible rectangle. PNG alpha is flattened onto
+black once for this retained copy; the decoded pixels remain available for
+conversion. Zoom, fit and views with borders retain the existing painter.
+
 `img` uses the shared kernel media service for both PNG and JPEG. Its output
 reports file-read time, the complete media-service decode/readback call, and
 time through UI4 publish. Publish is submission, not proof of display scanout.
