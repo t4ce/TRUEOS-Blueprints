@@ -25,7 +25,8 @@ use app_catalog::{
     RustcTier, example_required_features, example_specs, manifest_declared_features,
     manifest_has_dependency, package_app_spec, package_app_specs, package_bin_name,
     package_blueprint_argv_entry_v1, package_blueprint_filesystem_independent,
-    package_blueprint_profile, package_blueprint_replicatable,
+    package_blueprint_build_env_paths, package_blueprint_profile,
+    package_blueprint_replicatable,
     package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier,
     package_blueprint_trueosfs_scope, package_name, push_app_or_trueos_feature,
 };
@@ -655,6 +656,9 @@ fn build_one_target_to_in_lane(
         // the canonical catalog root for Blueprint sources intentionally
         // embedded with `include_str!`, such as rustc-min's runtime demo.
         cargo.env(BLUEPRINT_CATALOG_ROOT_ENV, root);
+    }
+    for (key, path) in package_blueprint_build_env_paths(manifest_path)? {
+        cargo.env(key, path);
     }
     if rustc_tier.is_some() {
         toolchain::configure_rustc_bootstrap_env(&mut cargo, &target_name)?;

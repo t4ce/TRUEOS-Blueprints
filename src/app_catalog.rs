@@ -297,6 +297,48 @@ pub(crate) fn package_blueprint_profile(
     Ok(None)
 }
 
+/// Environment variables whose values are paths relative to the package
+/// manifest. The packer resolves these against the original app directory and
+/// forwards them to Cargo, including staged builds.
+pub(crate) fn package_blueprint_build_env_paths(
+    manifest_path: &Path,
+) -> Result<Vec<(String, PathBuf)>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_paths = false;
+    let mut paths = Vec::new();
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_paths = trimmed == "[package.metadata.trueos-blueprint.build-env-paths]";
+            continue;
+        }
+        if !in_paths {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let Some(value) = toml_string_value(value.trim()) else {
+            return Err(format!(
+                "bad path for `{key}` in {}",
+                manifest_path.display()
+            ));
+        };
+        let path = PathBuf::from(value);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            manifest_path.parent().unwrap_or(Path::new(".")).join(path)
+        };
+        let path = fs::canonicalize(&path).map_err(|err| {
+            format!("failed to resolve build environment path {}: {err}", path.display())
+        })?;
+        paths.push((key.to_string(), path));
+    }
+    Ok(paths)
+}
+
 pub(crate) fn package_blueprint_rustc_tier(
     manifest_path: &Path,
 ) -> Result<Option<RustcTier>, String> {

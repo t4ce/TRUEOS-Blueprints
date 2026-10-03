@@ -8,6 +8,10 @@ description = "Experimental TRUEOS Blueprint build of the Veloren server CLI"
 [package.metadata.trueos-blueprint]
 replicatable = false
 
+[package.metadata.trueos-blueprint.build-env-paths]
+CARGO_WORKSPACE_DIR = "../../../veloren"
+
+
 [workspace]
 resolver = "3"
 

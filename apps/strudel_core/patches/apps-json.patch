@@ -1,7 +1,0 @@
-diff --git a/apps.json b/apps.json
---- a/apps.json
-+++ b/apps.json
-@@
-     "qjs",
-+    "strudel_core",
-     "monaco",

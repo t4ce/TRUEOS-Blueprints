@@ -76,7 +76,6 @@
       "path": "buildins/shell"
     },
     "qjs",
-    "strudel_core",
     "monaco",
     "Frog",
     "Player",
@@ -97,6 +96,7 @@
     },
     "swarm",
     "cubesrv",
+    "velosrv",
     "superseedr",
     "webmail",
     "xpapp",
