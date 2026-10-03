@@ -19,23 +19,23 @@ pub mod cursor_decode;
 pub mod debug_command;
 pub mod event_pool;
 mod frame_heartbeat;
-pub mod gl_signatures;
 pub mod gl_light_batch;
+pub mod gl_signatures;
 pub mod imports;
+pub mod initterm;
 #[path = "diagnostics.rs"]
 pub mod logl;
-pub mod initterm;
 pub mod pe32;
 pub mod process;
-pub mod reg;
 pub mod record_expand;
+pub mod reg;
 pub mod seh;
 pub mod session;
-pub mod staticstr;
-mod staticgl_raster;
 #[cfg(feature = "gpu-raster")]
 mod staticgl_prepared;
+mod staticgl_raster;
 mod staticgl_raster_pool;
+pub mod staticstr;
 pub mod thunk32;
 pub mod ui4_retry;
 pub mod window_creation;
@@ -51,7 +51,9 @@ pub const EXPECTED_SHA256: [u8; 32] = [
 #[cfg(test)]
 mod host_test_abi {
     #[unsafe(no_mangle)]
-    extern "C" fn trueos_cabi_log(_: u32, _: *const u8, _: usize, _: *const u8, _: usize) -> i32 { 0 }
+    extern "C" fn trueos_cabi_log(_: u32, _: *const u8, _: usize, _: *const u8, _: usize) -> i32 {
+        0
+    }
 
     #[unsafe(no_mangle)]
     extern "C" fn trueos_cabi_write(_stream: u32, _bytes: *const u8, _len: usize) {}
@@ -65,6 +67,6 @@ mod host_test_abi {
 #[cfg(all(test, not(target_os = "trueos")))]
 mod test_host_gpu;
 
-pub mod gl_frame;
 #[cfg(test)]
 mod execution_diagnostic;
+pub mod gl_frame;

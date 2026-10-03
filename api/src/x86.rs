@@ -273,9 +273,11 @@ impl Context {
     }
 
     /// Time request delivery, native execution, and reply delivery separately.
-    pub async fn execute_on_measured(&mut self, carrier: &ExecutionCarrier, resume: bool)
-        -> Result<(Exit, CarrierTiming), Error>
-    {
+    pub async fn execute_on_measured(
+        &mut self,
+        carrier: &ExecutionCarrier,
+        resume: bool,
+    ) -> Result<(Exit, CarrierTiming), Error> {
         carrier.execute_measured(self.handle, resume).await
     }
 
@@ -350,14 +352,20 @@ impl Completion {
     fn new() -> Self {
         Self {
             state: std::sync::Mutex::new(CompletionState {
-                generation: 0, waiting: false, reply: None, waker: None, closed: false,
+                generation: 0,
+                waiting: false,
+                reply: None,
+                waker: None,
+                closed: false,
             }),
         }
     }
 
     fn start(&self) -> Result<u64, Error> {
         let mut state = self.state.lock().unwrap();
-        if state.closed { return Err(Error::CarrierLost); }
+        if state.closed {
+            return Err(Error::CarrierLost);
+        }
         let generation = state.generation.checked_add(1).ok_or(Error::CarrierLost)?;
         state.generation = generation;
         state.waiting = true;
@@ -390,7 +398,9 @@ impl Completion {
             None
         };
         drop(state);
-        if let Some(waker) = waker { waker.wake(); }
+        if let Some(waker) = waker {
+            waker.wake();
+        }
     }
 
     fn poll_reply(
@@ -401,14 +411,22 @@ impl Completion {
         use core::task::Poll;
         let mut state = self.state.lock().unwrap();
         if state.generation == generation {
-            if let Some(reply) = state.reply.take() { return Poll::Ready(Ok(reply)); }
+            if let Some(reply) = state.reply.take() {
+                return Poll::Ready(Ok(reply));
+            }
         }
-        if state.closed { return Poll::Ready(Err(Error::CarrierLost)); }
+        if state.closed {
+            return Poll::Ready(Err(Error::CarrierLost));
+        }
         // Only the Waker crosses to the native carrier, as it did with the
         // old oneshot. Tokio Notify instead links its Notified future into
         // an intrusive list: under block_on that node can live on a Hull
         // stack which is not mapped into the carrier's execution realm.
-        let old = if state.waker.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
+        let old = if state
+            .waker
+            .as_ref()
+            .is_some_and(|w| w.will_wake(cx.waker()))
+        {
             None
         } else {
             state.waker.replace(cx.waker().clone())
@@ -423,9 +441,10 @@ impl Completion {
         state.closed = true;
         let waker = state.waker.take();
         drop(state);
-        if let Some(waker) = waker { waker.wake(); }
+        if let Some(waker) = waker {
+            waker.wake();
+        }
     }
-
 }
 
 struct CompletionWait<'a> {
@@ -434,7 +453,9 @@ struct CompletionWait<'a> {
 }
 
 impl Drop for CompletionWait<'_> {
-    fn drop(&mut self) { self.completion.cancel(self.generation); }
+    fn drop(&mut self) {
+        self.completion.cancel(self.generation);
+    }
 }
 
 struct CarrierEndpoint {
@@ -443,7 +464,9 @@ struct CarrierEndpoint {
 }
 
 impl Drop for CarrierEndpoint {
-    fn drop(&mut self) { self.completion.close(); }
+    fn drop(&mut self) {
+        self.completion.close();
+    }
 }
 
 /// One native worker shared by serially scheduled logical x86 contexts.
@@ -459,42 +482,77 @@ impl ExecutionCarrier {
     pub fn new() -> Result<Self, Error> {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let job = crate::worker::spawn(move || {
             carrier_boot("XPAPP CARRIER worker-enter");
-            let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_time().build() else {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+            else {
                 return;
             };
             carrier_boot("XPAPP CARRIER runtime-ready");
-            runtime.block_on(carrier_requests(endpoint, |handle, resume| {
-                if resume { v::vx86::context_resume(handle) }
-                else { v::vx86::context_run(handle) }
-            }, tokio::time::Instant::now));
-        }).map_err(|_| Error::CarrierUnavailable)?;
+            runtime.block_on(carrier_requests(
+                endpoint,
+                |handle, resume| {
+                    if resume {
+                        v::vx86::context_resume(handle)
+                    } else {
+                        v::vx86::context_run(handle)
+                    }
+                },
+                tokio::time::Instant::now,
+            ));
+        })
+        .map_err(|_| Error::CarrierUnavailable)?;
         // The request channel owns the worker lifetime, not an individual exit.
         drop(job);
-        Ok(Self { requests, submit_lock: tokio::sync::Mutex::new(()), completion })
+        Ok(Self {
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
+        })
     }
 
     async fn execute(&self, handle: u64, resume: bool) -> Result<Exit, Error> {
-        self.submit(handle, resume, false).await?.result
-            .map(Exit::from).map_err(Error::from_kernel)
+        self.submit(handle, resume, false)
+            .await?
+            .result
+            .map(Exit::from)
+            .map_err(Error::from_kernel)
     }
 
-    async fn execute_measured(&self, handle: u64, resume: bool) -> Result<(Exit, CarrierTiming), Error> {
+    async fn execute_measured(
+        &self,
+        handle: u64,
+        resume: bool,
+    ) -> Result<(Exit, CarrierTiming), Error> {
         let started = tokio::time::Instant::now();
         let response = self.submit(handle, resume, true).await?;
         let received = tokio::time::Instant::now();
-        let (accepted, finished) = response.timing.expect("measured carrier reply lacks timestamps");
+        let (accepted, finished) = response
+            .timing
+            .expect("measured carrier reply lacks timestamps");
         let timing = CarrierTiming {
             request_ns: accepted.saturating_duration_since(started).as_nanos() as u64,
             native_ns: finished.saturating_duration_since(accepted).as_nanos() as u64,
             reply_ns: received.saturating_duration_since(finished).as_nanos() as u64,
         };
-        response.result.map(|raw| (Exit::from(raw), timing)).map_err(Error::from_kernel)
+        response
+            .result
+            .map(|raw| (Exit::from(raw), timing))
+            .map_err(Error::from_kernel)
     }
 
-    async fn submit(&self, handle: u64, resume: bool, measured: bool) -> Result<CarrierReply, Error> {
+    async fn submit(
+        &self,
+        handle: u64,
+        resume: bool,
+        measured: bool,
+    ) -> Result<CarrierReply, Error> {
         let _serial = match self.submit_lock.try_lock() {
             Ok(guard) => guard,
             // The contended mutex future also has an intrusive waiter. Put
@@ -502,21 +560,36 @@ impl ExecutionCarrier {
             Err(_) => alloc::boxed::Box::pin(self.submit_lock.lock()).await,
         };
         let generation = self.completion.start()?;
-        let _wait = CompletionWait { completion: &self.completion, generation };
-        let request = CarrierRequest { handle, resume, measured, generation };
+        let _wait = CompletionWait {
+            completion: &self.completion,
+            generation,
+        };
+        let request = CarrierRequest {
+            handle,
+            resume,
+            measured,
+            generation,
+        };
         match self.requests.try_send(request) {
             Ok(()) => {}
             Err(tokio::sync::mpsc::error::TrySendError::Full(request)) => {
                 // A cancelled queued call can temporarily occupy the channel.
                 // Its send-permit waiter must also stay in shared heap memory.
-                alloc::boxed::Box::pin(self.requests.send(request)).await
+                alloc::boxed::Box::pin(self.requests.send(request))
+                    .await
                     .map_err(|_| Error::CarrierLost)?;
             }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Err(Error::CarrierLost),
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                return Err(Error::CarrierLost);
+            }
         }
-        if generation == 1 { carrier_boot("XPAPP CARRIER first-request-sent"); }
+        if generation == 1 {
+            carrier_boot("XPAPP CARRIER first-request-sent");
+        }
         let reply = core::future::poll_fn(|cx| self.completion.poll_reply(generation, cx)).await;
-        if generation == 1 { carrier_boot("XPAPP CARRIER first-reply-received"); }
+        if generation == 1 {
+            carrier_boot("XPAPP CARRIER first-reply-received");
+        }
         reply
     }
 }
@@ -527,21 +600,31 @@ async fn carrier_requests(
     mut now: impl FnMut() -> tokio::time::Instant,
 ) {
     loop {
-        if crate::worker::cancellation_requested() { break; }
+        if crate::worker::cancellation_requested() {
+            break;
+        }
         let request = tokio::select! {
             request = endpoint.requests.recv() => match request { Some(request) => request, None => break },
             _ = tokio::time::sleep(core::time::Duration::from_millis(8)) => continue,
         };
         // A cancelled caller must not start a queued context after its owner
         // has dropped it. Already executing slices still retire normally.
-        if request.generation == 1 { carrier_boot("XPAPP CARRIER first-request-accepted"); }
+        if request.generation == 1 {
+            carrier_boot("XPAPP CARRIER first-request-accepted");
+        }
         if endpoint.completion.is_waiting(request.generation) {
             let accepted = request.measured.then(&mut now);
             let result = execute(request.handle, request.resume);
             let timing = accepted.map(|accepted| (accepted, now()));
-            if request.generation == 1 { carrier_boot("XPAPP CARRIER first-native-returned"); }
-            endpoint.completion.publish(request.generation, CarrierReply { result, timing });
-            if request.generation == 1 { carrier_boot("XPAPP CARRIER first-reply-published"); }
+            if request.generation == 1 {
+                carrier_boot("XPAPP CARRIER first-native-returned");
+            }
+            endpoint
+                .completion
+                .publish(request.generation, CarrierReply { result, timing });
+            if request.generation == 1 {
+                carrier_boot("XPAPP CARRIER first-reply-published");
+            }
         }
     }
 }
@@ -567,66 +650,107 @@ mod tests {
     async fn reusable_carrier_orders_contexts_propagates_errors_and_retires() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let observed = Arc::clone(&calls);
-        let task = tokio::spawn(carrier_requests(endpoint, move |handle, resume| {
-            observed.lock().unwrap().push((handle, resume));
-            if handle == 3 {
-                let mut exit = v::vx86::Exit::default();
-                exit.kind = v::vx86::EXIT_VMCALL;
-                exit.registers.eax = 0x12345678;
-                return Ok(exit);
-            }
-            Err(if handle == 2 { -125 } else { -16 })
-        }, || panic!("ordinary execution sampled its clock")));
-        let carrier = ExecutionCarrier { requests, submit_lock: tokio::sync::Mutex::new(()), completion };
+        let task = tokio::spawn(carrier_requests(
+            endpoint,
+            move |handle, resume| {
+                observed.lock().unwrap().push((handle, resume));
+                if handle == 3 {
+                    let mut exit = v::vx86::Exit::default();
+                    exit.kind = v::vx86::EXIT_VMCALL;
+                    exit.registers.eax = 0x12345678;
+                    return Ok(exit);
+                }
+                Err(if handle == 2 { -125 } else { -16 })
+            },
+            || panic!("ordinary execution sampled its clock"),
+        ));
+        let carrier = ExecutionCarrier {
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
+        };
         for handle in [1, 2, 1] {
             let error = carrier.execute(handle, handle != 2).await.unwrap_err();
-            assert_eq!(error, if handle == 2 { Error::Cancelled } else { Error::Busy });
+            assert_eq!(
+                error,
+                if handle == 2 {
+                    Error::Cancelled
+                } else {
+                    Error::Busy
+                }
+            );
         }
         let exit = carrier.execute(3, false).await.unwrap();
         assert_eq!(exit.kind, ExitKind::VmCall);
         assert_eq!(exit.registers.eax, 0x12345678);
         drop(carrier);
-        tokio::time::timeout(core::time::Duration::from_secs(1), task).await.unwrap().unwrap();
-        assert_eq!(*calls.lock().unwrap(), [(1, true), (2, false), (1, true), (3, false)]);
+        tokio::time::timeout(core::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [(1, true), (2, false), (1, true), (3, false)]
+        );
     }
 
     #[tokio::test]
     async fn reusable_carrier_measures_only_requested_executions() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let samples = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed = Arc::clone(&samples);
         let epoch = tokio::time::Instant::now();
-        let task = tokio::spawn(carrier_requests(endpoint, |handle, resume| {
-            assert_eq!(resume, handle != 1);
-            if handle == 3 {
-                return Err(-125);
-            }
-            let mut exit = v::vx86::Exit::default();
-            exit.kind = v::vx86::EXIT_VMCALL;
-            exit.registers.eax = handle as u32;
-            Ok(exit)
-        }, move || {
-            let sample = observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            epoch + core::time::Duration::from_nanos(sample as u64 * 250)
-        }));
-        let carrier = ExecutionCarrier { requests, submit_lock: tokio::sync::Mutex::new(()), completion };
+        let task = tokio::spawn(carrier_requests(
+            endpoint,
+            |handle, resume| {
+                assert_eq!(resume, handle != 1);
+                if handle == 3 {
+                    return Err(-125);
+                }
+                let mut exit = v::vx86::Exit::default();
+                exit.kind = v::vx86::EXIT_VMCALL;
+                exit.registers.eax = handle as u32;
+                Ok(exit)
+            },
+            move || {
+                let sample = observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                epoch + core::time::Duration::from_nanos(sample as u64 * 250)
+            },
+        ));
+        let carrier = ExecutionCarrier {
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
+        };
         assert_eq!(carrier.execute(1, false).await.unwrap().registers.eax, 1);
         assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 0);
         let (exit, timing) = carrier.execute_measured(2, true).await.unwrap();
         assert_eq!(exit.registers.eax, 2);
         assert_eq!(timing.native_ns, 250);
         assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 2);
-        assert_eq!(carrier.execute_measured(3, true).await.unwrap_err(), Error::Cancelled);
+        assert_eq!(
+            carrier.execute_measured(3, true).await.unwrap_err(),
+            Error::Cancelled
+        );
         assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 4);
         assert_eq!(carrier.execute(4, true).await.unwrap().registers.eax, 4);
         assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 4);
         drop(carrier);
-        tokio::time::timeout(core::time::Duration::from_secs(1), task).await.unwrap().unwrap();
+        tokio::time::timeout(core::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -634,28 +758,52 @@ mod tests {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
         let generation = completion.start().unwrap();
-        requests.send(CarrierRequest { handle: 1, resume: true, measured: true, generation }).await.unwrap();
+        requests
+            .send(CarrierRequest {
+                handle: 1,
+                resume: true,
+                measured: true,
+                generation,
+            })
+            .await
+            .unwrap();
         completion.cancel(generation);
         drop(requests);
-        carrier_requests(CarrierEndpoint { requests: receiver, completion }, |_, _| panic!("abandoned context entered"),
-            || panic!("abandoned context sampled its clock")).await;
+        carrier_requests(
+            CarrierEndpoint {
+                requests: receiver,
+                completion,
+            },
+            |_, _| panic!("abandoned context entered"),
+            || panic!("abandoned context sampled its clock"),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn reusable_carrier_recovers_after_queued_caller_is_abandoned() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let carrier = Arc::new(ExecutionCarrier {
-            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
         });
         let abandoned = {
             let carrier = Arc::clone(&carrier);
             tokio::spawn(async move { carrier.execute(1, false).await })
         };
         tokio::time::timeout(core::time::Duration::from_secs(1), async {
-            while carrier.requests.capacity() != 0 { tokio::task::yield_now().await; }
-        }).await.unwrap();
+            while carrier.requests.capacity() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         abandoned.abort();
         assert!(abandoned.await.is_err());
 
@@ -665,15 +813,22 @@ mod tests {
         };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let observed = Arc::clone(&calls);
-        let worker = tokio::spawn(carrier_requests(endpoint, move |handle, _| {
-            observed.lock().unwrap().push(handle);
-            let mut exit = v::vx86::Exit::default();
-            exit.registers.eax = handle as u32;
-            Ok(exit)
-        }, tokio::time::Instant::now));
+        let worker = tokio::spawn(carrier_requests(
+            endpoint,
+            move |handle, _| {
+                observed.lock().unwrap().push(handle);
+                let mut exit = v::vx86::Exit::default();
+                exit.registers.eax = handle as u32;
+                Ok(exit)
+            },
+            tokio::time::Instant::now,
+        ));
         assert_eq!(next.await.unwrap().unwrap().registers.eax, 2);
         drop(carrier);
-        tokio::time::timeout(core::time::Duration::from_secs(1), worker).await.unwrap().unwrap();
+        tokio::time::timeout(core::time::Duration::from_secs(1), worker)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(*calls.lock().unwrap(), [2]);
     }
 
@@ -681,30 +836,47 @@ mod tests {
     async fn reusable_carrier_discards_late_reply_after_in_flight_abandonment() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let carrier = Arc::new(ExecutionCarrier {
-            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
         });
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
-            runtime.block_on(carrier_requests(endpoint, move |handle, _| {
-                if handle == 1 {
-                    entered_tx.send(()).unwrap();
-                    release_rx.recv().unwrap();
-                }
-                let mut exit = v::vx86::Exit::default();
-                exit.registers.eax = handle as u32;
-                Ok(exit)
-            }, tokio::time::Instant::now));
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            runtime.block_on(carrier_requests(
+                endpoint,
+                move |handle, _| {
+                    if handle == 1 {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    }
+                    let mut exit = v::vx86::Exit::default();
+                    exit.registers.eax = handle as u32;
+                    Ok(exit)
+                },
+                tokio::time::Instant::now,
+            ));
         });
         let abandoned = {
             let carrier = Arc::clone(&carrier);
             tokio::spawn(async move { carrier.execute(1, false).await })
         };
-        tokio::time::timeout(core::time::Duration::from_secs(1),
-            tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())).await.unwrap().unwrap();
+        tokio::time::timeout(
+            core::time::Duration::from_secs(1),
+            tokio::task::spawn_blocking(move || entered_rx.recv().unwrap()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         abandoned.abort();
         assert!(abandoned.await.is_err());
         let next = {
@@ -712,11 +884,23 @@ mod tests {
             tokio::spawn(async move { carrier.execute(2, false).await })
         };
         tokio::time::timeout(core::time::Duration::from_secs(1), async {
-            while carrier.requests.capacity() != 0 { tokio::task::yield_now().await; }
-        }).await.unwrap();
+            while carrier.requests.capacity() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         release_tx.send(()).unwrap();
-        assert_eq!(tokio::time::timeout(core::time::Duration::from_secs(1), next)
-            .await.unwrap().unwrap().unwrap().registers.eax, 2);
+        assert_eq!(
+            tokio::time::timeout(core::time::Duration::from_secs(1), next)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .registers
+                .eax,
+            2
+        );
         drop(carrier);
         worker.join().unwrap();
     }
@@ -725,27 +909,48 @@ mod tests {
     async fn reusable_carrier_serializes_concurrent_cross_thread_callers() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let carrier = Arc::new(ExecutionCarrier {
-            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
         });
         let worker = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
-            runtime.block_on(carrier_requests(endpoint, |handle, _| {
-                let mut exit = v::vx86::Exit::default();
-                exit.registers.eax = handle as u32;
-                Ok(exit)
-            }, tokio::time::Instant::now));
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            runtime.block_on(carrier_requests(
+                endpoint,
+                |handle, _| {
+                    let mut exit = v::vx86::Exit::default();
+                    exit.registers.eax = handle as u32;
+                    Ok(exit)
+                },
+                tokio::time::Instant::now,
+            ));
         });
         let mut callers = Vec::new();
         for handle in 0..32 {
             let carrier = Arc::clone(&carrier);
-            callers.push(tokio::spawn(async move { carrier.execute(handle, false).await }));
+            callers.push(tokio::spawn(
+                async move { carrier.execute(handle, false).await },
+            ));
         }
         let mut results = Vec::new();
         for caller in callers {
-            results.push(tokio::time::timeout(core::time::Duration::from_secs(1), caller)
-                .await.unwrap().unwrap().unwrap().registers.eax);
+            results.push(
+                tokio::time::timeout(core::time::Duration::from_secs(1), caller)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+                    .registers
+                    .eax,
+            );
         }
         results.sort_unstable();
         assert_eq!(results, (0..32).collect::<Vec<_>>());
@@ -757,25 +962,40 @@ mod tests {
     async fn reusable_carrier_reports_dropped_worker_to_pending_caller() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let completion = Arc::new(Completion::new());
-        let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
+        let endpoint = CarrierEndpoint {
+            requests: receiver,
+            completion: Arc::clone(&completion),
+        };
         let worker = tokio::spawn(async move {
             let _endpoint = endpoint;
             core::future::pending::<()>().await;
         });
         let carrier = Arc::new(ExecutionCarrier {
-            requests, submit_lock: tokio::sync::Mutex::new(()), completion,
+            requests,
+            submit_lock: tokio::sync::Mutex::new(()),
+            completion,
         });
         let pending = {
             let carrier = Arc::clone(&carrier);
             tokio::spawn(async move { carrier.execute(1, false).await })
         };
         tokio::time::timeout(core::time::Duration::from_secs(1), async {
-            while carrier.requests.capacity() != 0 { tokio::task::yield_now().await; }
-        }).await.unwrap();
+            while carrier.requests.capacity() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         worker.abort();
         assert!(worker.await.is_err());
-        assert_eq!(tokio::time::timeout(core::time::Duration::from_secs(1), pending)
-            .await.unwrap().unwrap().unwrap_err(), Error::CarrierLost);
+        assert_eq!(
+            tokio::time::timeout(core::time::Duration::from_secs(1), pending)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err(),
+            Error::CarrierLost
+        );
     }
 
     #[test]

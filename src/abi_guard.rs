@@ -468,10 +468,9 @@ mod tests {
 
     #[test]
     fn loader_gate_rejects_the_unimplemented_gles_bridge() {
-        let error = verify_launchable_imports(&BTreeSet::from([
-            "trueos_gl_get_proc_address".into(),
-        ]))
-        .unwrap_err();
+        let error =
+            verify_launchable_imports(&BTreeSet::from(["trueos_gl_get_proc_address".into()]))
+                .unwrap_err();
         assert!(error.contains("Alacritty cannot load or render"));
     }
 

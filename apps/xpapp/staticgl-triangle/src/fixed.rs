@@ -65,8 +65,10 @@ impl FixedRenderer {
     // the broker's resident sampled texture even when the bytes are unchanged.
     fn sampled_texture(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<Buffer, i32> {
         let shape = [width, height];
-        if let Some(index) = self.textures.iter().position(|entry|
-            entry.shape == shape && entry.pixels == rgba)
+        if let Some(index) = self
+            .textures
+            .iter()
+            .position(|entry| entry.shape == shape && entry.pixels == rgba)
         {
             self.uploads.hits += 1;
             let entry = self.textures.remove(index);
@@ -77,8 +79,12 @@ impl FixedRenderer {
         self.uploads.uploads += 1;
         self.uploads.bytes += rgba.len() as u64;
         if rgba.len() > TEXTURE_CACHE_BYTES {
-            let buffer = ensure_buffer(self.device, &mut self.texture, rgba.len(),
-                vgpu::BUFFER_USAGE_MAP_WRITE)?;
+            let buffer = ensure_buffer(
+                self.device,
+                &mut self.texture,
+                rgba.len(),
+                vgpu::BUFFER_USAGE_MAP_WRITE,
+            )?;
             if self.device.write_buffer(buffer, 0, rgba)? != rgba.len() {
                 return Err(vgpu::ERR_IO);
             }
@@ -92,16 +98,22 @@ impl FixedRenderer {
             let entry = self.textures.remove(0);
             self.texture_bytes -= entry.pixels.len();
         }
-        let buffer = self.device.create_buffer(rgba.len(), vgpu::BUFFER_USAGE_MAP_WRITE)?;
+        let buffer = self
+            .device
+            .create_buffer(rgba.len(), vgpu::BUFFER_USAGE_MAP_WRITE)?;
         match self.device.write_buffer(buffer, 0, rgba) {
-            Ok(n) if n == rgba.len() => {},
+            Ok(n) if n == rgba.len() => {}
             result => {
                 let _ = self.device.destroy_buffer(buffer);
                 return Err(result.err().unwrap_or(vgpu::ERR_IO));
             }
         }
         self.texture_bytes += rgba.len();
-        self.textures.push(CachedTexture { buffer, shape, pixels: rgba.to_vec() });
+        self.textures.push(CachedTexture {
+            buffer,
+            shape,
+            pixels: rgba.to_vec(),
+        });
         Ok(buffer)
     }
 

@@ -3823,11 +3823,11 @@ fn rewrite_staged_source_for_target(
     if build_settings.shims.add_entrypoint {
         if build_settings.shims.add_no_std {
             rewritten.push_str(
-                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
+                "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
             );
         } else {
             rewritten.push_str(
-                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
+                "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
             );
         }
     }

@@ -17,14 +17,14 @@ use trueos::{
     x86::{AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers},
 };
 mod asupersync;
+mod debug_shell;
+#[cfg(feature = "trace-execution")]
+mod exec_timing;
 #[cfg(feature = "actor-execution")]
 mod guest_actor;
 #[cfg(not(feature = "actor-execution"))]
 #[path = "guest_direct.rs"]
 mod guest_actor;
-mod debug_shell;
-#[cfg(feature = "trace-execution")]
-mod exec_timing;
 
 use guest_actor::GuestThreadContext;
 
@@ -38,17 +38,17 @@ use xpapp::{
     process::{
         CHILD_COMMAND_LINE_VA, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
         CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE, CHILD_WIN_HEAP_LIMIT, CRT_ACMDLN_VA,
-        CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARGV_VA,
-        CRT_COMMODE_VA,
+        CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARGV_VA, CRT_COMMODE_VA,
         CRT_CONSOLE_APP, CRT_ENVP_VA, CRT_FMODE_VA, CRT_GUI_APP, CRT_UNKNOWN_APP,
-        ENVIRONMENT_BLOCK_VA, GuestMemory, HEAP_GENERATE_EXCEPTIONS, HEAP_ZERO_MEMORY,
-        GAME_VIEWPORT_SIZE, PROCESS_DATA_VA, PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES,
-        STACK_TOP, ThreadObject, XP_ANSI_CODE_PAGE, XpProcess, OSVERSIONINFOA_SIZE,
-        OSVERSIONINFOEXA_SIZE, VER_NT_WORKSTATION, bmp_file_from_dib, dib_layout,
+        ENVIRONMENT_BLOCK_VA, GAME_VIEWPORT_SIZE, GuestMemory, HEAP_GENERATE_EXCEPTIONS,
+        HEAP_ZERO_MEMORY, OSVERSIONINFOA_SIZE, OSVERSIONINFOEXA_SIZE, PROCESS_DATA_VA,
+        PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
+        VER_NT_WORKSTATION, XP_ANSI_CODE_PAGE, XpProcess, bmp_file_from_dib, dib_layout,
     },
     session::{
-        CompletedWait, CriticalSectionWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject,
-        SessionRequest, ThreadKey, WINDOW_HANDLE_BASE, XpappSession, WindowPresentation,
+        CompletedWait, CriticalSectionWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID,
+        PersonalityAction, SessionObject, SessionRequest, ThreadKey, WINDOW_HANDLE_BASE,
+        WindowPresentation, XpappSession,
     },
     thunk32,
 };
@@ -80,10 +80,8 @@ const BOOTY_BAY_LOADFILE: &[u8] = b"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\0";
 const CHILD_NORMAL_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl\0";
 const CHILD_BOOTY_BAY_COMMAND_LINE: &[u8] =
     b"\"war3.exe\" -opengl -loadfile \"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\"\0";
-const CHILD_NORMAL_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
-    (CRT_ARG0_VA, b"war3.exe\0"),
-    (CRT_ARG1_VA, b"-opengl\0"),
-];
+const CHILD_NORMAL_CRT_ARGUMENTS: &[(u32, &[u8])] =
+    &[(CRT_ARG0_VA, b"war3.exe\0"), (CRT_ARG1_VA, b"-opengl\0")];
 const CHILD_BOOTY_BAY_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
     (CRT_ARG0_VA, b"war3.exe\0"),
     (CRT_ARG1_VA, b"-opengl\0"),
@@ -227,20 +225,29 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
     const FOLDER: &str = "/common/Warcraft III/Maps";
     match async_fs::metadata(FOLDER.as_bytes()).await {
         Err(async_fs::ERR_NOT_FOUND) => {
-            logl::log!(level::WARN, format_args!("XPAPP MAP CATALOG folder={FOLDER:?} status=missing"));
+            logl::log!(
+                level::WARN,
+                format_args!("XPAPP MAP CATALOG folder={FOLDER:?} status=missing")
+            );
             return Ok(None);
         }
         Ok(info) if info.kind == async_fs::NodeKind::Directory => {}
         Ok(_) => return Err(format!("map catalog folder is not a directory: {FOLDER}")),
         Err(error) => return Err(format!("map catalog folder metadata: TRUEOSFS {error}")),
     }
-    let selection = async_fs::select_files(
-        FOLDER.as_bytes(), async_fs::ContentTypeId::WARCRAFT3_MAP, 8,
-    ).await.map_err(|error| format!("select Warcraft III maps: TRUEOSFS {error}"))?;
-    logl::log!(level::IMPORTANT, format_args!(
-        "XPAPP MAP CATALOG folder={FOLDER:?} type=WARCRAFT3_MAP files={} max_depth=8 depth_limited={} truncated={}",
-        selection.files.len(), selection.depth_limited, selection.truncated,
-    ));
+    let selection =
+        async_fs::select_files(FOLDER.as_bytes(), async_fs::ContentTypeId::WARCRAFT3_MAP, 8)
+            .await
+            .map_err(|error| format!("select Warcraft III maps: TRUEOSFS {error}"))?;
+    logl::log!(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP MAP CATALOG folder={FOLDER:?} type=WARCRAFT3_MAP files={} max_depth=8 depth_limited={} truncated={}",
+            selection.files.len(),
+            selection.depth_limited,
+            selection.truncated,
+        )
+    );
     let mut entries = Vec::with_capacity(selection.files.len());
     for relative_path in selection.files {
         let full_path = format!("{FOLDER}/{relative_path}");
@@ -250,35 +257,65 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
         if metadata.kind != async_fs::NodeKind::File {
             return Err(format!("map catalog selected non-file {full_path:?}"));
         }
-        logl::trace!("trace-init", level::IMPORTANT, format_args!(
-            "XPAPP MAP FILE path={relative_path:?} bytes={}", metadata.len
-        ));
+        logl::trace!(
+            "trace-init",
+            level::IMPORTANT,
+            format_args!(
+                "XPAPP MAP FILE path={relative_path:?} bytes={}",
+                metadata.len
+            )
+        );
         entries.push(xpapp::session::MapCatalogEntry {
             relative_path,
             byte_len: metadata.len,
         });
     }
     Ok(Some(xpapp::session::MapCatalog {
-        folder: FOLDER.into(), entries,
-        depth_limited: selection.depth_limited, truncated: selection.truncated,
+        folder: FOLDER.into(),
+        entries,
+        depth_limited: selection.depth_limited,
+        truncated: selection.truncated,
     }))
 }
 
 async fn run() -> Result<(), String> {
-    logl::emit(level::IMPORTANT, format_args!(
-        "XPAPP RUNTIME requested_graphics=opengl renderer={} execution_timing={} presentation={} telemetry=scalar-phases-v1 raster_pool={}",
-        if cfg!(feature = "gpu-raster") { "cpu-geometry-gpu-raster" } else { "cpu" },
-        if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" },
-        if cfg!(feature = "gpu-raster") { "prepared-batch" } else { "rgba-strips" }, cfg!(feature = "raster-pool") && !cfg!(feature = "gpu-raster"),
-    ));
-    logl::emit(level::IMPORTANT, format_args!(
-        "XPAPP CHILD ARGS argc={} command_line={:?}",
-        CHILD_CRT_ARGUMENTS.len(), String::from_utf8_lossy(&CHILD_COMMAND_LINE[..CHILD_COMMAND_LINE.len() - 1]),
-    ));
+    logl::emit(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP RUNTIME requested_graphics=opengl renderer={} execution_timing={} presentation={} telemetry=scalar-phases-v1 raster_pool={}",
+            if cfg!(feature = "gpu-raster") {
+                "cpu-geometry-gpu-raster"
+            } else {
+                "cpu"
+            },
+            if cfg!(feature = "trace-execution") {
+                "detailed"
+            } else {
+                "frame-only"
+            },
+            if cfg!(feature = "gpu-raster") {
+                "prepared-batch"
+            } else {
+                "rgba-strips"
+            },
+            cfg!(feature = "raster-pool") && !cfg!(feature = "gpu-raster"),
+        ),
+    );
+    logl::emit(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP CHILD ARGS argc={} command_line={:?}",
+            CHILD_CRT_ARGUMENTS.len(),
+            String::from_utf8_lossy(&CHILD_COMMAND_LINE[..CHILD_COMMAND_LINE.len() - 1]),
+        ),
+    );
     if cfg!(feature = "bypass-critical-sections") {
-        logl::emit(level::IMPORTANT, format_args!(
-            "XPAPP EXPERIMENT critical_sections=bypassed enter_leave=guest-ret4 synchronization=disabled"
-        ));
+        logl::emit(
+            level::IMPORTANT,
+            format_args!(
+                "XPAPP EXPERIMENT critical_sections=bypassed enter_leave=guest-ret4 synchronization=disabled"
+            ),
+        );
     }
     let mut args = std::env::args().skip(1);
     let launcher_path = args.next().unwrap_or_else(|| LAUNCHER_PATH.to_owned());
@@ -289,7 +326,11 @@ async fn run() -> Result<(), String> {
         return Err("executable path must be an absolute TRUEOSFS path".into());
     }
     let default_launcher = launcher_path == LAUNCHER_PATH;
-    let maps = if default_launcher { discover_maps().await? } else { None };
+    let maps = if default_launcher {
+        discover_maps().await?
+    } else {
+        None
+    };
     if cfg!(feature = "carrier-selftest") {
         run_x86_extended_state_self_test().await?;
     }
@@ -299,11 +340,14 @@ async fn run() -> Result<(), String> {
     if default_launcher && Sha256::digest(&bytes).as_slice() != EXPECTED_SHA256 {
         return Err("launcher SHA-256 does not match Warcraft III RoC 1.00".into());
     }
-    let materialized = pe32::materialize_with_policy(&bytes, default_launcher).map_err(str::to_owned)?;
+    let materialized =
+        pe32::materialize_with_policy(&bytes, default_launcher).map_err(str::to_owned)?;
     if materialized.image_base != pe32::IMAGE_BASE {
         return Err("PE image base unsupported by current process mapping".into());
     }
-    let entry_va = materialized.image_base.checked_add(materialized.entry_rva)
+    let entry_va = materialized
+        .image_base
+        .checked_add(materialized.entry_rva)
         .ok_or("PE entry address overflow")?;
     let imports = materialized.imports.len();
     let PreparedProcess { mappings, xp } =
@@ -438,18 +482,41 @@ async fn run() -> Result<(), String> {
     if outcome.is_err() {
         // Quiet builds retain a bounded stopped-guest snapshot on failure.
         // Collect it here rather than continuously dumping healthy execution.
-        logl::log!(level::ERROR, format_args!(
-            "XPAPP CRASH SNAPSHOT outcome={outcome:?} execution={execution:?} registers={last_registers:?}"
-        ));
+        logl::log!(
+            level::ERROR,
+            format_args!(
+                "XPAPP CRASH SNAPSHOT outcome={outcome:?} execution={execution:?} registers={last_registers:?}"
+            )
+        );
         if let Some(registers) = last_registers {
-            let space = if execution.pid == LAUNCHER_PID { Some(&address_space) }
-                else { pending_child.as_ref().filter(|c| c.pid == execution.pid).map(|c| &c.address_space) };
+            let space = if execution.pid == LAUNCHER_PID {
+                Some(&address_space)
+            } else {
+                pending_child
+                    .as_ref()
+                    .filter(|c| c.pid == execution.pid)
+                    .map(|c| &c.address_space)
+            };
             if let Some(space) = space {
-                for (kind, address, count) in [("code", registers.eip, 64usize), ("stack", registers.esp, 128)] {
+                for (kind, address, count) in [
+                    ("code", registers.eip, 64usize),
+                    ("stack", registers.esp, 128),
+                ] {
                     let mut bytes = vec![0; count];
                     match space.read(address, &mut bytes) {
-                        Ok(read) => logl::log!(level::ERROR, format_args!("XPAPP CRASH {kind} address=0x{address:08x} bytes={:02x?}", &bytes[..read])),
-                        Err(error) => logl::log!(level::ERROR, format_args!("XPAPP CRASH {kind} address=0x{address:08x} unreadable={error}")),
+                        Ok(read) => logl::log!(
+                            level::ERROR,
+                            format_args!(
+                                "XPAPP CRASH {kind} address=0x{address:08x} bytes={:02x?}",
+                                &bytes[..read]
+                            )
+                        ),
+                        Err(error) => logl::log!(
+                            level::ERROR,
+                            format_args!(
+                                "XPAPP CRASH {kind} address=0x{address:08x} unreadable={error}"
+                            )
+                        ),
                     }
                 }
             }
@@ -874,8 +941,8 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         let mut ceil_registers = registers(CEIL_ENTRY);
         ceil_registers.esp = CEIL_STACK;
-        let mut ceil = Context::create(&address_space, ceil_registers)
-            .map_err(|error| error.to_string())?;
+        let mut ceil =
+            Context::create(&address_space, ceil_registers).map_err(|error| error.to_string())?;
         require_vmcall(
             &ceil.run().await.map_err(|error| error.to_string())?,
             "native ceil",
@@ -954,8 +1021,8 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
         ftol_registers.esi = 0x33dd_44ee;
         ftol_registers.edi = 0x55ff_6600;
         ftol_registers.ebp = 0x7788_9900;
-        let mut ftol = Context::create(&address_space, ftol_registers)
-            .map_err(|error| error.to_string())?;
+        let mut ftol =
+            Context::create(&address_space, ftol_registers).map_err(|error| error.to_string())?;
         let exit = ftol.run().await.map_err(|error| error.to_string())?;
         require_vmcall(&exit, "native ftol")?;
         let mut value = [0; 8];
@@ -973,16 +1040,26 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
         let mut status = [0; 2];
         read_exact_x86(&address_space, FTOL_FSW_OUT, &mut status)?;
         if (u16::from_le_bytes(status) & 1 != 0) != invalid {
-            return Err(format!("x86 native ftol self-test invalid status input={input:?}"));
+            return Err(format!(
+                "x86 native ftol self-test invalid status input={input:?}"
+            ));
         }
         let mut esp = [0; 4];
         read_exact_x86(&address_space, FTOL_ESP_OUT, &mut esp)?;
         if u32::from_le_bytes(esp) != FTOL_STACK + 4 {
             return Err("x86 native ftol self-test violated cdecl stack shape".into());
         }
-        if (exit.registers.ebx, exit.registers.esi, exit.registers.edi, exit.registers.ebp)
-            != (ftol_registers.ebx, ftol_registers.esi, ftol_registers.edi, ftol_registers.ebp)
-        {
+        if (
+            exit.registers.ebx,
+            exit.registers.esi,
+            exit.registers.edi,
+            exit.registers.ebp,
+        ) != (
+            ftol_registers.ebx,
+            ftol_registers.esi,
+            ftol_registers.edi,
+            ftol_registers.ebp,
+        ) {
             return Err("x86 native ftol self-test clobbered callee-saved registers".into());
         }
     }
@@ -999,7 +1076,9 @@ fn pump_ui4_input(
     frames: &mut HashMap<u32, Frame>,
     session: &mut XpappSession,
 ) -> Result<(), String> {
-    if frames.is_empty() { return Ok(()); }
+    if frames.is_empty() {
+        return Ok(());
+    }
     let mice = hid::hid_hut_mice();
 
     for (&hwnd, frame) in frames.iter_mut() {
@@ -1070,7 +1149,9 @@ fn pump_ui4_input(
     Ok(())
 }
 
-fn retry_ui4_busy<T>(operation: impl FnMut() -> Result<T, ui4_scene::Error>) -> Result<T, ui4_scene::Error> {
+fn retry_ui4_busy<T>(
+    operation: impl FnMut() -> Result<T, ui4_scene::Error>,
+) -> Result<T, ui4_scene::Error> {
     xpapp::ui4_retry::retry_busy(operation, || {
         // Only wait on an actual producer/consumer ownership conflict. The
         // host boundary also keeps stop requests observable during retirement.
@@ -1084,16 +1165,20 @@ fn paint_window_fill_rect(
     frames: &mut HashMap<u32, Frame>,
     window_rgba: &mut HashMap<u32, Vec<u8>>,
 ) -> Result<(), String> {
-    let frame = frames.get_mut(&request.hwnd)
+    let frame = frames
+        .get_mut(&request.hwnd)
         .ok_or_else(|| "FillRect destination frame missing".to_owned())?;
     let width = frame.width() as usize;
     let height = frame.height() as usize;
-    let expected = width.checked_mul(height)
+    let expected = width
+        .checked_mul(height)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| "FillRect frame size overflow".to_owned())?;
     let backing = window_rgba.entry(request.hwnd).or_insert_with(|| {
         let mut pixels = vec![0; expected];
-        for alpha in pixels[3..].iter_mut().step_by(4) { *alpha = 255; }
+        for alpha in pixels[3..].iter_mut().step_by(4) {
+            *alpha = 255;
+        }
         pixels
     });
     if backing.len() != expected {
@@ -1112,16 +1197,23 @@ fn paint_window_fill_rect(
         }
         retry_ui4_busy(|| frame.begin(rgba(0, 0, 0, 255)))
             .map_err(|error| format!("begin XPAPP FillRect: {error:?}"))?;
-        frame.write_opaque_rgba8(backing)
+        frame
+            .write_opaque_rgba8(backing)
             .map_err(|error| format!("write XPAPP FillRect: {error:?}"))?;
         let damage = Damage::full(frame.width(), frame.height());
         retry_ui4_busy(|| frame.publish(damage))
             .map_err(|error| format!("publish XPAPP FillRect: {error:?}"))?;
     }
-    logl::log!(level::IMPORTANT, format_args!(
-        "XPAPP UI4 FILLRECT hwnd=0x{:08x} hdc=0x{:08x} rect={:?} published={}",
-        request.hwnd, request.hdc, request.rect, u8::from(left < right && top < bottom),
-    ));
+    logl::log!(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP UI4 FILLRECT hwnd=0x{:08x} hdc=0x{:08x} rect={:?} published={}",
+            request.hwnd,
+            request.hdc,
+            request.rect,
+            u8::from(left < right && top < bottom),
+        )
+    );
     Ok(())
 }
 
@@ -1662,14 +1754,17 @@ fn create_child_runtime_context(
     } else {
         stack_size.max(0x1000)
     })
-        .checked_add(0xfff)
-        .ok_or("child thread stack size overflow")?
+    .checked_add(0xfff)
+    .ok_or("child thread stack size overflow")?
         & !0xfff;
     if stack_bytes > STACK_BYTES as u32 {
         return Err("child thread stack size frontier".into());
     }
     let stack_top = STACK_BASE
-        .checked_sub(tid.checked_mul(0x0010_0000).ok_or("child thread stack index")?)
+        .checked_sub(
+            tid.checked_mul(0x0010_0000)
+                .ok_or("child thread stack index")?,
+        )
         .ok_or("child thread stack address")?;
     let stack_base = stack_top
         .checked_sub(stack_bytes)
@@ -1714,8 +1809,8 @@ fn create_child_runtime_context(
         fs_base: teb,
         ..Registers::default()
     };
-    let context = Context::create(&child.address_space, registers)
-        .map_err(|error| error.to_string())?;
+    let context =
+        Context::create(&child.address_space, registers).map_err(|error| error.to_string())?;
     Ok(GuestContext {
         pid: child.pid,
         tid,
@@ -1736,13 +1831,8 @@ fn create_child_guest_thread(
     parameter: u32,
 ) -> Result<(GuestContext, ThreadKey, u32), String> {
     let proposed_tid = session.next_tid;
-    let guest = create_child_runtime_context(
-        child,
-        proposed_tid,
-        stack_size,
-        start_address,
-        parameter,
-    )?;
+    let guest =
+        create_child_runtime_context(child, proposed_tid, stack_size, start_address, parameter)?;
     let (key, handle) = session
         .create_child_thread(child.pid)
         .map_err(str::to_owned)?;
@@ -2061,7 +2151,8 @@ fn child_dllonexit(
         .filter(|bytes| bytes % 4 == 0)
         .map(|bytes| bytes / 4)
         .unwrap_or(0);
-    logl::trace!("trace-init",
+    logl::trace!(
+        "trace-init",
         level::IMPORTANT,
         format_args!(
             "XPAPP CHILD CRT DLLONEXIT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} func=0x{:08x} start_ref=0x{:08x} end_ref=0x{:08x} start=0x{:08x} end=0x{:08x} entries={}",
@@ -2170,7 +2261,8 @@ fn child_dllonexit(
             (current_mapped_end != old_mapped_end).then_some(current_mapped_end),
         )
     };
-    logl::trace!("trace-init",
+    logl::trace!(
+        "trace-init",
         level::IMPORTANT,
         format_args!(
             "XPAPP CHILD CRT DLLONEXIT RESULT pid={} tid={} func=0x{:08x} old_start=0x{:08x} old_end=0x{:08x} new_start=0x{:08x} new_end=0x{:08x} entries_before={} entries_after={} moved={} return_eax=0x{:08x}",
@@ -2188,7 +2280,8 @@ fn child_dllonexit(
         ),
     );
     if let Some(mapped_end) = mapped_end {
-        logl::trace!("trace-init",
+        logl::trace!(
+            "trace-init",
             level::IMPORTANT,
             format_args!(
                 "XPAPP CHILD CRT DLLONEXIT RESULT mapped_end=0x{:08x}",
@@ -2521,12 +2614,27 @@ struct ChildWindowCallback {
 }
 
 impl ChildWindowCallback {
-    fn creation_registers(&self, child: &PendingChild, mut registers: Registers) -> Result<Registers, String> {
+    fn creation_registers(
+        &self,
+        child: &PendingChild,
+        mut registers: Registers,
+    ) -> Result<Registers, String> {
         let (scratch, phase) = self.creation.ok_or("missing creation callback state")?;
-        let callback_esp = scratch.checked_sub(20).ok_or("creation callback stack underflow")?;
+        let callback_esp = scratch
+            .checked_sub(20)
+            .ok_or("creation callback stack underflow")?;
         let bytes = xpapp::window_creation::callback_frame(
-            thunk32::CHILD_CALLBACK_RETURN_ADDRESS, self.hwnd, phase, scratch);
-        if child.address_space.write(callback_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() {
+            thunk32::CHILD_CALLBACK_RETURN_ADDRESS,
+            self.hwnd,
+            phase,
+            scratch,
+        );
+        if child
+            .address_space
+            .write(callback_esp, &bytes)
+            .map_err(|error| error.to_string())?
+            != bytes.len()
+        {
             return Err("short creation callback frame write".into());
         }
         registers.eip = self.wndproc;
@@ -2560,17 +2668,28 @@ enum InittermAdvance {
 // optimization further to their declared sections: code for fetches, non-code
 // data for operands. Dynamic/stack/control mappings never qualify.
 fn initializer_image_range(child: &PendingChild, address: u32, len: usize, access: u32) -> bool {
-    let Some(end) = u32::try_from(len).ok().and_then(|len| address.checked_add(len)) else {
+    let Some(end) = u32::try_from(len)
+        .ok()
+        .and_then(|len| address.checked_add(len))
+    else {
         return false;
     };
-    std::iter::once(&child.image).chain(child.native_modules.iter().map(|module| &module.image))
-        .any(|image| image.sections.iter().any(|section| {
-            let Some(start) = image.image_base.checked_add(section.virtual_address) else { return false; };
-            let Some(limit) = start.checked_add(section.virtual_size) else { return false; };
-            address >= start && end <= limit
-                && section.characteristics & access == access
-                && (access & 0x2000_0000 != 0 || section.characteristics & 0x2000_0000 == 0)
-        }))
+    std::iter::once(&child.image)
+        .chain(child.native_modules.iter().map(|module| &module.image))
+        .any(|image| {
+            image.sections.iter().any(|section| {
+                let Some(start) = image.image_base.checked_add(section.virtual_address) else {
+                    return false;
+                };
+                let Some(limit) = start.checked_add(section.virtual_size) else {
+                    return false;
+                };
+                address >= start
+                    && end <= limit
+                    && section.characteristics & access == access
+                    && (access & 0x2000_0000 != 0 || section.characteristics & 0x2000_0000 == 0)
+            })
+        })
 }
 
 fn try_rust_initializer(
@@ -2585,12 +2704,23 @@ fn try_rust_initializer(
     if !child.parked_threads.is_empty() || registers.eflags & 0x0007_4100 != 0 {
         return Ok(false);
     }
-    let debug = context.context.debug_registers().map_err(|error| error.to_string())?;
-    if debug.dr7 & 0x23ff != 0 { return Ok(false); }
+    let debug = context
+        .context
+        .debug_registers()
+        .map_err(|error| error.to_string())?;
+    if debug.dr7 & 0x23ff != 0 {
+        return Ok(false);
+    }
     let mut trap = [0; 3];
-    if child.address_space.read(thunk32::CHILD_CALLBACK_RETURN_ADDRESS, &mut trap).ok() != Some(3)
+    if child
+        .address_space
+        .read(thunk32::CHILD_CALLBACK_RETURN_ADDRESS, &mut trap)
+        .ok()
+        != Some(3)
         || trap != [0x0f, 0x01, 0xc1]
-    { return Ok(false); }
+    {
+        return Ok(false);
+    }
     let Some(effect) = xpapp::initterm::plan(target, |address, output, access| {
         let permission = match access {
             xpapp::initterm::Access::Code => 0x2000_0000,
@@ -2598,23 +2728,32 @@ fn try_rust_initializer(
         };
         initializer_image_range(child, address, output.len(), permission)
             && child.address_space.read(address, output).ok() == Some(output.len())
-    }) else { return Ok(false); };
+    }) else {
+        return Ok(false);
+    };
     if let Some((destination, value)) = effect.store {
         // A single-page kernel write validates the whole range before copying.
         // On denial it has made no changes, so the guest can take its own fault.
         if destination & 0xfff > 0xffc
             || !initializer_image_range(child, destination, 4, 0xc000_0000)
-        { return Ok(false); }
+        {
+            return Ok(false);
+        }
         match child.address_space.write(destination, &value.to_le_bytes()) {
             Ok(4) => (),
             Err(_) => return Ok(false),
             Ok(_) => return Err("short semantic initializer write".into()),
         }
     }
-    if let Some(eax) = effect.eax { registers.eax = eax; }
+    if let Some(eax) = effect.eax {
+        registers.eax = eax;
+    }
     registers.esp = callback_esp + 4;
     registers.eip = thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL;
-    context.context.set_registers(*registers).map_err(|error| error.to_string())?;
+    context
+        .context
+        .set_registers(*registers)
+        .map_err(|error| error.to_string())?;
     Ok(true)
 }
 
@@ -2632,10 +2771,13 @@ fn advance_child_initterm(
                 .initterm
                 .take()
                 .ok_or_else(|| "child _initterm completion state missing".to_owned())?;
-            logl::log!(level::IMPORTANT, format_args!(
-                "XPAPP CHILD CRT INITTERM COMPLETE pid={} tid={} callbacks={} rust_callbacks={}",
-                child.pid, child.tid, complete.callbacks_invoked, complete.rust_callbacks,
-            ));
+            logl::log!(
+                level::IMPORTANT,
+                format_args!(
+                    "XPAPP CHILD CRT INITTERM COMPLETE pid={} tid={} callbacks={} rust_callbacks={}",
+                    child.pid, child.tid, complete.callbacks_invoked, complete.rust_callbacks,
+                )
+            );
             let mut registers = context
                 .context
                 .registers()
@@ -2687,7 +2829,8 @@ fn advance_child_initterm(
             .checked_sub(state.begin)
             .ok_or_else(|| "child _initterm index underflow".to_owned())?
             / 4;
-        logl::trace!("trace-init",
+        logl::trace!(
+            "trace-init",
             level::IMPORTANT,
             format_args!(
                 "XPAPP CHILD CRT INITTERM CALL pid={} tid={} index={} slot=0x{:08x} target=0x{:08x}",
@@ -2701,7 +2844,11 @@ fn advance_child_initterm(
         if !cfg!(feature = "guest-initterm")
             && try_rust_initializer(child, context, target, callback_esp, &mut registers)?
         {
-            child.initterm.as_mut().expect("active initializer").rust_callbacks += 1;
+            child
+                .initterm
+                .as_mut()
+                .expect("active initializer")
+                .rust_callbacks += 1;
             continue;
         }
         registers.eip = target;
@@ -2960,8 +3107,10 @@ fn map_child_controls(address_space: &AddressSpace) -> Result<(), String> {
             Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
         )
         .map_err(|error| format!("map child GL batch code: {error}"))?;
-    if address_space.write(thunk32::CHILD_LIGHT_BATCH_ADDRESS, &gl_code)
-        .map_err(|error| format!("write child GL batch code: {error}"))? != gl_code.len()
+    if address_space
+        .write(thunk32::CHILD_LIGHT_BATCH_ADDRESS, &gl_code)
+        .map_err(|error| format!("write child GL batch code: {error}"))?
+        != gl_code.len()
     {
         return Err("short child GL batch code write".into());
     }
@@ -2974,22 +3123,35 @@ fn map_child_controls(address_space: &AddressSpace) -> Result<(), String> {
         .map_err(|error| format!("map child light batch: {error}"))?;
     if address_space
         .write(thunk32::CHILD_LIGHT_BATCH_DATA, &[0; 4])
-        .map_err(|error| format!("initialize child light batch: {error}"))? != 4
+        .map_err(|error| format!("initialize child light batch: {error}"))?
+        != 4
     {
         return Err("short child light batch initialization".into());
     }
     // Initialized once with the process controls, never on thread activation.
-    if address_space.write(thunk32::CHILD_RNG_SEED_ADDRESS,
-        &thunk32::CHILD_RNG_INITIAL_SEED.to_le_bytes())
-        .map_err(|error| format!("initialize child RNG: {error}"))? != 4
+    if address_space
+        .write(
+            thunk32::CHILD_RNG_SEED_ADDRESS,
+            &thunk32::CHILD_RNG_INITIAL_SEED.to_le_bytes(),
+        )
+        .map_err(|error| format!("initialize child RNG: {error}"))?
+        != 4
     {
         return Err("short child RNG initialization".into());
     }
-    logl::log!(level::IMPORTANT, format_args!(
-        "XPAPP CHILD RNG mode={} initial_seed={} state=0x{:08x} reseed=explicit-srand",
-        if cfg!(feature = "trace-api") { "host-traced" } else { "guest-native" },
-        thunk32::CHILD_RNG_INITIAL_SEED, thunk32::CHILD_RNG_SEED_ADDRESS,
-    ));
+    logl::log!(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP CHILD RNG mode={} initial_seed={} state=0x{:08x} reseed=explicit-srand",
+            if cfg!(feature = "trace-api") {
+                "host-traced"
+            } else {
+                "guest-native"
+            },
+            thunk32::CHILD_RNG_INITIAL_SEED,
+            thunk32::CHILD_RNG_SEED_ADDRESS,
+        )
+    );
     Ok(())
 }
 

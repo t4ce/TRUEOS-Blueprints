@@ -34,10 +34,8 @@ const STORM_EXPAND_TRAP: u32 = 0x1501_d5e0;
 const STORM_EXPAND_AFTER_TRAP: u32 = STORM_EXPAND_TRAP + 3;
 const STORM_EXPAND_TAIL: u32 = 0x1501_d61e;
 const STORM_EXPAND_SIGNATURE: [u8; 32] = [
-    0xbf, 0x85, 0x0f, 0xb4, 0x4f, 0x64, 0x5f, 0xcc,
-    0x7f, 0x8b, 0xe7, 0x7c, 0xaf, 0xf7, 0x71, 0xf9,
-    0xa9, 0x0b, 0x38, 0x46, 0x29, 0x04, 0xd5, 0xe5,
-    0xdf, 0x62, 0xc1, 0xb3, 0xb9, 0x58, 0xc4, 0xdc,
+    0xbf, 0x85, 0x0f, 0xb4, 0x4f, 0x64, 0x5f, 0xcc, 0x7f, 0x8b, 0xe7, 0x7c, 0xaf, 0xf7, 0x71, 0xf9,
+    0xa9, 0x0b, 0x38, 0x46, 0x29, 0x04, 0xd5, 0xe5, 0xdf, 0x62, 0xc1, 0xb3, 0xb9, 0x58, 0xc4, 0xdc,
 ];
 const STORM_EXPAND_ORIGINAL: [u8; 3] = [0x8b, 0x45, 0xf8];
 
@@ -47,10 +45,8 @@ const WAR3_EVENT_POOL_AFTER_TRAP: u32 = WAR3_EVENT_POOL_TRAP + 3;
 const WAR3_EVENT_POOL_TAIL: u32 = 0x0040_2a47;
 const WAR3_EVENT_POOL_ORIGINAL: [u8; 3] = [0x8b, 0x4d, 0xf0];
 const WAR3_EVENT_POOL_SIGNATURE: [u8; 32] = [
-    0x61, 0xa6, 0x2f, 0x92, 0x31, 0x93, 0x26, 0x48,
-    0x6b, 0xe6, 0x58, 0x5a, 0x7e, 0xb4, 0x21, 0x03,
-    0x46, 0xbe, 0xcd, 0x33, 0xc0, 0x04, 0x39, 0x79,
-    0xb9, 0xc3, 0xb8, 0x58, 0x8b, 0xd5, 0xe5, 0xa1,
+    0x61, 0xa6, 0x2f, 0x92, 0x31, 0x93, 0x26, 0x48, 0x6b, 0xe6, 0x58, 0x5a, 0x7e, 0xb4, 0x21, 0x03,
+    0x46, 0xbe, 0xcd, 0x33, 0xc0, 0x04, 0x39, 0x79, 0xb9, 0xc3, 0xb8, 0x58, 0x8b, 0xd5, 0xe5, 0xa1,
 ];
 const WAR3_EVENT_POOL_HANDLES: u32 = 0x0045_70b8;
 const WAR3_EVENT_POOL_GENERATIONS: u32 = 0x0045_90b8;
@@ -85,15 +81,31 @@ const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 // the unmodified guest loop. The match is against the prepared guest image,
 // after import resolution, rather than the older checked-in game installation.
 fn install_war3_event_pool_trap(child: &PendingChild) -> Result<bool, String> {
-    if cfg!(feature = "guest-event-pool") { return Ok(false); }
+    if cfg!(feature = "guest-event-pool") {
+        return Ok(false);
+    }
     let mut code = [0u8; (WAR3_EVENT_POOL_TAIL - WAR3_EVENT_POOL_BEGIN) as usize];
-    if child.address_space.read(WAR3_EVENT_POOL_BEGIN, &mut code).ok() != Some(code.len())
+    if child
+        .address_space
+        .read(WAR3_EVENT_POOL_BEGIN, &mut code)
+        .ok()
+        != Some(code.len())
         || Sha256::digest(code).as_slice() != WAR3_EVENT_POOL_SIGNATURE
-    { return Ok(false); }
-    if child.address_space.write(WAR3_EVENT_POOL_TRAP, &[0x0f, 0x01, 0xc1]).ok() != Some(3) {
+    {
+        return Ok(false);
+    }
+    if child
+        .address_space
+        .write(WAR3_EVENT_POOL_TRAP, &[0x0f, 0x01, 0xc1])
+        .ok()
+        != Some(3)
+    {
         return Err("install War3 event pool trap failed".into());
     }
-    logl::log!(level::IMPORTANT, format_args!("XPAPP EVENT POOL RUST ARMED eip=0x{WAR3_EVENT_POOL_TRAP:08x}"));
+    logl::log!(
+        level::IMPORTANT,
+        format_args!("XPAPP EVENT POOL RUST ARMED eip=0x{WAR3_EVENT_POOL_TRAP:08x}")
+    );
     Ok(true)
 }
 
@@ -104,7 +116,12 @@ fn read_event_pool_word(child: &PendingChild, address: u32) -> Option<u32> {
 }
 
 fn write_event_pool_word(child: &PendingChild, address: u32, value: u32) -> Result<(), String> {
-    if child.address_space.write(address, &value.to_le_bytes()).ok() != Some(4) {
+    if child
+        .address_space
+        .write(address, &value.to_le_bytes())
+        .ok()
+        != Some(4)
+    {
         return Err(format!("War3 event pool write failed at 0x{address:08x}"));
     }
     Ok(())
@@ -117,16 +134,24 @@ fn complete_war3_event_pool(
     mut registers: Registers,
 ) -> Result<bool, String> {
     let original = WAR3_EVENT_POOL_ORIGINAL;
-    if child.address_space.write(WAR3_EVENT_POOL_TRAP, &original).ok() != Some(3) {
+    if child
+        .address_space
+        .write(WAR3_EVENT_POOL_TRAP, &original)
+        .ok()
+        != Some(3)
+    {
         return Err("restore War3 event pool instruction failed".into());
     }
     registers.eip = WAR3_EVENT_POOL_TRAP;
     let mut live = [0u8; (WAR3_EVENT_POOL_TAIL - WAR3_EVENT_POOL_BEGIN) as usize];
     let expected = child.image.image.get(
         (WAR3_EVENT_POOL_BEGIN - child.image.image_base) as usize
-            ..(WAR3_EVENT_POOL_TAIL - child.image.image_base) as usize
+            ..(WAR3_EVENT_POOL_TAIL - child.image.image_base) as usize,
     );
-    let debug = context.context.debug_registers().map_err(|error| error.to_string())?;
+    let debug = context
+        .context
+        .debug_registers()
+        .map_err(|error| error.to_string())?;
     let frame = registers.ebp;
     let eligible = child.initterm.is_some()
         && child.parked_threads.is_empty()
@@ -148,8 +173,14 @@ fn complete_war3_event_pool(
         && expected == Some(live.as_slice())
         && session.next_event_handle.checked_add(2048).is_some();
     if !eligible {
-        context.context.set_registers(registers).map_err(|error| error.to_string())?;
-        logl::log!(level::IMPORTANT, format_args!("XPAPP EVENT POOL RUST BYPASS reason=state-or-code-mismatch"));
+        context
+            .context
+            .set_registers(registers)
+            .map_err(|error| error.to_string())?;
+        logl::log!(
+            level::IMPORTANT,
+            format_args!("XPAPP EVENT POOL RUST BYPASS reason=state-or-code-mismatch")
+        );
         return Ok(false);
     }
     // Image maps are RWX throughout this region. Confirm every page before
@@ -158,19 +189,26 @@ fn complete_war3_event_pool(
     for page in ((WAR3_EVENT_POOL_HANDLES & !0xfff)..0x0045_d000).step_by(0x1000) {
         let mut probe = [0u8; 4];
         if child.address_space.read(page, &mut probe).ok() != Some(4) {
-            context.context.set_registers(registers).map_err(|error| error.to_string())?;
+            context
+                .context
+                .set_registers(registers)
+                .map_err(|error| error.to_string())?;
             return Ok(false);
         }
     }
     let tables = xpapp::event_pool::build(|manual_reset| {
-        let (handle, already_exists) = session.create_event(child.pid, xpapp::session::CreateEventRequest {
-            name: None,
-            manual_reset,
-            initial_state: false,
-            inheritable: false,
-        });
+        let (handle, already_exists) = session.create_event(
+            child.pid,
+            xpapp::session::CreateEventRequest {
+                name: None,
+                manual_reset,
+                initial_state: false,
+                inheritable: false,
+            },
+        );
         if already_exists { 0 } else { handle }
-    }).map_err(str::to_owned)?;
+    })
+    .map_err(str::to_owned)?;
     for bank in 0..2u32 {
         write_event_pool_word(child, 0x0045_70ac + bank * 4, 0x7ff)?;
         write_event_pool_word(child, 0x0045_709c + bank * 4, 0x3ff)?;
@@ -178,16 +216,26 @@ fn complete_war3_event_pool(
     }
     let handles = &tables.handles;
     let generations = &tables.generations;
-    if child.address_space.write(WAR3_EVENT_POOL_HANDLES, &handles).ok() != Some(handles.len()) {
+    if child
+        .address_space
+        .write(WAR3_EVENT_POOL_HANDLES, &handles)
+        .ok()
+        != Some(handles.len())
+    {
         return Err("War3 event pool handles write failed".into());
     }
     for (bank, generation) in generations.iter().enumerate() {
         let address = WAR3_EVENT_POOL_GENERATIONS + bank as u32 * 0x2000;
         if child.address_space.write(address, generation).ok() != Some(generation.len()) {
-            return Err(format!("War3 event pool generation write failed bank={bank}"));
+            return Err(format!(
+                "War3 event pool generation write failed bank={bank}"
+            ));
         }
     }
-    session.process_mut(child.pid).ok_or("War3 event owner missing")?.xp
+    session
+        .process_mut(child.pid)
+        .ok_or("War3 event owner missing")?
+        .xp
         .set_last_error_for_thread(child.tid, 0);
     write_event_pool_word(child, frame.wrapping_sub(4), 2)?;
     write_event_pool_word(child, frame.wrapping_sub(8), 0x0045_d0b8)?;
@@ -200,21 +248,41 @@ fn complete_war3_event_pool(
     registers.edi = 0x8020_0000;
     registers.eflags = (registers.eflags & !0x8d5) | 0x44; // final CMP: equality
     registers.eip = WAR3_EVENT_POOL_TAIL;
-    context.context.set_registers(registers).map_err(|error| error.to_string())?;
-    logl::log!(level::IMPORTANT, format_args!("XPAPP EVENT POOL RUST COMPLETE pid={} tid={} events=2048 next_handle=0x{:08x}", child.pid, child.tid, session.next_event_handle));
+    context
+        .context
+        .set_registers(registers)
+        .map_err(|error| error.to_string())?;
+    logl::log!(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP EVENT POOL RUST COMPLETE pid={} tid={} events=2048 next_handle=0x{:08x}",
+            child.pid, child.tid, session.next_event_handle
+        )
+    );
     Ok(true)
 }
 
 fn install_storm_record_expand_trap(address_space: &AddressSpace) -> Result<bool, String> {
-    if cfg!(feature = "guest-record-expand") { return Ok(false); }
+    if cfg!(feature = "guest-record-expand") {
+        return Ok(false);
+    }
     let mut code = [0u8; (STORM_EXPAND_TAIL + 3 - STORM_EXPAND_BEGIN) as usize];
     if address_space.read(STORM_EXPAND_BEGIN, &mut code).ok() != Some(code.len())
         || Sha256::digest(code).as_slice() != STORM_EXPAND_SIGNATURE
-    { return Ok(false); }
-    if address_space.write(STORM_EXPAND_TRAP, &[0x0f, 0x01, 0xc1]).ok() != Some(3) {
+    {
+        return Ok(false);
+    }
+    if address_space
+        .write(STORM_EXPAND_TRAP, &[0x0f, 0x01, 0xc1])
+        .ok()
+        != Some(3)
+    {
         return Err("install Storm record expansion trap failed".into());
     }
-    logl::log!(level::IMPORTANT, format_args!("XPAPP RECORD EXPAND RUST ARMED eip=0x{STORM_EXPAND_TRAP:08x}"));
+    logl::log!(
+        level::IMPORTANT,
+        format_args!("XPAPP RECORD EXPAND RUST ARMED eip=0x{STORM_EXPAND_TRAP:08x}")
+    );
     Ok(true)
 }
 
@@ -224,39 +292,63 @@ fn complete_storm_record_expand(
     context: &mut GuestContext,
     mut registers: Registers,
 ) -> Result<bool, String> {
-    if child.address_space.write(STORM_EXPAND_TRAP, &STORM_EXPAND_ORIGINAL).ok() != Some(3) {
+    if child
+        .address_space
+        .write(STORM_EXPAND_TRAP, &STORM_EXPAND_ORIGINAL)
+        .ok()
+        != Some(3)
+    {
         return Err("restore Storm record expansion instruction failed".into());
     }
     registers.eip = STORM_EXPAND_TRAP;
-    let module = child.native_modules.iter().find(|module| module.stored.eq_ignore_ascii_case("Storm.dll"));
-    let expected = module.and_then(|module| module.image.image.get(
-        (STORM_EXPAND_BEGIN - module.image.image_base) as usize
-            ..(STORM_EXPAND_TAIL + 3 - module.image.image_base) as usize
-    ));
+    let module = child
+        .native_modules
+        .iter()
+        .find(|module| module.stored.eq_ignore_ascii_case("Storm.dll"));
+    let expected = module.and_then(|module| {
+        module.image.image.get(
+            (STORM_EXPAND_BEGIN - module.image.image_base) as usize
+                ..(STORM_EXPAND_TAIL + 3 - module.image.image_base) as usize,
+        )
+    });
     let mut live = [0u8; (STORM_EXPAND_TAIL + 3 - STORM_EXPAND_BEGIN) as usize];
-    let debug = context.context.debug_registers().map_err(|error| error.to_string())?;
+    let debug = context
+        .context
+        .debug_registers()
+        .map_err(|error| error.to_string())?;
     let frame = registers.ebp;
     let metadata = read_event_pool_word(child, registers.ebx.wrapping_add(0x138));
-    let count = metadata.and_then(|metadata| read_event_pool_word(child, metadata.wrapping_add(0x1c)));
+    let count =
+        metadata.and_then(|metadata| read_event_pool_word(child, metadata.wrapping_add(0x1c)));
     let base = read_event_pool_word(child, registers.ebx.wrapping_add(0x13c));
     let plan = count.zip(base).and_then(|(count, base)| {
-        if !(2..=65_536).contains(&count) { return None; }
+        if !(2..=65_536).contains(&count) {
+            return None;
+        }
         let last = count.checked_sub(1)?;
         let source_end = base.checked_add(count.checked_mul(16)?)?;
         let output_end = base.checked_add(count.checked_mul(44)?)?;
         let expected_source = base.checked_add(last.checked_mul(16)?)?;
         let expected_destination = base.checked_add(last.checked_mul(44)?)?;
-        let reservation = session.process(child.pid)?.xp.virtual_reservation_containing(base, output_end - base)?;
+        let reservation = session
+            .process(child.pid)?
+            .xp
+            .virtual_reservation_containing(base, output_end - base)?;
         let committed = reservation.committed.iter().any(|commit| {
-            commit.base <= base && commit.base.checked_add(commit.size).is_some_and(|end| end >= output_end)
+            commit.base <= base
+                && commit
+                    .base
+                    .checked_add(commit.size)
+                    .is_some_and(|end| end >= output_end)
         });
-        (committed && source_end <= output_end
+        (committed
+            && source_end <= output_end
             && registers.edi == expected_destination
             && registers.esi == expected_destination.checked_add(36)?
             && read_event_pool_word(child, frame.wrapping_sub(4)) == Some(count)
             && read_event_pool_word(child, frame.wrapping_sub(8)) == Some(expected_source)
             && read_event_pool_word(child, frame.wrapping_sub(12)) == Some(last))
-            .then_some((count as usize, base, source_end, output_end))
+        .then_some((count as usize, base, source_end, output_end))
     });
     let eligible = child.parked_threads.is_empty()
         && registers.eflags & 0x0007_4500 == 0 // TF, DF, NT, RF, VM, AC
@@ -265,13 +357,22 @@ fn complete_storm_record_expand(
         && child.address_space.read(STORM_EXPAND_BEGIN, &mut live).ok() == Some(live.len())
         && expected == Some(live.as_slice());
     let Some((count, base, source_end, output_end)) = plan.filter(|_| eligible) else {
-        context.context.set_registers(registers).map_err(|error| error.to_string())?;
-        logl::log!(level::IMPORTANT, format_args!("XPAPP RECORD EXPAND RUST BYPASS reason=state-or-code-mismatch"));
+        context
+            .context
+            .set_registers(registers)
+            .map_err(|error| error.to_string())?;
+        logl::log!(
+            level::IMPORTANT,
+            format_args!("XPAPP RECORD EXPAND RUST BYPASS reason=state-or-code-mismatch")
+        );
         return Ok(false);
     };
     let mut source = vec![0u8; (source_end - base) as usize];
     if child.address_space.read(base, &mut source).ok() != Some(source.len()) {
-        context.context.set_registers(registers).map_err(|error| error.to_string())?;
+        context
+            .context
+            .set_registers(registers)
+            .map_err(|error| error.to_string())?;
         return Ok(false);
     }
     let output = xpapp::record_expand::build(&source, count)
@@ -287,8 +388,22 @@ fn complete_storm_record_expand(
     registers.esi = base + 36;
     registers.eflags = (registers.eflags & !0x8d5) | 0x44;
     registers.eip = STORM_EXPAND_TAIL;
-    context.context.set_registers(registers).map_err(|error| error.to_string())?;
-    logl::log!(level::IMPORTANT, format_args!("XPAPP RECORD EXPAND RUST COMPLETE pid={} tid={} records={} input_bytes={} output_bytes={} output_end=0x{:08x}", child.pid, child.tid, count - 1, source.len(), output.len(), output_end));
+    context
+        .context
+        .set_registers(registers)
+        .map_err(|error| error.to_string())?;
+    logl::log!(
+        level::IMPORTANT,
+        format_args!(
+            "XPAPP RECORD EXPAND RUST COMPLETE pid={} tid={} records={} input_bytes={} output_bytes={} output_end=0x{:08x}",
+            child.pid,
+            child.tid,
+            count - 1,
+            source.len(),
+            output.len(),
+            output_end
+        )
+    );
     Ok(true)
 }
 
@@ -341,8 +456,7 @@ const MSVCRT_MCW_RC: u32 = 0x0000_0300;
 const MSVCRT_MCW_PC: u32 = 0x0003_0000;
 const MSVCRT_MCW_IC: u32 = 0x0004_0000;
 const MSVCRT_MCW_EM: u32 = 0x0008_001f;
-const MSVCRT_X87_CONTROL_MASK: u32 =
-    MSVCRT_MCW_EM | MSVCRT_MCW_RC | MSVCRT_MCW_PC | MSVCRT_MCW_IC;
+const MSVCRT_X87_CONTROL_MASK: u32 = MSVCRT_MCW_EM | MSVCRT_MCW_RC | MSVCRT_MCW_PC | MSVCRT_MCW_IC;
 
 fn msvcrt_control_from_x87(fcw: u16) -> u32 {
     let mut out = 0;
@@ -388,12 +502,24 @@ fn msvcrt_control_from_x87(fcw: u16) -> u32 {
 fn x87_control_from_msvcrt(original_fcw: u16, control: u32) -> u16 {
     let mut fcw = original_fcw & !0x1f3f;
 
-    if control & MSVCRT_EM_INVALID != 0 { fcw |= 1 << 0; }
-    if control & MSVCRT_EM_DENORMAL != 0 { fcw |= 1 << 1; }
-    if control & MSVCRT_EM_ZERODIVIDE != 0 { fcw |= 1 << 2; }
-    if control & MSVCRT_EM_OVERFLOW != 0 { fcw |= 1 << 3; }
-    if control & MSVCRT_EM_UNDERFLOW != 0 { fcw |= 1 << 4; }
-    if control & MSVCRT_EM_INEXACT != 0 { fcw |= 1 << 5; }
+    if control & MSVCRT_EM_INVALID != 0 {
+        fcw |= 1 << 0;
+    }
+    if control & MSVCRT_EM_DENORMAL != 0 {
+        fcw |= 1 << 1;
+    }
+    if control & MSVCRT_EM_ZERODIVIDE != 0 {
+        fcw |= 1 << 2;
+    }
+    if control & MSVCRT_EM_OVERFLOW != 0 {
+        fcw |= 1 << 3;
+    }
+    if control & MSVCRT_EM_UNDERFLOW != 0 {
+        fcw |= 1 << 4;
+    }
+    if control & MSVCRT_EM_INEXACT != 0 {
+        fcw |= 1 << 5;
+    }
 
     fcw |= match control & MSVCRT_MCW_PC {
         0x0002_0000 => 0x0000, // _PC_24
@@ -594,7 +720,16 @@ fn service_sync_request(
                 .process_mut(caller_pid)
                 .ok_or_else(|| "event process missing".to_owned())?
                 .xp
-                .set_last_error_for_thread(caller_tid, if handle == 0 { 6 } else if already_exists { 183 } else { 0 });
+                .set_last_error_for_thread(
+                    caller_tid,
+                    if handle == 0 {
+                        6
+                    } else if already_exists {
+                        183
+                    } else {
+                        0
+                    },
+                );
             logl::log!(
                 level::IMPORTANT,
                 format_args!(
@@ -615,13 +750,7 @@ fn service_sync_request(
                     level::IMPORTANT,
                     format_args!(
                         "XPAPP CHILD OPENEVENTA RESULT pid={} tid={} desired_access=0x{:08x} access=EVENT_MODIFY_STATE inheritable={} name={:?} object={} handle=0x{:08x} result=success last_error=unchanged cleanup=12-by-thunk",
-                        key.pid,
-                        key.tid,
-                        desired_access,
-                        inheritable as u8,
-                        name,
-                        object,
-                        handle,
+                        key.pid, key.tid, desired_access, inheritable as u8, name, object, handle,
                     ),
                 );
                 Ok(handle)
@@ -636,12 +765,7 @@ fn service_sync_request(
                     level::IMPORTANT,
                     format_args!(
                         "XPAPP CHILD OPENEVENTA RESULT pid={} tid={} desired_access=0x{:08x} inheritable={} name={:?} handle=NULL result=failure error={}",
-                        key.pid,
-                        key.tid,
-                        desired_access,
-                        inheritable as u8,
-                        name,
-                        error,
+                        key.pid, key.tid, desired_access, inheritable as u8, name, error,
                     ),
                 );
                 Ok(0)
@@ -650,12 +774,7 @@ fn service_sync_request(
         SessionRequest::SetEvent { pid, tid, handle } => match session.set_event(pid, handle) {
             Ok(outcome) => {
                 let waiters_woken = outcome.woken.len();
-                resume_completed_waiters(
-                    &outcome.woken,
-                    "set-event",
-                    contexts,
-                    wait_deadlines,
-                )?;
+                resume_completed_waiters(&outcome.woken, "set-event", contexts, wait_deadlines)?;
                 logl::log!(
                     level::IMPORTANT,
                     format_args!(
@@ -692,11 +811,7 @@ fn service_sync_request(
                     level::IMPORTANT,
                     format_args!(
                         "XPAPP CHILD EVENT RESET pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} result=1",
-                        pid,
-                        tid,
-                        handle,
-                        outcome.manual_reset as u8,
-                        outcome.was_signaled as u8,
+                        pid, tid, handle, outcome.manual_reset as u8, outcome.was_signaled as u8,
                     ),
                 );
                 Ok(1)
@@ -772,11 +887,7 @@ fn service_sync_request(
                          pid={} tid={} handle=0x{:08x} object={} concurrency={} \\
                          queue_depth=0 associations=0 transport=offline \\
                          trueos_network=0 result=success cleanup=16-by-thunk",
-                        caller.pid,
-                        caller.tid,
-                        handle,
-                        object,
-                        concurrency,
+                        caller.pid, caller.tid, handle, object, concurrency,
                     ),
                 );
                 Ok(handle)
@@ -2187,103 +2298,176 @@ pub(super) async fn run_loop(
         // trap: a timer exit can interrupt a partially written record, so
         // resetting its count here would make the resumed helper publish a
         // stale slot. The consumed watermark also supports thread switches.
-        if let Some(child) = pending_child.as_ref().filter(|child|
-            child.pid == active_key.pid && child.loader.prepared)
+        if let Some(child) = pending_child
+            .as_ref()
+            .filter(|child| child.pid == active_key.pid && child.loader.prepared)
         {
             if gl_light_batch_pid != Some(child.pid) {
                 gl_light_batch_pid = Some(child.pid);
                 gl_light_batch_cursor = xpapp::gl_light_batch::Cursor::default();
             }
             let mut count_bytes = [0u8; 4];
-            if child.address_space.read(thunk32::CHILD_LIGHT_BATCH_DATA, &mut count_bytes)
-                .map_err(|error| format!("read child light batch count: {error}"))? != 4
+            if child
+                .address_space
+                .read(thunk32::CHILD_LIGHT_BATCH_DATA, &mut count_bytes)
+                .map_err(|error| format!("read child light batch count: {error}"))?
+                != 4
             {
                 return Err("short child light batch count read".into());
             }
             let count = u32::from_le_bytes(count_bytes) as usize;
-            let pending = gl_light_batch_cursor.pending(count, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
+            let pending = gl_light_batch_cursor
+                .pending(count, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
                 .map_err(str::to_owned)?;
             let new_count = pending.len();
             if new_count != 0 {
                 #[cfg(feature = "trace-execution")]
                 let batch_started = std::time::Instant::now();
-                let mut entries = [0u8; thunk32::CHILD_LIGHT_BATCH_CAPACITY * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES];
+                let mut entries = [0u8; thunk32::CHILD_LIGHT_BATCH_CAPACITY
+                    * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES];
                 let bytes = new_count * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES;
-                let start = thunk32::CHILD_LIGHT_BATCH_DATA + 4
+                let start = thunk32::CHILD_LIGHT_BATCH_DATA
+                    + 4
                     + (pending.start * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES) as u32;
-                if child.address_space.read(start, &mut entries[..bytes])
-                    .map_err(|error| format!("read child light batch records: {error}"))? != bytes
+                if child
+                    .address_space
+                    .read(start, &mut entries[..bytes])
+                    .map_err(|error| format!("read child light batch records: {error}"))?
+                    != bytes
                 {
                     return Err("short child light batch record read".into());
                 }
-                let process = session.process_mut(active_key.pid)
+                let process = session
+                    .process_mut(active_key.pid)
                     .ok_or_else(|| "light batch process missing".to_owned())?;
-                for entry in entries[..bytes].chunks_exact(thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES) {
-                    let word = |offset| u32::from_le_bytes(entry[offset..offset + 4].try_into().unwrap());
+                for entry in entries[..bytes].chunks_exact(thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES)
+                {
+                    let word =
+                        |offset| u32::from_le_bytes(entry[offset..offset + 4].try_into().unwrap());
                     match word(0) {
                         thunk32::CHILD_GL_BATCH_TAG_LIGHT => {
-                            process.xp.replay_gl_lightfv(active_key.tid, word(4), word(8),
-                                [word(12), word(16), word(20), word(24)])
+                            process
+                                .xp
+                                .replay_gl_lightfv(
+                                    active_key.tid,
+                                    word(4),
+                                    word(8),
+                                    [word(12), word(16), word(20), word(24)],
+                                )
                                 .map_err(|error| format!("replay child glLightfv: {error}"))?;
                             gl_batch_light_replayed += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_MATRIX_MODE => {
-                            process.xp.replay_gl_matrix_mode(active_key.tid, word(4))
+                            process
+                                .xp
+                                .replay_gl_matrix_mode(active_key.tid, word(4))
                                 .map_err(|error| format!("replay child glMatrixMode: {error}"))?;
                             gl_batch_mode_replayed += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_LOAD_MATRIX => {
                             let bits = core::array::from_fn(|i| word(8 + 4 * i));
-                            process.xp.replay_gl_load_matrixf(active_key.tid, bits)
+                            process
+                                .xp
+                                .replay_gl_load_matrixf(active_key.tid, bits)
                                 .map_err(|error| format!("replay child glLoadMatrixf: {error}"))?;
                             gl_batch_load_replayed += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_ENABLE => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlEnable,
-                                [word(4), word(8), word(12), word(16)])
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlEnable,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
                                 .map_err(|error| format!("replay child GlEnable: {error}"))?;
                             gl_batch_scalar_replayed[0] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_DISABLE => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlDisable,
-                                [word(4), word(8), word(12), word(16)])
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlDisable,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
                                 .map_err(|error| format!("replay child GlDisable: {error}"))?;
                             gl_batch_scalar_replayed[1] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_ENABLE_CLIENT => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlEnableClientState,
-                                [word(4), word(8), word(12), word(16)])
-                                .map_err(|error| format!("replay child GlEnableClientState: {error}"))?;
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlEnableClientState,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
+                                .map_err(|error| {
+                                    format!("replay child GlEnableClientState: {error}")
+                                })?;
                             gl_batch_scalar_replayed[2] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_DISABLE_CLIENT => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlDisableClientState,
-                                [word(4), word(8), word(12), word(16)])
-                                .map_err(|error| format!("replay child GlDisableClientState: {error}"))?;
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlDisableClientState,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
+                                .map_err(|error| {
+                                    format!("replay child GlDisableClientState: {error}")
+                                })?;
                             gl_batch_scalar_replayed[3] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_VERTEX_POINTER => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlVertexPointer,
-                                [word(4), word(8), word(12), word(16)])
-                                .map_err(|error| format!("replay child GlVertexPointer: {error}"))?;
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlVertexPointer,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
+                                .map_err(|error| {
+                                    format!("replay child GlVertexPointer: {error}")
+                                })?;
                             gl_batch_scalar_replayed[4] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_COLOR_POINTER => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlColorPointer,
-                                [word(4), word(8), word(12), word(16)])
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlColorPointer,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
                                 .map_err(|error| format!("replay child GlColorPointer: {error}"))?;
                             gl_batch_scalar_replayed[5] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_NORMAL_POINTER => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlNormalPointer,
-                                [word(4), word(8), word(12), word(16)])
-                                .map_err(|error| format!("replay child GlNormalPointer: {error}"))?;
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlNormalPointer,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
+                                .map_err(|error| {
+                                    format!("replay child GlNormalPointer: {error}")
+                                })?;
                             gl_batch_scalar_replayed[6] += 1;
                         }
                         thunk32::CHILD_GL_BATCH_TAG_TEXCOORD_POINTER => {
-                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlTexCoordPointer,
-                                [word(4), word(8), word(12), word(16)])
-                                .map_err(|error| format!("replay child GlTexCoordPointer: {error}"))?;
+                            process
+                                .xp
+                                .replay_gl_scalar_state(
+                                    active_key.tid,
+                                    child_loader::ProviderOp::GlTexCoordPointer,
+                                    [word(4), word(8), word(12), word(16)],
+                                )
+                                .map_err(|error| {
+                                    format!("replay child GlTexCoordPointer: {error}")
+                                })?;
                             gl_batch_scalar_replayed[7] += 1;
                         }
                         tag => return Err(format!("unknown child GL batch tag {tag}").into()),
@@ -2293,48 +2477,76 @@ pub(super) async fn run_loop(
                 crate::exec_timing::record_light_batch_replay(batch_started.elapsed());
                 gl_light_batch_replayed += new_count as u64;
                 gl_light_batch_flushes += 1;
-                if gl_light_batch_replayed / 1024 != (gl_light_batch_replayed - new_count as u64) / 1024 {
-                    logl::log!(level::IMPORTANT, format_args!(
-                        "XPAPP CHILD GL STATE BATCH pid={} replayed={} light={} mode={} load={} enable={} disable={} enable_client={} disable_client={} vertex_pointer={} color_pointer={} normal_pointer={} texcoord_pointer={} flushes={} full_exits={} estimated_exits_saved={}",
-                        active_key.pid, gl_light_batch_replayed,
-                        gl_batch_light_replayed, gl_batch_mode_replayed, gl_batch_load_replayed,
-                        gl_batch_scalar_replayed[0], gl_batch_scalar_replayed[1],
-                        gl_batch_scalar_replayed[2], gl_batch_scalar_replayed[3],
-                        gl_batch_scalar_replayed[4], gl_batch_scalar_replayed[5],
-                        gl_batch_scalar_replayed[6], gl_batch_scalar_replayed[7],
-                        gl_light_batch_flushes, gl_light_batch_full_exits,
-                        gl_light_batch_replayed - gl_light_batch_full_exits,
-                    ));
+                if gl_light_batch_replayed / 1024
+                    != (gl_light_batch_replayed - new_count as u64) / 1024
+                {
+                    logl::log!(
+                        level::IMPORTANT,
+                        format_args!(
+                            "XPAPP CHILD GL STATE BATCH pid={} replayed={} light={} mode={} load={} enable={} disable={} enable_client={} disable_client={} vertex_pointer={} color_pointer={} normal_pointer={} texcoord_pointer={} flushes={} full_exits={} estimated_exits_saved={}",
+                            active_key.pid,
+                            gl_light_batch_replayed,
+                            gl_batch_light_replayed,
+                            gl_batch_mode_replayed,
+                            gl_batch_load_replayed,
+                            gl_batch_scalar_replayed[0],
+                            gl_batch_scalar_replayed[1],
+                            gl_batch_scalar_replayed[2],
+                            gl_batch_scalar_replayed[3],
+                            gl_batch_scalar_replayed[4],
+                            gl_batch_scalar_replayed[5],
+                            gl_batch_scalar_replayed[6],
+                            gl_batch_scalar_replayed[7],
+                            gl_light_batch_flushes,
+                            gl_light_batch_full_exits,
+                            gl_light_batch_replayed - gl_light_batch_full_exits,
+                        )
+                    );
                 }
             }
             if exit.kind == ExitKind::VmCall
                 && exit.registers.eip == thunk32::CHILD_LIGHT_BATCH_AFTER_VMCALL
             {
-                gl_light_batch_cursor.commit(count, true, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
+                gl_light_batch_cursor
+                    .commit(count, true, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
                     .map_err(str::to_owned)?;
-                if child.address_space.write(thunk32::CHILD_LIGHT_BATCH_DATA, &[0; 4])
-                    .map_err(|error| format!("reset full child light batch: {error}"))? != 4
+                if child
+                    .address_space
+                    .write(thunk32::CHILD_LIGHT_BATCH_DATA, &[0; 4])
+                    .map_err(|error| format!("reset full child light batch: {error}"))?
+                    != 4
                 {
                     return Err("short full child light batch reset".into());
                 }
                 gl_light_batch_full_exits += 1;
             } else {
-                gl_light_batch_cursor.commit(count, false, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
+                gl_light_batch_cursor
+                    .commit(count, false, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
                     .map_err(str::to_owned)?;
             }
         }
         let in_light_helper = active_key.pid != LAUNCHER_PID
             && (thunk32::CHILD_LIGHT_BATCH_ADDRESS
-                ..thunk32::CHILD_LIGHT_BATCH_ADDRESS + thunk32::CHILD_LIGHT_BATCH_CODE_BYTES as u32)
+                ..thunk32::CHILD_LIGHT_BATCH_ADDRESS
+                    + thunk32::CHILD_LIGHT_BATCH_CODE_BYTES as u32)
                 .contains(&exit.registers.eip);
         if in_light_helper && exit.kind == ExitKind::Exception {
-            return Err(format!("guest GL state capture fault at 0x{:08x}", exit.registers.eip));
+            return Err(format!(
+                "guest GL state capture fault at 0x{:08x}",
+                exit.registers.eip
+            ));
         }
         if in_light_helper && exit.kind == ExitKind::Other && exit.detail == 52 {
             continue;
         }
-        debug_shell.poll(&contexts, pending_child.as_ref(), address_space, &mut session, active_key,
-            exit.kind == ExitKind::Other && exit.detail == 52);
+        debug_shell.poll(
+            &contexts,
+            pending_child.as_ref(),
+            address_space,
+            &mut session,
+            active_key,
+            exit.kind == ExitKind::Other && exit.detail == 52,
+        );
         match exit.kind {
             ExitKind::Cpuid if active_key.pid != LAUNCHER_PID => {
                 let child = pending_child
@@ -2343,18 +2555,29 @@ pub(super) async fn run_loop(
                     .ok_or_else(|| "CPUID child missing".to_owned())?;
                 let eip = exit.registers.eip;
                 let mut opcode = [0; 2];
-                if child.address_space.read(eip, &mut opcode).map_err(|error| error.to_string())? != 2 {
+                if child
+                    .address_space
+                    .read(eip, &mut opcode)
+                    .map_err(|error| error.to_string())?
+                    != 2
+                {
                     return Err("short CPUID opcode read".into());
                 }
                 if opcode != [0x0f, 0xa2] {
-                    return Err(format!("VM-exit reason CPUID but bytes={:02x} {:02x}", opcode[0], opcode[1]));
+                    return Err(format!(
+                        "VM-exit reason CPUID but bytes={:02x} {:02x}",
+                        opcode[0], opcode[1]
+                    ));
                 }
                 let leaf = exit.registers.eax;
                 let subleaf = exit.registers.ecx;
-                logl::log!(level::IMPORTANT, format_args!(
-                    "XPAPP CHILD CPUID CALL pid={} tid={} eip=0x{:08x} leaf=0x{:08x} subleaf=0x{:08x}",
-                    active_key.pid, active_key.tid, eip, leaf, subleaf,
-                ));
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD CPUID CALL pid={} tid={} eip=0x{:08x} leaf=0x{:08x} subleaf=0x{:08x}",
+                        active_key.pid, active_key.tid, eip, leaf, subleaf,
+                    )
+                );
                 let [eax, ebx, ecx, edx] = xpapp_cpuid(leaf, subleaf)?;
                 let mut registers = exit.registers;
                 registers.eax = eax;
@@ -2362,11 +2585,26 @@ pub(super) async fn run_loop(
                 registers.ecx = ecx;
                 registers.edx = edx;
                 registers.eip = eip.checked_add(2).ok_or("CPUID EIP overflow")?;
-                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                logl::log!(level::IMPORTANT, format_args!(
-                    "XPAPP CHILD CPUID RESULT pid={} tid={} leaf=0x{:08x} subleaf=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} profile=xp-p3 eip=0x{:08x}->0x{:08x}",
-                    active_key.pid, active_key.tid, leaf, subleaf, eax, ebx, ecx, edx, eip, registers.eip,
-                ));
+                contexts[active]
+                    .context
+                    .set_registers(registers)
+                    .map_err(|error| error.to_string())?;
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD CPUID RESULT pid={} tid={} leaf=0x{:08x} subleaf=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} profile=xp-p3 eip=0x{:08x}->0x{:08x}",
+                        active_key.pid,
+                        active_key.tid,
+                        leaf,
+                        subleaf,
+                        eax,
+                        ebx,
+                        ecx,
+                        edx,
+                        eip,
+                        registers.eip,
+                    )
+                );
                 continue;
             }
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
@@ -2403,62 +2641,62 @@ pub(super) async fn run_loop(
                         })
                     {
                         let child = pending_child.as_ref().unwrap();
-                    let (owner, rva) =
-                        child_pc_owner(child, exit.registers.eip).unwrap_or(("unknown", 0));
-                    let mut code = [0u8; 16];
-                    let code_len = child
-                        .address_space
-                        .read(exit.registers.eip, &mut code)
-                        .unwrap_or(0);
-                    let code = code[..code_len]
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    logl::log!(
-                        level::IMPORTANT,
-                        format_args!(
-                            "XPAPP CHILD EXEC SAMPLE pid={} tid={} during=\"War3.exe:ENTRY\" preemptions={} owner={:?} rva=0x{:08x} eip=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} same_page={} code={}",
-                            active_key.pid,
-                            active_key.tid,
-                            preemptions,
-                            owner,
-                            rva,
-                            exit.registers.eip,
-                            exit.registers.esp,
-                            exit.registers.ebp,
-                            exit.registers.eax,
-                            same_page,
-                            code,
-                        ),
-                    );
-                    let scan_index = child_read_u32(child, WAR3_SCAN_INDEX);
-                    let scan_source = child_read_u32(child, WAR3_SCAN_SOURCE);
-                    let scan_bound = child_read_u32(child, WAR3_SCAN_BOUND);
-                    let scan_count = child_read_u32(child, WAR3_SCAN_COUNT);
-                    logl::log!(
-                        level::IMPORTANT,
-                        format_args!(
-                            "XPAPP CHILD HOTLOOP pid={} tid={} preemptions={} eip=0x{:08x} index={} source={} bound={} count={} eflags=0x{:08x}",
-                            active_key.pid,
-                            active_key.tid,
-                            preemptions,
-                            exit.registers.eip,
-                            scan_index
-                                .map(|value| format!("0x{value:08x}"))
-                                .unwrap_or_else(|| "-".into()),
-                            scan_source
-                                .map(|value| format!("0x{value:08x}"))
-                                .unwrap_or_else(|| "-".into()),
-                            scan_bound
-                                .map(|value| format!("0x{value:08x}"))
-                                .unwrap_or_else(|| "-".into()),
-                            scan_count
-                                .map(|value| format!("0x{value:08x}"))
-                                .unwrap_or_else(|| "-".into()),
-                            exit.registers.eflags,
-                        ),
-                    );
+                        let (owner, rva) =
+                            child_pc_owner(child, exit.registers.eip).unwrap_or(("unknown", 0));
+                        let mut code = [0u8; 16];
+                        let code_len = child
+                            .address_space
+                            .read(exit.registers.eip, &mut code)
+                            .unwrap_or(0);
+                        let code = code[..code_len]
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "XPAPP CHILD EXEC SAMPLE pid={} tid={} during=\"War3.exe:ENTRY\" preemptions={} owner={:?} rva=0x{:08x} eip=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} same_page={} code={}",
+                                active_key.pid,
+                                active_key.tid,
+                                preemptions,
+                                owner,
+                                rva,
+                                exit.registers.eip,
+                                exit.registers.esp,
+                                exit.registers.ebp,
+                                exit.registers.eax,
+                                same_page,
+                                code,
+                            ),
+                        );
+                        let scan_index = child_read_u32(child, WAR3_SCAN_INDEX);
+                        let scan_source = child_read_u32(child, WAR3_SCAN_SOURCE);
+                        let scan_bound = child_read_u32(child, WAR3_SCAN_BOUND);
+                        let scan_count = child_read_u32(child, WAR3_SCAN_COUNT);
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "XPAPP CHILD HOTLOOP pid={} tid={} preemptions={} eip=0x{:08x} index={} source={} bound={} count={} eflags=0x{:08x}",
+                                active_key.pid,
+                                active_key.tid,
+                                preemptions,
+                                exit.registers.eip,
+                                scan_index
+                                    .map(|value| format!("0x{value:08x}"))
+                                    .unwrap_or_else(|| "-".into()),
+                                scan_source
+                                    .map(|value| format!("0x{value:08x}"))
+                                    .unwrap_or_else(|| "-".into()),
+                                scan_bound
+                                    .map(|value| format!("0x{value:08x}"))
+                                    .unwrap_or_else(|| "-".into()),
+                                scan_count
+                                    .map(|value| format!("0x{value:08x}"))
+                                    .unwrap_or_else(|| "-".into()),
+                                exit.registers.eflags,
+                            ),
+                        );
                         if same_page == 1024 {
                             logl::log!(
                                 level::IMPORTANT,
@@ -2500,9 +2738,14 @@ pub(super) async fn run_loop(
                 }
                 #[cfg(feature = "trace-execution")]
                 let _provider_timing = crate::exec_timing::ProviderScope::new(
-                    active_key.pid, active_key.tid, exit.registers.eax, exit.registers.eip,
-                    session.process(active_key.pid).and_then(|process|
-                        process.xp.provider_operation(exit.registers.eax)));
+                    active_key.pid,
+                    active_key.tid,
+                    exit.registers.eax,
+                    exit.registers.eip,
+                    session
+                        .process(active_key.pid)
+                        .and_then(|process| process.xp.provider_operation(exit.registers.eax)),
+                );
                 let active_pid = active_key.pid;
                 let active_tid = active_key.tid;
                 include!("asupersync_child_vmcall.rs");
@@ -2517,18 +2760,17 @@ pub(super) async fn run_loop(
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 let first_low_address_fault = exception.vector == Some(14)
-                    && exception.fault_linear.is_some_and(|address| address < 0x1000)
+                    && exception
+                        .fault_linear
+                        .is_some_and(|address| address < 0x1000)
                     && !child.first_null_write_snapshot_logged;
                 if first_low_address_fault {
-                    let stack = read_guest_words(
-                        &X86Memory(&child.address_space),
-                        registers.esp,
-                        32,
-                    )
-                    .map(|words| format!("{words:08x?}"))
-                    .unwrap_or_else(|error| format!("<unreadable:{error}>"));
-                    let (owner, rva) = child_pc_owner(child, registers.eip)
-                        .unwrap_or(("unmapped-or-stack", 0));
+                    let stack =
+                        read_guest_words(&X86Memory(&child.address_space), registers.esp, 32)
+                            .map(|words| format!("{words:08x?}"))
+                            .unwrap_or_else(|error| format!("<unreadable:{error}>"));
+                    let (owner, rva) =
+                        child_pc_owner(child, registers.eip).unwrap_or(("unmapped-or-stack", 0));
                     let file_operations = session
                         .process(active_key.pid)
                         .map(|process| process.xp.file_operation_trace())
@@ -2565,9 +2807,7 @@ pub(super) async fn run_loop(
                         level::IMPORTANT,
                         format_args!(
                             "XPAPP CHILD FIRST LOW ADDRESS FAULT FILE TRACE pid={} tid={} operations={:?}",
-                            active_key.pid,
-                            active_key.tid,
-                            file_operations,
+                            active_key.pid, active_key.tid, file_operations,
                         ),
                     );
                 }
@@ -3016,10 +3256,12 @@ mod control_word_tests {
         let effective_mask = mask & MSVCRT_X87_CONTROL_MASK;
         assert_eq!(effective_mask, 0x000f_031f);
 
-        let updated_control =
-            (old_control & !effective_mask) | (0x0009_001f & effective_mask);
+        let updated_control = (old_control & !effective_mask) | (0x0009_001f & effective_mask);
         assert_eq!(updated_control, old_control);
-        assert_eq!(x87_control_from_msvcrt(before_fcw, updated_control), before_fcw);
+        assert_eq!(
+            x87_control_from_msvcrt(before_fcw, updated_control),
+            before_fcw
+        );
     }
 
     #[test]
@@ -3031,6 +3273,9 @@ mod control_word_tests {
         let updated_control = (old_control & !effective_mask) | (requested & effective_mask);
 
         assert_eq!(updated_control & MSVCRT_EM_DENORMAL, 0);
-        assert_eq!(x87_control_from_msvcrt(before_fcw, updated_control) & 0x0002, 0);
+        assert_eq!(
+            x87_control_from_msvcrt(before_fcw, updated_control) & 0x0002,
+            0
+        );
     }
 }

@@ -1051,10 +1051,7 @@ impl Frame {
     /// red[256], green[256], blue[256].
     pub fn set_display_gamma_ramp(&mut self, ramp: &[u16; 3 * 256]) -> Result<(), Error> {
         status(unsafe {
-            v::bp_abi::trueos_cabi_ui4_scene_set_display_gamma_ramp(
-                self.window_id,
-                ramp.as_ptr(),
-            )
+            v::bp_abi::trueos_cabi_ui4_scene_set_display_gamma_ramp(self.window_id, ramp.as_ptr())
         })
     }
 
@@ -1088,21 +1085,36 @@ impl Frame {
     /// frame.select_cursor_image(0)?; // restore UI4's default
     /// ```
     pub fn register_cursor_image(
-        &mut self, id: u32, width: u32, height: u32,
-        hotspot_x: u32, hotspot_y: u32, rgba: &[u8],
+        &mut self,
+        id: u32,
+        width: u32,
+        height: u32,
+        hotspot_x: u32,
+        hotspot_y: u32,
+        rgba: &[u8],
     ) -> Result<(), Error> {
-        if !(1..=16).contains(&id) || !(1..=64).contains(&width)
-            || !(1..=64).contains(&height) || hotspot_x >= width || hotspot_y >= height
+        if !(1..=16).contains(&id)
+            || !(1..=64).contains(&width)
+            || !(1..=64).contains(&height)
+            || hotspot_x >= width
+            || hotspot_y >= height
             || rgba.len() != width as usize * height as usize * 4
         {
             return Err(Error::Invalid);
         }
         let image = v::bp_abi::TrueosUi4CursorImageV1 {
-            id, width, height, hotspot_x, hotspot_y,
+            id,
+            width,
+            height,
+            hotspot_x,
+            hotspot_y,
         };
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_register_cursor_image_v1(
-                self.window_id, &image, rgba.as_ptr(), rgba.len(),
+                self.window_id,
+                &image,
+                rgba.as_ptr(),
+                rgba.len(),
             )
         })
     }

@@ -9,10 +9,10 @@ use std::{
     sync::Arc,
 };
 
+use crate::logl::{self, level};
 #[cfg(target_os = "trueos")]
 use trueos::clock;
 use trueos::clock::UtcDateTime;
-use crate::logl::{self, level};
 use trueos::vgpu::{Capabilities, Device, Queue, QueueClass};
 
 use crate::{
@@ -21,13 +21,14 @@ use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
-        CreateDirectoryRequest, CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
-        DuplicateHandleRequest,
-        DiagnosticFileOpenRequest, GetExitCodeProcessRequest, GetQueuedCompletionStatusRequest, LoadImageRequest, MapCatalogEntry, OpenFileRequest, PersonalityAction, PersistDiagnosticFileRequest, SessionRequest,
-        SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowGammaRampRequest, WindowTextRequest,
+        CreateDirectoryRequest, CreateEventRequest, CreateMutexRequest, CreateProcessRequest,
+        CreateWindowRequest, DiagnosticFileOpenRequest, DuplicateHandleRequest,
+        GetExitCodeProcessRequest, GetQueuedCompletionStatusRequest, LoadImageRequest,
+        MapCatalogEntry, OpenFileRequest, PersistDiagnosticFileRequest, PersonalityAction,
+        SessionRequest, SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest,
+        WindowFillRectRequest, WindowGammaRampRequest, WindowTextRequest,
     },
-    staticstr,
-    thunk32,
+    staticstr, thunk32,
 };
 
 #[cfg(test)]
@@ -65,11 +66,8 @@ pub const DM_PELSWIDTH: u32 = 0x0008_0000;
 pub const DM_PELSHEIGHT: u32 = 0x0010_0000;
 pub const DM_DISPLAYFLAGS: u32 = 0x0020_0000;
 pub const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
-pub const TRUEOS_DISPLAY_FIELDS: u32 = DM_BITSPERPEL
-    | DM_PELSWIDTH
-    | DM_PELSHEIGHT
-    | DM_DISPLAYFLAGS
-    | DM_DISPLAYFREQUENCY;
+pub const TRUEOS_DISPLAY_FIELDS: u32 =
+    DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY;
 pub const XP_CXICON: u32 = 32;
 pub const XP_CYICON: u32 = 32;
 pub const XP_CXCURSOR: u32 = 32;
@@ -161,11 +159,15 @@ fn xp_system_message(message_id: u32) -> Option<&'static str> {
         ERROR_PATH_NOT_FOUND => Some("The system cannot find the path specified.\r\n"),
         ERROR_ACCESS_DENIED => Some("Access is denied.\r\n"),
         ERROR_INVALID_HANDLE => Some("The handle is invalid.\r\n"),
-        ERROR_NOT_ENOUGH_MEMORY => Some("Not enough storage is available to process this command.\r\n"),
+        ERROR_NOT_ENOUGH_MEMORY => {
+            Some("Not enough storage is available to process this command.\r\n")
+        }
         ERROR_NO_MORE_FILES => Some("There are no more files.\r\n"),
         ERROR_FILE_EXISTS => Some("The file exists.\r\n"),
         87 => Some("The parameter is incorrect.\r\n"),
-        ERROR_INSUFFICIENT_BUFFER => Some("The data area passed to a system call is too small.\r\n"),
+        ERROR_INSUFFICIENT_BUFFER => {
+            Some("The data area passed to a system call is too small.\r\n")
+        }
         ERROR_MOD_NOT_FOUND => Some("The specified module could not be found.\r\n"),
         127 => Some("The specified procedure could not be found.\r\n"),
         ERROR_ALREADY_EXISTS => Some("Cannot create a file when that file already exists.\r\n"),
@@ -364,12 +366,7 @@ fn xp_filetime_from_system_time(st: [u16; 8]) -> Option<u64> {
     let second = u32::from(st[6]);
     let millis = u32::from(st[7]);
 
-    if !(1601..=30827).contains(&year)
-        || hour > 23
-        || minute > 59
-        || second > 59
-        || millis > 999
-    {
+    if !(1601..=30827).contains(&year) || hour > 23 || minute > 59 || second > 59 || millis > 999 {
         return None;
     }
 
@@ -380,7 +377,11 @@ fn xp_filetime_from_system_time(st: [u16; 8]) -> Option<u64> {
 
     let mut days = 0u64;
     for current_year in 1601..year {
-        days += if xp_is_leap_year(current_year) { 366 } else { 365 };
+        days += if xp_is_leap_year(current_year) {
+            366
+        } else {
+            365
+        };
     }
     for current_month in 1..month {
         days += u64::from(xp_days_in_month(year, current_month)?);
@@ -554,14 +555,25 @@ pub trait GuestMemory {
 }
 
 /// Fetch an API argument frame in one checked transfer across the host boundary.
-pub fn read_guest_words(memory: &impl GuestMemory, address: u32, count: usize) -> Result<Vec<u32>, String> {
+pub fn read_guest_words(
+    memory: &impl GuestMemory,
+    address: u32,
+    count: usize,
+) -> Result<Vec<u32>, String> {
     let len = count.checked_mul(4).ok_or("guest frame size overflow")?;
-    if len == 0 { return Ok(Vec::new()); }
+    if len == 0 {
+        return Ok(Vec::new());
+    }
     let last = u32::try_from(len - 1).map_err(|_| "guest frame size overflow")?;
-    address.checked_add(last).ok_or("guest frame address overflow")?;
+    address
+        .checked_add(last)
+        .ok_or("guest frame address overflow")?;
     let mut bytes = vec![0; len];
     memory.read(address, &mut bytes).map_err(str::to_owned)?;
-    Ok(bytes.chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect())
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+        .collect())
 }
 
 fn read_u32(memory: &impl GuestMemory, address: u32) -> Result<u32, &'static str> {
@@ -607,7 +619,9 @@ fn arguments<const N: usize>(
     memory: &impl GuestMemory,
     esp: u32,
 ) -> Result<[u32; N], &'static str> {
-    if N == 0 { return Ok([0; N]); }
+    if N == 0 {
+        return Ok([0; N]);
+    }
     let len = N.checked_mul(4).ok_or("stack overflow")?;
     let last = u32::try_from(len - 1).map_err(|_| "stack overflow")?;
     esp.checked_add(last).ok_or("stack overflow")?;
@@ -681,16 +695,16 @@ pub fn read_c_string(
     Err("unterminated string")
 }
 
-fn read_c_bytes(
-    memory: &impl GuestMemory,
-    address: u32,
-) -> Result<Vec<u8>, ProviderDispatchError> {
+fn read_c_bytes(memory: &impl GuestMemory, address: u32) -> Result<Vec<u8>, ProviderDispatchError> {
     let mut bytes = Vec::new();
     for offset in 0..staticstr::MAX_C_STRING {
         let mut byte = [0];
         memory.read(
             address
-                .checked_add(u32::try_from(offset).map_err(|_| ProviderDispatchError::Fault("string offset"))?)
+                .checked_add(
+                    u32::try_from(offset)
+                        .map_err(|_| ProviderDispatchError::Fault("string offset"))?,
+                )
                 .ok_or(ProviderDispatchError::Fault("string overflow"))?,
             &mut byte,
         )?;
@@ -708,9 +722,13 @@ fn crt_strncpy(
     source: u32,
     count: u32,
 ) -> Result<u32, ProviderDispatchError> {
-    let count = usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("strncpy count"))?;
+    let count =
+        usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("strncpy count"))?;
     if count > staticstr::MAX_C_STRING {
-        return Err(ProviderDispatchError::Frontier { api: "strncpy", detail: "count exceeds compatibility bound".into() });
+        return Err(ProviderDispatchError::Frontier {
+            api: "strncpy",
+            detail: "count exceeds compatibility bound".into(),
+        });
     }
     let mut output = vec![0; count];
     let mut terminated = false;
@@ -718,7 +736,10 @@ fn crt_strncpy(
         if !terminated {
             memory.read(
                 source
-                    .checked_add(u32::try_from(offset).map_err(|_| ProviderDispatchError::Fault("strncpy offset"))?)
+                    .checked_add(
+                        u32::try_from(offset)
+                            .map_err(|_| ProviderDispatchError::Fault("strncpy offset"))?,
+                    )
                     .ok_or(ProviderDispatchError::Fault("strncpy source overflow"))?,
                 core::slice::from_mut(byte),
             )?;
@@ -738,12 +759,16 @@ fn crt_strncmp_bounded(
     let mut left_prefix = Vec::new();
     let mut right_prefix = Vec::new();
     for offset in 0..count {
-        let left_address = left.checked_add(offset).ok_or(ProviderDispatchError::Fault(
-            "strncmp left address overflow",
-        ))?;
-        let right_address = right.checked_add(offset).ok_or(ProviderDispatchError::Fault(
-            "strncmp right address overflow",
-        ))?;
+        let left_address = left
+            .checked_add(offset)
+            .ok_or(ProviderDispatchError::Fault(
+                "strncmp left address overflow",
+            ))?;
+        let right_address = right
+            .checked_add(offset)
+            .ok_or(ProviderDispatchError::Fault(
+                "strncmp right address overflow",
+            ))?;
         let mut a = [0u8; 1];
         let mut b = [0u8; 1];
         memory.read(left_address, &mut a)?;
@@ -766,7 +791,11 @@ fn crt_strcase(
     upper: bool,
 ) -> Result<u32, ProviderDispatchError> {
     let mut bytes = read_c_bytes(memory, string)?;
-    if upper { staticstr::upper_in_place(&mut bytes) } else { staticstr::lower_in_place(&mut bytes) };
+    if upper {
+        staticstr::upper_in_place(&mut bytes)
+    } else {
+        staticstr::lower_in_place(&mut bytes)
+    };
     memory.write(string, &bytes)?;
     Ok(string)
 }
@@ -801,7 +830,11 @@ pub fn crt_parse_decimal_i32(
         }
         _ => false,
     };
-    let limit = if negative { 0x8000_0000u64 } else { 0x7fff_ffffu64 };
+    let limit = if negative {
+        0x8000_0000u64
+    } else {
+        0x7fff_ffffu64
+    };
     let mut any = false;
     let mut magnitude = 0u64;
     let mut overflow = false;
@@ -905,7 +938,11 @@ fn crt_strtol(
     }
 
     let digits_start = at;
-    let limit = if negative { 0x8000_0000u64 } else { 0x7fff_ffffu64 };
+    let limit = if negative {
+        0x8000_0000u64
+    } else {
+        0x7fff_ffffu64
+    };
     let mut magnitude = 0u64;
     while let Some(&byte) = bytes.get(at) {
         let digit = match byte {
@@ -993,7 +1030,8 @@ fn crt_memmove(
     if count == 0 || destination == source {
         return Ok(destination);
     }
-    let length = usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("memmove count"))?;
+    let length =
+        usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("memmove count"))?;
     source
         .checked_add(count - 1)
         .ok_or(ProviderDispatchError::Fault("memmove source overflow"))?;
@@ -1120,7 +1158,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
     let mut next = || -> Result<u32, ProviderDispatchError> {
         let address = argument_index
             .checked_mul(4)
-            .and_then(|offset| esp.checked_add(12).and_then(|base| base.checked_add(offset)))
+            .and_then(|offset| {
+                esp.checked_add(12)
+                    .and_then(|base| base.checked_add(offset))
+            })
             .ok_or(ProviderDispatchError::Fault("sprintf argument overflow"))?;
         argument_index = argument_index
             .checked_add(1)
@@ -1147,7 +1188,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
         if offset == format.len() {
             return Err(ProviderDispatchError::Frontier {
                 api: "sprintf",
-                detail: format!("format={:?} offset={start} trailing percent", String::from_utf8_lossy(format)),
+                detail: format!(
+                    "format={:?} offset={start} trailing percent",
+                    String::from_utf8_lossy(format)
+                ),
             });
         }
         if format[offset] == b'%' {
@@ -1184,7 +1228,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
                 width = supplied as usize;
             }
         } else {
-            while let Some(digit) = format.get(offset).and_then(|value| (*value as char).to_digit(10)) {
+            while let Some(digit) = format
+                .get(offset)
+                .and_then(|value| (*value as char).to_digit(10))
+            {
                 offset += 1;
                 width = width
                     .checked_mul(10)
@@ -1195,7 +1242,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
         if width > CRT_SPRINTF_MAX_OUTPUT {
             return Err(ProviderDispatchError::Frontier {
                 api: "sprintf",
-                detail: format!("format={:?} offset={start} width={width} exceeds limit", String::from_utf8_lossy(format)),
+                detail: format!(
+                    "format={:?} offset={start} width={width} exceeds limit",
+                    String::from_utf8_lossy(format)
+                ),
             });
         }
 
@@ -1210,7 +1260,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
                 }
             } else {
                 let mut value = 0usize;
-                while let Some(digit) = format.get(offset).and_then(|value| (*value as char).to_digit(10)) {
+                while let Some(digit) = format
+                    .get(offset)
+                    .and_then(|value| (*value as char).to_digit(10))
+                {
                     offset += 1;
                     value = value
                         .checked_mul(10)
@@ -1222,26 +1275,38 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
             if precision.is_some_and(|value| value > CRT_SPRINTF_MAX_OUTPUT) {
                 return Err(ProviderDispatchError::Frontier {
                     api: "sprintf",
-                    detail: format!("format={:?} offset={start} precision exceeds limit", String::from_utf8_lossy(format)),
+                    detail: format!(
+                        "format={:?} offset={start} precision exceeds limit",
+                        String::from_utf8_lossy(format)
+                    ),
                 });
             }
         }
 
         if matches!(format.get(offset), Some(b'h' | b'l' | b'L' | b'I' | b'w')) {
-            while matches!(format.get(offset), Some(b'h' | b'l' | b'L' | b'I' | b'w' | b'6' | b'4')) {
+            while matches!(
+                format.get(offset),
+                Some(b'h' | b'l' | b'L' | b'I' | b'w' | b'6' | b'4')
+            ) {
                 offset += 1;
             }
             let token = String::from_utf8_lossy(&format[start..offset.min(format.len())]);
             return Err(ProviderDispatchError::Frontier {
                 api: "sprintf",
-                detail: format!("format={:?} offset={start} token={token:?} unsupported length modifier", String::from_utf8_lossy(format)),
+                detail: format!(
+                    "format={:?} offset={start} token={token:?} unsupported length modifier",
+                    String::from_utf8_lossy(format)
+                ),
             });
         }
 
         let Some(&specifier) = format.get(offset) else {
             return Err(ProviderDispatchError::Frontier {
                 api: "sprintf",
-                detail: format!("format={:?} offset={start} missing conversion", String::from_utf8_lossy(format)),
+                detail: format!(
+                    "format={:?} offset={start} missing conversion",
+                    String::from_utf8_lossy(format)
+                ),
             });
         };
         offset += 1;
@@ -1249,21 +1314,32 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
         let mut field = match specifier {
             b's' => {
                 let pointer = next()?;
-                let value = if pointer == 0 { b"(null)".to_vec() } else {
+                let value = if pointer == 0 {
+                    b"(null)".to_vec()
+                } else {
                     let value = read_c_bytes(memory, pointer)?;
                     value.strip_suffix(&[0]).unwrap_or(&value).to_vec()
                 };
-                match precision { Some(limit) => value[..value.len().min(limit)].to_vec(), None => value }
+                match precision {
+                    Some(limit) => value[..value.len().min(limit)].to_vec(),
+                    None => value,
+                }
             }
             b'c' => vec![next()? as u8],
             b'd' | b'i' => {
                 let value = next()? as i32;
                 let magnitude = value.unsigned_abs();
-                if value < 0 { prefix.push(b'-'); }
-                else if plus { prefix.push(b'+'); }
-                else if space { prefix.push(b' '); }
+                if value < 0 {
+                    prefix.push(b'-');
+                } else if plus {
+                    prefix.push(b'+');
+                } else if space {
+                    prefix.push(b' ');
+                }
                 let mut digits = magnitude.to_string().into_bytes();
-                if precision == Some(0) && magnitude == 0 { digits.clear(); }
+                if precision == Some(0) && magnitude == 0 {
+                    digits.clear();
+                }
                 if let Some(precision) = precision {
                     if digits.len() < precision {
                         let mut padded = vec![b'0'; precision - digits.len()];
@@ -1281,7 +1357,9 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
                     b'X' => format!("{value:X}").into_bytes(),
                     _ => unreachable!(),
                 };
-                if precision == Some(0) && value == 0 { digits.clear(); }
+                if precision == Some(0) && value == 0 {
+                    digits.clear();
+                }
                 if let Some(precision) = precision {
                     if digits.len() < precision {
                         let mut padded = vec![b'0'; precision - digits.len()];
@@ -1289,7 +1367,9 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
                         digits = padded;
                     }
                 }
-                if (alternate && value != 0 && matches!(specifier, b'x' | b'X')) || specifier == b'p' {
+                if (alternate && value != 0 && matches!(specifier, b'x' | b'X'))
+                    || specifier == b'p'
+                {
                     prefix.extend_from_slice(if specifier == b'X' { b"0X" } else { b"0x" });
                 }
                 digits
@@ -1298,7 +1378,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
                 let token = String::from_utf8_lossy(&format[start..offset]);
                 return Err(ProviderDispatchError::Frontier {
                     api: "sprintf",
-                    detail: format!("format={:?} offset={start} token={token:?} unsupported conversion", String::from_utf8_lossy(format)),
+                    detail: format!(
+                        "format={:?} offset={start} token={token:?} unsupported conversion",
+                        String::from_utf8_lossy(format)
+                    ),
                 });
             }
         };
@@ -1306,7 +1389,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
         // For numeric fields, zero padding goes after the sign/prefix.  A
         // precision or left justification suppresses the zero flag.
         let numeric = matches!(specifier, b'd' | b'i' | b'u' | b'x' | b'X' | b'p');
-        let field_len = prefix.len().checked_add(field.len()).ok_or(ProviderDispatchError::Fault("sprintf field length"))?;
+        let field_len = prefix
+            .len()
+            .checked_add(field.len())
+            .ok_or(ProviderDispatchError::Fault("sprintf field length"))?;
         if width > field_len {
             let padding = width - field_len;
             if !left_justify && zero_pad && precision.is_none() && numeric {
@@ -1332,7 +1418,10 @@ fn crt_sprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderD
     memory.write(output, &rendered)?;
     memory.write(
         output
-            .checked_add(u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("sprintf length"))?)
+            .checked_add(
+                u32::try_from(rendered.len())
+                    .map_err(|_| ProviderDispatchError::Fault("sprintf length"))?,
+            )
             .ok_or(ProviderDispatchError::Fault("sprintf output overflow"))?,
         &[0],
     )?;
@@ -1785,22 +1874,22 @@ fn pack_mouse_coordinates(x: i32, y: i32) -> u32 {
 
 fn ui4_virtual_key(key_code: u16) -> Option<u32> {
     Some(match key_code {
-        1 => 0x08, // VK_BACK
-        2 => 0x09, // VK_TAB
-        3 => 0x0d, // VK_RETURN
-        4 => 0x1b, // VK_ESCAPE
-        5 => 0x20, // VK_SPACE
-        6 => 0x2e, // VK_DELETE
-        7 => 0x2d, // VK_INSERT
-        8 => 0x24, // VK_HOME
-        9 => 0x23, // VK_END
-        10 => 0x21, // VK_PRIOR
-        11 => 0x22, // VK_NEXT
-        12 => 0x26, // VK_UP
-        13 => 0x28, // VK_DOWN
-        14 => 0x25, // VK_LEFT
-        15 => 0x27, // VK_RIGHT
-        16 => 0x5b, // VK_LWIN / TRUEOS start key
+        1 => 0x08,                                     // VK_BACK
+        2 => 0x09,                                     // VK_TAB
+        3 => 0x0d,                                     // VK_RETURN
+        4 => 0x1b,                                     // VK_ESCAPE
+        5 => 0x20,                                     // VK_SPACE
+        6 => 0x2e,                                     // VK_DELETE
+        7 => 0x2d,                                     // VK_INSERT
+        8 => 0x24,                                     // VK_HOME
+        9 => 0x23,                                     // VK_END
+        10 => 0x21,                                    // VK_PRIOR
+        11 => 0x22,                                    // VK_NEXT
+        12 => 0x26,                                    // VK_UP
+        13 => 0x28,                                    // VK_DOWN
+        14 => 0x25,                                    // VK_LEFT
+        15 => 0x27,                                    // VK_RIGHT
+        16 => 0x5b,                                    // VK_LWIN / TRUEOS start key
         101..=112 => 0x70 + u32::from(key_code - 101), // VK_F1..VK_F12
         _ => return None,
     })
@@ -1917,7 +2006,10 @@ fn war3_trueos_path(path: &str) -> Option<String> {
     {
         return None;
     }
-    Some(format!("/common/Warcraft III/{}", relative.replace('\\', "/")))
+    Some(format!(
+        "/common/Warcraft III/{}",
+        relative.replace('\\', "/")
+    ))
 }
 
 /// Directories within the mounted Warcraft tree may be created by the guest;
@@ -2286,12 +2378,7 @@ impl XpProcess {
     /// Compatibility for the deprecated `IsBadWritePtr` probe. Preserve the
     /// guest bytes while checking both endpoints so an invalid mapping or
     /// write-protected page becomes its documented nonzero result.
-    fn is_bad_write_ptr(
-        &self,
-        pointer: u32,
-        bytes: u32,
-        memory: &mut impl GuestMemory,
-    ) -> u32 {
+    fn is_bad_write_ptr(&self, pointer: u32, bytes: u32, memory: &mut impl GuestMemory) -> u32 {
         if bytes == 0 {
             return 0;
         }
@@ -2309,10 +2396,25 @@ impl XpProcess {
 
     /// Explicit diagnostic notification, consumed by the normal guest message pump.
     /// Queuing is not synchronous SendMessage and does not force thread wakeups.
-    pub fn debug_post_window_message(&mut self, hwnd: u32, message: u32, wparam: u32, lparam: u32) -> Result<(), &'static str> {
-        if self.messages.len() >= 64 { return Err("diagnostic message queue limit reached"); }
-        self.messages.push_back(Message { hwnd, message, wparam, lparam,
-            time: monotonic_counter_millis(), x: 0, y: 0 });
+    pub fn debug_post_window_message(
+        &mut self,
+        hwnd: u32,
+        message: u32,
+        wparam: u32,
+        lparam: u32,
+    ) -> Result<(), &'static str> {
+        if self.messages.len() >= 64 {
+            return Err("diagnostic message queue limit reached");
+        }
+        self.messages.push_back(Message {
+            hwnd,
+            message,
+            wparam,
+            lparam,
+            time: monotonic_counter_millis(),
+            x: 0,
+            y: 0,
+        });
         Ok(())
     }
 
@@ -2374,9 +2476,8 @@ impl XpProcess {
         let screen_y = screen_y.min(i32::MAX as u32) as i32;
         self.set_cursor_position(screen_x, screen_y);
 
-        let button_state = (buttons_down & 0x1)
-            | ((buttons_down & 0x2) >> 0)
-            | ((buttons_down & 0x4) << 2);
+        let button_state =
+            (buttons_down & 0x1) | ((buttons_down & 0x2) >> 0) | ((buttons_down & 0x4) << 2);
         let local_lparam = pack_mouse_coordinates(local_x, local_y);
         let time = monotonic_counter_millis();
 
@@ -3337,11 +3438,17 @@ impl XpProcess {
         used_bytes: u32,
         required_bytes: u32,
     ) -> Result<Option<CrtResize>, &'static str> {
-        let capacity = self.crt_allocation_capacity(pointer).ok_or("untracked CRT callback table")?;
+        let capacity = self
+            .crt_allocation_capacity(pointer)
+            .ok_or("untracked CRT callback table")?;
         if used_bytes > capacity || required_bytes <= capacity || required_bytes < used_bytes {
             return Err("invalid CRT callback table growth");
         }
-        let reserve = capacity.checked_mul(2).unwrap_or(required_bytes).max(64).max(required_bytes);
+        let reserve = capacity
+            .checked_mul(2)
+            .unwrap_or(required_bytes)
+            .max(64)
+            .max(required_bytes);
         if let Some(allocation) = self.crt_resize(pointer, used_bytes, reserve)? {
             return Ok(Some(allocation));
         }
@@ -3484,24 +3591,22 @@ impl XpProcess {
                     )?
                 }
             }
-            OPEN_EXISTING => {
-                match existing {
-                    Some(id) => id,
-                    None => {
-                        let Some(bytes) = existing_bytes else {
-                            self.set_last_error(ERROR_FILE_NOT_FOUND);
-                            return Ok((u32::MAX, false, 0));
-                        };
-                        self.set_last_error(0);
-                        self.create_diagnostic_scratch_file(
-                            canonical,
-                            request.flags_and_attributes,
-                            request.trueos_path.clone(),
-                            bytes,
-                        )?
-                    }
+            OPEN_EXISTING => match existing {
+                Some(id) => id,
+                None => {
+                    let Some(bytes) = existing_bytes else {
+                        self.set_last_error(ERROR_FILE_NOT_FOUND);
+                        return Ok((u32::MAX, false, 0));
+                    };
+                    self.set_last_error(0);
+                    self.create_diagnostic_scratch_file(
+                        canonical,
+                        request.flags_and_attributes,
+                        request.trueos_path.clone(),
+                        bytes,
+                    )?
                 }
-            }
+            },
             OPEN_ALWAYS => {
                 if let Some(id) = existing {
                     self.set_last_error(ERROR_ALREADY_EXISTS);
@@ -3862,12 +3967,7 @@ impl XpProcess {
                 return Ok(0);
             }
             write_fixed_ansi(&mut record, 0x04, 32, r"\\.\DISPLAY1");
-            write_fixed_ansi(
-                &mut record,
-                0x24,
-                128,
-                TRUEOS_DISPLAY_ADAPTER_DESCRIPTION,
-            );
+            write_fixed_ansi(&mut record, 0x24, 128, TRUEOS_DISPLAY_ADAPTER_DESCRIPTION);
             record[0xa4..0xa8].copy_from_slice(
                 &(DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE).to_le_bytes(),
             );
@@ -4004,7 +4104,6 @@ impl XpProcess {
         self.d3d8_ref_count -= 1;
         Ok(self.d3d8_ref_count)
     }
-
 }
 
 include!("process_provider_dispatch.rs");
@@ -4019,7 +4118,6 @@ include!("staticgl_arrays.rs");
 include!("staticgl_compat_draw.rs");
 include!("staticgl_gpu_draw.rs");
 include!("staticgl_fixed_gpu.rs");
-
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BitmapDiagnostic {
@@ -4263,7 +4361,9 @@ fn resource_directory_entry(
 ) -> Result<u32, &'static str> {
     let named = u32::from(read_u16(memory, directory + 12)?);
     let ids = u32::from(read_u16(memory, directory + 14)?);
-    let entries = directory.checked_add(16).ok_or("resource entries overflow")?;
+    let entries = directory
+        .checked_add(16)
+        .ok_or("resource entries overflow")?;
     let count = match wanted {
         ResourceKey::Id(_) => ids,
         ResourceKey::Name(_) => named,
@@ -4274,7 +4374,11 @@ fn resource_directory_entry(
     };
     for index in 0..count {
         let entry = entries
-            .checked_add((start + index).checked_mul(8).ok_or("resource entry overflow")?)
+            .checked_add(
+                (start + index)
+                    .checked_mul(8)
+                    .ok_or("resource entry overflow")?,
+            )
             .ok_or("resource entry overflow")?;
         let key = read_u32(memory, entry)?;
         let matches = match wanted {
@@ -4283,7 +4387,9 @@ fn resource_directory_entry(
                 if key & 0x8000_0000 == 0 {
                     false
                 } else {
-                    let address = root.checked_add(key & 0x7fff_ffff).ok_or("resource name overflow")?;
+                    let address = root
+                        .checked_add(key & 0x7fff_ffff)
+                        .ok_or("resource name overflow")?;
                     let length = usize::from(read_u16(memory, address)?);
                     let mut units = Vec::with_capacity(length);
                     for offset in 0..length {
@@ -4303,7 +4409,9 @@ fn resource_directory_entry(
         if child & 0x8000_0000 == 0 {
             return Err("resource entry is not a directory");
         }
-        return root.checked_add(child & 0x7fff_ffff).ok_or("resource directory overflow");
+        return root
+            .checked_add(child & 0x7fff_ffff)
+            .ok_or("resource directory overflow");
     }
     Err("resource key not found")
 }
@@ -4387,11 +4495,12 @@ fn message_table_text(
     let root = module_base
         .checked_add(root_rva)
         .ok_or(MessageTableLookup::Fault("message table root"))?;
-    let type_directory = match resource_directory_entry(memory, root, root, ResourceKey::Id(RT_MESSAGETABLE)) {
-        Ok(directory) => directory,
-        Err("resource id not found") => return Err(MessageTableLookup::TypeMissing),
-        Err(error) => return Err(MessageTableLookup::Fault(error)),
-    };
+    let type_directory =
+        match resource_directory_entry(memory, root, root, ResourceKey::Id(RT_MESSAGETABLE)) {
+            Ok(directory) => directory,
+            Err("resource id not found") => return Err(MessageTableLookup::TypeMissing),
+            Err(error) => return Err(MessageTableLookup::Fault(error)),
+        };
     let named =
         u32::from(read_u16(memory, type_directory + 12).map_err(MessageTableLookup::Fault)?);
     let ids = u32::from(read_u16(memory, type_directory + 14).map_err(MessageTableLookup::Fault)?);

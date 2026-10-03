@@ -110,4 +110,3 @@ fn read_ansi_string(memory: &impl GuestMemory, address: u32) -> Result<String, S
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
-

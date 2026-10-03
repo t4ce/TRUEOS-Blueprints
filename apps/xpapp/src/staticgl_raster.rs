@@ -962,7 +962,8 @@ impl Frame {
         triangles: Vec<[ClipVertex; 3]>,
     ) -> Result<usize, trueos::worker::SpawnError> {
         let copy_started = std::time::Instant::now();
-        self.timing.texture_bytes = texture.map_or(0, |t| t.levels.iter().map(|l| l.rgba.len() as u64).sum());
+        self.timing.texture_bytes =
+            texture.map_or(0, |t| t.levels.iter().map(|l| l.rgba.len() as u64).sum());
         self.timing.framebuffer_bytes = u64::from(self.width) * u64::from(self.height) * 8 * 2;
         let triangles: std::sync::Arc<[[ClipVertex; 3]]> = triangles.into();
         let texture = texture.map(OwnedTexture::copy_of).map(std::sync::Arc::new);
@@ -1935,18 +1936,27 @@ mod tests {
         let mut prepared = Frame::new(8, 8).unwrap();
         let rgba = prepared.rgba.clone();
         let depth = prepared.depth.clone();
-        let expected = reference.draw_indexed(&state(), None, &vertices, &[0, 1, 2]).unwrap();
-        let stats = prepared.prepare_indexed(&state(), None, &vertices, &[0, 1, 2]).unwrap();
+        let expected = reference
+            .draw_indexed(&state(), None, &vertices, &[0, 1, 2])
+            .unwrap();
+        let stats = prepared
+            .prepare_indexed(&state(), None, &vertices, &[0, 1, 2])
+            .unwrap();
         assert_eq!(stats.clipped_triangles, expected.clipped_triangles);
         assert_eq!(prepared.rgba, rgba);
         assert_eq!(prepared.depth, depth);
         let triangles = prepared.prepared_triangles().to_vec();
-        let pixels: usize = triangles.into_iter()
-            .map(|tri| prepared.draw_triangle(&state(), None, tri)).sum();
+        let pixels: usize = triangles
+            .into_iter()
+            .map(|tri| prepared.draw_triangle(&state(), None, tri))
+            .sum();
         assert_eq!(pixels as u64, expected.shaded_pixels);
         assert_eq!(prepared.rgba, reference.rgba);
         assert_eq!(prepared.depth, reference.depth);
-        assert_eq!(prepared.prepare_indexed(&state(), None, &vertices, &[0, 1, 9]), Err(RasterError::BadIndex));
+        assert_eq!(
+            prepared.prepare_indexed(&state(), None, &vertices, &[0, 1, 9]),
+            Err(RasterError::BadIndex)
+        );
         assert!(prepared.prepared_triangles().is_empty());
     }
 

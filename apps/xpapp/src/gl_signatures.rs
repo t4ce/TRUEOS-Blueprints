@@ -50,7 +50,9 @@ macro_rules! sig {
     };
 }
 
-use GlArgKind::{Boolean as B, CString as S, Enum as E, Float as F, Int as I, Pointer as P, Uint as U};
+use GlArgKind::{
+    Boolean as B, CString as S, Enum as E, Float as F, Int as I, Pointer as P, Uint as U,
+};
 
 pub const GL_SIGNATURES: &[GlSignature] = &[
     sig!("wglMakeCurrent", Frontier, ["hdc": P, "hglrc": P]),
@@ -186,7 +188,12 @@ fn append_floats(
         if index != 0 {
             description.push_str(", ");
         }
-        write!(description, "{}", f32::from_le_bytes(word.try_into().unwrap())).unwrap();
+        write!(
+            description,
+            "{}",
+            f32::from_le_bytes(word.try_into().unwrap())
+        )
+        .unwrap();
     }
     description.push(']');
     Ok(())

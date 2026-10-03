@@ -11,7 +11,9 @@ use view::{Alignment, View, contained_extent};
 
 use alloc::{format, string::String, vec, vec::Vec};
 use trueos::logl::{self, level};
-use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, SpriteCorner, SpriteQuad, output_dimensions, rgba};
+use trueos::ui4_scene::{
+    Damage, Error as Ui4Error, Frame, SpriteCorner, SpriteQuad, output_dimensions, rgba,
+};
 use trueos::{async_fs, image_source, input, replication, vmedia, vsys};
 
 const MAX_SOURCE_PIXELS: usize = 64 * 1024 * 1024;
@@ -611,7 +613,10 @@ fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error>
                 }
                 pixel[3] = 255;
             }
-            if frame.upload_sprite_rgba8(1, image.width, image.height, &opaque).is_err() {
+            if frame
+                .upload_sprite_rgba8(1, image.width, image.height, &opaque)
+                .is_err()
+            {
                 return present_cpu(frame, view, image);
             }
             image.uploaded_window.set(frame.window_id());
@@ -625,11 +630,32 @@ fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error>
         frame.begin_gpu_frame()?;
         frame.draw_sprite_quads(&[SpriteQuad {
             sprite_id: 1,
-            c0: SpriteCorner { x: 0.0, y: 0.0, u: u0, v: v0 },
-            c1: SpriteCorner { x: w, y: 0.0, u: u1, v: v0 },
-            c2: SpriteCorner { x: w, y: h, u: u1, v: v1 },
-            c3: SpriteCorner { x: 0.0, y: h, u: u0, v: v1 },
-            color_rgba: rgba(255,255,255,255), source_over: false,
+            c0: SpriteCorner {
+                x: 0.0,
+                y: 0.0,
+                u: u0,
+                v: v0,
+            },
+            c1: SpriteCorner {
+                x: w,
+                y: 0.0,
+                u: u1,
+                v: v0,
+            },
+            c2: SpriteCorner {
+                x: w,
+                y: h,
+                u: u1,
+                v: v1,
+            },
+            c3: SpriteCorner {
+                x: 0.0,
+                y: h,
+                u: u0,
+                v: v1,
+            },
+            color_rgba: rgba(255, 255, 255, 255),
+            source_over: false,
         }])?;
         return frame.publish(Damage::full(frame.width(), frame.height()));
     }

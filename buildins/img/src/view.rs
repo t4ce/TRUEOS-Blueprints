@@ -66,7 +66,8 @@ impl View {
         let x = (-self.offset_x) as u32;
         let y = (-self.offset_y) as u32;
         (x.checked_add(self.viewport_width)? <= self.image_width
-            && y.checked_add(self.viewport_height)? <= self.image_height).then_some((x,y))
+            && y.checked_add(self.viewport_height)? <= self.image_height)
+            .then_some((x, y))
     }
 
     pub(super) fn pan(&mut self, dx: i32, dy: i32) {
@@ -187,21 +188,21 @@ mod tests {
 
     #[test]
     fn native_4k_pan_is_a_full_viewport_crop() {
-        let mut view = View::new(2560,1440,3840,2160,Alignment::Center);
-        assert_eq!(view.native_full_crop(),Some((640,360)));
-        view.pan(100,-50);
-        assert_eq!(view.native_full_crop(),Some((540,410)));
-        view.pan(i32::MAX,i32::MAX);
-        assert_eq!(view.native_full_crop(),Some((0,0)));
-        view.pan(i32::MIN,i32::MIN);
-        assert_eq!(view.native_full_crop(),Some((1280,720)));
+        let mut view = View::new(2560, 1440, 3840, 2160, Alignment::Center);
+        assert_eq!(view.native_full_crop(), Some((640, 360)));
+        view.pan(100, -50);
+        assert_eq!(view.native_full_crop(), Some((540, 410)));
+        view.pan(i32::MAX, i32::MAX);
+        assert_eq!(view.native_full_crop(), Some((0, 0)));
+        view.pan(i32::MIN, i32::MIN);
+        assert_eq!(view.native_full_crop(), Some((1280, 720)));
         view.letterbox = true;
-        assert_eq!(view.native_full_crop(),None);
+        assert_eq!(view.native_full_crop(), None);
         view.letterbox = false;
         view.scale = 2.0;
-        assert_eq!(view.native_full_crop(),None);
-        let small = View::new(2560,1440,800,600,Alignment::Center);
-        assert_eq!(small.native_full_crop(),None);
+        assert_eq!(view.native_full_crop(), None);
+        let small = View::new(2560, 1440, 800, 600, Alignment::Center);
+        assert_eq!(small.native_full_crop(), None);
     }
 
     #[test]

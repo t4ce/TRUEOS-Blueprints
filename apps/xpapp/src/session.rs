@@ -8,8 +8,8 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::ThisToThat;
 use crate::process::{
-    CURRENT_PROCESS_PSEUDO_HANDLE, CURRENT_THREAD_PSEUDO_HANDLE, CreateProcessAFrame,
-    ThreadObject, XpProcess,
+    CURRENT_PROCESS_PSEUDO_HANDLE, CURRENT_THREAD_PSEUDO_HANDLE, CreateProcessAFrame, ThreadObject,
+    XpProcess,
 };
 
 pub type Pid = u32;
@@ -296,8 +296,8 @@ impl RegistryImage {
                     unquote(name)?
                 };
                 if let Some(hex) = data.strip_prefix("dword:") {
-                    let value = u32::from_str_radix(hex.trim(), 16)
-                        .map_err(|_| "registry dword")?;
+                    let value =
+                        u32::from_str_radix(hex.trim(), 16).map_err(|_| "registry dword")?;
                     values.insert(
                         canonical(&name),
                         RegistryValue {
@@ -914,7 +914,12 @@ pub enum SessionRequest {
         hwnd: u32,
         output: u32,
     },
-    SetWindowLongA { pid: Pid, hwnd: u32, index: i32, value: u32 },
+    SetWindowLongA {
+        pid: Pid,
+        hwnd: u32,
+        index: i32,
+        value: u32,
+    },
     GetWindowLongA {
         pid: Pid,
         hwnd: u32,
@@ -1254,7 +1259,8 @@ impl XpappSession {
         }
         let source_pid = self.resolve_process_handle(request.caller.pid, request.source_process)?;
         let target_pid = self.resolve_process_handle(request.caller.pid, request.target_process)?;
-        let object = self.duplicate_source_object(request.caller, source_pid, request.source_handle)?;
+        let object =
+            self.duplicate_source_object(request.caller, source_pid, request.source_handle)?;
         let handle = match self.objects.get(&object) {
             Some(SessionObject::Thread(_)) => {
                 let handle = self.next_thread_handle;
@@ -1274,16 +1280,13 @@ impl XpappSession {
             Some(SessionObject::IoCompletionPort(_)) => return Err(6),
             None => return Err(6),
         };
-        self.process_mut(target_pid)
-            .ok_or(6u32)?
-            .handles
-            .insert(
-                handle,
-                HandleEntry {
-                    object,
-                    inheritable: request.inherit,
-                },
-            );
+        self.process_mut(target_pid).ok_or(6u32)?.handles.insert(
+            handle,
+            HandleEntry {
+                object,
+                inheritable: request.inherit,
+            },
+        );
         Ok(DuplicateHandleResult {
             handle,
             object,
@@ -1312,16 +1315,13 @@ impl XpappSession {
         );
         let handle = self.next_event_handle;
         self.next_event_handle = handle.checked_add(1).ok_or(6u32)?;
-        self.process_mut(caller.pid)
-            .ok_or(6u32)?
-            .handles
-            .insert(
-                handle,
-                HandleEntry {
-                    object,
-                    inheritable: false,
-                },
-            );
+        self.process_mut(caller.pid).ok_or(6u32)?.handles.insert(
+            handle,
+            HandleEntry {
+                object,
+                inheritable: false,
+            },
+        );
         Ok((handle, object))
     }
 
@@ -1353,10 +1353,14 @@ impl XpappSession {
     ) -> Result<(ThreadKey, i32, u8), u32> {
         let base = normal_class_base_priority(priority).ok_or(87u32)?;
         let target = self.resolve_thread_key(caller, handle)?;
-        let thread = self.objects.values_mut().find_map(|object| match object {
-            SessionObject::Thread(thread) if thread.key == target => Some(thread),
-            _ => None,
-        }).ok_or(6u32)?;
+        let thread = self
+            .objects
+            .values_mut()
+            .find_map(|object| match object {
+                SessionObject::Thread(thread) if thread.key == target => Some(thread),
+                _ => None,
+            })
+            .ok_or(6u32)?;
         let old = thread.priority_level;
         thread.priority_level = priority;
         Ok((target, old, base))
@@ -1368,10 +1372,14 @@ impl XpappSession {
         handle: u32,
     ) -> Result<(ThreadKey, i32, u8), u32> {
         let target = self.resolve_thread_key(caller, handle)?;
-        let thread = self.objects.values().find_map(|object| match object {
-            SessionObject::Thread(thread) if thread.key == target => Some(thread),
-            _ => None,
-        }).ok_or(6u32)?;
+        let thread = self
+            .objects
+            .values()
+            .find_map(|object| match object {
+                SessionObject::Thread(thread) if thread.key == target => Some(thread),
+                _ => None,
+            })
+            .ok_or(6u32)?;
         let level = thread.priority_level;
         let base = normal_class_base_priority(level).ok_or(87u32)?;
         Ok((target, level, base))
@@ -1381,8 +1389,15 @@ impl XpappSession {
         self.blocked.insert(request.key, request);
     }
 
-    pub fn block_critical_section(&mut self, wait: CriticalSectionWait) -> Result<(), &'static str> {
-        if self.critical_waiters.iter().any(|entry| entry.key == wait.key) {
+    pub fn block_critical_section(
+        &mut self,
+        wait: CriticalSectionWait,
+    ) -> Result<(), &'static str> {
+        if self
+            .critical_waiters
+            .iter()
+            .any(|entry| entry.key == wait.key)
+        {
             return Err("thread already blocked on a critical section");
         }
         self.critical_waiters.push_back(wait);
@@ -1601,7 +1616,10 @@ impl XpappSession {
             return Ok([0, 0, right, bottom]);
         }
 
-        let window = self.windows.get(&hwnd).ok_or("GetWindowRect unknown window")?;
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("GetWindowRect unknown window")?;
         let right = i64::from(window.x)
             .checked_add(i64::from(window.width))
             .and_then(|value| i32::try_from(value).ok())
@@ -1627,7 +1645,10 @@ impl XpappSession {
                 i32::try_from(height).map_err(|_| "GetClientRect desktop height overflow")?,
             ]);
         }
-        let window = self.windows.get(&hwnd).ok_or("GetClientRect unknown window")?;
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("GetClientRect unknown window")?;
         if window.owner.pid != pid {
             return Err("GetClientRect window owner mismatch");
         }
@@ -1640,19 +1661,27 @@ impl XpappSession {
     }
 
     /// The guest, rather than CreateWindowEx's host shim, owns GWL_USERDATA.
-    pub fn set_window_long_a(&mut self, pid: Pid, hwnd: u32, index: i32, value: u32) -> Result<u32, &'static str> {
-        let window = self.windows.get_mut(&hwnd).ok_or("SetWindowLongA unknown window")?;
-        if window.owner.pid != pid { return Err("SetWindowLongA window owner mismatch"); }
-        if index != -21 { return Err("SetWindowLongA unobserved index"); }
-        Ok(core::mem::replace(&mut window.user_data, value))
-    }
-
-    pub fn get_window_long_a(
-        &self,
+    pub fn set_window_long_a(
+        &mut self,
         pid: Pid,
         hwnd: u32,
         index: i32,
+        value: u32,
     ) -> Result<u32, &'static str> {
+        let window = self
+            .windows
+            .get_mut(&hwnd)
+            .ok_or("SetWindowLongA unknown window")?;
+        if window.owner.pid != pid {
+            return Err("SetWindowLongA window owner mismatch");
+        }
+        if index != -21 {
+            return Err("SetWindowLongA unobserved index");
+        }
+        Ok(core::mem::replace(&mut window.user_data, value))
+    }
+
+    pub fn get_window_long_a(&self, pid: Pid, hwnd: u32, index: i32) -> Result<u32, &'static str> {
         const GWL_WNDPROC: i32 = -4;
         const GWL_HINSTANCE: i32 = -6;
         const GWL_HWNDPARENT: i32 = -8;
@@ -1825,7 +1854,10 @@ impl XpappSession {
 
     pub fn release_capture(&mut self, pid: Pid) -> Result<u32, &'static str> {
         let hwnd = self.mouse_capture.ok_or("ReleaseCapture no capture")?;
-        let window = self.windows.get(&hwnd).ok_or("ReleaseCapture captured window missing")?;
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("ReleaseCapture captured window missing")?;
         if window.owner.pid != pid {
             return Err("ReleaseCapture window owner mismatch");
         }
@@ -1840,7 +1872,10 @@ impl XpappSession {
         x: i32,
         y: i32,
     ) -> Result<(i32, i32), &'static str> {
-        let window = self.windows.get(&hwnd).ok_or("ScreenToClient unknown window")?;
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("ScreenToClient unknown window")?;
         if window.owner.pid != pid {
             return Err("ScreenToClient window owner mismatch");
         }
@@ -1854,7 +1889,10 @@ impl XpappSession {
         x: i32,
         y: i32,
     ) -> Result<(i32, i32), &'static str> {
-        let window = self.windows.get(&hwnd).ok_or("ClientToScreen unknown window")?;
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("ClientToScreen unknown window")?;
         if window.owner.pid != pid {
             return Err("ClientToScreen window owner mismatch");
         }
@@ -1874,7 +1912,10 @@ impl XpappSession {
         wheel: i16,
     ) -> Result<(), &'static str> {
         let target = self.mouse_capture.unwrap_or(hwnd);
-        let window = self.windows.get(&target).ok_or("UI4 pointer unknown window")?;
+        let window = self
+            .windows
+            .get(&target)
+            .ok_or("UI4 pointer unknown window")?;
         let owner = window.owner;
         let target_x = window.x;
         let target_y = window.y;
@@ -1906,7 +1947,11 @@ impl XpappSession {
         y: i32,
     ) -> Result<(), &'static str> {
         let target = self.mouse_capture.unwrap_or(hwnd);
-        let owner = self.windows.get(&target).ok_or("UI4 cursor unknown window")?.owner;
+        let owner = self
+            .windows
+            .get(&target)
+            .ok_or("UI4 cursor unknown window")?
+            .owner;
         self.processes
             .get_mut(&owner.pid)
             .ok_or("UI4 cursor owner process missing")?
@@ -1955,7 +2000,11 @@ impl XpappSession {
         pressed: bool,
         time: u32,
     ) -> Result<(), &'static str> {
-        let owner = self.windows.get(&hwnd).ok_or("UI4 key unknown window")?.owner;
+        let owner = self
+            .windows
+            .get(&hwnd)
+            .ok_or("UI4 key unknown window")?
+            .owner;
         self.focused_window = Some(hwnd);
         self.foreground_window = Some(hwnd);
         self.active_windows.insert(owner, hwnd);
@@ -1974,7 +2023,11 @@ impl XpappSession {
         pressed: bool,
         time: u32,
     ) -> Result<(), &'static str> {
-        let owner = self.windows.get(&hwnd).ok_or("UI4 text unknown window")?.owner;
+        let owner = self
+            .windows
+            .get(&hwnd)
+            .ok_or("UI4 text unknown window")?
+            .owner;
         self.focused_window = Some(hwnd);
         self.foreground_window = Some(hwnd);
         self.active_windows.insert(owner, hwnd);
@@ -2008,11 +2061,7 @@ impl XpappSession {
         Ok((previous, owner))
     }
 
-    pub fn set_active_window(
-        &mut self,
-        caller: ThreadKey,
-        hwnd: u32,
-    ) -> Result<u32, &'static str> {
+    pub fn set_active_window(&mut self, caller: ThreadKey, hwnd: u32) -> Result<u32, &'static str> {
         let previous = self.active_windows.get(&caller).copied().unwrap_or(0);
         let window = self
             .windows
@@ -2157,13 +2206,16 @@ impl XpappSession {
                 priority_level: 0,
             }),
         );
-        self.process_mut(pid).expect("validated child process").handles.insert(
-            handle,
-            HandleEntry {
-                object,
-                inheritable: false,
-            },
-        );
+        self.process_mut(pid)
+            .expect("validated child process")
+            .handles
+            .insert(
+                handle,
+                HandleEntry {
+                    object,
+                    inheritable: false,
+                },
+            );
         Ok((key, handle))
     }
 
@@ -2707,8 +2759,15 @@ mod child_thread_tests {
         assert_eq!(key.pid, child.pid);
         assert_ne!(key.tid, child.tid);
         assert!(!session.runnable.contains(&key));
-        let entry = session.process(child.pid).unwrap().handles.get(&handle).unwrap();
-        assert!(matches!(session.objects.get(&entry.object), Some(SessionObject::Thread(thread)) if thread.key == key && thread.exit_code.is_none()));
+        let entry = session
+            .process(child.pid)
+            .unwrap()
+            .handles
+            .get(&handle)
+            .unwrap();
+        assert!(
+            matches!(session.objects.get(&entry.object), Some(SessionObject::Thread(thread)) if thread.key == key && thread.exit_code.is_none())
+        );
         session.enqueue(key);
         assert!(session.runnable.contains(&key));
         session.signal_thread(key, 7).unwrap();
@@ -2732,7 +2791,10 @@ mod child_thread_tests {
                 })
                 .unwrap();
         }
-        assert_eq!(session.take_critical_waiter(child.pid, 0x1234).unwrap().key, first);
+        assert_eq!(
+            session.take_critical_waiter(child.pid, 0x1234).unwrap().key,
+            first
+        );
         session.signal_thread(second, 0).unwrap();
         assert!(session.take_critical_waiter(child.pid, 0x1234).is_none());
     }
@@ -2748,7 +2810,10 @@ mod child_thread_tests {
             .xp
             .set_last_error_for_thread(other.tid, 42);
         let wait = WaitRequest {
-            key: ThreadKey { pid: child.pid, tid: child.tid },
+            key: ThreadKey {
+                pid: child.pid,
+                tid: child.tid,
+            },
             return_address: 0,
             count: 1,
             handles_pointer: 0,

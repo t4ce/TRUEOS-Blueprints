@@ -75,8 +75,8 @@ fn base_state(extent: [u32; 2]) -> [f32; 384] {
     s[108..112].copy_from_slice(&[1., 1., 0., 0.]);
     s[112..116].copy_from_slice(&[0., 1., 0., 0.]);
     s[116..120].copy_from_slice(&[0., 0., extent[0] as f32, extent[1] as f32]);
-    s[353..355].copy_from_slice(&[1.,17.]);
-    s[356..358].copy_from_slice(&[1.,17.]);
+    s[353..355].copy_from_slice(&[1., 17.]);
+    s[356..358].copy_from_slice(&[1., 17.]);
     s[360] = 1.;
     s
 }
@@ -250,7 +250,7 @@ pub(crate) fn clear(
     ] {
         let mut v = [0.; 16];
         v[..4].copy_from_slice(&[x(px), y(py), depth.unwrap_or(1.) * 2. - 1., 1.]);
-        v[8..12].copy_from_slice(&color.unwrap_or([0;4]).map(|c|c as f32/255.));
+        v[8..12].copy_from_slice(&color.unwrap_or([0; 4]).map(|c| c as f32 / 255.));
         v[15] = 1.;
         vertices.push(v);
     }

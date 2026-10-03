@@ -30,7 +30,14 @@ struct Measured<T> {
 impl<T> Measured<T> {
     fn new(value: T) -> Self {
         let now = Instant::now();
-        Self { value, submitted: now, first: None, finished: now, active: Duration::ZERO, steps: 0 }
+        Self {
+            value,
+            submitted: now,
+            first: None,
+            finished: now,
+            active: Duration::ZERO,
+            steps: 0,
+        }
     }
 }
 
@@ -90,7 +97,10 @@ where
         let accepted = job.first.unwrap_or(job.finished);
         timing.queue[index] = accepted.saturating_duration_since(job.submitted);
         timing.active[index] = job.active;
-        timing.gaps[index] = job.finished.saturating_duration_since(accepted).saturating_sub(job.active);
+        timing.gaps[index] = job
+            .finished
+            .saturating_duration_since(accepted)
+            .saturating_sub(job.active);
         timing.steps[index] = job.steps;
     }
     Ok((first.value, second.value, timing))
@@ -133,7 +143,10 @@ where
             more
         }) {
             Ok(handle) => return Ok(handle),
-            Err(SpawnError::Unavailable) => { *retries += 1; yield_executor(); },
+            Err(SpawnError::Unavailable) => {
+                *retries += 1;
+                yield_executor();
+            }
             Err(error) => return Err(error),
         }
     }

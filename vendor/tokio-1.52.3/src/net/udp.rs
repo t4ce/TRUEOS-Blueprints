@@ -166,7 +166,7 @@ impl UdpSocket {
         }))
     }
 
-    fn bind_addr(addr: SocketAddr) -> io::Result<UdpSocket> {
+    pub fn bind_addr(addr: SocketAddr) -> io::Result<UdpSocket> {
         let sys = mio::net::UdpSocket::bind(addr)?;
         UdpSocket::new(sys)
     }

@@ -16,3 +16,6 @@
 [submodule "apps/termdir"]
 	path = buildins/termdir
 	url = https://github.com/t4ce/texplo.git
+[submodule "apps/RbGB"]
+	path = apps/RbGB
+	url = https://github.com/t4ce/RbGB.git

@@ -33,12 +33,14 @@ const BI_RGB: u32 = 0;
 const MAX_CURSOR_EDGE: u32 = 256;
 
 fn u16_at(bytes: &[u8], offset: usize) -> Option<u16> {
-    bytes.get(offset..offset.checked_add(2)?)
+    bytes
+        .get(offset..offset.checked_add(2)?)
         .map(|value| u16::from_le_bytes([value[0], value[1]]))
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
-    bytes.get(offset..offset.checked_add(4)?)
+    bytes
+        .get(offset..offset.checked_add(4)?)
         .map(|value| u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
 }
 
@@ -114,17 +116,29 @@ pub fn decode_cursor_dib(
         0
     };
     let palette_end = HEADER_BYTES
-        .checked_add(palette_entries.checked_mul(4).ok_or(CursorDecodeError::Format)?)
+        .checked_add(
+            palette_entries
+                .checked_mul(4)
+                .ok_or(CursorDecodeError::Format)?,
+        )
         .ok_or(CursorDecodeError::Format)?;
     if palette_end > dib.len() {
         return Err(CursorDecodeError::Truncated);
     }
     let xor_stride = stride(width, bpp).ok_or(CursorDecodeError::Format)?;
     let and_stride = stride(width, 1).ok_or(CursorDecodeError::Format)?;
-    let xor_bytes = xor_stride.checked_mul(height).ok_or(CursorDecodeError::Format)?;
-    let and_start = palette_end.checked_add(xor_bytes).ok_or(CursorDecodeError::Format)?;
-    let and_bytes = and_stride.checked_mul(height).ok_or(CursorDecodeError::Format)?;
-    let end = and_start.checked_add(and_bytes).ok_or(CursorDecodeError::Format)?;
+    let xor_bytes = xor_stride
+        .checked_mul(height)
+        .ok_or(CursorDecodeError::Format)?;
+    let and_start = palette_end
+        .checked_add(xor_bytes)
+        .ok_or(CursorDecodeError::Format)?;
+    let and_bytes = and_stride
+        .checked_mul(height)
+        .ok_or(CursorDecodeError::Format)?;
+    let end = and_start
+        .checked_add(and_bytes)
+        .ok_or(CursorDecodeError::Format)?;
     if end > dib.len() {
         return Err(CursorDecodeError::Truncated);
     }
@@ -157,7 +171,12 @@ pub fn decode_cursor_dib(
             let (red, green, blue, source_alpha) = match bpp {
                 32 => {
                     let offset = xor_row + x * 4;
-                    (dib[offset + 2], dib[offset + 1], dib[offset], dib[offset + 3])
+                    (
+                        dib[offset + 2],
+                        dib[offset + 1],
+                        dib[offset],
+                        dib[offset + 3],
+                    )
                 }
                 24 => {
                     let offset = xor_row + x * 3;
@@ -166,7 +185,11 @@ pub fn decode_cursor_dib(
                 8 => palette_pixel(dib, palette_end, dib[xor_row + x] as usize)?,
                 4 => {
                     let packed = dib[xor_row + x / 2];
-                    let index = if x & 1 == 0 { packed >> 4 } else { packed & 0x0f };
+                    let index = if x & 1 == 0 {
+                        packed >> 4
+                    } else {
+                        packed & 0x0f
+                    };
                     palette_pixel(dib, palette_end, usize::from(index))?
                 }
                 1 => {
@@ -191,7 +214,13 @@ pub fn decode_cursor_dib(
             };
         }
     }
-    Ok(DecodedCursor { width: width as u32, height: height as u32, hotspot_x, hotspot_y, rgba })
+    Ok(DecodedCursor {
+        width: width as u32,
+        height: height as u32,
+        hotspot_x,
+        hotspot_y,
+        rgba,
+    })
 }
 
 fn palette_pixel(
@@ -231,7 +260,12 @@ mod tests {
         dib.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
         let cursor = decode_cursor_dib(2, 2, 1, 1, &dib).unwrap();
         assert_eq!((cursor.hotspot_x, cursor.hotspot_y), (1, 1));
-        assert_eq!(cursor.rgba, vec![255, 0, 0, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 255, 0, 255]);
+        assert_eq!(
+            cursor.rgba,
+            vec![
+                255, 0, 0, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 255, 0, 255
+            ]
+        );
     }
 
     #[test]
@@ -261,21 +295,33 @@ mod tests {
         dib.extend_from_slice(&[0, 0, 0, 0, 0, 0, 255, 0]);
         dib.extend_from_slice(&[0b1000_0000, 0, 0, 0]);
         dib.extend_from_slice(&[0b1000_0000, 0, 0, 0]);
-        assert_eq!(decode_cursor_dib(1, 1, 0, 0, &dib), Err(CursorDecodeError::XorComposite));
+        assert_eq!(
+            decode_cursor_dib(1, 1, 0, 0, &dib),
+            Err(CursorDecodeError::XorComposite)
+        );
     }
 
     #[test]
     fn rejects_non_cursor_height() {
         let mut dib = header(1, 1, 32);
         dib[8..12].copy_from_slice(&1i32.to_le_bytes());
-        assert_eq!(decode_cursor_dib(1, 1, 0, 0, &dib), Err(CursorDecodeError::Dimensions));
+        assert_eq!(
+            decode_cursor_dib(1, 1, 0, 0, &dib),
+            Err(CursorDecodeError::Dimensions)
+        );
     }
 
     #[test]
     fn rejects_out_of_bounds_hotspot_and_oversized_cursor() {
         let dib = header(1, 1, 32);
-        assert_eq!(decode_cursor_dib(1, 1, 1, 0, &dib), Err(CursorDecodeError::Dimensions));
+        assert_eq!(
+            decode_cursor_dib(1, 1, 1, 0, &dib),
+            Err(CursorDecodeError::Dimensions)
+        );
         let dib = header(257, 1, 32);
-        assert_eq!(decode_cursor_dib(257, 1, 0, 0, &dib), Err(CursorDecodeError::Dimensions));
+        assert_eq!(
+            decode_cursor_dib(257, 1, 0, 0, &dib),
+            Err(CursorDecodeError::Dimensions)
+        );
     }
 }

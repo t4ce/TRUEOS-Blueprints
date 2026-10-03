@@ -3,11 +3,17 @@
 pub const MAX_C_STRING: usize = 1_048_576;
 
 pub const fn fold_ascii(byte: u8) -> u8 {
-    if byte.is_ascii_uppercase() { byte + 0x20 } else { byte }
+    if byte.is_ascii_uppercase() {
+        byte + 0x20
+    } else {
+        byte
+    }
 }
 
 pub fn compare(left: &[u8], right: &[u8], limit: Option<usize>, insensitive: bool) -> i32 {
-    compare_with(left, right, limit, |byte| if insensitive { fold_ascii(byte) } else { byte })
+    compare_with(left, right, limit, |byte| {
+        if insensitive { fold_ascii(byte) } else { byte }
+    })
 }
 
 pub fn compare_with(
@@ -30,19 +36,34 @@ pub fn compare_with(
 }
 
 pub fn pbrk(haystack: &[u8], accept: &[u8]) -> Option<usize> {
-    haystack.iter().position(|byte| *byte != 0 && accept.contains(byte))
+    haystack
+        .iter()
+        .position(|byte| *byte != 0 && accept.contains(byte))
 }
 
 pub fn rchr(bytes: &[u8], needle: u8) -> Option<usize> {
-    bytes.iter().take_while(|byte| **byte != 0).position(|byte| *byte == needle).and_then(|first| {
-        bytes.iter().take_while(|byte| **byte != 0).enumerate().filter_map(|(index, byte)| (*byte == needle).then_some(index)).last().or(Some(first))
-    }).or_else(|| (needle == 0).then_some(bytes.iter().position(|byte| *byte == 0)?))
+    bytes
+        .iter()
+        .take_while(|byte| **byte != 0)
+        .position(|byte| *byte == needle)
+        .and_then(|first| {
+            bytes
+                .iter()
+                .take_while(|byte| **byte != 0)
+                .enumerate()
+                .filter_map(|(index, byte)| (*byte == needle).then_some(index))
+                .last()
+                .or(Some(first))
+        })
+        .or_else(|| (needle == 0).then_some(bytes.iter().position(|byte| *byte == 0)?))
 }
 
 pub fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let haystack = haystack.split(|byte| *byte == 0).next().unwrap_or_default();
     let needle = needle.split(|byte| *byte == 0).next().unwrap_or_default();
-    haystack.windows(needle.len()).position(|candidate| candidate == needle)
+    haystack
+        .windows(needle.len())
+        .position(|candidate| candidate == needle)
         .or_else(|| needle.is_empty().then_some(0))
 }
 

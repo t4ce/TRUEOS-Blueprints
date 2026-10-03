@@ -26,8 +26,7 @@ pub fn needs_drawable(op: ProviderOp) -> bool {
     )
 }
 pub fn publishes_frame(op: ProviderOp, preview_draw: bool) -> bool {
-    op == ProviderOp::WglSwapLayerBuffers
-        || (op == ProviderOp::GlDrawElements && preview_draw)
+    op == ProviderOp::WglSwapLayerBuffers || (op == ProviderOp::GlDrawElements && preview_draw)
 }
 pub fn state_only(name: &str) -> bool {
     name.starts_with("gl") && !matches!(name, "glClear" | "glDrawElements")
@@ -61,9 +60,7 @@ mod tests {
         }
         assert_eq!(
             events,
-            [
-                "render", "render", "render", "begin", "publish", "render"
-            ]
+            ["render", "render", "render", "begin", "publish", "render"]
         );
     }
     #[test]

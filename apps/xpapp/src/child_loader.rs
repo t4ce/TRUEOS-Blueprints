@@ -1065,9 +1065,12 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
             _ => {}
         }
     }
-    if cfg!(feature = "bypass-critical-sections") && matches!(
-        provider_op(import), ProviderOp::EnterCriticalSection | ProviderOp::LeaveCriticalSection
-    ) {
+    if cfg!(feature = "bypass-critical-sections")
+        && matches!(
+            provider_op(import),
+            ProviderOp::EnterCriticalSection | ProviderOp::LeaveCriticalSection
+        )
+    {
         return thunk32::Kind::NoopStdcall(4);
     }
     if provider_op(import) == ProviderOp::CrtCeil {
@@ -1092,8 +1095,11 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::CrtIswSpace && !cfg!(feature = "trace-api") {
         return thunk32::Kind::IswSpace;
     }
-    if matches!(provider_op(import), ProviderOp::CrtAtoi | ProviderOp::CrtAtol)
-        && !cfg!(feature = "host-decimal") {
+    if matches!(
+        provider_op(import),
+        ProviderOp::CrtAtoi | ProviderOp::CrtAtol
+    ) && !cfg!(feature = "host-decimal")
+    {
         return thunk32::Kind::Decimal;
     }
     if provider_op(import) == ProviderOp::CrtQsort && !cfg!(feature = "host-qsort") {
@@ -1148,7 +1154,9 @@ mod beginthreadex_tests {
     fn critical_section_bypass_keeps_stdcall_stack_cleanup_without_vmcall() {
         for name in ["EnterCriticalSection", "LeaveCriticalSection"] {
             let import = ProviderImport {
-                module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name(name.into()), iat_rva: 0,
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name(name.into()),
+                iat_rva: 0,
             };
             let kind = provider_thunk_kind(&import);
             let mut code = [0; thunk32::THUNK_BYTES];
@@ -1203,7 +1211,11 @@ mod beginthreadex_tests {
             };
             let operation = provider_op(&import);
             assert_eq!(operation, expected, "{symbol}");
-            assert_eq!(operation.is_generic_process_local(), symbol != "SetDeviceGammaRamp", "{symbol}");
+            assert_eq!(
+                operation.is_generic_process_local(),
+                symbol != "SetDeviceGammaRamp",
+                "{symbol}"
+            );
             assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
             assert_eq!(
                 provider_thunk_kind(&import),
@@ -1278,19 +1290,33 @@ mod beginthreadex_tests {
             assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
             assert_eq!(
                 provider_thunk_kind(&import),
-                if symbol == "glFinish" { thunk32::Kind::Return }
-                else if symbol == "glLightfv" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLightBatch }
-                else if symbol == "glMatrixMode" && !cfg!(feature = "trace-api") { thunk32::Kind::GlMatrixModeBatch }
-                else if symbol == "glLoadMatrixf" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLoadMatrixBatch }
-                else if symbol == "glEnable" && !cfg!(feature = "trace-api") { thunk32::Kind::GlEnableBatch }
-                else if symbol == "glDisable" && !cfg!(feature = "trace-api") { thunk32::Kind::GlDisableBatch }
-                else if symbol == "glEnableClientState" && !cfg!(feature = "trace-api") { thunk32::Kind::GlEnableClientBatch }
-                else if symbol == "glDisableClientState" && !cfg!(feature = "trace-api") { thunk32::Kind::GlDisableClientBatch }
-                else if symbol == "glVertexPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlVertexPointerBatch }
-                else if symbol == "glColorPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlColorPointerBatch }
-                else if symbol == "glNormalPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlNormalPointerBatch }
-                else if symbol == "glTexCoordPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlTexCoordPointerBatch }
-                else { thunk32::Kind::Stdcall(cleanup) },
+                if symbol == "glFinish" {
+                    thunk32::Kind::Return
+                } else if symbol == "glLightfv" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlLightBatch
+                } else if symbol == "glMatrixMode" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlMatrixModeBatch
+                } else if symbol == "glLoadMatrixf" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlLoadMatrixBatch
+                } else if symbol == "glEnable" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlEnableBatch
+                } else if symbol == "glDisable" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlDisableBatch
+                } else if symbol == "glEnableClientState" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlEnableClientBatch
+                } else if symbol == "glDisableClientState" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlDisableClientBatch
+                } else if symbol == "glVertexPointer" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlVertexPointerBatch
+                } else if symbol == "glColorPointer" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlColorPointerBatch
+                } else if symbol == "glNormalPointer" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlNormalPointerBatch
+                } else if symbol == "glTexCoordPointer" && !cfg!(feature = "trace-api") {
+                    thunk32::Kind::GlTexCoordPointerBatch
+                } else {
+                    thunk32::Kind::Stdcall(cleanup)
+                },
                 "{symbol}",
             );
         }
@@ -1463,11 +1489,14 @@ mod beginthreadex_tests {
         assert_eq!(provider_op(&import), ProviderOp::CrtIswSpace);
         assert_eq!(provider_op(&import).stack_cleanup_bytes(), 0);
         let kind = provider_thunk_kind(&import);
-        assert_eq!(kind, if cfg!(feature = "trace-api") {
-            thunk32::Kind::Return
-        } else {
-            thunk32::Kind::IswSpace
-        });
+        assert_eq!(
+            kind,
+            if cfg!(feature = "trace-api") {
+                thunk32::Kind::Return
+            } else {
+                thunk32::Kind::IswSpace
+            }
+        );
     }
 
     #[test]

@@ -15,7 +15,11 @@ pub struct ChessView {
 
 impl ChessView {
     pub const fn new() -> Self {
-        Self { yaw: 0, elevation: 60, zoom: 1.0 }
+        Self {
+            yaw: 0,
+            elevation: 60,
+            zoom: 1.0,
+        }
     }
 
     pub fn turn(&mut self, degrees: i32) {
@@ -27,7 +31,9 @@ impl ChessView {
     }
 
     pub fn wheel_zoom(&mut self, wheel: i32) -> bool {
-        if wheel == 0 { return false; }
+        if wheel == 0 {
+            return false;
+        }
         let old = self.zoom;
         self.zoom = (self.zoom + wheel.signum() as f32 * 0.1).clamp(0.5, 1.5);
         self.zoom != old
@@ -56,7 +62,11 @@ impl ChessView {
     fn position(&self, width: u32, height: u32) -> [f32; 3] {
         let (_, _, forward) = self.basis();
         let distance = Self::distance(width, height);
-        [-forward[0] * distance, -forward[1] * distance, -forward[2] * distance]
+        [
+            -forward[0] * distance,
+            -forward[1] * distance,
+            -forward[2] * distance,
+        ]
     }
 
     fn half_fov_tangent(&self) -> f32 {
@@ -78,9 +88,22 @@ impl ChessView {
         }
     }
 
-    pub fn pick(&self, local_x: i32, local_y: i32, width: u32, height: u32) -> Option<(usize, usize)> {
-        if width == 0 || height == 0 || local_x < 0 || local_y < 0
-            || local_x >= width as i32 || local_y >= height as i32 { return None; }
+    pub fn pick(
+        &self,
+        local_x: i32,
+        local_y: i32,
+        width: u32,
+        height: u32,
+    ) -> Option<(usize, usize)> {
+        if width == 0
+            || height == 0
+            || local_x < 0
+            || local_y < 0
+            || local_x >= width as i32
+            || local_y >= height as i32
+        {
+            return None;
+        }
         let (right, up, forward) = self.basis();
         let aspect = width as f32 / height as f32;
         let half_tan = self.half_fov_tangent();
@@ -91,10 +114,14 @@ impl ChessView {
             forward[1] + right[1] * sx + up[1] * sy,
             forward[2] + right[2] * sx + up[2] * sy,
         ];
-        if direction[1] >= -0.0001 { return None; }
+        if direction[1] >= -0.0001 {
+            return None;
+        }
         let eye = self.position(width, height);
         let t = (TILE_SCALE - eye[1]) / direction[1];
-        if t <= 0.0 { return None; }
+        if t <= 0.0 {
+            return None;
+        }
         let x = eye[0] + direction[0] * t;
         let z = eye[2] + direction[2] * t;
         let col = (x + 4.0 * STEP) / STEP;
@@ -112,13 +139,19 @@ mod tests {
     use super::*;
 
     fn project(view: &ChessView, point: [f32; 3], width: u32, height: u32) -> (i32, i32) {
-        let camera = view.camera(width, height).retained(width, height, [0.0; 16]);
+        let camera = view
+            .camera(width, height)
+            .retained(width, height, [0.0; 16]);
         let p = [point[0], point[1], point[2], 1.0];
         let clip: [f32; 4] = core::array::from_fn(|r| {
-            (0..4).map(|c| camera.view_projection[c * 4 + r] * p[c]).sum()
+            (0..4)
+                .map(|c| camera.view_projection[c * 4 + r] * p[c])
+                .sum()
         });
-        (((clip[0] / clip[3] * 0.5 + 0.5) * width as f32) as i32,
-         ((0.5 - clip[1] / clip[3] * 0.5) * height as f32) as i32)
+        (
+            ((clip[0] / clip[3] * 0.5 + 0.5) * width as f32) as i32,
+            ((0.5 - clip[1] / clip[3] * 0.5) * height as f32) as i32,
+        )
     }
 
     #[test]
@@ -126,16 +159,24 @@ mod tests {
         for yaw in [0, 45, 90, 180, 270] {
             for elevation in [30, 45, 60, 75] {
                 for zoom in [0.5, 1.0, 1.5] {
-                    let view = ChessView { yaw, elevation, zoom };
+                    let view = ChessView {
+                        yaw,
+                        elevation,
+                        zoom,
+                    };
                     for (width, height) in [(650, 740), (1920, 1080)] {
                         for row in 0..8 {
                             for col in 0..8 {
                                 let mut point = ChessView::cell(row, col);
                                 point[1] = TILE_SCALE;
                                 let (x, y) = project(&view, point, width, height);
-                                if (0..width as i32).contains(&x) && (0..height as i32).contains(&y) {
-                                    assert_eq!(view.pick(x, y, width, height), Some((row, col)),
-                                        "yaw={yaw} elevation={elevation} zoom={zoom} {width}x{height}");
+                                if (0..width as i32).contains(&x) && (0..height as i32).contains(&y)
+                                {
+                                    assert_eq!(
+                                        view.pick(x, y, width, height),
+                                        Some((row, col)),
+                                        "yaw={yaw} elevation={elevation} zoom={zoom} {width}x{height}"
+                                    );
                                 }
                             }
                         }

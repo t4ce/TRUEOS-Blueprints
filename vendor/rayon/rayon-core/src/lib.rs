@@ -69,7 +69,7 @@ use std::io;
 use std::env;
 use std::thread;
 #[cfg(target_os = "trueos")]
-use v::env;
+use crate::trueos_env as env;
 
 mod broadcast;
 mod job;
@@ -80,6 +80,8 @@ mod scope;
 mod sleep;
 mod spawn;
 mod thread_pool;
+#[cfg(target_os = "trueos")]
+mod trueos_env;
 mod unwind;
 
 mod compile_fail;

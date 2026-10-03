@@ -9,6 +9,7 @@
     "pi_snake",
     "gboi",
     "games",
+    { "name": "rbgb", "path": "apps/RbGB" },
     "tredb",
     "hello_world",
     {

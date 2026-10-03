@@ -6,7 +6,11 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn pending(&self, count: usize, capacity: usize) -> Result<std::ops::Range<usize>, &'static str> {
+    pub fn pending(
+        &self,
+        count: usize,
+        capacity: usize,
+    ) -> Result<std::ops::Range<usize>, &'static str> {
         if count > capacity {
             return Err("light batch exceeds capacity");
         }
@@ -16,7 +20,12 @@ impl Cursor {
         Ok(self.consumed..count)
     }
 
-    pub fn commit(&mut self, count: usize, full_trap: bool, capacity: usize) -> Result<(), &'static str> {
+    pub fn commit(
+        &mut self,
+        count: usize,
+        full_trap: bool,
+        capacity: usize,
+    ) -> Result<(), &'static str> {
         self.pending(count, capacity)?;
         if full_trap && count != capacity {
             return Err("light batch full trap before capacity");

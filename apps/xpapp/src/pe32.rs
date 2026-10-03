@@ -362,13 +362,17 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
     materialize_with_policy(bytes, true)
 }
 
-pub fn materialize_with_policy(bytes: &[u8], strict_launcher: bool) -> Result<Materialized, &'static str> {
+pub fn materialize_with_policy(
+    bytes: &[u8],
+    strict_launcher: bool,
+) -> Result<Materialized, &'static str> {
     let parsed = parse(bytes)?;
-    if strict_launcher && (parsed.entry_rva != ENTRY_RVA
-        || parsed.image_base != IMAGE_BASE
-        || parsed.size_of_image as usize != IMAGE_BYTES
-        || parsed.size_of_headers as usize != HEADERS_BYTES
-        || !parsed.relocations.is_empty())
+    if strict_launcher
+        && (parsed.entry_rva != ENTRY_RVA
+            || parsed.image_base != IMAGE_BASE
+            || parsed.size_of_image as usize != IMAGE_BYTES
+            || parsed.size_of_headers as usize != HEADERS_BYTES
+            || !parsed.relocations.is_empty())
     {
         return Err("PE fixed launcher header mismatch");
     }
@@ -385,9 +389,10 @@ pub fn materialize_with_policy(bytes: &[u8], strict_launcher: bool) -> Result<Ma
             iat_rva: descriptor.iat_rva,
         });
     }
-    if strict_launcher && !imports
-        .iter()
-        .any(|item| item.module.eq_ignore_ascii_case("KERNEL32.dll") && item.symbol == "GetVersion")
+    if strict_launcher
+        && !imports.iter().any(|item| {
+            item.module.eq_ignore_ascii_case("KERNEL32.dll") && item.symbol == "GetVersion"
+        })
     {
         return Err("PE expected GetVersion missing");
     }

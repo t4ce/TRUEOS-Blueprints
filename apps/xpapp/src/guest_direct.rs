@@ -7,12 +7,14 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use trueos::x86::{Context, DebugRegisters, ExecutionCarrier, Exit, ExitKind, ExtendedState, Registers};
+use trueos::x86::{
+    Context, DebugRegisters, ExecutionCarrier, Exit, ExitKind, ExtendedState, Registers,
+};
 
 #[path = "execution_diagnostic.rs"]
 mod execution_diagnostic;
-pub use execution_diagnostic::{ExecutionDiagnostic, ExecutionStage};
 use execution_diagnostic::ExecutionSnapshot;
+pub use execution_diagnostic::{ExecutionDiagnostic, ExecutionStage};
 
 static EXECUTION_CARRIER: Mutex<Weak<ExecutionCarrier>> = Mutex::new(Weak::new());
 
@@ -67,7 +69,9 @@ impl GuestThreadContext {
         let registers = context.registers().map_err(|error| error.to_string())?;
         let carrier = {
             let mut shared = EXECUTION_CARRIER.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(carrier) = shared.upgrade() { carrier } else {
+            if let Some(carrier) = shared.upgrade() {
+                carrier
+            } else {
                 let carrier = Arc::new(ExecutionCarrier::new().map_err(|e| e.to_string())?);
                 *shared = Arc::downgrade(&carrier);
                 carrier
@@ -196,9 +200,13 @@ impl GuestThreadContext {
         let resume = self.started;
         self.started = true;
         #[cfg(feature = "trace-execution")]
-        let result = self.context.execute_on_measured(&self.carrier, resume).await
+        let result = self
+            .context
+            .execute_on_measured(&self.carrier, resume)
+            .await
             .map(|(exit, timing)| {
-                self.timing.record(self.pid, self.tid, prepare_started, prepared, timing, &exit);
+                self.timing
+                    .record(self.pid, self.tid, prepare_started, prepared, timing, &exit);
                 exit
             });
         #[cfg(not(feature = "trace-execution"))]
@@ -250,12 +258,20 @@ impl GuestThreadContext {
                 let now = std::time::Instant::now();
                 let elapsed = now.duration_since(self.progress_at);
                 if elapsed >= std::time::Duration::from_secs(2) {
-                    crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
-                        "XPAPP EXEC PROGRESS pid={} tid={} interval_ms={} exits={} vmcalls={} preemptions={} exceptions={} eip=0x{:08x} transport=reused-native-worker",
-                        self.pid, self.tid, elapsed.as_millis(), self.progress_counts[0],
-                        self.progress_counts[1], self.progress_counts[2], self.progress_counts[3],
-                        exit.registers.eip,
-                    ));
+                    crate::logl::emit(
+                        trueos::logl::level::IMPORTANT,
+                        format_args!(
+                            "XPAPP EXEC PROGRESS pid={} tid={} interval_ms={} exits={} vmcalls={} preemptions={} exceptions={} eip=0x{:08x} transport=reused-native-worker",
+                            self.pid,
+                            self.tid,
+                            elapsed.as_millis(),
+                            self.progress_counts[0],
+                            self.progress_counts[1],
+                            self.progress_counts[2],
+                            self.progress_counts[3],
+                            exit.registers.eip,
+                        ),
+                    );
                     self.progress_at = now;
                     self.progress_counts = [0; 4];
                 }

@@ -183,18 +183,16 @@ impl GuestThreadContext {
             .map(|provenance| provenance.caller_ret)
             .unwrap_or(0);
         record_execution(sequence, ExecutionStage::Submit, self.pid, self.tid);
-        trace_api!(
-            format_args!(
-                "XPAPP EXEC SUBMIT seq={} pid={} tid={} provider={} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
-                sequence,
-                self.pid,
-                self.tid,
-                provider,
-                self.registers.eip,
-                self.registers.esp,
-                caller_ret,
-            ),
-        );
+        trace_api!(format_args!(
+            "XPAPP EXEC SUBMIT seq={} pid={} tid={} provider={} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
+            sequence,
+            self.pid,
+            self.tid,
+            provider,
+            self.registers.eip,
+            self.registers.esp,
+            caller_ret,
+        ),);
         let (reply, response) = oneshot::channel();
         self.commands
             .send(ThreadCommand::Execute {
@@ -236,12 +234,10 @@ impl GuestThreadContext {
             }
         };
         record_execution(sequence, ExecutionStage::Receive, self.pid, self.tid);
-        trace_api!(
-            format_args!(
-                "XPAPP EXEC RECEIVE seq={} pid={} tid={} result=ok",
-                sequence, self.pid, self.tid,
-            ),
-        );
+        trace_api!(format_args!(
+            "XPAPP EXEC RECEIVE seq={} pid={} tid={} result=ok",
+            sequence, self.pid, self.tid,
+        ),);
         self.registers = event.exit.registers;
         self.debug_registers = event.debug_registers;
         self.extended_state = event.extended_state;
@@ -346,16 +342,14 @@ async fn guest_thread_task(
                 let state_capture = if result.is_ok() { "ok" } else { "failed" };
                 let delivered = reply.send(result).is_ok();
                 record_execution(sequence, ExecutionStage::Reply, pid, tid);
-                trace_api!(
-                    format_args!(
-                        "XPAPP EXEC REPLY seq={} pid={} tid={} state_capture={} delivered={}",
-                        sequence,
-                        pid,
-                        tid,
-                        state_capture,
-                        u8::from(delivered),
-                    ),
-                );
+                trace_api!(format_args!(
+                    "XPAPP EXEC REPLY seq={} pid={} tid={} state_capture={} delivered={}",
+                    sequence,
+                    pid,
+                    tid,
+                    state_capture,
+                    u8::from(delivered),
+                ),);
             }
         }
     }
