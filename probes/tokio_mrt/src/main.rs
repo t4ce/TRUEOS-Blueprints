@@ -74,6 +74,7 @@ fn main() {
 }
 
 fn run_std_threads() -> Result<(), &'static str> {
+    logl::log(level::INFO, format_args!("tokio_mrt: phase=std.start"));
     let initial_drops = TLS_DESTRUCTORS.load(Ordering::Acquire);
     TLS_PROBE.with(|probe| probe.0.set(0x55));
     let main_id = std::thread::current().id();
@@ -187,6 +188,7 @@ fn run_std_threads() -> Result<(), &'static str> {
 }
 
 fn run_scoped_threads() -> Result<(), &'static str> {
+    logl::log(level::INFO, format_args!("tokio_mrt: phase=scoped.start"));
     let initial_drops = TLS_DESTRUCTORS.load(Ordering::Acquire);
     let main_id = std::thread::current().id();
     // These values live on the spawning thread's stack. Scoped children must
@@ -293,6 +295,11 @@ fn run_scoped_threads() -> Result<(), &'static str> {
 
 fn run_multi_thread_runtimes() -> Result<(), &'static str> {
     for wave in 0..WAVES {
+        let before = std::time::Instant::now();
+        logl::log(
+            level::INFO,
+            format_args!("tokio_mrt: phase=multi-thread.build.start wave={wave}"),
+        );
         let initial_drops = TLS_DESTRUCTORS.load(Ordering::Acquire);
         let started = Arc::new(AtomicUsize::new(0));
         let stopped = Arc::new(AtomicUsize::new(0));
@@ -311,16 +318,40 @@ fn run_multi_thread_runtimes() -> Result<(), &'static str> {
             })
             .enable_all()
             .build()
-            .map_err(|_| "multi-thread.build")?;
+            .map_err(|error| {
+                logl::log(
+                    level::ERROR,
+                    format_args!("tokio_mrt: multi-thread.build wave={wave} error={error:?}"),
+                );
+                "multi-thread.build"
+            })?;
+        logl::log(
+            level::INFO,
+            format_args!("tokio_mrt: phase=multi-thread.build.ready wave={wave}"),
+        );
         let result = runtime.block_on(async {
             tokio::time::timeout(DEADLINE, probe_multi_thread(wave))
                 .await
                 .map_err(|_| "multi-thread.timeout")?
         });
+        logl::log(
+            level::INFO,
+            format_args!(
+                "tokio_mrt: phase=multi-thread.shutdown.start wave={wave} result={result:?} elapsed_ms={}",
+                before.elapsed().as_millis()
+            ),
+        );
         runtime.shutdown_timeout(DEADLINE);
         let starts = started.load(Ordering::Acquire);
         let stops = stopped.load(Ordering::Acquire);
         let drops = TLS_DESTRUCTORS.load(Ordering::Acquire) - initial_drops;
+        logl::log(
+            level::INFO,
+            format_args!(
+                "tokio_mrt: phase=multi-thread.shutdown.done wave={wave} started={starts} stopped={stops} tls_destructors={drops} elapsed_ms={}",
+                before.elapsed().as_millis()
+            ),
+        );
         if starts < LANES || starts != stops || starts != drops {
             return Err("multi-thread.shutdown-or-tls-destructors");
         }
@@ -337,6 +368,10 @@ fn run_multi_thread_runtimes() -> Result<(), &'static str> {
 
 async fn probe_multi_thread(wave: usize) -> Result<(), &'static str> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.tasks.start wave={wave}"),
+    );
     let mut tasks = tokio::task::JoinSet::new();
     for task in 0..TASKS {
         tasks.spawn(async move {
@@ -357,7 +392,15 @@ async fn probe_multi_thread(wave: usize) -> Result<(), &'static str> {
     if sum != count * (count + 1) / 2 {
         return Err("multi-thread.task.checksum");
     }
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.tasks.done wave={wave} checksum={sum}"),
+    );
 
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.blocking.start wave={wave}"),
+    );
     let mut blocking = tokio::task::JoinSet::new();
     for task in 0..TASKS {
         blocking.spawn_blocking(move || {
@@ -375,6 +418,16 @@ async fn probe_multi_thread(wave: usize) -> Result<(), &'static str> {
     if blocking_sum != (TASKS * (TASKS + 1) / 2) as u64 {
         return Err("multi-thread.blocking.checksum");
     }
+    logl::log(
+        level::INFO,
+        format_args!(
+            "tokio_mrt: phase=multi-thread.blocking.done wave={wave} checksum={blocking_sum}"
+        ),
+    );
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.block-in-place.start wave={wave}"),
+    );
     let in_place = tokio::spawn(async move {
         tokio::task::block_in_place(|| {
             std::thread::sleep(Duration::from_millis(2));
@@ -386,13 +439,33 @@ async fn probe_multi_thread(wave: usize) -> Result<(), &'static str> {
     if in_place != wave + 100 {
         return Err("multi-thread.block-in-place.tls");
     }
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.block-in-place.done wave={wave}"),
+    );
 
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.tcp.bind.start wave={wave}"),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|_| "multi-thread.tcp.bind")?;
+        .map_err(|error| {
+            logl::log(
+                level::ERROR,
+                format_args!("tokio_mrt: tcp.bind wave={wave} error={error:?}"),
+            );
+            "multi-thread.tcp.bind"
+        })?;
     let address = listener
         .local_addr()
         .map_err(|_| "multi-thread.tcp.address")?;
+    logl::log(
+        level::INFO,
+        format_args!(
+            "tokio_mrt: phase=multi-thread.tcp.connect.start wave={wave} address={address}"
+        ),
+    );
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener
             .accept()
@@ -412,9 +485,26 @@ async fn probe_multi_thread(wave: usize) -> Result<(), &'static str> {
             .map_err(|_| "multi-thread.tcp.server.write")?;
         Ok::<_, &'static str>(())
     });
-    let mut socket = tokio::net::TcpStream::connect(address)
-        .await
-        .map_err(|_| "multi-thread.tcp.connect")?;
+    let mut socket = match tokio::net::TcpStream::connect(address).await {
+        Ok(socket) => socket,
+        Err(error) => {
+            logl::log(
+                level::ERROR,
+                format_args!(
+                    "tokio_mrt: tcp.connect wave={wave} address={address} kind={:?} errno={:?} error={error}",
+                    error.kind(),
+                    error.raw_os_error()
+                ),
+            );
+            server.abort();
+            let _ = server.await;
+            return Err("multi-thread.tcp.connect");
+        }
+    };
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.tcp.connect.done wave={wave}"),
+    );
     socket
         .write_all(b"ping")
         .await
@@ -428,6 +518,10 @@ async fn probe_multi_thread(wave: usize) -> Result<(), &'static str> {
         return Err("multi-thread.tcp.client.message");
     }
     server.await.map_err(|_| "multi-thread.tcp.server.join")??;
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: phase=multi-thread.tcp.done wave={wave}"),
+    );
     Ok(())
 }
 

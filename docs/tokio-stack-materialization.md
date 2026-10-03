@@ -86,7 +86,7 @@ validation. Syntax/static checks alone must not be reported as a passing rig run
 The stackful-thread change passes all 75 Blueprint builder tests and packs the
 extended `tokio_mrt` probe for the custom TRUEOS target with matching CABI
 signatures. The nested scoped probe's local `dist/tokio_mrt.bp` SHA-256 is
-`ef8aab2b830c6e32a3ac68706de3d8bec53524668e18d5ffb000c306d4ef576a`.
+`b08f5e6ed91c650a6606eacaf2271c02021c01bb44b5836ad154afe7da4195fb`.
 Its std/multi-thread test logic also passes on Linux with the
 vendored Tokio 1.52.3: two joined threads, one detached thread, two scoped
 children sharing parent stack values, five std TLS destructors, and six
