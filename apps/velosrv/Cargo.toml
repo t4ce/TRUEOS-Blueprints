@@ -64,3 +64,4 @@ mimalloc = "0.1"
 [patch.crates-io]
 specs = { git = "https://github.com/amethyst/specs.git", rev = "4e2da1df29ee840baa9b936593c45592b7c9ae27" }
 thread-priority = { path = "stubs/thread-priority" }
+tracing-appender = { path = "vendor/tracing-appender" }
