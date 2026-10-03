@@ -17,7 +17,7 @@ From `TRUEOS-Blueprints`, with the Veloren checkout beside it at
 VELOREN_SOURCE_ROOT="$(realpath ../veloren)" \
 CARGO_WORKSPACE_DIR="$(realpath ../veloren)" \
 TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 \
-cargo bp apps/veloren-server-pack
+cargo bp apps/velosrv
 ```
 
 The environment variables provide the source and compile-time workspace path

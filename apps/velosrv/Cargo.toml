@@ -1,5 +1,5 @@
 [package]
-name = "veloren-server-pack"
+name = "velosrv"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
@@ -22,7 +22,7 @@ hot-agent = ["server/hot-agent", "dep:agent"]
 hot-site = ["server/hot-site", "dep:world"]
 
 [[bin]]
-name = "veloren-server-pack"
+name = "velosrv"
 path = "src/main.rs"
 
 [dependencies]
@@ -48,7 +48,7 @@ specs = { version = "0.20", features = ["nightly"] }
 quinn = "=0.11.9"
 trueos = { path = "../../api", features = ["lifecycle-net"] }
 
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
 hyper = { version = "=1.10.0", default-features = false, features = ["client", "server", "http1"] }
 http-body-util = { version = "0.1.3", default-features = false }
 prometheus = { version = "0.14", default-features = false }
