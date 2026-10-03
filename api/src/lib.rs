@@ -441,7 +441,7 @@ pub mod net {
     pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
 
     /// Resolve hostnames on explicit native capacity. Tokio's generic
-    /// `lookup_host` still uses its unsupported std-thread blocking pool.
+    /// `lookup_host` uses its independently scheduled std-thread blocking pool.
     #[cfg(feature = "tokio-net-probe")]
     pub async fn resolve_host(
         host: &str,

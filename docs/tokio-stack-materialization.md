@@ -8,9 +8,9 @@ that every API in these crates works on TRUEOS.
 
 | Surface | Pin | Execution boundary |
 | --- | --- | --- |
-| Rust core/alloc/std | nightly-2026-07-10 | TRUEOS std thread lifecycle is unsupported; atomics, synchronization, WLS, clocks and I/O remain enabled. |
+| Rust core/alloc/std | nightly-2026-07-10 | TRUEOS stackful std threads provide spawn, join, detach and independent key-backed TLS with exit destructors; synchronization, clocks and I/O terminate at TRUEOS. |
 | Mio | 1.2.0 | Registrations/selectors remain in userspace. Unix poll/readiness and wake operations terminate at TRUEOS. |
-| Tokio | 1.52.3 | Each native lane owns a current-thread runtime. Async tasks stay in that runtime; explicit `trueos::worker` supplies additional native lanes. |
+| Tokio | 1.52.3 | Current-thread and multi-thread runtimes use the pinned platform vendor. Multi-thread workers and the blocking pool use the TRUEOS std thread backend; explicit `trueos::worker` remains available for finite native jobs. |
 | Bytes | 1.11.1 | Application buffers and operations; storage uses the platform allocator. |
 | Hyper / Tower / Axum / Tonic | 1.10.0 / 0.5.3 / 0.8.9 / 0.14.6 | Protocol and application state remain in the Blueprint; transport uses Tokio/Mio. |
 | Tracing | 0.1.44 | `trueos::trace::with_default` installs the kernel subscriber on each executing lane. |
@@ -31,23 +31,45 @@ Concurrent native workers have distinct stable WLS slots. Sequential jobs may
 reuse slots and TLS values. Build/drop/rebuild a runtime on the same worker to
 check that Tokio enter guards and runtime context are released correctly.
 
+Normal Tokio runtime shutdown wakes and joins its workers and runs their TLS
+destructors. A crash or force-stop with persistent stackful threads retains the
+VM's executable pages, heap and process resources until those threads exit
+cooperatively. The kernel does not abandon suspended stacks that may still own
+guest code, TLS values or host guards; non-cooperative threads can leave teardown
+pending. Stackful execution is cooperative on shared carriers, with independent
+guarded stacks and inline stack probes.
+
+Guarded stacks use compact reservations in a monotonic 512 GiB virtual alias
+arena. Completion reclaims the physical stack pages after the carrier returns
+to its parent stack. Retired virtual aliases are never reused; reuse requires
+future synchronous invalidation of remote CPU TLB entries. Admission fails
+cleanly if the bounded alias arena or thread capacity is exhausted.
+
 The builder checks native source declarations/exports and installs the canonical
-std backend from the selected TRUEOS checkout. A stale pthread lifecycle import
-is rejected before packing. Changes to installed backend, selectors and WLS
-sources change the build-std cache fingerprint.
+std backend from the selected TRUEOS checkout. Thread lifecycle uses the additive
+`trueos_cabi_thread_*` ABI; stale pthread lifecycle imports are rejected before
+packing. The `tokio-platform-v7-stackful-threads` build-std cache fingerprints the
+installed backend, selectors, key-backed TLS storage and destructor guards.
+The old slot-indexed no-threads TLS path is no longer installed for TRUEOS.
 
 ## Supported probes and remaining boundaries
 
 `tokio_rt`, `tokio_fs`, `tokio_net`, and `framework_stack` retain focused
-current-thread coverage. `tokio_mrt`, `wls`, `condvar`, `cross`, and
-`redb_multirt` use explicit native worker admission and completion.
+current-thread coverage. `tokio_mrt` retains explicit native admission/completion
+coverage and adds independent std spawn/join, TLS isolation/destructors,
+wake-before-park and cross-thread unpark. Two scoped children also read and
+update values borrowed from their parent's stack across carriers, with distinct
+thread identities and TLS. It builds, runs and shuts down a two-worker Tokio runtime
+twice, exercising cross-worker tasks, timers, `spawn_blocking`, `block_in_place`,
+loopback TCP and worker TLS destruction. `wls`, `condvar`, `cross`, and
+`redb_multirt` retain focused native worker coverage.
 
-Use `trueos::net::resolve_host` for asynchronous hostname lookup. Generic Tokio
-hostname lookup still uses its unsupported std-thread blocking pool; Hyper's
-TRUEOS GAI path is synchronous unless the application supplies a native async
-resolver. Superseedr's TRUEOS tracker client supplies that resolver.
+Use `trueos::net::resolve_host` for hostname lookup on explicit native capacity.
+Generic Tokio hostname lookup uses the supported std-thread blocking pool.
+Hyper's TRUEOS GAI path is synchronous unless the application supplies a native
+async resolver. Superseedr's TRUEOS tracker client supplies that resolver.
 
-Actual Tokio asynchronous stdin/stdout/stderr I/O still uses the blocking pool.
+Tokio asynchronous stdin/stdout/stderr I/O uses the std-thread blocking pool.
 Constructing those handles in `tokio_rt` is not an I/O acceptance test. The custom
 TRUEOS Tokio filesystem implementation uses asynchronous CABI operations.
 
@@ -59,6 +81,14 @@ series does not establish full peer-to-peer operation.
 Compilation, packing, symbol inspection and runtime acceptance are subsequent
 validation. Syntax/static checks alone must not be reported as a passing rig run.
 
+The stackful-thread change passes all 75 Blueprint builder tests and packs the
+extended `tokio_mrt` probe for the custom TRUEOS target with matching CABI
+signatures. Its std/multi-thread test logic also passes on Linux with the
+vendored Tokio 1.52.3: two joined threads, one detached thread, two scoped
+children sharing parent stack values, five std TLS destructors, and six
+started/stopped/TLS-destroyed runtime threads per wave.
+These are build and host-validation results; a TRUEOS rig PASS is still required.
+
 
 The light-stress follow-up gives `tokio_stack` two native lane-owned runtimes,
 each with four clients sending eight gRPC requests to an isolated ephemeral
@@ -66,3 +96,32 @@ loopback server. Successful output includes `tokio_stack: PASS`, two lanes,
 64 total verified replies and joined server shutdown. Each lane installs its own
 Tracing subscriber. This expected output is acceptance criteria, not a recorded
 runtime result.
+
+
+## Velosrv thread-spawn failure provenance
+
+The failing `velosrv.bp` fetched with SHA-256
+`748d6b2b9b0979fb41af72e3e0d52962cee780b9035e6864add9d7c9ca2614dd`
+exactly matched the locally packed artifact. Its retained Cargo lock selected
+Tokio 1.52.3 without a registry source; dependency files point to
+`vendor/tokio-1.52.3`, and the Tokio fingerprint enables `rt-multi-thread`.
+The target is `x86_64-unknown-trueos` (`os=trueos`, `env=musl`, Unix family),
+compiled using the pinned nightly-2026-07-10 Rust source. Its linked module
+contains `std::sys::thread::trueos::Thread::new`, whose previous implementation
+returned `UNSUPPORTED_PLATFORM` unconditionally. Veloren builds a multi-thread
+runtime immediately on entry; Tokio reaches that unsupported lifecycle while
+starting its workers. The failure therefore comes from the platform backend,
+not an unpinned Tokio or a host pthread implementation.
+
+The replacement adds the missing stackful lifecycle and schedules independent
+thread contexts, while preserving the ordinary Tokio 1.52.3 worker/blocking-pool
+code paths. Repacking is required: the fetched hash identifies the old backend.
+Use `TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp apps/velosrv` for local build
+validation; compilation and packing do not replace a runtime acceptance run.
+
+The local rebuild passes the CABI guard with 16 matching imports and produces
+`dist/velosrv.bp` with SHA-256
+`0dd31276738e05e542a137fb852126a5f42edf18724205f0eb259d7aa68accdb`.
+The linked module imports the canonical spawn/join/detach functions and no
+POSIX thread lifecycle functions. Publication was disabled during validation;
+the remote artifact identified by the old hash remains a separate deployment.

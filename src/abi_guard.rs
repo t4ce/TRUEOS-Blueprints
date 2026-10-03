@@ -242,7 +242,7 @@ fn verify_launchable_imports(imports: &BTreeSet<String>) -> Result<(), String> {
     for symbol in imports {
         let reason = match symbol.as_str() {
             "pthread_create" | "pthread_join" | "pthread_detach" | "pthread_kill" => Some(
-                "POSIX thread lifecycle is unavailable; rebuild with the TRUEOS std backend and use trueos::worker",
+                "POSIX thread lifecycle is unavailable; rebuild with the TRUEOS std backend using trueos_cabi_thread_*",
             ),
             "opendir" | "fdopendir" | "readdir" | "readdir_r" | "closedir" | "dirfd" => {
                 Some("POSIX directory streams are unavailable; use trueos::async_fs::list_dir")
@@ -460,6 +460,9 @@ mod tests {
                 "pthread_mutex_lock".into(),
                 "trueos_cabi_async_fs_read_start".into(),
                 "trueos_service_lane_submit_job".into(),
+                "trueos_cabi_thread_spawn".into(),
+                "trueos_cabi_thread_join".into(),
+                "trueos_cabi_thread_detach".into(),
                 "raise".into(),
             ]))
             .is_ok()

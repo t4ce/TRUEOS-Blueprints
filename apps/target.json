@@ -17,5 +17,6 @@
   "relocation-model": "pic",
   "code-model": "small",
   "tls-model": "local-exec",
+  "stack-probes": { "kind": "inline" },
   "emit-debug-gdb-scripts": false
 }

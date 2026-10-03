@@ -36,18 +36,21 @@ pub(crate) fn install(blueprint_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn cache_revision() -> Result<String, String> {
+pub(crate) fn cache_revision(target_spec: &Path) -> Result<String, String> {
     let library = crate::toolchain::rust_sysroot()?.join("lib/rustlib/src/rust/library");
     let mut hash = Sha256::new();
-    // Include the actual installed TLS, synchronization selection and current
-    // identity hooks too: rust-src is outside Cargo's dependency tracking.
+    // Include the installed thread lifecycle, key-backed TLS storage and
+    // destructor hooks: rust-src is outside Cargo's dependency tracking.
     for relative in [
         "std/src/sys/thread/mod.rs",
         "std/src/sys/thread/trueos.rs",
         "std/src/os/unix/mod.rs",
         "std/src/thread/current.rs",
         "std/src/sys/thread_local/mod.rs",
-        "std/src/sys/thread_local/no_threads.rs",
+        "std/src/sys/thread_local/os.rs",
+        "std/src/sys/thread_local/key/unix.rs",
+        "std/src/sys/thread_local/key/racy.rs",
+        "std/src/sys/thread_local/guard/key.rs",
         "std/src/hash/random.rs",
         "std/src/sys/pal/unix/time.rs",
     ] {
@@ -57,5 +60,13 @@ pub(crate) fn cache_revision() -> Result<String, String> {
         hash.update((source.len() as u64).to_le_bytes());
         hash.update(source);
     }
+    // Custom target JSON lives outside the rust-src dependency graph too.
+    // In particular, guarded stacks require every crate, including std, to
+    // be rebuilt when inline stack probes are enabled.
+    let target = fs::read(target_spec)
+        .map_err(|error| format!("cannot fingerprint target {}: {error}", target_spec.display()))?;
+    hash.update(b"target-spec");
+    hash.update((target.len() as u64).to_le_bytes());
+    hash.update(target);
     Ok(format!("{:x}", hash.finalize())[..16].to_owned())
 }
