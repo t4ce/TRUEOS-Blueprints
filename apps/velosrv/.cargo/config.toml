@@ -1,6 +1,0 @@
-[env]
-# SQLite's bundled amalgamation defaults to compiling optional background
-# sort workers that call pthread_create/join. TRUEOS runs Veloren on its Tokio
-# worker pool, so keep SQLite's worker pool disabled while retaining its normal
-# thread-safety and mutex support.
-LIBSQLITE3_FLAGS = { value = "-DSQLITE_MAX_WORKER_THREADS=0", force = true }

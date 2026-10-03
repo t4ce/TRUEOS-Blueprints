@@ -15,3 +15,5 @@ bench = false
 
 [dependencies]
 trueos = { workspace = true, features = ["ui4-scene"] }
+
+trueos-terminal = { path = "../../../TRUEOS/crates/trueos-terminal" }

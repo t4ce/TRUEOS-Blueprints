@@ -39,6 +39,12 @@ guest code, TLS values or host guards; non-cooperative threads can leave teardow
 pending. Stackful execution is cooperative on shared carriers, with independent
 guarded stacks and inline stack probes.
 
+Each VM-owned thread retains a carrier page-table overlay that maps the Hull's
+main stack at the same virtual addresses as the guest. Scoped children can
+therefore borrow parent stack values directly; nested scoped children share
+their carrier parent's guarded aliases. Hull mutex contention yields through
+VMCALL instead of entering a host executor with guest per-CPU state.
+
 Guarded stacks use compact reservations in a monotonic 512 GiB virtual alias
 arena. Completion reclaims the physical stack pages after the carrier returns
 to its parent stack. Retired virtual aliases are never reused; reuse requires
@@ -92,7 +98,19 @@ vendored Tokio 1.52.3: two joined threads, one detached thread, two scoped
 children sharing parent stack values, five std TLS destructors, and six
 started/stopped/TLS-destroyed runtime threads per wave. Two additional nested
 children share their carrier parents' guarded stack values and stable identities.
-These are build and host-validation results; a TRUEOS rig PASS is still required.
+The same packed probe passes on TRUEOS in isolated QEMU using the final normal
+ISO. The recorded result is
+`../TRUEOS/bld/thread-acceptance/qemu-run-6/result.json` (`status=PASS`, elapsed
+12.849 seconds), with its runtime output in `shell.log`. The local seeded
+Blueprint was launched through Shell2 Default mode, with no remote fetch or
+publication. Both Tokio runtime
+waves start, stop and destroy TLS for six threads, complete sixteen blocking
+tasks, pass `block_in_place`, and exchange TCP ping/pong on assigned loopback
+ports 50000 and 50001. Runtime shutdown completes in each wave. The joined,
+detached, scoped and nested scoped std-thread checks pass, followed by the
+retained two-lane native stress test and the final `tokio_mrt: PASS` marker.
+This establishes the probe's thread/runtime contract; velosrv startup is a
+separate smoke test.
 
 
 The light-stress follow-up gives `tokio_stack` two native lane-owned runtimes,
@@ -130,3 +148,16 @@ The local rebuild passes the CABI guard with 16 matching imports and produces
 The linked module imports the canonical spawn/join/detach functions and no
 POSIX thread lifecycle functions. Publication was disabled during validation;
 the remote artifact identified by the old hash remains a separate deployment.
+
+The separate velosrv smoke is recorded in
+`../TRUEOS/bld/thread-acceptance/qemu-velosrv-2/result.json`. A transient 128 MiB
+TRUEOSFS RAM disc mounted successfully (`root_mounted=1`); the sole unresolved
+import from the earlier smoke, `renameat`, has a real kernel implementation.
+Velosrv then reached `common_frontend::init` and panicked at
+`common/base/src/userdata_dir.rs:64` because `std::env::current_exe()` returned
+errno 38 (`Unsupported`). Auditing `server-cli/src/main.rs` establishes that its
+multi-thread Tokio `build().unwrap()` returned before this initialization call.
+No explicit server-ready marker was observed, so the smoke records successful
+runtime construction followed by an application startup failure. Generic
+executable-path discovery remains a separate platform boundary; full velosrv
+startup requires that interface or its documented `VELOREN_USERDATA` override.
