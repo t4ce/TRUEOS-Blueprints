@@ -216,6 +216,38 @@ fn run_scoped_threads() -> Result<(), &'static str> {
                             probe.0.set(lane + 10);
                             Ok(())
                         })?;
+                        // Nested children borrow an outer child's guarded
+                        // stack, covering carrier-to-carrier pointer stability.
+                        let nested_read = lane + 0x200;
+                        let nested_write = AtomicUsize::new(0);
+                        let nested_id = std::thread::scope(|nested_scope| {
+                            let nested_read = &nested_read;
+                            let nested_write = &nested_write;
+                            std::thread::Builder::new()
+                                .name(format!("mrt-scoped-nested-{lane}"))
+                                .stack_size(256 * 1024)
+                                .spawn_scoped(nested_scope, move || {
+                                    let nested_id = std::thread::current().id();
+                                    if nested_id == id
+                                        || nested_id == main_id
+                                        || *nested_read != lane + 0x200
+                                    {
+                                        return Err("std.scoped.nested-stack-read-or-identity");
+                                    }
+                                    nested_write.store(lane + 0x400, Ordering::Release);
+                                    std::thread::yield_now();
+                                    if std::thread::current().id() != nested_id {
+                                        return Err("std.scoped.nested-stable-identity");
+                                    }
+                                    Ok(nested_id)
+                                })
+                                .map_err(|_| "std.scoped.nested-spawn")?
+                                .join()
+                                .map_err(|_| "std.scoped.nested-join")?
+                        })?;
+                        if nested_id == id || nested_write.load(Ordering::Acquire) != lane + 0x400 {
+                            return Err("std.scoped.nested-stack-write");
+                        }
                         let mut values =
                             stack_values.lock().map_err(|_| "std.scoped.stack-lock")?;
                         values.0 += lane + 1;
@@ -252,7 +284,9 @@ fn run_scoped_threads() -> Result<(), &'static str> {
     }
     logl::log(
         level::INFO,
-        format_args!("tokio_mrt: std scoped={LANES} borrowed_stack=PASS tls_destructors={LANES}"),
+        format_args!(
+            "tokio_mrt: std scoped={LANES} borrowed_stack=PASS tls_destructors={LANES} nested_threads={LANES}"
+        ),
     );
     Ok(())
 }

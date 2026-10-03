@@ -59,7 +59,9 @@ current-thread coverage. `tokio_mrt` retains explicit native admission/completio
 coverage and adds independent std spawn/join, TLS isolation/destructors,
 wake-before-park and cross-thread unpark. Two scoped children also read and
 update values borrowed from their parent's stack across carriers, with distinct
-thread identities and TLS. It builds, runs and shuts down a two-worker Tokio runtime
+thread identities and TLS. Each child also starts a nested scoped child borrowing
+its own guarded stack, checking both Hull-to-carrier and carrier-to-carrier
+address stability. It builds, runs and shuts down a two-worker Tokio runtime
 twice, exercising cross-worker tasks, timers, `spawn_blocking`, `block_in_place`,
 loopback TCP and worker TLS destruction. `wls`, `condvar`, `cross`, and
 `redb_multirt` retain focused native worker coverage.
@@ -83,10 +85,13 @@ validation. Syntax/static checks alone must not be reported as a passing rig run
 
 The stackful-thread change passes all 75 Blueprint builder tests and packs the
 extended `tokio_mrt` probe for the custom TRUEOS target with matching CABI
-signatures. Its std/multi-thread test logic also passes on Linux with the
+signatures. The nested scoped probe's local `dist/tokio_mrt.bp` SHA-256 is
+`ef8aab2b830c6e32a3ac68706de3d8bec53524668e18d5ffb000c306d4ef576a`.
+Its std/multi-thread test logic also passes on Linux with the
 vendored Tokio 1.52.3: two joined threads, one detached thread, two scoped
 children sharing parent stack values, five std TLS destructors, and six
-started/stopped/TLS-destroyed runtime threads per wave.
+started/stopped/TLS-destroyed runtime threads per wave. Two additional nested
+children share their carrier parents' guarded stack values and stable identities.
 These are build and host-validation results; a TRUEOS rig PASS is still required.
 
 
