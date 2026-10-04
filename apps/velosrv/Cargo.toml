@@ -62,6 +62,14 @@ chrono = { version = "0.4.24", default-features = false, features = ["clock", "s
 mimalloc = "0.1"
 
 [patch.crates-io]
+atomicwrites = { path = "../../../veloren/vendor/atomicwrites-0.4.4" }
+tynm = { path = "../../../veloren/vendor/tynm-0.1.10" }
+wavefront = { path = "../../../veloren/vendor/wavefront-0.2.3" }
+lz-fear = { path = "../../../veloren/vendor/lz-fear-0.2.0" }
+png = { path = "../../../veloren/vendor/png-0.18.1" }
+backtrace = { path = "../../../veloren/vendor/backtrace-0.3.76" }
+hashbrown_015 = { package = "hashbrown", path = "../../../veloren/vendor/hashbrown-0.15.5" }
+rust-argon2 = { path = "../../../veloren/vendor/rust-argon2-2.1.0" }
 specs = { path = "../../../veloren/vendor/specs" }
 shred = { path = "../../../veloren/vendor/shred" }
 hibitset = { path = "../../../veloren/vendor/hibitset" }
@@ -69,3 +77,8 @@ hashbrown = { path = "../../../veloren/vendor/hashbrown" }
 indexmap = { path = "../../../veloren/vendor/indexmap" }
 thread-priority = { path = "stubs/thread-priority" }
 tracing-appender = { path = "vendor/tracing-appender" }
+
+# Retain the SHA 0.10 APIs while sharing cpufeatures 0.3.1 with SHA 0.11.
+sha1 = { path = "../../../veloren/vendor/sha1-0.10.6" }
+
+sha2 = { path = "../../../veloren/vendor/sha2-0.10.9" }

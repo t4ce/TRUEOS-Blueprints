@@ -2136,7 +2136,10 @@ fn add_manifest_source_patches(
             )
         })?;
         let package = package_name(&canonical.join("Cargo.toml"))?;
-        patches.retain(|patch| patch.key != key && patch.name != package);
+        // Cargo permits differently keyed patches for distinct versions of
+        // one package. Replacing by package name silently discards the first
+        // version when a later alias is materialized.
+        patches.retain(|patch| patch.key != key);
         patches.push(if package == key {
             CratePatch::new(key, canonical)
         } else {
@@ -2144,6 +2147,46 @@ fn add_manifest_source_patches(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod manifest_patch_alias_tests {
+    use super::*;
+
+    #[test]
+    fn different_versions_of_one_package_keep_both_patch_aliases() {
+        let dir = env::temp_dir().join(format!(
+            "trueos-patch-aliases-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for (name, version) in [("older", "0.1.0"), ("newer", "0.2.0")] {
+            fs::create_dir_all(dir.join(name)).unwrap();
+            fs::write(
+                dir.join(name).join("Cargo.toml"),
+                format!("[package]\nname=\"example\"\nversion=\"{version}\"\n"),
+            )
+            .unwrap();
+        }
+        let manifest = dir.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[patch.crates-io]\nexample_old = { package = \"example\", path = \"older\" }\nexample = { path = \"newer\" }\n",
+        )
+        .unwrap();
+        let mut patches = Vec::new();
+        add_manifest_source_patches(&manifest, &mut patches).unwrap();
+        assert_eq!(patches.len(), 2);
+        assert_eq!(patches[0].key, "example_old");
+        assert_eq!(patches[1].key, "example");
+        // Reapplying a manifest replaces the same keys without multiplying them.
+        add_manifest_source_patches(&manifest, &mut patches).unwrap();
+        assert_eq!(patches.len(), 2);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 fn pinned_git_patch_revision(key: &str, value: &str) -> Result<String, String> {
