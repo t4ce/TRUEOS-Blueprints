@@ -99,6 +99,11 @@
     "swarm",
     "cubesrv",
     "velosrv",
+    {
+      "name": "voxy",
+      "path": "../veloren-voxygen/blueprint",
+      "optional": true
+    },
     "superseedr",
     "webmail",
     "xpapp",
