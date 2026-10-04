@@ -3,8 +3,14 @@ name = "veloren_executor"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.trueos-blueprint.build-env-paths]
+CARGO_WORKSPACE_DIR = "../../../veloren"
+
 [workspace]
 resolver = "3"
+
+[features]
+cooperative-worldgen = []
 
 [dependencies]
 trueos = { path = "../../api" }

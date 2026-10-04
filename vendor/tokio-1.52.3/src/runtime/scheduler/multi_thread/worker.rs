@@ -567,7 +567,21 @@ impl Context {
         // will be one of the first things we do.
         core.stats.start_processing_scheduled_tasks();
 
+        #[cfg(target_os = "trueos")]
+        let mut last_carrier_turn = std::time::Instant::now();
+
         while !core.is_shutdown {
+            // A task-level async yield can immediately poll another task on
+            // this same worker, without returning to TRUEOS's shared carrier.
+            // Give other logical threads a turn between polls. No scheduler
+            // mutex or core RefCell borrow is held at this boundary. Long
+            // individual task polls still need their own cooperative points.
+            #[cfg(target_os = "trueos")]
+            if last_carrier_turn.elapsed() >= std::time::Duration::from_millis(10) {
+                std::thread::yield_now();
+                last_carrier_turn = std::time::Instant::now();
+            }
+
             self.assert_lifo_enabled_is_correct(&core);
 
             if core.is_traced {

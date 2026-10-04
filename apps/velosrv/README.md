@@ -95,6 +95,30 @@ python3 tools/qemu/verify-tokio-platform.py --iso <private.iso> \
   --output <new-evidence-directory> --probe veloren_executor
 ```
 
+## Cooperative world bootstrap
+
+The worldgen build selects `world/cooperative-worldgen`. Startup economy history
+updates sites sequentially with quiet, timed scheduling checkpoints between
+complete updates. Deliveries, site calculations, order distribution and trade
+retain their original phase order; live ECS and chunk-job scheduling still use
+the shared Tokio runtime. A startup tick no longer waits on a parallel site
+completion barrier for each of its 2,000 history iterations.
+
+Peak naming uses neighbouring spatial buckets instead of comparing every peak
+with every other peak. The strict radius, equal-height ties, original peak order
+and removal by higher peaks that themselves get removed are preserved. Naming,
+biome scans and subsequent civilisation/resource loops reach a 10 ms work-budget
+checkpoint between units. Logging is separate from these checkpoints. Long
+individual site generators still need their own internal scheduling points.
+
+The first civilisation markers after `terrain-simulation-complete` are
+`civs stage=enter`, followed by peak/biome naming start and completion. These
+bracket the previously silent startup work without logging every iteration.
+`world/tests/cooperative_bootstrap.rs` compares the new peak rule with an
+all-pairs oracle and checks borrowed site-phase completion; the native
+`veloren_executor` probe includes the actual worldgen site helper and requires
+sleeping std carrier peers to advance during its workload.
+
 ## Graceful VM stop
 
 The server registers `trueos::shutdown::ShutdownGuard` before its Tokio runtime

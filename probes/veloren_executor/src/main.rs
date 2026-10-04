@@ -1,11 +1,14 @@
 use specs::{Builder, ParJoin, WorldExt};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Condvar, Mutex,
 };
 use std::time::Duration;
 use tokio_parallel::{join, prelude::*, scope, ThreadPool};
 use trueos::logl::{self, level};
+mod generation {
+    include!(concat!(env!("CARGO_WORKSPACE_DIR"), "/world/src/generation.rs"));
+}
 struct Position(usize);
 impl specs::Component for Position {
     type Storage = specs::VecStorage<Self>;
@@ -24,11 +27,148 @@ impl<'a> specs::System<'a> for Sum {
         *result = (&data).par_join().map(|p| p.0).sum();
     }
 }
+
+// No logging or manual yields inside these loops: VMCall boundaries must not
+// hide a failed completion wake or a continuation that never resumes.
+fn completion_progress() {
+    const THREADS: usize = 8;
+    const ROUNDS: usize = 128;
+    let ring = Arc::new((Mutex::new(0usize), Condvar::new()));
+    let mut threads = Vec::new();
+    for lane in 1..THREADS {
+        let ring = ring.clone();
+        threads.push(std::thread::spawn(move || ring_lane(&ring, lane, THREADS, ROUNDS)));
+    }
+    ring_lane(&ring, 0, THREADS, ROUNDS);
+    for thread in threads { thread.join().unwrap(); }
+    assert_eq!(*ring.0.lock().unwrap(), THREADS * ROUNDS);
+    logl::log(level::INFO, format_args!(
+        "veloren_executor: progress condvar_threads=8 handoffs=1024 hull_and_native=PASS"));
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4).enable_all().build().unwrap();
+    let pool = Arc::new(ThreadPool::from_handle(runtime.handle().clone()));
+    // The left branch cannot return until a different worker has taken the
+    // right branch. Thus Job::wait cannot satisfy this join by claiming it.
+    for caller in 0..2 {
+        let executor = pool.clone();
+        let work = move || executor.install(|| {
+            for round in 0..ROUNDS {
+                let (claimed, claim) = std::sync::mpsc::channel();
+                let left_done = std::sync::atomic::AtomicBool::new(false);
+                let left_done = &left_done;
+                let (left, right) = join(move || {
+                    claim.recv_timeout(Duration::from_secs(5)).unwrap();
+                    left_done.store(true, Ordering::Release);
+                    round
+                }, || {
+                    claimed.send(()).unwrap();
+                    while !left_done.load(Ordering::Acquire) {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                    round * 3
+                });
+                assert_eq!((left, right), (round, round * 3));
+            }
+        });
+        if caller == 0 { work(); }
+        else { runtime.block_on(runtime.spawn(async move { work(); })).unwrap(); }
+    }
+    drop(pool);
+    drop(runtime);
+    logl::log(level::INFO, format_args!(
+        "veloren_executor: progress claimed_joins=256 callers=hull,native workers=4 PASS"));
+}
+
+fn ring_lane(ring: &(Mutex<usize>, Condvar), lane: usize, lanes: usize, rounds: usize) {
+    for _ in 0..rounds {
+        let mut turn = ring.0.lock().unwrap();
+        while *turn % lanes != lane { turn = ring.1.wait(turn).unwrap(); }
+        *turn += 1;
+        ring.1.notify_all();
+    }
+}
+
+fn cpu_progress(mode: usize) {
+    use std::sync::atomic::AtomicBool;
+    let running = Arc::new(AtomicBool::new(true));
+    let beats = Arc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
+    let mut monitors = Vec::new();
+    for lane in 0..2 {
+        let running = running.clone();
+        let beats = beats.clone();
+        monitors.push(std::thread::spawn(move || {
+            while running.load(Ordering::Acquire) {
+                beats[lane].fetch_add(1, Ordering::Release);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }));
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2).enable_all().build().unwrap();
+    let pool = Arc::new(ThreadPool::from_handle(runtime.handle().clone()));
+    let gate = Arc::new(std::sync::Barrier::new(3));
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let gate = gate.clone();
+        let pool = pool.clone();
+        let beats = beats.clone();
+        tasks.push(runtime.spawn(async move {
+            gate.wait();
+            let initial = [beats[0].load(Ordering::Acquire), beats[1].load(Ordering::Acquire)];
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            if mode == 1 {
+                while std::time::Instant::now() < deadline {
+                    let slice = std::time::Instant::now() + Duration::from_micros(250);
+                    while std::time::Instant::now() < slice { std::hint::black_box(17usize); }
+                    // Tokio yields its task, but the native worker must also
+                    // eventually give sleeping std peers a carrier turn.
+                    tokio::task::yield_now().await;
+                }
+            } else if mode == 2 {
+                let mut total = 0usize;
+                generation::for_each_site(0..4000, |site| {
+                    let slice = std::time::Instant::now() + Duration::from_micros(250);
+                    while std::time::Instant::now() < slice { std::hint::black_box(site); }
+                    total += site;
+                });
+                assert_eq!(total, (0..4000).sum::<usize>());
+            } else { pool.install(|| {
+                while std::time::Instant::now() < deadline {
+                    join(|| {
+                        let slice = std::time::Instant::now() + Duration::from_micros(250);
+                        while std::time::Instant::now() < slice { std::hint::black_box(17usize); }
+                    }, || std::hint::black_box(7usize));
+                }
+            }); }
+            [beats[0].load(Ordering::Acquire) - initial[0], beats[1].load(Ordering::Acquire) - initial[1]]
+        }));
+    }
+    gate.wait();
+    let counts = tasks.into_iter().map(|task| runtime.block_on(task).unwrap()).collect::<Vec<_>>();
+    running.store(false, Ordering::Release);
+    for monitor in monitors { monitor.join().unwrap(); }
+    drop(pool);
+    drop(runtime);
+    let mode = match mode { 1 => "async-yield", 2 => "worldgen-sites", _ => "parallel-jobs" };
+    if counts.iter().any(|counts| counts.iter().any(|count| *count < 10)) {
+        logl::log(level::ERROR, format_args!("veloren_executor: FAIL mode={mode} cpu-bound heartbeat_counts={counts:?}"));
+        panic!("CPU jobs starved carrier peers");
+    }
+    logl::log(level::INFO, format_args!(
+        "veloren_executor: progress cpu_jobs=2 heartbeat_peers=2 bounded_turns=PASS mode={mode} counts={counts:?}"));
+}
+
 fn main() {
     logl::log(
         level::INFO,
         format_args!("veloren_executor: start shared-tokio-runtime"),
     );
+    completion_progress();
+    cpu_progress(0);
+    cpu_progress(1);
+    cpu_progress(2);
     for workers in [1, 2] {
         logl::log(
             level::INFO,

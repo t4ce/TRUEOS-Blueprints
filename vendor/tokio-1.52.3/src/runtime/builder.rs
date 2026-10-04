@@ -335,7 +335,11 @@ impl Builder {
 
             metrics_poll_count_histogram: HistogramBuilder::default(),
 
-            disable_lifo_slot: false,
+            // TRUEOS workers are stackful continuations on shared cooperative
+            // carriers. A synchronous scoped CPU caller can park without
+            // returning from its Tokio task poll. Keep spawned children in the
+            // stealable queue so another worker can run them while it is parked.
+            disable_lifo_slot: cfg!(target_os = "trueos"),
 
             timer_flavor: TimerFlavor::Traditional,
 
