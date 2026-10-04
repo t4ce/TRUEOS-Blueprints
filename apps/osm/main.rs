@@ -1,4 +1,8 @@
 // trueos-blueprint: features=["tokio-net-probe", "ui4-scene"]
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod presenter;
+mod ram_cache;
+
 use anyhow::{Context, Result, ensure};
 use font8x8::UnicodeFonts;
 use image::{Rgba, RgbaImage};
@@ -38,7 +42,8 @@ impl Map {
 
 struct Tiles {
     client: reqwest::Client,
-    cache: PathBuf,
+    cache: Option<PathBuf>,
+    ram: ram_cache::RamCache,
     base: String,
 }
 impl Tiles {
@@ -49,27 +54,51 @@ impl Tiles {
         let cache = PathBuf::from(
             std::env::var("OSM_CACHE_DIR").unwrap_or_else(|_| "osm-tile-cache".into()),
         );
-        std::fs::create_dir_all(&cache).context("create persistent tile cache")?;
+        let ram_only = std::env::var("OSM_CACHE_MODE").is_ok_and(|mode| mode == "ram");
+        ensure!(
+            !ram_only || base.trim_end_matches('/') != "https://tile.openstreetmap.org",
+            "public OSM tiles require persistent caching; use a provider permitting RAM-only caching"
+        );
+        let cache = if ram_only {
+            None
+        } else {
+            std::fs::create_dir_all(&cache).context("create persistent tile cache")?;
+            Some(cache)
+        };
         Ok(Self {
             client: reqwest::Client::builder()
                 .user_agent("TRUEOS-OSM/0.1")
                 .timeout(Duration::from_secs(30))
                 .build()?,
             cache,
+            ram: ram_cache::RamCache::new()?,
             base: base.trim_end_matches('/').into(),
         })
     }
-    async fn tile(&self, z: u8, x: i64, y: i64) -> Result<RgbaImage> {
-        let path = self.cache.join(format!("{z}-{x}-{y}.png"));
-        if let Ok(meta) = std::fs::metadata(&path) {
-            if meta
-                .modified()
-                .ok()
-                .and_then(|t| SystemTime::now().duration_since(t).ok())
-                .is_some_and(|age| age < TTL)
-            {
-                if let Ok(image) = image::open(&path) {
-                    return Ok(image.to_rgba8());
+    async fn tile(&mut self, z: u8, x: i64, y: i64) -> Result<RgbaImage> {
+        let key = format!("{z}-{x}-{y}");
+        if let Some(tile) = self.ram.get(&key)? {
+            return Ok(tile);
+        }
+        let path = self
+            .cache
+            .as_ref()
+            .map(|cache| cache.join(format!("{key}.png")));
+        if let Some(path) = &path {
+            if let Ok(meta) = std::fs::metadata(path) {
+                if let Some(age) = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| SystemTime::now().duration_since(t).ok())
+                    .filter(|age| *age < TTL)
+                {
+                    if let Ok(image) = image::open(path) {
+                        let image = image.to_rgba8();
+                        if image.dimensions() == (256, 256) {
+                            self.ram.insert(key, &image, TTL - age)?;
+                            return Ok(image);
+                        }
+                    }
                 }
             }
         }
@@ -88,10 +117,13 @@ impl Tiles {
             image.dimensions() == (256, 256),
             "unexpected tile dimensions"
         );
-        std::fs::write(path, &bytes).context("cache tile")?;
+        if let Some(path) = path {
+            std::fs::write(path, &bytes).context("cache tile")?;
+        }
+        self.ram.insert(key, &image, TTL)?;
         Ok(image)
     }
-    async fn render(&self, map: &Map) -> RgbaImage {
+    async fn render(&mut self, map: &Map) -> RgbaImage {
         let mut out = RgbaImage::from_pixel(WIDTH, HEIGHT + 24, Rgba([230, 230, 230, 255]));
         let left = map.x.floor() as i64 - WIDTH as i64 / 2;
         let top = map.y.floor() as i64 - HEIGHT as i64 / 2;
@@ -139,7 +171,7 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let tiles = Tiles::new()?;
+    let mut tiles = Tiles::new()?;
     let map = Map::new(51.471336, 13.827807, 17);
     rt.block_on(tiles.render(&map)).save("osm-demo.png")?;
     println!("Saved osm-demo.png; attribution: https://www.openstreetmap.org/copyright");
@@ -148,9 +180,9 @@ fn main() -> Result<()> {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn main() -> Result<()> {
-    use trueos::ui4_scene::{Damage, Error, Frame, PanPhase};
+    use trueos::ui4_scene::{Frame, PanPhase};
     let rt = trueos::runtime::current_thread_net().build()?;
-    let tiles = Tiles::new()?;
+    let mut tiles = Tiles::new()?;
     let mut map = Map::new(51.471336, 13.827807, 17);
     let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + 24)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
@@ -159,23 +191,8 @@ fn main() -> Result<()> {
     loop {
         if dirty {
             let pixels = rt.block_on(tiles.render(&map));
-            loop {
-                match frame.begin(trueos::ui4_scene::rgba(230, 230, 230, 255)) {
-                    Ok(()) => break,
-                    Err(Error::Busy) => trueos::vsys::sleep_ms(8),
-                    Err(e) => anyhow::bail!("begin map: {e:?}"),
-                }
-            }
-            loop {
-                match frame.write_opaque_rgba8(pixels.as_raw()) {
-                    Ok(()) => break,
-                    Err(Error::Busy) => trueos::vsys::sleep_ms(8),
-                    Err(e) => anyhow::bail!("paint map: {e:?}"),
-                }
-            }
-            frame
-                .publish(Damage::full(WIDTH, HEIGHT + 24))
-                .map_err(|e| anyhow::anyhow!("publish map: {e:?}"))?;
+            presenter::present(&mut frame, &pixels)
+                .map_err(|e| anyhow::anyhow!("present map sprite: {e:?}"))?;
             dirty = false;
         }
         while let Ok(Some(event)) = frame.take_pan_event() {
@@ -199,6 +216,44 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn warmed_render_reuses_decoded_ram_tiles_after_disk_removal() {
+        let path =
+            std::env::temp_dir().join(format!("trueos-osm-cache-test-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let map = Map::new(51.471336, 13.827807, 17);
+        let left = map.x.floor() as i64 - WIDTH as i64 / 2;
+        let top = map.y.floor() as i64 - HEIGHT as i64 / 2;
+        let tile = RgbaImage::from_pixel(256, 256, Rgba([100, 150, 200, 255]));
+        for ty in top.div_euclid(256)..=(top + HEIGHT as i64 - 1).div_euclid(256) {
+            for tx in left.div_euclid(256)..=(left + WIDTH as i64 - 1).div_euclid(256) {
+                tile.save(path.join(format!("17-{tx}-{ty}.png"))).unwrap();
+            }
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut tiles = Tiles {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_millis(100))
+                .build()
+                .unwrap(),
+            base: "https://127.0.0.1:1".into(),
+            cache: Some(path.clone()),
+            ram: ram_cache::RamCache::new().unwrap(),
+        };
+        let started = std::time::Instant::now();
+        let cold = rt.block_on(tiles.render(&map));
+        let cold_time = started.elapsed();
+        assert_eq!(*cold.get_pixel(0, 0), Rgba([100, 150, 200, 255]));
+        std::fs::remove_dir_all(path).unwrap();
+        let started = std::time::Instant::now();
+        let warm = rt.block_on(tiles.render(&map));
+        let warm_time = started.elapsed();
+        assert_eq!(cold, warm);
+        eprintln!("fixture render: disk+decode+RAM insert {cold_time:?}, RAM reuse {warm_time:?}");
+    }
     #[test]
     fn mercator_coordinates() {
         let center = Map::new(0.0, 0.0, 0);

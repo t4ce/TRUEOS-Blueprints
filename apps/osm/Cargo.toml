@@ -16,6 +16,7 @@ reqwest = { version = "=0.13.3", default-features = false, features = ["rustls"]
 tokio = { version = "=1.52.3", features = ["rt", "net", "time"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 font8x8 = "0.3"
+trueos-redb = { path = "../../crates/trueos-redb", features = ["std"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos = { path = "../../api", features = ["tokio-net-probe", "ui4-scene"] }
