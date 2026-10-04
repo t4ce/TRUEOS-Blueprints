@@ -127,6 +127,14 @@ sample, then reports completed/total samples about every two seconds. Horizon
 directions and pixel generation have their own completed-work counters. These
 counts measure returned work; a running VM or busy CPU alone is not a progress
 guarantee. Sampling keeps the original calculations and visits every chunk.
+After the map returns, the server still builds its complete distant scenery
+(LOD) cache. The cooperative build visits each zone sequentially rather than
+entering nested parallel zone iterators. Tree candidate, column and structure
+work reaches quiet checkpoints inside each zone; `lod` completed-zone counters
+show returned work. The same tree/structure algorithms, positions and complete
+zone cache are retained. Startup now also brackets LOD, ECS setup, persistence,
+spawn-point generation, networking and RtSim so later work is not mistaken for
+a map-generation stall.
 `world/tests/cooperative_bootstrap.rs` compares the new peak rule with an
 all-pairs oracle and checks borrowed site-phase completion and map sample order;
 the native

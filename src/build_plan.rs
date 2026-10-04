@@ -79,7 +79,7 @@ pub(crate) fn resolve_build_settings(
     }
     let add_entrypoint = source_path.file_name().and_then(|name| name.to_str()) != Some("lib.rs")
         && source_defines_main(&source)
-        && !source.contains("#![no_main]");
+        && !source_disables_main_on_trueos(&source);
     Ok(BuildSettings {
         flavor,
         source_path,
@@ -214,6 +214,13 @@ fn source_group_import_mentions(source: &str, prefix: &str, names: &[&str]) -> b
         rest = after_group;
     }
     false
+}
+
+fn source_disables_main_on_trueos(source: &str) -> bool {
+    source.contains("#![no_main]") || source.lines().any(|line| {
+        let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact == "#![cfg_attr(target_os=\"trueos\",no_main)]"
+    })
 }
 
 fn source_is_explicit_no_std(source: &str) -> bool {

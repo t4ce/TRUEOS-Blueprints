@@ -3390,6 +3390,11 @@ fn rewrite_staged_source_for_target(
         "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
     );
 
+    // A staged app may retain an upstream source symlink. Replace that link
+    // instead of following it and changing the checkout we are packaging.
+    if fs::symlink_metadata(&staged_source).map_err(io_string)?.file_type().is_symlink() {
+        fs::remove_file(&staged_source).map_err(io_string)?;
+    }
     fs::write(&staged_source, rewritten).map_err(io_string)
 }
 

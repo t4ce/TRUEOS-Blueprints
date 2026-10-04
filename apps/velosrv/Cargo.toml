@@ -17,7 +17,7 @@ resolver = "3"
 
 [features]
 default = ["worldgen"]
-worldgen = ["server/worldgen", "dep:world", "world/cooperative-worldgen"]
+worldgen = ["server/worldgen", "server/cooperative-worldgen", "dep:world", "world/cooperative-worldgen"]
 persistent_world = ["server/persistent_world"]
 tracy = ["common-frontend/tracy"]
 plugins = ["server/plugins"]

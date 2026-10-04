@@ -18,6 +18,7 @@ fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
         ("fn main() {}\n", false, true),
         ("#![no_std]\nfn main() {}\n", true, true),
         ("#![no_std]\n#![no_main]\n", true, false),
+        ("#![cfg_attr(target_os = \"trueos\", no_main)]\nfn main() {}\n#[cfg(target_os = \"trueos\")]\npub extern \"C\" fn _start() -> ! { loop {} }\n", false, false),
     ] {
         fs::write(root.join("src/main.rs"), source).unwrap();
         fs::write(staged.join("src/main.rs"), source).unwrap();
@@ -37,6 +38,27 @@ fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
             assert_eq!(rewritten, source);
         }
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn entrypoint_rewrite_does_not_modify_upstream_source_symlink() {
+    let root = env::temp_dir().join(format!("trueos-entrypoint-symlink-{}", std::process::id()));
+    let staged = root.join("staged");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(staged.join("src")).unwrap();
+    let manifest = root.join("Cargo.toml");
+    fs::write(&manifest, "[package]\nname = \"entrypoint-symlink-test\"\nversion = \"0.1.0\"\n").unwrap();
+    let original = "fn main() {}\n";
+    fs::write(root.join("src/main.rs"), original).unwrap();
+    std::os::unix::fs::symlink(root.join("src/main.rs"), staged.join("src/main.rs")).unwrap();
+    let settings = resolve_build_settings(&root, &manifest, &BuildTarget::Package).unwrap();
+    rewrite_staged_source_for_target(&root, &staged, &manifest, &settings).unwrap();
+    assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), original);
+    let rewritten = fs::read_to_string(staged.join("src/main.rs")).unwrap();
+    assert!(rewritten.contains("pub extern \"C\" fn _start() -> !"));
+    assert!(!fs::symlink_metadata(staged.join("src/main.rs")).unwrap().file_type().is_symlink());
     fs::remove_dir_all(root).unwrap();
 }
 
