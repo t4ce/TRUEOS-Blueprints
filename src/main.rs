@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs;

@@ -1,0 +1,12 @@
+[package]
+name = "tokio_stop"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+trueos = { path = "../../api" }
+tokio = { version = "=1.52.3", default-features = false, features = ["rt-multi-thread", "time", "sync"] }
+tokio-parallel = { package = "veloren-tokio-parallel", path = "../../../veloren/common/tokio-parallel" }

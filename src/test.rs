@@ -2,6 +2,44 @@
 
 use super::*;
 
+#[test]
+fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
+    let root = env::temp_dir().join(format!("trueos-entrypoint-rewrite-{}", std::process::id()));
+    let staged = root.join("staged");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(staged.join("src")).unwrap();
+    let manifest = root.join("Cargo.toml");
+    fs::write(
+        &manifest,
+        "[package]\nname = \"entrypoint-test\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    for (source, thin, entrypoint) in [
+        ("fn main() {}\n", false, true),
+        ("#![no_std]\nfn main() {}\n", true, true),
+        ("#![no_std]\n#![no_main]\n", true, false),
+    ] {
+        fs::write(root.join("src/main.rs"), source).unwrap();
+        fs::write(staged.join("src/main.rs"), source).unwrap();
+        let settings = resolve_build_settings(&root, &manifest, &BuildTarget::Package).unwrap();
+        assert_eq!(matches!(settings.flavor, BuildFlavor::ThinNoStd), thin);
+        rewrite_staged_source_for_target(&root, &staged, &manifest, &settings).unwrap();
+        let rewritten = fs::read_to_string(staged.join("src/main.rs")).unwrap();
+        assert_eq!(
+            rewritten.matches("#![no_std]").count(),
+            usize::from(thin)
+        );
+        if entrypoint {
+            assert!(rewritten.starts_with(&format!("#![no_main]\n{source}")));
+            assert!(rewritten.contains("pub extern \"C\" fn _start() -> !"));
+            assert!(rewritten.contains("core::hint::spin_loop()"));
+        } else {
+            assert_eq!(rewritten, source);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(test)]
 mod external_path_overlay_tests {
     use super::*;

@@ -20,6 +20,7 @@
     "test_some_crates",
     "tokio_fs",
     "tokio_mrt",
+    "tokio_stop",
     "tokio_net",
     "tokio_rt",
     "tokio_stack",
