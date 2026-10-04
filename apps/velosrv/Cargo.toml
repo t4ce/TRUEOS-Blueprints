@@ -16,7 +16,7 @@ CARGO_WORKSPACE_DIR = "../../../veloren"
 resolver = "3"
 
 [features]
-default = []
+default = ["worldgen"]
 worldgen = ["server/worldgen", "dep:world"]
 persistent_world = ["server/persistent_world"]
 tracy = ["common-frontend/tracy"]

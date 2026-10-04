@@ -589,7 +589,6 @@ fn build_one_target_to_in_lane(
     }
     let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
     preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
-    let staged_source_overlay = staged_source_overlay(&source_overlay, &work_dir);
     let cargo_manifest_path = staged_manifest_for_overlay(
         app_dir,
         manifest_path,
@@ -599,7 +598,7 @@ fn build_one_target_to_in_lane(
         &lock_mismatches,
     )?
     .unwrap_or_else(|| manifest_path.to_path_buf());
-    enforce_source_overlay_lock(&cargo_manifest_path, &staged_source_overlay)?;
+    enforce_source_overlay_lock(&cargo_manifest_path, &source_overlay)?;
 
     let mut cargo = toolchain::cargo_command();
     if let Some(manifest_dir) = cargo_manifest_path.parent() {
@@ -629,7 +628,7 @@ fn build_one_target_to_in_lane(
                 .join(",")
         );
     }
-    push_source_overlay_configs(&mut cargo, &staged_source_overlay);
+    push_source_overlay_configs(&mut cargo, &source_overlay);
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
     if let Some(lane) = lane {
         // Each lane owns a target-cache shard, so Cargo does not serialize on
@@ -771,7 +770,7 @@ fn build_one_target_to_in_lane(
             let metadata = cargo_metadata_for_rustc_payload(
                 &cargo_manifest_path,
                 &target_spec,
-                &staged_source_overlay,
+                &source_overlay,
                 no_default_features,
                 &extra_features,
             )?;
@@ -783,12 +782,12 @@ fn build_one_target_to_in_lane(
                 &target_spec,
                 &target_name,
                 cargo_profile,
-                &staged_source_overlay,
+                &source_overlay,
             )?;
             let isolated_metadata = cargo_metadata_for_rustc_payload(
                 &isolated.manifest_path,
                 &target_spec,
-                &staged_source_overlay,
+                &source_overlay,
                 false,
                 &[],
             )?;
@@ -2007,11 +2006,6 @@ fn source_overlay_patches(
         ));
     }
 
-    if let Some(path) = find_vendor_dir(app_dir, "hyper-rustls-0.27.9") {
-        out.retain(|patch| patch.name != "hyper-rustls");
-        out.push(CratePatch::new("hyper-rustls", path));
-    }
-
     if uses_tonic || manifest_or_lock_mentions_crate(app_dir, manifest_path, "hyper-timeout")? {
         out.retain(|patch| patch.name != "hyper-timeout");
         out.push(CratePatch::new(
@@ -3099,7 +3093,6 @@ fn staged_manifest_for_overlay(
     let stage_for_source_rewrite =
         staged_source_needs_trueos_collection_rewrite(app_dir, manifest_path)?;
     if source_overlay.is_empty()
-        && !build_settings.shims.add_no_std
         && !build_settings.shims.add_entrypoint
         && !stage_for_source_rewrite
     {
@@ -3138,7 +3131,6 @@ fn staged_manifest_for_overlay(
     }
     canonicalize_staged_blueprint_dependency_paths(app_dir, &staged_app_dir)?;
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, &staged_manifest, build_settings)?;
-    let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
     if lock_mismatches.is_empty() {
         return Ok(Some(staged_manifest));
@@ -3157,7 +3149,7 @@ fn staged_manifest_for_overlay(
     );
 
     for mismatch in lock_mismatches {
-        run_staged_lock_overlay_update(&staged_manifest, &staged_source_overlay, &mismatch)?;
+        run_staged_lock_overlay_update(&staged_manifest, source_overlay, &mismatch)?;
     }
 
     Ok(Some(staged_manifest))
@@ -3370,7 +3362,7 @@ fn rewrite_staged_source_for_target(
         rewrite_trueos_collection_imports(staged_app_dir)?;
     }
 
-    if !build_settings.shims.add_no_std && !build_settings.shims.add_entrypoint {
+    if !build_settings.shims.add_entrypoint {
         return Ok(());
     }
 
@@ -3387,31 +3379,17 @@ fn rewrite_staged_source_for_target(
     let staged_source = staged_app_dir.join(relative_source);
     let original = fs::read_to_string(&staged_source).map_err(io_string)?;
 
-    let mut header = String::new();
-    if build_settings.shims.add_no_std {
-        header.push_str("#![no_std]\n");
-    }
-    if build_settings.shims.add_entrypoint {
-        header.push_str("#![no_main]\n");
-    }
+    let header = "#![no_main]\n";
 
     let mut rewritten = String::with_capacity(original.len() + header.len() + 128);
-    rewritten.push_str(&header);
+    rewritten.push_str(header);
     rewritten.push_str(&original);
     if !original.ends_with('\n') {
         rewritten.push('\n');
     }
-    if build_settings.shims.add_entrypoint {
-        if build_settings.shims.add_no_std {
-            rewritten.push_str(
-                "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
-            );
-        } else {
-            rewritten.push_str(
-                "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
-            );
-        }
-    }
+    rewritten.push_str(
+        "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
+    );
 
     fs::write(&staged_source, rewritten).map_err(io_string)
 }
@@ -4895,20 +4873,6 @@ fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch])
             toml_string(&patch.path.to_string_lossy())
         ));
     }
-}
-
-fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec<CratePatch> {
-    source_overlay
-        .iter()
-        .map(|patch| CratePatch {
-            key: patch.key.clone(),
-            name: patch.name.clone(),
-            // Preserve the canonical vendor identity. A symlinked overlay may
-            // contain relative Blueprint-crate dependencies; mixing those with
-            // the canonical SDK produces duplicate path package IDs.
-            path: patch.path.clone(),
-        })
-        .collect()
 }
 
 fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {

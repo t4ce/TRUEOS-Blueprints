@@ -44,7 +44,6 @@ pub(crate) struct SourceFacts {
 }
 
 pub(crate) struct SourceShims {
-    pub(crate) add_no_std: bool,
     pub(crate) add_entrypoint: bool,
 }
 
@@ -66,7 +65,6 @@ pub(crate) fn resolve_build_settings(
         || needs_tokio_net
         || needs_trueos_platform
         || source.contains("trueos_blueprint")
-        || source.contains("trueos_blueprint::")
         || source.contains("tokio::")
     {
         BuildFlavor::TokioStd
@@ -91,7 +89,6 @@ pub(crate) fn resolve_build_settings(
             uses_tokio_net: needs_tokio_net,
         },
         shims: SourceShims {
-            add_no_std: matches!(flavor, BuildFlavor::ThinNoStd) && !explicit_no_std,
             add_entrypoint,
         },
         features: extra_features,

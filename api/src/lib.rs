@@ -140,6 +140,7 @@ pub mod ui4_scene;
 pub mod image_source;
 
 pub mod replication;
+pub mod shutdown;
 
 #[cfg(feature = "lifecycle-net")]
 pub mod lifecycle;

@@ -7,9 +7,9 @@ vendor patches described below. `src/main.rs` includes the
 upstream CLI as the crate root, so its console commands, web UI, and server
 logic remain the same.
 
-The first build leaves `worldgen` and `persistent_world` disabled to isolate
-the basic server, console, and web-service dependency path. Enable those Cargo
-features in this manifest for a later full-server attempt.
+The default build enables `worldgen` for the full generated world rather than
+the basic test terrain. `persistent_world` remains optional for saving terrain
+changes. World generation requires the Veloren world assets at runtime.
 
 From `TRUEOS-Blueprints`, with the Veloren checkout beside it at
 `../veloren`, run:
