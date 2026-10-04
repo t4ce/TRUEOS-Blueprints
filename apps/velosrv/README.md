@@ -110,3 +110,6 @@ packed server. Updating only the Blueprint on an older ISO is insufficient.
 Healthy cleanup is cooperative; a stalled game tick or nonreturning native job
 can still retain its resources. The QEMU `tokio_stop` probe verifies worker/TLS
 cleanup, zero native jobs, carrier release, and reuse of the same VM slot.
+Kernel keyed wait registries and waker buffers must also use host allocation;
+the updated teardown retires that VM's registry entries after workers return,
+while concurrent network wakeups retain safe queue references.
