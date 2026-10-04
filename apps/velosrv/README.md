@@ -94,3 +94,19 @@ TRUEOS. With an ISO embedding that probe, run from the TRUEOS checkout:
 python3 tools/qemu/verify-tokio-platform.py --iso <private.iso> \
   --output <new-evidence-directory> --probe veloren_executor
 ```
+
+## Graceful VM stop
+
+The server registers `trueos::shutdown::ShutdownGuard` before its Tokio runtime
+and logging guards, then polls the host request between game ticks. `vmx_stop`
+and Apps `stop <vmid>` leave the Hull and native-job admission available while
+server cleanup flushes persistence/logging and drops the runtime. The guard
+acknowledges shutdown last; the host drains remaining thread destruction before
+releasing the realm and publishing the VM offline. ECS/background pools retain
+only a Tokio handle so they cannot keep the runtime alive during cleanup.
+
+This requires a kernel with `trueos_cabi_blueprint_stop_control_v1` and a newly
+packed server. Updating only the Blueprint on an older ISO is insufficient.
+Healthy cleanup is cooperative; a stalled game tick or nonreturning native job
+can still retain its resources. The QEMU `tokio_stop` probe verifies worker/TLS
+cleanup, zero native jobs, carrier release, and reuse of the same VM slot.
