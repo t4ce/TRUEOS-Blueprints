@@ -159,5 +159,21 @@ errno 38 (`Unsupported`). Auditing `server-cli/src/main.rs` establishes that its
 multi-thread Tokio `build().unwrap()` returned before this initialization call.
 No explicit server-ready marker was observed, so the smoke records successful
 runtime construction followed by an application startup failure. Generic
-executable-path discovery remains a separate platform boundary; full velosrv
-startup requires that interface or its documented `VELOREN_USERDATA` override.
+executable-path discovery remains a separate platform boundary.
+
+On 2026-10-04, the host launch environment now supplies
+`VELOREN_USERDATA=<VM HOME>/userdata`. This selects the real per-instance data
+directory before Veloren's executable-path fallback and grants no additional
+filesystem scope. The absolute app path keeps the same location if broader FS
+scope is explicitly granted later.
+`../TRUEOS/bld/thread-acceptance/qemu-velosrv-env-2/result.json` records a smoke
+with the existing local packed server and the updated kernel. The exact embedded
+server SHA-256 is
+`96ea744cd2f467bb74f239b3667edd482b01f872e80ed4084881e2b2b2b8bd9b`;
+no server source change or repack was performed for this environment bridge. Its native
+`vmx_env` view reports `VELOREN_USERDATA=/apps/velosrv/userdata`; the userdata
+executable-path panic is gone. Startup proceeds to asset discovery, where the
+empty test filesystem has no Veloren asset tree. The full-startup result remains
+`FAIL` for that missing directory, rather than claiming server readiness.
+CLI settings and server saves use this userdata root; `VELOREN_ASSETS` selects
+the separate asset tree. See `apps/velosrv/README.md` for logical storage paths.

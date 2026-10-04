@@ -78,6 +78,7 @@
     "qjs",
     "monaco",
     "Frog",
+    "osm",
     "Player",
     {
       "name": "tinyfighter",

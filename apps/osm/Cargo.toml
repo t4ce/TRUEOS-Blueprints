@@ -1,0 +1,29 @@
+[package]
+name = "osm"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[[bin]]
+name = "osm"
+path = "main.rs"
+
+[dependencies]
+anyhow = "1.0"
+reqwest = { version = "=0.13.3", default-features = false, features = ["rustls"] }
+tokio = { version = "=1.52.3", features = ["rt", "net", "time"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+font8x8 = "0.3"
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { path = "../../api", features = ["tokio-net-probe", "ui4-scene"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[workspace]
+
+[patch.crates-io]
+reqwest = { path = "../../vendor/reqwest-0.13.3" }
