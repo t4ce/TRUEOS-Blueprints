@@ -13,6 +13,7 @@ use std::{
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
+const FOOTER: u32 = 24;
 const TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 struct Map {
@@ -123,26 +124,33 @@ impl Tiles {
         self.ram.insert(key, &image, TTL)?;
         Ok(image)
     }
-    async fn render(&mut self, map: &Map) -> RgbaImage {
-        let mut out = RgbaImage::from_pixel(WIDTH, HEIGHT + 24, Rgba([230, 230, 230, 255]));
-        let left = map.x.floor() as i64 - WIDTH as i64 / 2;
-        let top = map.y.floor() as i64 - HEIGHT as i64 / 2;
+    async fn render(&mut self, map: &Map, width: u32, height: u32) -> RgbaImage {
+        let map_height = height.saturating_sub(FOOTER);
+        let footer_top = map_height;
+        let mut out = RgbaImage::from_pixel(width, height, Rgba([230, 230, 230, 255]));
+        let left = map.x.floor() as i64 - width as i64 / 2;
+        let top = map.y.floor() as i64 - map_height as i64 / 2;
         let n = 1i64 << map.zoom;
-        for ty in top.div_euclid(256)..=(top + HEIGHT as i64 - 1).div_euclid(256) {
-            if !(0..n).contains(&ty) {
-                continue;
-            }
-            for tx in left.div_euclid(256)..=(left + WIDTH as i64 - 1).div_euclid(256) {
-                match self.tile(map.zoom, tx.rem_euclid(n), ty).await {
-                    Ok(tile) => {
-                        image::imageops::overlay(&mut out, &tile, tx * 256 - left, ty * 256 - top)
+        if width != 0 && map_height != 0 {
+            for ty in top.div_euclid(256)..=(top + map_height as i64 - 1).div_euclid(256) {
+                if !(0..n).contains(&ty) {
+                    continue;
+                }
+                for tx in left.div_euclid(256)..=(left + width as i64 - 1).div_euclid(256) {
+                    match self.tile(map.zoom, tx.rem_euclid(n), ty).await {
+                        Ok(tile) => image::imageops::overlay(
+                            &mut out,
+                            &tile,
+                            tx * 256 - left,
+                            ty * 256 - top,
+                        ),
+                        Err(error) => eprintln!("tile {}/{tx}/{ty}: {error:#}", map.zoom),
                     }
-                    Err(error) => eprintln!("tile {}/{tx}/{ty}: {error:#}", map.zoom),
                 }
             }
         }
-        for y in HEIGHT..HEIGHT + 24 {
-            for x in 0..WIDTH {
+        for y in footer_top..height {
+            for x in 0..width {
                 out.put_pixel(x, y, Rgba([255, 255, 255, 255]));
             }
         }
@@ -152,11 +160,11 @@ impl Tiles {
                 for (y, row) in glyph.iter().enumerate() {
                     for x in 0..8 {
                         if row & (1 << x) != 0 {
-                            out.put_pixel(
-                                8 + i as u32 * 8 + x,
-                                HEIGHT + 8 + y as u32,
-                                Rgba([20, 20, 20, 255]),
-                            );
+                            let px = 8 + i as u32 * 8 + x;
+                            let py = footer_top + 8 + y as u32;
+                            if px < width && py < height {
+                                out.put_pixel(px, py, Rgba([20, 20, 20, 255]));
+                            }
                         }
                     }
                 }
@@ -173,7 +181,8 @@ fn main() -> Result<()> {
         .build()?;
     let mut tiles = Tiles::new()?;
     let map = Map::new(51.471336, 13.827807, 17);
-    rt.block_on(tiles.render(&map)).save("osm-demo.png")?;
+    rt.block_on(tiles.render(&map, WIDTH, HEIGHT + FOOTER))
+        .save("osm-demo.png")?;
     println!("Saved osm-demo.png; attribution: https://www.openstreetmap.org/copyright");
     Ok(())
 }
@@ -184,15 +193,46 @@ fn main() -> Result<()> {
     let rt = trueos::runtime::current_thread_net().build()?;
     let mut tiles = Tiles::new()?;
     let mut map = Map::new(51.471336, 13.827807, 17);
-    let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + 24)
+    let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + FOOTER)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
     println!("OSM: pan gesture to move, wheel to zoom; https://www.openstreetmap.org/copyright");
     let mut dirty = true;
     loop {
+        // Resize is a staged app-owned repaint, not a broker-scaled snapshot.
+        while let Some(event) = frame
+            .take_resize_event()
+            .map_err(|e| anyhow::anyhow!("map resize event: {e:?}"))?
+        {
+            if (event.width, event.height) != (frame.width(), frame.height()) {
+                frame.resize(event.width, event.height).map_err(|e| {
+                    anyhow::anyhow!("map resize {}x{}: {e:?}", event.width, event.height)
+                })?;
+                trueos::logl::log(
+                    trueos::logl::level::IMPORTANT,
+                    format_args!(
+                        "osm: resize staged {}x{} -> {}x{}",
+                        event.old_width, event.old_height, event.width, event.height
+                    ),
+                );
+                dirty = true;
+            }
+        }
         if dirty {
-            let pixels = rt.block_on(tiles.render(&map));
-            presenter::present(&mut frame, &pixels)
-                .map_err(|e| anyhow::anyhow!("present map sprite: {e:?}"))?;
+            let pixels = rt.block_on(tiles.render(&map, frame.width(), frame.height()));
+            if let Err(error) = presenter::present(&mut frame, &pixels) {
+                trueos::logl::log(
+                    trueos::logl::level::ERROR,
+                    format_args!(
+                        "osm: presentation failed error={error:?} center=({:.0},{:.0}) zoom={} extent={}x{}",
+                        map.x,
+                        map.y,
+                        map.zoom,
+                        frame.width(),
+                        frame.height()
+                    ),
+                );
+                return Err(anyhow::anyhow!("present map sprite: {error:?}"));
+            }
             dirty = false;
         }
         while let Ok(Some(event)) = frame.take_pan_event() {
@@ -244,15 +284,32 @@ mod tests {
             ram: ram_cache::RamCache::new().unwrap(),
         };
         let started = std::time::Instant::now();
-        let cold = rt.block_on(tiles.render(&map));
+        let cold = rt.block_on(tiles.render(&map, WIDTH, HEIGHT + FOOTER));
         let cold_time = started.elapsed();
         assert_eq!(*cold.get_pixel(0, 0), Rgba([100, 150, 200, 255]));
         std::fs::remove_dir_all(path).unwrap();
         let started = std::time::Instant::now();
-        let warm = rt.block_on(tiles.render(&map));
+        let warm = rt.block_on(tiles.render(&map, WIDTH, HEIGHT + FOOTER));
         let warm_time = started.elapsed();
         assert_eq!(cold, warm);
         eprintln!("fixture render: disk+decode+RAM insert {cold_time:?}, RAM reuse {warm_time:?}");
+    }
+    #[test]
+    fn tiny_resize_keeps_valid_opaque_frame_and_clips_footer() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut tiles = Tiles {
+            client: reqwest::Client::new(),
+            base: "https://127.0.0.1:1".into(),
+            cache: None,
+            ram: ram_cache::RamCache::new().unwrap(),
+        };
+        let map = Map::new(0.0, 0.0, 0);
+        let image = rt.block_on(tiles.render(&map, 12, 16));
+        assert_eq!(image.dimensions(), (12, 16));
+        assert!(image.pixels().all(|pixel| pixel[3] == 255));
     }
     #[test]
     fn mercator_coordinates() {

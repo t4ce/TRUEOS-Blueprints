@@ -31,3 +31,12 @@ wraps that API and does not supply raster tiles. It also uses the development
 server in debug builds. It is therefore not a dependency of this image demo;
 a future geographic-data overlay can integrate it separately.
 TLS certificate validation is enabled.
+
+Resize/maximize/restore events are handled by staging frame.resize, rendering
+at the requested extent, and publishing the replacement. The map center stays
+fixed. Footer text is clipped safely for small frames.
+Kernel retirement fix: begin_blueprint_frame must reap retired generations on
+the shared path, including guest vmcalls. Updating only osm.bp does not fix a
+kernel that still bypasses reclamation; boot the accompanying updated OS.
+Retirement evidence is sampled at Important, so the normal log profile admits
+"frame retirement reaped" without enabling noisy UI4 Trace logging.
