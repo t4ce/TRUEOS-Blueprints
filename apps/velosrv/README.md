@@ -114,8 +114,22 @@ individual site generators still need their own internal scheduling points.
 The first civilisation markers after `terrain-simulation-complete` are
 `civs stage=enter`, followed by peak/biome naming start and completion. These
 bracket the previously silent startup work without logging every iteration.
+Spot placement also checkpoints between candidate locations. Its markers separate
+the first manifest load from each placement pass, followed by `spots-complete`
+and worldgen `complete`. Map preparation then reports marker, column-sample,
+horizon and pixel phases. The cooperative build collects samples and both
+horizon directions in input order without parallel joins, and checkpoints
+between complete samples and pixels; the terrain and horizon calculations are
+unchanged. These boundaries distinguish a spot/asset wait from subsequent map
+preparation rather than attributing a stall to the last printed stage.
+Column sampling reports its exact buffer reservation separately from the first
+sample, then reports completed/total samples about every two seconds. Horizon
+directions and pixel generation have their own completed-work counters. These
+counts measure returned work; a running VM or busy CPU alone is not a progress
+guarantee. Sampling keeps the original calculations and visits every chunk.
 `world/tests/cooperative_bootstrap.rs` compares the new peak rule with an
-all-pairs oracle and checks borrowed site-phase completion; the native
+all-pairs oracle and checks borrowed site-phase completion and map sample order;
+the native
 `veloren_executor` probe includes the actual worldgen site helper and requires
 sleeping std carrier peers to advance during its workload.
 

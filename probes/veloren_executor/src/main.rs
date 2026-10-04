@@ -134,6 +134,16 @@ fn cpu_progress(mode: usize) {
                     total += site;
                 });
                 assert_eq!(total, (0..4000).sum::<usize>());
+            } else if mode == 3 {
+                let samples = generation::collect_ordered(0..4000, |position| {
+                    let slice = std::time::Instant::now() + Duration::from_micros(250);
+                    while std::time::Instant::now() < slice { std::hint::black_box(position); }
+                    (position % 3 != 0).then_some(position)
+                });
+                assert_eq!(samples.len(), 4000);
+                for (position, sample) in samples.into_iter().enumerate() {
+                    assert_eq!(sample, (position % 3 != 0).then_some(position));
+                }
             } else { pool.install(|| {
                 while std::time::Instant::now() < deadline {
                     join(|| {
@@ -151,7 +161,7 @@ fn cpu_progress(mode: usize) {
     for monitor in monitors { monitor.join().unwrap(); }
     drop(pool);
     drop(runtime);
-    let mode = match mode { 1 => "async-yield", 2 => "worldgen-sites", _ => "parallel-jobs" };
+    let mode = match mode { 1 => "async-yield", 2 => "worldgen-sites", 3 => "worldgen-map", _ => "parallel-jobs" };
     if counts.iter().any(|counts| counts.iter().any(|count| *count < 10)) {
         logl::log(level::ERROR, format_args!("veloren_executor: FAIL mode={mode} cpu-bound heartbeat_counts={counts:?}"));
         panic!("CPU jobs starved carrier peers");
@@ -169,6 +179,7 @@ fn main() {
     cpu_progress(0);
     cpu_progress(1);
     cpu_progress(2);
+    cpu_progress(3);
     for workers in [1, 2] {
         logl::log(
             level::INFO,
