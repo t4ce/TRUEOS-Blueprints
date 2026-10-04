@@ -20,12 +20,16 @@ pub struct ShutdownError;
 impl ShutdownGuard {
     pub fn register() -> Result<Self, ShutdownError> {
         if control(0) == 0 {
-            Ok(Self { _hull_only: PhantomData })
+            Ok(Self {
+                _hull_only: PhantomData,
+            })
         } else {
             Err(ShutdownError)
         }
     }
-    pub fn requested(&self) -> Result<bool, ShutdownError> { requested() }
+    pub fn requested(&self) -> Result<bool, ShutdownError> {
+        requested()
+    }
 }
 
 /// Poll from either the Hull owner or one of its native std-thread workers.
@@ -49,7 +53,12 @@ impl Drop for ShutdownGuard {
 
 fn control(operation: u32) -> i32 {
     #[cfg(target_os = "trueos")]
-    { unsafe { v::bp_abi::trueos_cabi_blueprint_stop_control_v1(operation) } }
+    {
+        unsafe { v::bp_abi::trueos_cabi_blueprint_stop_control_v1(operation) }
+    }
     #[cfg(not(target_os = "trueos"))]
-    { let _ = operation; -1 }
+    {
+        let _ = operation;
+        -1
+    }
 }
