@@ -1,0 +1,17 @@
+[package]
+name = "veloren_executor"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+trueos = { path = "../../api" }
+tokio = { version = "=1.52.3", default-features = false, features = ["rt-multi-thread", "time", "sync", "net"] }
+tokio-parallel = { package = "veloren-tokio-parallel", path = "../../../veloren/common/tokio-parallel" }
+specs = { path = "../../../veloren/vendor/specs" }
+
+[patch.crates-io]
+shred = { path = "../../../veloren/vendor/shred" }
+hibitset = { path = "../../../veloren/vendor/hibitset" }

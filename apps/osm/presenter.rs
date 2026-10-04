@@ -32,18 +32,18 @@ fn viewport_quad(width: u32, height: u32) -> SpriteQuad {
         source_over: false,
     }
 }
-fn retry(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Error> {
+async fn retry(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Error> {
     loop {
         match operation() {
             Err(Error::Busy) => {
                 trueos::vsys::poll_once();
-                trueos::vsys::sleep_ms(1);
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
             result => return result,
         }
     }
 }
-pub fn present(frame: &mut Frame, pixels: &image::RgbaImage) -> Result<(), Error> {
+pub async fn present(frame: &mut Frame, pixels: &image::RgbaImage) -> Result<(), Error> {
     if pixels.dimensions() != (frame.width(), frame.height())
         || pixels.pixels().any(|p| p[3] != 255)
     {
@@ -52,10 +52,11 @@ pub fn present(frame: &mut Frame, pixels: &image::RgbaImage) -> Result<(), Error
     // Same sprite ID replaces the retained source instead of accumulating uploads.
     retry(|| {
         frame.upload_sprite_rgba8(MAP_SPRITE, pixels.width(), pixels.height(), pixels.as_raw())
-    })?;
-    retry(|| frame.begin_sprite_frame(rgba(230, 230, 230, 255)))?;
+    })
+    .await?;
+    retry(|| frame.begin_sprite_frame(rgba(255, 255, 255, 255))).await?;
     let quad = viewport_quad(frame.width(), frame.height());
-    retry(|| frame.draw_sprite_quads(std::slice::from_ref(&quad)))?;
+    retry(|| frame.draw_sprite_quads(std::slice::from_ref(&quad))).await?;
     let damage = Damage::full(frame.width(), frame.height());
-    retry(|| frame.publish(damage))
+    retry(|| frame.publish(damage)).await
 }

@@ -2,7 +2,8 @@
 
 This package tries the existing `veloren-server-cli` source through the TRUEOS
 Blueprint packer without adding Veloren to the TRUEOS-Blueprints Cargo
-workspace or changing Veloren's root `Cargo.toml`. `src/main.rs` includes the
+workspace. Veloren's root manifest selects the local Tokio executor and ECS
+vendor patches described below. `src/main.rs` includes the
 upstream CLI as the crate root, so its console commands, web UI, and server
 logic remain the same.
 
@@ -64,3 +65,32 @@ python3 ../veloren/common/assets/tests/trueos_source_contract.py
 This runs the actual TRUEOS async client against pending mock CABI operations
 using the kernel's binary directory encoder, including short result reads,
 override merging, malformed/truncated listings, and real server asset files.
+
+## Tokio CPU scheduling
+
+The server and its Specs/collection adapters now use Veloren's local
+`common/tokio-parallel` iterator fork. It retains the iterator algorithms and
+runs scoped CPU tasks on the existing Tokio 1.52.3 runtime. ECS dependency
+ordering and borrowed component lifetimes are preserved. The separate Rayon
+ECS and slow-job worker pools are removed. Slow-job admission reserves worker
+capacity for ticks/networking when possible. This requires the local vendored
+Specs, Shred, Hibitset, Hashbrown and IndexMap patches in this manifest.
+
+Tokio workers still use the platform std thread backend; CPU closures run
+cooperatively and are not preempted by Tokio. The migration does not establish
+that every previously observed platform stall was caused by Rayon.
+
+The first TRUEOS executor run exposed a separate kernel fault: allocator
+diagnostics walked an invalid guest frame pointer on a native std-thread stack
+while holding the guest heap lock. `TRUEOS/src/allocators.rs` now excludes both
+Hull and native Blueprint stacks from that kernel-only frame walk. The fixed
+QEMU run completed 64 Specs ticks with one and two workers, nested borrowed
+joins, and descendant scopes (`bld/veloren-tokio/qemu-ecs-fixed/result.json`).
+
+`probes/veloren_executor` tests the same scheduler and actual Specs dispatch on
+TRUEOS. With an ISO embedding that probe, run from the TRUEOS checkout:
+
+```sh
+python3 tools/qemu/verify-tokio-platform.py --iso <private.iso> \
+  --output <new-evidence-directory> --probe veloren_executor
+```

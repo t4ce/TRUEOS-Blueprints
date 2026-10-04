@@ -1,11 +1,13 @@
 // trueos-blueprint: features=["tokio-net-probe", "ui4-scene"]
+#[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
+mod loader;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod presenter;
 mod ram_cache;
+mod viewport;
 
 use anyhow::{Context, Result, ensure};
-use font8x8::UnicodeFonts;
-use image::{Rgba, RgbaImage};
+use image::RgbaImage;
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -16,6 +18,7 @@ const HEIGHT: u32 = 512;
 const FOOTER: u32 = 24;
 const TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+#[derive(Clone, Copy)]
 struct Map {
     x: f64,
     y: f64,
@@ -31,7 +34,6 @@ impl Map {
             zoom,
         }
     }
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     fn zoom(&mut self, delta: i32) {
         let next = (self.zoom as i32 + delta.signum()).clamp(0, 19) as u8;
         let scale = 2f64.powi(next as i32 - self.zoom as i32);
@@ -77,7 +79,7 @@ impl Tiles {
         })
     }
     async fn tile(&mut self, z: u8, x: i64, y: i64) -> Result<RgbaImage> {
-        let key = format!("{z}-{x}-{y}");
+        let key = viewport::TileKey { z, x, y }.cache_key();
         if let Some(tile) = self.ram.get(&key)? {
             return Ok(tile);
         }
@@ -124,53 +126,18 @@ impl Tiles {
         self.ram.insert(key, &image, TTL)?;
         Ok(image)
     }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     async fn render(&mut self, map: &Map, width: u32, height: u32) -> RgbaImage {
-        let map_height = height.saturating_sub(FOOTER);
-        let footer_top = map_height;
-        let mut out = RgbaImage::from_pixel(width, height, Rgba([230, 230, 230, 255]));
-        let left = map.x.floor() as i64 - width as i64 / 2;
-        let top = map.y.floor() as i64 - map_height as i64 / 2;
-        let n = 1i64 << map.zoom;
-        if width != 0 && map_height != 0 {
-            for ty in top.div_euclid(256)..=(top + map_height as i64 - 1).div_euclid(256) {
-                if !(0..n).contains(&ty) {
-                    continue;
+        let mut view = viewport::Viewport::new(*map, width, height);
+        for key in view.missing() {
+            match self.tile(key.z, key.x, key.y).await {
+                Ok(tile) => {
+                    view.complete(key, tile);
                 }
-                for tx in left.div_euclid(256)..=(left + width as i64 - 1).div_euclid(256) {
-                    match self.tile(map.zoom, tx.rem_euclid(n), ty).await {
-                        Ok(tile) => image::imageops::overlay(
-                            &mut out,
-                            &tile,
-                            tx * 256 - left,
-                            ty * 256 - top,
-                        ),
-                        Err(error) => eprintln!("tile {}/{tx}/{ty}: {error:#}", map.zoom),
-                    }
-                }
+                Err(error) => eprintln!("tile {}/{}/{}: {error:#}", key.z, key.x, key.y),
             }
         }
-        for y in footer_top..height {
-            for x in 0..width {
-                out.put_pixel(x, y, Rgba([255, 255, 255, 255]));
-            }
-        }
-        let label = "(c) OpenStreetMap contributors | ODbL";
-        for (i, ch) in label.chars().enumerate() {
-            if let Some(glyph) = font8x8::BASIC_FONTS.get(ch) {
-                for (y, row) in glyph.iter().enumerate() {
-                    for x in 0..8 {
-                        if row & (1 << x) != 0 {
-                            let px = 8 + i as u32 * 8 + x;
-                            let py = footer_top + 8 + y as u32;
-                            if px < width && py < height {
-                                out.put_pixel(px, py, Rgba([20, 20, 20, 255]));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        out
+        view.pixels().clone()
     }
 }
 
@@ -189,37 +156,108 @@ fn main() -> Result<()> {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn main() -> Result<()> {
-    use trueos::ui4_scene::{Frame, PanPhase};
-    let rt = trueos::runtime::current_thread_net().build()?;
-    let mut tiles = Tiles::new()?;
+    trueos::logl::log(
+        trueos::logl::level::IMPORTANT,
+        format_args!("osm: startup runtime=tokio-current-thread phase=build"),
+    );
+    let runtime = trueos::runtime::current_thread_net().build()?;
+    let local = tokio::task::LocalSet::new();
+    runtime.block_on(local.run_until(run_ui()))
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+async fn run_ui() -> Result<()> {
+    use trueos::ui4_scene::{Error as UiError, Frame, PanPhase};
+    let tiles = Tiles::new()?;
+    let mut loader = loader::Loader::start(tiles);
+    trueos::logl::log(
+        trueos::logl::level::IMPORTANT,
+        format_args!("osm: execution=tokio-local runtime=current-thread loader=cooperative"),
+    );
     let mut map = Map::new(51.471336, 13.827807, 17);
     let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + FOOTER)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
+    let mut view = viewport::Viewport::new(map, frame.width(), frame.height());
     println!("OSM: pan gesture to move, wheel to zoom; https://www.openstreetmap.org/copyright");
     let mut dirty = true;
+    let mut request = true;
+    let mut pending_resize = None;
+    let mut presentations = 0u64;
+    let mut discarded = 0u64;
     loop {
-        // Resize is a staged app-owned repaint, not a broker-scaled snapshot.
+        let mut navigated = false;
         while let Some(event) = frame
             .take_resize_event()
             .map_err(|e| anyhow::anyhow!("map resize event: {e:?}"))?
         {
-            if (event.width, event.height) != (frame.width(), frame.height()) {
-                frame.resize(event.width, event.height).map_err(|e| {
-                    anyhow::anyhow!("map resize {}x{}: {e:?}", event.width, event.height)
-                })?;
-                trueos::logl::log(
-                    trueos::logl::level::IMPORTANT,
-                    format_args!(
-                        "osm: resize staged {}x{} -> {}x{}",
-                        event.old_width, event.old_height, event.width, event.height
+            pending_resize = Some((event.width, event.height));
+        }
+        if let Some((width, height)) = pending_resize {
+            if (width, height) == (frame.width(), frame.height()) {
+                pending_resize = None;
+            } else {
+                match frame.resize(width, height) {
+                    Ok(()) => {
+                        pending_resize = None;
+                        navigated = true;
+                        trueos::logl::log(
+                            trueos::logl::level::IMPORTANT,
+                            format_args!("osm: resize staged {}x{}", width, height),
+                        );
+                    }
+                    Err(UiError::Busy) => {}
+                    Err(e) => return Err(anyhow::anyhow!("map resize {width}x{height}: {e:?}")),
+                }
+            }
+        }
+        // Drain input before considering any completion from an older view.
+        while let Some(event) = frame
+            .take_pan_event()
+            .map_err(|e| anyhow::anyhow!("map pan event: {e:?}"))?
+        {
+            if matches!(event.phase, PanPhase::Begin | PanPhase::Update) {
+                map.x -= event.dx as f64;
+                map.y = (map.y - event.dy as f64).clamp(0.0, (1u32 << map.zoom) as f64 * 256.0);
+                navigated = true;
+            }
+        }
+        while let Some(event) = frame
+            .take_pointer_event()
+            .map_err(|e| anyhow::anyhow!("map pointer event: {e:?}"))?
+        {
+            if event.wheel != 0 {
+                map.zoom(event.wheel as i32);
+                navigated = true;
+            }
+        }
+        if navigated {
+            view.navigate(map, frame.width(), frame.height());
+            dirty = true;
+            request = true;
+        }
+        loop {
+            match loader.completions.try_recv() {
+                Ok(completion) => match completion.image {
+                    Ok(tile) => {
+                        if view.complete(completion.key, tile) {
+                            dirty = true;
+                        } else {
+                            discarded += 1;
+                        }
+                    }
+                    Err(error) => eprintln!(
+                        "tile {}/{}/{}: {error:#}",
+                        completion.key.z, completion.key.x, completion.key.y
                     ),
-                );
-                dirty = true;
+                },
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(anyhow::anyhow!("tile loader stopped"));
+                }
             }
         }
         if dirty {
-            let pixels = rt.block_on(tiles.render(&map, frame.width(), frame.height()));
-            if let Err(error) = presenter::present(&mut frame, &pixels) {
+            if let Err(error) = presenter::present(&mut frame, view.pixels()).await {
                 trueos::logl::log(
                     trueos::logl::level::ERROR,
                     format_args!(
@@ -234,28 +272,35 @@ fn main() -> Result<()> {
                 return Err(anyhow::anyhow!("present map sprite: {error:?}"));
             }
             dirty = false;
-        }
-        while let Ok(Some(event)) = frame.take_pan_event() {
-            if matches!(event.phase, PanPhase::Begin | PanPhase::Update) {
-                map.x -= event.dx as f64;
-                map.y = (map.y - event.dy as f64).clamp(0.0, (1u32 << map.zoom) as f64 * 256.0);
-                dirty = true;
+            presentations += 1;
+            if presentations <= 4 || presentations % 120 == 0 {
+                trueos::logl::log(
+                    trueos::logl::level::IMPORTANT,
+                    format_args!(
+                        "osm: immediate viewport frame={} zoom={} extent={}x{} missing={} stale-skipped={}",
+                        presentations,
+                        map.zoom,
+                        frame.width(),
+                        frame.height(),
+                        view.missing().len(),
+                        discarded
+                    ),
+                );
             }
         }
-        while let Ok(Some(event)) = frame.take_pointer_event() {
-            if event.wheel != 0 {
-                map.zoom(event.wheel as i32);
-                dirty = true;
-            }
+        if request {
+            loader.request(view.missing())?;
+            request = false;
         }
         trueos::vsys::poll_once();
-        trueos::vsys::sleep_ms(16);
+        tokio::time::sleep(Duration::from_millis(16)).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::Rgba;
     #[test]
     fn warmed_render_reuses_decoded_ram_tiles_after_disk_removal() {
         let path =

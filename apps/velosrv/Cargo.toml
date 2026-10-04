@@ -62,6 +62,10 @@ chrono = { version = "0.4.24", default-features = false, features = ["clock", "s
 mimalloc = "0.1"
 
 [patch.crates-io]
-specs = { git = "https://github.com/amethyst/specs.git", rev = "4e2da1df29ee840baa9b936593c45592b7c9ae27" }
+specs = { path = "../../../veloren/vendor/specs" }
+shred = { path = "../../../veloren/vendor/shred" }
+hibitset = { path = "../../../veloren/vendor/hibitset" }
+hashbrown = { path = "../../../veloren/vendor/hashbrown" }
+indexmap = { path = "../../../veloren/vendor/indexmap" }
 thread-priority = { path = "stubs/thread-priority" }
 tracing-appender = { path = "vendor/tracing-appender" }
