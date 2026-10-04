@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sphere Room — GLSL physics lab</title>
+<style>
+:root{color-scheme:dark;--bg:#0c1015;--panel:#12181f;--line:#26303b;--muted:#95a3b3;--text:#e6edf2;--accent:#d2ec8b;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}button,input,select{font:inherit}button,input[type=number],select{border:1px solid var(--line);border-radius:6px;color:var(--text);background:#1a222c;padding:8px 10px}button{cursor:pointer}button:hover{background:#26313e;border-color:#506174}button:disabled{opacity:.5;cursor:wait}button.primary{background:var(--accent);border-color:var(--accent);color:#17220c;font-weight:650}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,canvas:focus-visible{outline:2px solid var(--accent);outline-offset:3px}input[type=range]{width:100%;height:17px;accent-color:var(--accent);margin:6px 0 0;cursor:pointer}input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0}input[type=number]{min-width:0;width:100%;font-variant-numeric:tabular-nums}select{min-width:0;max-width:100%}header{height:88px;padding:18px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:20px}.eyebrow{font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--muted);text-transform:uppercase}h1{font-size:25px;line-height:1.2;font-weight:620;margin:4px 0 0;letter-spacing:-.035em}.badge{font-size:11px;border:1px solid #425637;color:var(--accent);border-radius:30px;padding:6px 10px;white-space:nowrap}.layout{display:grid;grid-template-columns:304px minmax(0,1fr);max-width:1720px;margin:auto}aside{padding:22px 20px 26px;border-right:1px solid var(--line);background:var(--panel)}.group+.group{border-top:1px solid var(--line);padding-top:18px;margin-top:18px}.group h2{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--muted);font-weight:650;margin:0 0 12px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}.field{margin:11px 0}.field label,.label{font-size:12px;color:#cbd6df}output,.mono{font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stack label{display:block;margin-bottom:5px}.small{font-size:11px;line-height:1.55;color:var(--muted);margin:9px 0}.preset{width:100%;margin:0 0 5px}.full{width:100%}.switch{display:flex;gap:8px;align-items:center}.note{color:#b8c8d7;border-left:2px solid #4c6779;padding-left:9px}.main{min-width:0;padding:20px 24px 26px}.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}.toolbar button{font-size:12px;min-width:60px}.toolbar .right{margin-left:auto;display:flex;align-items:center;gap:8px}.scene{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0b0f13;height:clamp(420px,65vh,760px)}canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}.scene-top{position:absolute;top:18px;left:20px;right:20px;display:flex;justify-content:space-between;gap:10px;pointer-events:none}.scene-label{font:11px/1.65 ui-monospace,Consolas,monospace;color:#acbbc8}.scene-label b{color:#edf5f9;font-weight:500}.live-dot{display:inline-block;width:6px;height:6px;margin-right:7px;border-radius:50%;background:var(--accent)}.scene-bottom{position:absolute;bottom:15px;left:20px;right:20px;display:flex;justify-content:space-between;gap:12px;align-items:center;pointer-events:none;font-size:10px;color:var(--muted)}.legend{display:flex;align-items:center;gap:7px}.gradient{width:70px;height:4px;border-radius:3px;background:linear-gradient(90deg,#3ba8c4,#e0f577)}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:8px;margin-top:15px;overflow:hidden}.metric{padding:14px 16px}.metric+.metric{border-left:1px solid var(--line)}.metric .value{font:21px/1.4 ui-monospace,Consolas,monospace;letter-spacing:-.03em;color:#f0f4f7}.metric .caption{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}.section{margin-top:24px}h2{font-size:15px;font-weight:600;margin:0}.section-head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:12px}.buttons{display:flex;gap:6px;flex-wrap:wrap}.buttons button{font-size:11px;padding:6px 9px}.inspection{padding:13px 15px;background:#12181f;border:1px solid var(--line);border-radius:7px}.inspection .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px}.inspection .stats div{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--muted)}.inspection .stats b{font-weight:400;color:var(--text);font-family:ui-monospace,Consolas,monospace}.muted{color:var(--muted)}details{border-top:1px solid var(--line);margin-top:18px;padding-top:15px}summary{cursor:pointer;color:#c3d1dc;font-size:12px}pre{padding:14px;background:#0b0f14;border:1px solid var(--line);border-radius:6px;overflow:auto;font:11px/1.6 ui-monospace,Consolas,monospace;max-height:420px;white-space:pre-wrap;overflow-wrap:anywhere}#shaderSource{white-space:pre;max-height:500px}#notice{margin:12px 0 0;font-size:12px;min-height:18px;color:#bdcdad}#notice.error{color:#ffaf9f}#fatal{border:1px solid #ac6354;color:#ffcabc;background:#301a19;padding:16px;margin:16px;border-radius:8px;white-space:pre-wrap}#testStatus{color:var(--accent)}footer{padding-top:18px;color:#6f8294;font-size:10px;overflow-wrap:anywhere}code{font:11px ui-monospace,Consolas,monospace;color:#c1d7b3}a{color:var(--accent)}.pipeline{padding:10px 0;color:#c3d1dc;font-size:11px;line-height:1.8}.pending{color:#eacb8b!important}.gravity-off{opacity:.55}
+@media(min-width:1350px){.main{padding:24px 30px}.scene{height:680px}.layout{grid-template-columns:320px minmax(0,1fr)}}
+@media(max-width:850px){header{padding:15px 18px;height:80px}.layout{grid-template-columns:240px minmax(0,1fr)}aside{padding:16px 14px}.main{padding:16px 14px}.scene{height:430px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.metric:nth-child(3){border-left:0;border-top:1px solid var(--line)}.metric:nth-child(4){border-top:1px solid var(--line)}.inspection .stats{grid-template-columns:1fr}.scene-bottom{left:12px;right:12px}.scene-top{left:12px;right:12px}.legend{display:none}.section-head{align-items:flex-start;flex-direction:column}}
+@media(max-width:610px){.layout{display:flex;flex-direction:column}.main{order:0}aside{order:1;border-right:0;border-top:1px solid var(--line)}.scene{height:420px}.badge{font-size:9px}.toolbar .right{margin-left:0}.group{max-width:520px;margin-left:auto;margin-right:auto}.metric{padding:10px 12px}.section{margin-top:18px}}
+</style></head>
+<body>
+<header><div><div class="eyebrow">GLSL physics lab / experiment 02</div><h1>Sphere Room</h1></div><span class="badge" id="backendBadge">WebGL2 · vertex solver</span></header>
+<div id="fatal" role="alert" hidden></div>
+<div class="layout">
+<aside aria-label="Physics controls">
+ <div class="group"><h2>Scene</h2><label for="preset" class="small">Load a starting configuration</label><select id="preset" class="preset"><option value="cloud">Bouncy cloud</option><option value="settle">Gravity + settling</option><option value="crowd">Crowded room</option><option value="elastic">Elastic, no friction</option></select><p class="small">A spherical room, radius <strong>100</strong>. Gravity follows the bottom of your screen by default. Tilt the view to make the pile settle in a new direction.</p></div>
+ <div class="group"><h2>Spheres <span id="pending" class="small" hidden>· pending reset</span></h2>
+  <div class="twocol"><div class="stack"><label for="count" class="label">Count</label><input id="count" type="number" min="1" max="16384" step="1" value="2048"></div><div class="stack"><label for="seed" class="label">Random seed</label><input id="seed" type="number" min="0" max="2147483647" step="1" value="7"></div></div>
+  <div class="field"><div class="row"><label for="radius">Base radius</label><output id="radiusValue">3.0</output></div><input id="radius" type="range" min="1" max="12" step="0.1" value="3"></div>
+  <div class="field"><div class="row"><label for="spread">Size variation</label><output id="spreadValue">±20%</output></div><input id="spread" type="range" min="0" max="0.5" step="0.05" value="0.2"></div>
+  <div class="field"><div class="row"><label for="initialSpeed">Initial speed</label><output id="initialSpeedValue">24 units/s</output></div><input id="initialSpeed" type="range" min="0" max="180" step="1" value="24"></div>
+  <button id="rebuild" class="full">Apply count / size & reset</button><p class="small" id="sizeHint">Radii 2.40–3.60 · mass ∝ radius³.</p><p class="small">Minimum radius is 1. Size/count changes rebuild a non-overlapping layout; they are not an instantaneous inflation force.</p>
+ </div>
+ <div class="group"><h2>Forces <span class="muted">/ live</span></h2>
+  <label class="switch label"><input type="checkbox" id="gravityEnabled">Enable gravity</label>
+  <label class="switch label" style="margin-top:10px"><input type="checkbox" id="gravityFollowsView" checked>Keep gravity screen-down</label>
+  <p class="small" id="gravityModeHint">Drag to tilt: gravity stays visually down and the spheres respond. Uncheck to restore fixed world −Y gravity.</p>
+  <div class="field" id="gravityField"><div class="row"><label for="gravity">Downward acceleration</label><output id="gravityValue">24 units/s²</output></div><input id="gravity" type="range" min="0" max="100" step="1" value="24"></div>
+  <div class="field"><div class="row"><label for="drag">Air drag</label><output id="dragValue">0.00 /s</output></div><input id="drag" type="range" min="0" max="2" step="0.01" value="0"></div>
+ </div>
+ <div class="group"><h2>Contacts <span class="muted">/ live</span></h2>
+  <div class="field"><div class="row"><label for="restitution">Bounciness</label><output id="restitutionValue">0.92</output></div><input id="restitution" type="range" min="0" max="1" step="0.01" value="0.92"></div>
+  <div class="field"><div class="row"><label for="friction">Contact friction</label><output id="frictionValue">0.12</output></div><input id="friction" type="range" min="0" max="1" step="0.01" value="0.12"></div>
+  <p class="small">Applies to sphere–sphere and sphere–wall contacts. Friction damps sliding at contact; drag slows free flight. No spin or rolling model.</p>
+ </div>
+ <div class="group"><h2>Numerics <span class="muted">/ live</span></h2>
+  <div class="field"><div class="row"><label for="speedCap">Hard speed limit</label><output id="speedCapValue">48 units/s</output></div><input id="speedCap" type="range" min="1" max="240" step="1" value="48"></div>
+  <div class="twocol"><div class="stack"><label for="iterations" class="label">Contact iterations</label><select id="iterations"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option><option value="12">12</option></select></div><div class="stack"><label for="minSubsteps" class="label">Min. substeps</label><select id="minSubsteps"><option value="1" selected>Auto</option><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16">16</option></select></div></div>
+  <p class="small note" id="stepHint">30 Hz outer step. Automatic internal substeps.</p><p class="small">The hard speed limit can remove energy. More substeps/iterations cost more work. Overloaded devices run slower rather than take larger physics steps.</p>
+ </div>
+</aside>
+<main class="main">
+ <div class="toolbar"><button id="play" class="primary">Pause</button><button id="step">Step 1/30 s</button><button id="reset">Reset</button><div class="right"><label for="playback" class="small">Playback</label><select id="playback"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select><button id="camera">Reset view</button></div></div>
+ <div class="scene"><canvas id="view" tabindex="0" aria-label="3D spheres bouncing inside a radius-100 room. Drag to tilt; gravity stays screen-down when enabled. Scroll to zoom."></canvas><div class="scene-top"><div class="scene-label"><span class="live-dot" id="liveDot"></span><b id="runningLabel">RUNNING</b><br><span id="bodyLabel">2,048 spheres</span></div><div class="scene-label" style="text-align:right">ROOM R = <b>100</b><br><span id="gravityLabel">GRAVITY OFF</span></div></div><div class="scene-bottom"><span id="interactionHint">Drag to tilt · gravity stays ↓ · scroll to zoom</span><span class="legend">Slower <span class="gradient"></span>Faster</span></div></div>
+ <div class="metrics"><div class="metric"><div class="value" id="simTime">0.00 s</div><div class="caption">Simulated time</div></div><div class="metric"><div class="value" id="tickRate">—</div><div class="caption">Actual physics ticks / s</div></div><div class="metric"><div class="value" id="substepsStat">—</div><div class="caption">Substeps × iterations</div></div><div class="metric"><div class="value" id="gridStat">—</div><div class="caption">Broad-phase grid</div></div></div>
+ <div id="notice" role="status" aria-live="polite">Initializing shaders…</div>
+ <section class="section"><div class="section-head"><h2>Inspect the simulation</h2><div class="buttons"><button id="inspect">Inspect state</button><button id="checks">Run shader checks</button><button id="saveState">Save state</button></div></div>
+ <div class="inspection"><div class="stats"><div><span>Outside room</span><b id="outside">Not sampled</b></div><div><span>Non-finite states</span><b id="nonfinite">Not sampled</b></div><div><span>Residual overlaps</span><b id="overlaps">Not sampled</b></div><div><span>Maximum penetration</span><b id="penetration">Not sampled</b></div><div><span>Mean / maximum speed</span><b id="speeds">Not sampled</b></div><div><span>Candidate checks / sphere</span><b id="candidates">Not sampled</b></div></div><p class="small" id="auditTime">Inspection reads GPU state only when requested; it does not drive the simulation.</p></div>
+ <details id="testDetails"><summary>Shader checks <span id="testStatus"></span></summary><pre id="testResults">No checks run yet. Tests exercise the compiled shader, not a JavaScript substitute.</pre><div class="buttons"><button id="saveTests" disabled>Save check results</button></div></details>
+ </section>
+ <details><summary>How the simulation works — and its limits</summary>
+   <div class="pipeline">GPU state → integrate → sort cell IDs → cell ranges → count contacts → solve contacts → next GPU state</div>
+   <p class="small">Screen-down mode converts camera-down into a world-space gravity vector before each physics tick. Dragging changes that acceleration, not the stored positions or velocities; a settled pile can move again without resetting. Paused scenes stay paused. This is interactive gravity, not a moving-wall model with angular momentum, rolling, or rotational inertial forces.</p>
+  <p class="small">Physics runs in GLSL ES 3.00 vertex shaders using transform feedback. Integer-texture shader passes build a uniform spatial grid. Each sphere gathers neighbors from its own cell and 26 adjacent cells. Complete cell ranges are used: there is no hidden fixed-size bucket or neighbor-count truncation.</p>
+  <p class="small">The grid is rebuilt every substep. A correction halo lets contact iterations reuse that grid safely while each projection is bounded. Every invocation writes only its own sphere; all neighbors are read from a stable snapshot. Sorting is O(N log²N) here; crowded cells can still make local contact work quadratic.</p>
+  <p class="small">This is an approximate, discrete many-body contact solver, not the earlier isolated-pair exact time-of-impact solution. Adaptive substeps limit free-flight travel to 0.4 of the smallest radius per substep. Gravity uses at least four substeps. They reduce tunneling; they are not a guarantee for every 3D grazing collision. No spin, rolling resistance, exact static-friction solver, sleeping, or continuous sphere–sphere collision detection is implemented.</p>
+  <p class="small">Wall handling computes the first exit during a constant-velocity segment, then projects the final center inside radius 100 − sphere radius. Contact projections keep spheres contained, but dense piles can retain small overlaps. Restitution is disabled below a normal approach speed of 1 unit/s to reduce resting jitter. Numerical projection, penetration-bias impulses, multiple-contact weighting, and the hard speed limit mean total energy is not guaranteed conserved, even at bounciness 1.</p>
+  <p class="small">Positions and velocities never go through a JavaScript simulation loop. JavaScript only seeds/reset states, dispatches GPU work, updates the UI/camera, and optionally reads diagnostics. On a software graphics backend, the graphics driver itself executes shader work on the CPU.</p>
+  <label class="switch small"><input type="checkbox" id="hideRender">Disable rendering (physics keeps running)</label>
+ </details>
+ <details><summary>Read the GLSL</summary><div class="buttons" style="margin-top:12px"><select id="shaderSelect"><option value="contacts.vert">contacts.vert — collisions</option><option value="integrate.vert">integrate.vert — forces + wall</option><option value="keys.frag">keys.frag — grid keys</option><option value="sort.frag">sort.frag — sorting</option><option value="ranges.vert">ranges.vert — cell ranges</option></select><button id="saveShader">Save shader</button></div><pre id="shaderSource"></pre></details>
+ <footer><div id="backend"></div><div>Single file. No libraries, network requests, server, or float-render-target extension required. Actual throughput depends on your browser and graphics backend.</div></footer>
+</main></div>
+<script>
+const SHADERS={"contacts.vert": "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp usampler2D;\n// One invocation writes ONLY its own sphere. Neighbors are read from a stable\n// snapshot; no cross-invocation writes, atomics, CPU neighbor lists, or all-pairs loop.\nuniform sampler2D u_state, u_reference;\nuniform usampler2D u_sorted, u_ranges;\nuniform int u_width, u_count, u_grid, u_rangeWidth, u_phase;\nuniform float u_cell, u_restitution, u_friction, u_cap, u_minRadius, u_dt;\nout vec4 next_position;\nout vec4 next_velocity;\nout vec4 next_meta;\nvec4 state(int id, int lane) {\n    return texelFetch(u_state, ivec2((id % u_width)*3+lane,id/u_width),0);\n}\nivec3 cellOf(vec3 p) { return clamp(ivec3(floor((p+100.0)/u_cell)),ivec3(0),ivec3(u_grid-1)); }\nvec3 coincidentNormal(int i, int j) {\n    // Antisymmetric, deterministic fallback for exactly coincident centers.\n    int k = min(i,j), l = max(i,j);\n    uint h = uint(k)*1664525u + uint(l)*1013904223u;\n    vec3 n = vec3(0.0); n[int(h%3u)] = i < j ? 1.0 : -1.0; return n;\n}\nvoid main() {\n    gl_Position=vec4(0.0,0.0,0.0,1.0);\n    int id=gl_VertexID;\n    if (id>=u_count) {next_position=vec4(0.0);next_velocity=vec4(0.0);next_meta=vec4(0.0);return;}\n    vec4 pr=state(id,0), vm=state(id,1), meta=state(id,2);\n    vec3 dp=vec3(0.0), dv=vec3(0.0);\n    float count=0.0, maxPen=0.0, candidates=0.0;\n    float slop=0.001*u_minRadius, skin=0.004*u_minRadius;\n    // The grid stays fixed within a substep. Its cell size includes a halo\n    // for the MAXIMUM allowed position correction across all iterations.\n    vec3 ref=texelFetch(u_reference,ivec2((id%u_width)*3,id/u_width),0).xyz;\n    ivec3 home=cellOf(ref);\n    for (int z=-1;z<=1;++z) for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x) {\n        ivec3 c=home+ivec3(x,y,z);\n        if(any(lessThan(c,ivec3(0))) || any(greaterThanEqual(c,ivec3(u_grid)))) continue;\n        int key=c.x+u_grid*(c.y+u_grid*c.z);\n        uvec2 range=texelFetch(u_ranges,ivec2(key%u_rangeWidth,key/u_rangeWidth),0).xy;\n        if(range.x==0u) continue;\n        // Variable-length, complete cell range: there is NO fixed bucket cap.\n        for(uint slot=range.x-1u;slot<range.y;++slot) {\n            int j=int(texelFetch(u_sorted,ivec2(int(slot)%u_width,int(slot)/u_width),0).y);\n            if(j==id) continue;\n            candidates+=1.0;\n            vec4 qr=state(j,0);\n            vec3 delta=pr.xyz-qr.xyz;\n            float rr=pr.w+qr.w, d2=dot(delta,delta);\n            if(d2>(rr+skin)*(rr+skin)) continue;\n            count+=1.0;\n            float d=sqrt(d2), pen=rr-d;\n            maxPen=max(maxPen,pen);\n            if(u_phase==0) continue; // Contact-degree measurement pass.\n            vec3 n=d>1e-7 ? delta/d : coincidentNormal(id,j);\n            vec4 wj=state(j,1);\n            float invSum=vm.w+wj.w;\n            // Symmetric degree weighting damps simultaneous-contact Jacobi\n            // updates. An isolated pair has weight 1 and the ordinary impulse.\n            float weight=1.0/max(1.0,max(meta.x,state(j,2).x));\n            dp+=n*(max(pen-slop,0.0)*0.9*vm.w/invSum*weight);\n            vec3 rel=vm.xyz-wj.xyz;\n            float vn=dot(rel,n);\n            // Baumgarte contact bias provides sustained separation/support in\n            // a dense gravity pile. Use the larger of bounce speed and bias,\n            // not their sum; fast isolated elastic impacts keep their impulse.\n            float e=vn < -1.0 ? u_restitution : 0.0;\n            float bias=u_dt>0.0 ? 0.4*max(pen-slop,0.0)/u_dt : 0.0;\n            float target=max(-e*min(vn,0.0),bias);\n            if(vn<target) {\n                float jn=(target-vn)/invSum;\n                vec3 tangent=rel-vn*n;\n                float tangentSpeed=length(tangent);\n                vec3 jt=tangentSpeed>1e-7 ? -tangent/tangentSpeed * min(u_friction*jn,tangentSpeed/invSum) : vec3(0.0);\n                dv+=vm.w*weight*(jn*n+jt);\n            }\n        }\n    }\n    if(u_phase==0) {next_position=pr;next_velocity=vm;next_meta=vec4(count,maxPen,candidates,meta.w);return;}\n    // This bound is also used to size the broad-phase halo. Do not remove it\n    // without rebuilding the grid each iteration or expanding the halo.\n    float corrLimit=0.2*u_minRadius;\n    dp*=min(1.0,corrLimit/max(length(dp),1e-8));\n    vec3 p=pr.xyz+dp, v=vm.xyz+dv;\n    float limit=100.0-pr.w-0.0001, d=length(p);\n    if(d>=limit) {\n        vec3 n=p/max(d,1e-8); p=n*limit;\n        float outward=dot(v,n);\n        if(outward>0.0) {\n            float e=outward>1.0 ? u_restitution : 0.0;\n            float change=(1.0+e)*outward;\n            vec3 tangent=v-outward*n;\n            v-=change*n+tangent*min(1.0,u_friction*change/max(length(tangent),1e-8));\n        }\n    }\n    float speed=length(v), capped=max(meta.w,float(speed>u_cap));\n    v*=min(1.0,u_cap/max(speed,1e-8));\n    next_position=vec4(p,pr.w);\n    next_velocity=vec4(v,vm.w);\n    next_meta=vec4(count,maxPen,candidates,capped);\n}\n", "empty.frag": "#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(0.0);}\n", "fullscreen.vert": "#version 300 es\nvoid main() {\n    vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));\n    gl_Position=vec4(p*2.0-1.0,0.0,1.0);\n}\n", "integrate.vert": "#version 300 es\nprecision highp float;\nprecision highp int;\n// GPU state: three RGBA32F texels per sphere, mirrored from transform feedback.\n// (position.xyz, radius), (velocity.xyz, inverseMass), (diagnostics).\nuniform sampler2D u_state;\nuniform int u_width, u_count;\nuniform float u_dt, u_drag, u_restitution, u_friction, u_cap;\n// World-space acceleration. The host maps screen-down through the camera's\n// inverse rotation; no positions/velocities are rotated or read back on drag.\nuniform vec3 u_gravity;\nout vec4 next_position;\nout vec4 next_velocity;\nout vec4 next_meta;\nvec4 state(int id, int lane) {\n    return texelFetch(u_state, ivec2((id % u_width) * 3 + lane, id / u_width), 0);\n}\nvec3 wallImpulse(vec3 v, vec3 n) {\n    float outward = dot(v, n);\n    if (outward <= 0.0) return v;\n    float e = outward > 1.0 ? u_restitution : 0.0;\n    float normalChange = (1.0 + e) * outward;\n    vec3 tangent = v - outward * n;\n    float t = length(tangent);\n    return v - normalChange*n - tangent * min(1.0, u_friction*normalChange/max(t, 1e-8));\n}\nvoid main() {\n    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    int id = gl_VertexID;\n    if (id >= u_count) {\n        next_position = vec4(0.0); next_velocity = vec4(0.0); next_meta = vec4(0.0); return;\n    }\n    vec4 pr = state(id, 0), vm = state(id, 1);\n    vec3 p = pr.xyz;\n    vec3 v = (vm.xyz + u_gravity * u_dt) * exp(-u_drag*u_dt);\n    float speed = length(v), capped = float(speed > u_cap);\n    v *= min(1.0, u_cap/max(speed, 1e-8));\n    float limit = 100.0 - pr.w - 0.0001;\n    float d = length(p);\n    if (d > limit) p *= limit/d;\n    vec3 proposed = p + v*u_dt;\n    if (dot(proposed, proposed) > limit*limit) {\n        // First wall exit along the constant-velocity segment. Gravity was\n        // applied above (semi-implicit Euler). Curvature/multiple contacts\n        // are protected by the final containment projection below.\n        float a = dot(v,v), b = dot(p,v), c = dot(p,p)-limit*limit;\n        float t = a > 1e-12 ? clamp((-b+sqrt(max(0.0,b*b-a*c)))/a, 0.0, u_dt) : 0.0;\n        p += v*t;\n        vec3 n = normalize(p);\n        p = n*limit;\n        v = wallImpulse(v,n);\n        p += v*(u_dt-t);\n    } else p = proposed;\n    d = length(p);\n    if (d > limit) { vec3 n = p/d; p=n*limit; v=wallImpulse(v,n); }\n    next_position = vec4(p,pr.w);\n    next_velocity = vec4(v,vm.w);\n    next_meta = vec4(0.0,0.0,0.0,capped);\n}\n", "keys.frag": "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform sampler2D u_state;\nuniform int u_width,u_count,u_grid;\nuniform float u_cell;\nlayout(location=0) out uvec4 result;\nvoid main() {\n    ivec2 xy=ivec2(gl_FragCoord.xy);\n    int id=xy.x+xy.y*u_width;\n    if(id>=u_count){result=uvec4(0xffffffffu);return;}\n    vec3 p=texelFetch(u_state,ivec2(xy.x*3,xy.y),0).xyz;\n    ivec3 c=clamp(ivec3(floor((p+100.0)/u_cell)),ivec3(0),ivec3(u_grid-1));\n    result=uvec4(uint(c.x+u_grid*(c.y+u_grid*c.z)),uint(id),0u,0u);\n}\n", "ranges.frag": "#version 300 es\nprecision highp float;\nprecision highp int;\nflat in uvec4 value;\nlayout(location=0) out uvec4 result;\nvoid main(){result=value;}\n", "ranges.vert": "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp usampler2D;\nuniform usampler2D u_sorted;\nuniform int u_width,u_count,u_rangeWidth,u_rangeHeight,u_mode;\nflat out uvec4 value;\nuvec2 entry(int id){return texelFetch(u_sorted,ivec2(id%u_width,id/u_width),0).xy;}\nvoid main(){\n    int i=gl_VertexID; uvec2 v=entry(i);\n    bool valid=i<u_count;\n    bool edge=false;\n    if(valid){\n        if(u_mode==0) edge=i==0||entry(max(0,i-1)).x!=v.x;\n        else edge=i==u_count-1||entry(min(u_count-1,i+1)).x!=v.x;\n    }\n    gl_PointSize=1.0; value=uvec4(uint(i+1),uint(i+1),0u,0u);\n    if(!edge){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}\n    int key=int(v.x); vec2 xy=vec2(key%u_rangeWidth,key/u_rangeWidth)+0.5;\n    gl_Position=vec4(xy/vec2(u_rangeWidth,u_rangeHeight)*2.0-1.0,0.0,1.0);\n}\n", "render.frag": "#version 300 es\nprecision highp float;\nin vec3 v_color;\nin float v_z,v_radius;\nuniform mat4 u_projection;\nout vec4 color;\nvoid main(){\n    vec2 p=(gl_PointCoord-0.5)*2.0;p.y=-p.y;\n    float r=dot(p,p);if(r>1.0)discard;\n    vec3 n=vec3(p,sqrt(max(0.0,1.0-r)));\n    float diffuse=max(0.0,dot(n,normalize(vec3(-0.4,0.65,0.8))));\n    float spec=pow(max(0.0,dot(n,normalize(vec3(-0.25,0.4,1.0)))),28.0);\n    color=vec4(v_color*(0.28+0.72*diffuse)+0.18*spec,1.0);\n    float z=v_z+v_radius*n.z;\n    float clipZ=u_projection[2][2]*z+u_projection[3][2];\n    gl_FragDepth=(clipZ/-z)*0.5+0.5;\n}\n", "render.vert": "#version 300 es\nprecision highp float;\nlayout(location=0) in vec4 a_position;\nlayout(location=1) in vec4 a_velocity;\nuniform mat4 u_view,u_projection;\nuniform float u_height,u_cap,u_pointMax;\nout vec3 v_color;\nout float v_z,v_radius;\nvoid main(){\n    vec4 p=u_view*vec4(a_position.xyz,1.0);\n    gl_Position=u_projection*p;\n    gl_PointSize=clamp(a_position.w*u_projection[1][1]*u_height/max(1.0,-p.z),1.0,u_pointMax);\n    float t=clamp(length(a_velocity.xyz)/u_cap,0.0,1.0);\n    v_color=mix(vec3(0.23,0.66,0.77),vec3(0.88,0.96,0.47),t);\n    v_z=p.z;v_radius=a_position.w;\n}\n", "room.frag": "#version 300 es\nprecision highp float;\nin float v_brightness;\nout vec4 color;\nvoid main(){color=vec4(vec3(0.30,0.41,0.46),0.16+0.25*v_brightness);}\n", "room.vert": "#version 300 es\nprecision highp float;\nlayout(location=0) in vec3 a_position;\nuniform mat4 u_view,u_projection;\nout float v_brightness;\nvoid main(){vec4 p=u_view*vec4(a_position,1.0);gl_Position=u_projection*p;v_brightness=0.55+0.45*normalize((u_view*vec4(normalize(a_position),0.0)).xyz).z;}\n", "sort.frag": "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp usampler2D;\nuniform usampler2D u_sorted;\nuniform int u_width,u_j,u_k;\nlayout(location=0) out uvec4 result;\nvoid main(){\n    ivec2 xy=ivec2(gl_FragCoord.xy); int i=xy.x+xy.y*u_width,other=i^u_j;\n    uvec4 a=texelFetch(u_sorted,xy,0), b=texelFetch(u_sorted,ivec2(other%u_width,other/u_width),0);\n    bool aLess=a.x<b.x||(a.x==b.x&&a.y<b.y);\n    bool wantMin=((i&u_k)==0)==((i&u_j)==0);\n    result=(aLess==wantMin)?a:b;\n}\n"};
+/* Sphere Room — no dependencies. Physics and broad phase are GLSL GPU passes.
+   CPU: initialization, GL dispatch, UI, camera, and EXPLICIT diagnostic readback.
+   Shader strings are embedded by build.py in the single-file distributable. */
+'use strict';
+const ROOM_RADIUS = 100, TICK_DT = 1 / 30;
+const DEFAULTS = Object.freeze({ count:2048, radius:3, spread:0.2, initialSpeed:24,
+  seed:7, gravityEnabled:false, gravity:24, gravityFollowsView:true, restitution:0.92, friction:0.12,
+  drag:0, speedCap:48, iterations:4, minSubsteps:1 });
+const clamp = (x,a,b) => Math.min(b,Math.max(a,x));
+function seeded(seed) { let s=seed>>>0; return () => { s+=0x6D2B79F5;let t=s;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296; }; }
+function validConfig(input) {
+  const c={...DEFAULTS,...input};
+  const check=(k,a,b,integer=false)=>{let n=Number(c[k]);if(!Number.isFinite(n)||n<a||n>b||(integer&&!Number.isInteger(n)))throw new Error(`${k} must be ${integer?'an integer ':''}between ${a} and ${b}.`);c[k]=n;};
+  check('count',1,16384,true);check('radius',1,12);check('spread',0,0.5);check('initialSpeed',0,180);
+  check('seed',0,2147483647,true);check('gravity',0,100);check('restitution',0,1);check('friction',0,1);
+  check('drag',0,2);check('speedCap',1,240);check('iterations',1,12,true);check('minSubsteps',1,16,true);
+  c.gravityEnabled=!!c.gravityEnabled;c.gravityFollowsView=!!c.gravityFollowsView;return c;
+}
+function initialState(c) {
+  const n=c.count, m=2**Math.ceil(Math.log2(n)), data=new Float32Array(m*12);
+  const minR=Math.max(1,c.radius*(1-c.spread)), maxR=Math.max(1,c.radius*(1+c.spread));
+  const pitch=2*maxR*1.015, limit=100-maxR-0.01, extent=Math.floor(limit/pitch), rand=seeded(c.seed);
+  // Reservoir sampling keeps memory O(N), even when radius-1 placement offers
+  // hundreds of thousands of valid lattice sites. Conservative, not optimal packing.
+  const centers=new Float32Array(n*3);let available=0;
+  for(let z=-extent;z<=extent;z++)for(let y=-extent;y<=extent;y++)for(let x=-extent;x<=extent;x++){
+    const px=x*pitch,py=y*pitch,pz=z*pitch;if(px*px+py*py+pz*pz>limit*limit)continue;
+    available++;let k=available<=n?available-1:Math.floor(rand()*available);
+    if(k<n){centers[k*3]=px;centers[k*3+1]=py;centers[k*3+2]=pz;}
+  }
+  if(available<n)throw new Error(`This non-overlapping spawn layout fits ${available.toLocaleString()} spheres at the selected maximum radius ${maxR.toFixed(2)}. Reduce count, radius, or size variation. The running scene was not changed.`);
+  for(let i=n-1;i>0;i--){const j=Math.floor(rand()*(i+1));for(let a=0;a<3;a++){let t=centers[3*i+a];centers[3*i+a]=centers[3*j+a];centers[3*j+a]=t;}}
+  for(let i=0;i<n;i++){
+    const k=i*12,r=Math.fround(minR+(maxR-minR)*rand()),z=2*rand()-1,phi=2*Math.PI*rand(),xy=Math.sqrt(1-z*z);
+    const speed=Math.min(c.initialSpeed,c.speedCap);
+    data.set([centers[i*3],centers[i*3+1],centers[i*3+2],r,speed*xy*Math.cos(phi),speed*z,speed*xy*Math.sin(phi),1/(r*r*r),0,0,0,0],k);
+  }
+  return {data,available};
+}
+function compile(gl,type,source,name) {
+  const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){let msg=gl.getShaderInfoLog(sh);gl.deleteShader(sh);throw new Error(`${name}: ${msg}`);}return sh;
+}
+function makeProgram(gl,vs,fs,name,feedback=false) {
+  const p=gl.createProgram(),v=compile(gl,gl.VERTEX_SHADER,vs,name+'.vert'),f=compile(gl,gl.FRAGMENT_SHADER,fs,name+'.frag');
+  gl.attachShader(p,v);gl.attachShader(p,f);
+  if(feedback)gl.transformFeedbackVaryings(p,['next_position','next_velocity','next_meta'],gl.INTERLEAVED_ATTRIBS);
+  gl.linkProgram(p);gl.deleteShader(v);gl.deleteShader(f);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(name+': '+gl.getProgramInfoLog(p));
+  const u={};for(let i=0;i<gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);i++){const a=gl.getActiveUniform(p,i);u[a.name]=gl.getUniformLocation(p,a.name);}
+  return {p,u};
+}
+function makePrograms(gl,S) {
+  return { integrate:makeProgram(gl,S['integrate.vert'],S['empty.frag'],'integrate',true),
+    contacts:makeProgram(gl,S['contacts.vert'],S['empty.frag'],'contacts',true),
+    keys:makeProgram(gl,S['fullscreen.vert'],S['keys.frag'],'keys'),
+    sort:makeProgram(gl,S['fullscreen.vert'],S['sort.frag'],'sort'),
+    ranges:makeProgram(gl,S['ranges.vert'],S['ranges.frag'],'ranges'),
+    render:makeProgram(gl,S['render.vert'],S['render.frag'],'render'),
+    room:makeProgram(gl,S['room.vert'],S['room.frag'],'room') };
+}
+function texture(gl,w,h,integer=false,data=null) {
+  const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texStorage2D(gl.TEXTURE_2D,1,integer?gl.RGBA32UI:gl.RGBA32F,w,h);
+  if(data)gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,w,h,integer?gl.RGBA_INTEGER:gl.RGBA,integer?gl.UNSIGNED_INT:gl.FLOAT,data);
+  return t;
+}
+function framebuffer(gl,t) {
+  const f=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,f);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('Required integer framebuffer is not complete on this device.');
+  return f;
+}
+class SphereSimulation {
+  constructor(gl,programs,config,state=null){
+    this.gl=gl;this.programs=programs;this.config=validConfig(config);this.n=this.config.count;
+    // Detached/test simulations start with ordinary world-down. The main UI
+    // refreshes this direction from the current camera BEFORE each physics tick.
+    this.gravityDirection=new Float32Array([0,-1,0]);
+    const spawn=state?{data:state,available:null}:initialState(this.config);
+    this.m=2**Math.ceil(Math.log2(this.n));this.w=Math.min(256,this.m);this.h=this.m/this.w;
+    this.initial=new Float32Array(this.m*12);this.initial.set(spawn.data.subarray(0,this.n*12));this.available=spawn.available;
+    this.minR=Infinity;this.maxR=0;
+    for(let i=0;i<this.n;i++){const r=this.initial[i*12+3];if(!Number.isFinite(r)||r<1||r>=100)throw new Error('All sphere radii must be finite and at least 1.');this.minR=Math.min(this.minR,r);this.maxR=Math.max(this.maxR,r);}
+    this.vao=gl.createVertexArray();this.tf=gl.createTransformFeedback();this.states=[];this.keyTargets=[];
+    for(let i=0;i<3;i++){
+      const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,this.initial,gl.DYNAMIC_COPY);
+      const t=texture(gl,this.w*3,this.h,false,this.initial);
+      const vao=gl.createVertexArray();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,b);
+      gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,4,gl.FLOAT,false,48,0);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.FLOAT,false,48,16);
+      this.states.push({b,t,vao});
+    }
+    for(let i=0;i<2;i++){const t=texture(gl,this.w,this.h,true);this.keyTargets.push({t,f:framebuffer(gl,t)});}
+    this.current=2;this.sorted=0;this.tickCount=0;this.grid=0;this.range=null;this.clear=new Uint32Array(4);
+    this.configureGrid();gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.bindVertexArray(null);gl.bindBuffer(gl.ARRAY_BUFFER,null);
+  }
+  configureGrid(){
+    const gl=this.gl,c=this.config;
+    // Every position projection moves <= 0.2*rMin per iteration. Include twice
+    // the total bound in the cell size, then query reference cells in a 3^3 halo.
+    const needed=2*this.maxR+2*c.iterations*0.2*this.minR+0.01*this.minR;
+    const grid=Math.max(1,Math.min(48,Math.floor(200/needed)));
+    if(grid!==this.grid){
+      if(this.range){gl.deleteTexture(this.range.t);gl.deleteFramebuffer(this.range.f);}
+      this.grid=grid;this.cell=200/grid;this.rangeW=Math.min(512,grid**3);this.rangeH=Math.ceil(grid**3/this.rangeW);
+      const t=texture(gl,this.rangeW,this.rangeH,true);this.range={t,f:framebuffer(gl,t)};
+    }
+    // Travel-based sampling bound is a heuristic, NOT full 3D CCD. Gravity
+    // uses at least four substeps for less compressible resting contacts.
+    this.substeps=Math.max(c.minSubsteps,c.gravityEnabled ? 4 : 1,Math.ceil(c.speedCap*TICK_DT/(0.4*this.minR)));
+  }
+  setLive(values){this.config=validConfig({...this.config,...values,count:this.n});this.configureGrid();}
+  setGravityDirection(direction){
+    if(!direction||direction.length!==3||!Array.from(direction).every(Number.isFinite))
+      throw new Error('Gravity direction must contain three finite numbers.');
+    const length=Math.hypot(...direction);
+    if(!Number.isFinite(length)||length<1e-12)throw new Error('Gravity direction must be nonzero.');
+    // Normalize so rotating the camera never changes the acceleration strength.
+    for(let axis=0;axis<3;axis++)this.gravityDirection[axis]=direction[axis]/length;
+  }
+  bindTex(unit,t){const gl=this.gl;gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);}
+  common(P){
+    const gl=this.gl,u=P.u,c=this.config;
+    gl.useProgram(P.p);
+    const ints={u_width:this.w,u_count:this.n,u_grid:this.grid,u_rangeWidth:this.rangeW,u_rangeHeight:this.rangeH,u_state:0,u_reference:1,u_sorted:2,u_ranges:3};
+    const floats={u_cell:this.cell,u_cap:c.speedCap,u_minRadius:this.minR,u_restitution:c.restitution,u_friction:c.friction};
+    for(const[k,v]of Object.entries(ints))if(u[k]!==undefined)gl.uniform1i(u[k],v);
+    for(const[k,v]of Object.entries(floats))if(u[k]!==undefined)gl.uniform1f(u[k],v);
+  }
+  feedback(P,src,dst,phase,dt){
+    const gl=this.gl,c=this.config;
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.bindVertexArray(this.vao);this.common(P);
+    this.bindTex(0,this.states[src].t);
+    if(P===this.programs.contacts){
+      this.bindTex(1,this.states[0].t);this.bindTex(2,this.keyTargets[this.sorted].t);this.bindTex(3,this.range.t);gl.uniform1i(P.u.u_phase,phase);gl.uniform1f(P.u.u_dt,dt);
+    }else{
+      const g=c.gravityEnabled?c.gravity:0,direction=this.gravityDirection;
+      gl.uniform1f(P.u.u_dt,dt);
+      gl.uniform3f(P.u.u_gravity,g*direction[0],g*direction[1],g*direction[2]);
+      gl.uniform1f(P.u.u_drag,c.drag);
+    }
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK,this.tf);gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,this.states[dst].b);
+    gl.enable(gl.RASTERIZER_DISCARD);gl.beginTransformFeedback(gl.POINTS);gl.drawArrays(gl.POINTS,0,this.m);gl.endTransformFeedback();gl.disable(gl.RASTERIZER_DISCARD);
+    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null);gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK,null);gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER,null);
+    // GPU buffer -> GPU texture, NOT getBufferSubData / a CPU readback.
+    this.bindTex(4,this.states[dst].t);gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER,this.states[dst].b);
+    gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,this.w*3,this.h,gl.RGBA,gl.FLOAT,0);gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER,null);
+  }
+  buildGrid(reference=0){
+    const gl=this.gl,P=this.programs;
+    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);gl.colorMask(true,true,true,true);gl.bindVertexArray(this.vao);
+    this.common(P.keys);this.bindTex(0,this.states[reference].t);gl.bindFramebuffer(gl.FRAMEBUFFER,this.keyTargets[0].f);gl.viewport(0,0,this.w,this.h);gl.drawArrays(gl.TRIANGLES,0,3);
+    let a=0;this.common(P.sort);
+    for(let k=2;k<=this.m;k*=2){gl.uniform1i(P.sort.u.u_k,k);for(let j=k/2;j>=1;j/=2){gl.uniform1i(P.sort.u.u_j,j);this.bindTex(2,this.keyTargets[a].t);gl.bindFramebuffer(gl.FRAMEBUFFER,this.keyTargets[1-a].f);gl.drawArrays(gl.TRIANGLES,0,3);a=1-a;}}
+    this.sorted=a;gl.bindFramebuffer(gl.FRAMEBUFFER,this.range.f);gl.viewport(0,0,this.rangeW,this.rangeH);gl.clearBufferuiv(gl.COLOR,0,this.clear);
+    this.common(P.ranges);this.bindTex(2,this.keyTargets[a].t);
+    gl.colorMask(true,false,false,false);gl.uniform1i(P.ranges.u.u_mode,0);gl.drawArrays(gl.POINTS,0,this.n);
+    gl.colorMask(false,true,false,false);gl.uniform1i(P.ranges.u.u_mode,1);gl.drawArrays(gl.POINTS,0,this.n);
+    gl.colorMask(true,true,true,true);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  }
+  tick(){
+    const gl=this.gl,dt=TICK_DT/this.substeps;gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);
+    for(let s=0;s<this.substeps;s++){
+      this.feedback(this.programs.integrate,this.current,0,0,dt);this.buildGrid(0);
+      let src=0;
+      for(let i=0;i<this.config.iterations;i++){
+        this.feedback(this.programs.contacts,src,1,0,dt);this.feedback(this.programs.contacts,1,2,1,dt);src=2;
+      }
+      this.current=2;
+    }
+    this.tickCount++;gl.bindVertexArray(null);
+  }
+  read(){const gl=this.gl,a=new Float32Array(this.n*12);gl.bindBuffer(gl.COPY_READ_BUFFER,this.states[this.current].b);gl.getBufferSubData(gl.COPY_READ_BUFFER,0,a);gl.bindBuffer(gl.COPY_READ_BUFFER,null);return a;}
+  audit(data=this.read()){
+    const n=this.n,tolerance=0.002*this.minR,buckets=new Map(),cell=2*this.maxR+0.01;
+    let nonfinite=0,outside=0,maxOutside=0,maxSpeed=0,totalSpeed=0,ke=0,totalY=0,candidates=0,capped=0,maxPen=0,overlaps=0;
+    const momentum=[0,0,0];
+    const key=(x,y,z)=>`${x},${y},${z}`;
+    for(let i=0;i<n;i++){
+      const o=i*12,p=data.subarray(o,o+3),v=data.subarray(o+4,o+7),r=data[o+3];
+      if(!Array.from(data.subarray(o,o+12)).every(Number.isFinite)){nonfinite++;continue;}
+      const escape=Math.hypot(...p)+r-100;maxOutside=Math.max(maxOutside,escape);if(escape>0.0005)outside++;
+      const speed=Math.hypot(...v),mass=1/data[o+7];maxSpeed=Math.max(maxSpeed,speed);totalSpeed+=speed;ke+=0.5*mass*speed*speed;totalY+=p[1];
+      for(let a=0;a<3;a++)momentum[a]+=mass*v[a];candidates+=data[o+10];capped+=data[o+11]>0?1:0;
+      const c=p.map(x=>Math.floor(x/cell)),k=key(...c);if(!buckets.has(k))buckets.set(k,[]);buckets.get(k).push(i);
+    }
+    for(let i=0;i<n;i++){
+      const o=i*12,p=data.subarray(o,o+3),r=data[o+3];if(!Number.isFinite(r))continue;
+      const c=Array.from(p,x=>Math.floor(x/cell));
+      for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){
+        const list=buckets.get(key(c[0]+x,c[1]+y,c[2]+z));if(!list)continue;
+        for(const j of list){if(j<=i)continue;const q=j*12;const pen=r+data[q+3]-Math.hypot(p[0]-data[q],p[1]-data[q+1],p[2]-data[q+2]);maxPen=Math.max(maxPen,pen);if(pen>tolerance)overlaps++;}
+      }
+    }
+    return {spheres:n,tick:this.tickCount,simulatedSeconds:this.tickCount*TICK_DT,substeps:this.substeps,iterations:this.config.iterations,
+      nonfinite,outside,maxOutside,maxSpeed,meanSpeed:totalSpeed/n,kineticEnergy:ke,momentum,meanY:totalY/n,
+      gravityDirectionWorld:Array.from(this.gravityDirection),
+      gravityAccelerationWorld:Array.from(this.gravityDirection,d=>d*(this.config.gravityEnabled?this.config.gravity:0)),
+      residualOverlapPairs:overlaps,maxPenetration:maxPen,overlapTolerance:tolerance,
+      averageCandidatesLastPass:candidates/n,speedCappedLastSubstep:capped,gridDimension:this.grid,cellSize:this.cell};
+  }
+  validateGrid(){
+    this.buildGrid(this.current);const gl=this.gl,keys=new Uint32Array(this.m*4),ranges=new Uint32Array(this.rangeW*this.rangeH*4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,this.keyTargets[this.sorted].f);gl.readPixels(0,0,this.w,this.h,gl.RGBA_INTEGER,gl.UNSIGNED_INT,keys);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,this.range.f);gl.readPixels(0,0,this.rangeW,this.rangeH,gl.RGBA_INTEGER,gl.UNSIGNED_INT,ranges);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    // Read freshly generated UNSORTED keys from the same GLSL key builder.
+    // A double-precision JS floor is not an exact oracle at float32 cell edges.
+    const expectedKeys=new Uint32Array(this.m*4),scratch=this.keyTargets[1-this.sorted];
+    this.common(this.programs.keys);this.bindTex(0,this.states[this.current].t);gl.bindFramebuffer(gl.FRAMEBUFFER,scratch.f);gl.viewport(0,0,this.w,this.h);gl.bindVertexArray(this.vao);gl.drawArrays(gl.TRIANGLES,0,3);
+    gl.readPixels(0,0,this.w,this.h,gl.RGBA_INTEGER,gl.UNSIGNED_INT,expectedKeys);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    let errors=0,seen=new Set(),occupied=0;const details=[];
+    for(let i=0;i<this.n;i++){
+      const cell=keys[i*4],id=keys[i*4+1];seen.add(id);
+      if(i>0&&cell<keys[(i-1)*4])errors++;
+      if(id>=this.n){errors++;continue;}
+      if(cell!==expectedKeys[id*4]){errors++;if(details.length<5)details.push({i,id,sortedKey:cell,originalKey:expectedKeys[id*4]});}
+      if(i===0||cell!==keys[(i-1)*4]){occupied++;if(ranges[cell*4]!==i+1)errors++;}
+      if(i===this.n-1||cell!==keys[(i+1)*4])if(ranges[cell*4+1]!==i+1)errors++;
+    }
+    if(seen.size!==this.n)errors++;return {pass:errors===0,errors,uniqueIds:seen.size,occupiedCells:occupied,details};
+  }
+  dispose(){const gl=this.gl;for(const s of this.states){gl.deleteTexture(s.t);gl.deleteBuffer(s.b);gl.deleteVertexArray(s.vao);}for(const s of this.keyTargets){gl.deleteTexture(s.t);gl.deleteFramebuffer(s.f);}if(this.range){gl.deleteTexture(this.range.t);gl.deleteFramebuffer(this.range.f);}gl.deleteVertexArray(this.vao);gl.deleteTransformFeedback(this.tf);}
+}
+function perspective(fovy,aspect,near,far){const f=1/Math.tan(fovy/2),a=1/(near-far);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*a,-1,0,0,2*far*near*a,0]);}
+function lookAt(eye){
+  const normalize=v=>{const n=Math.hypot(...v);return v.map(x=>x/n);},cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
+  const z=normalize(eye),x=normalize(cross([0,1,0],z)),y=cross(z,x);
+  return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1]);
+}
+class SceneRenderer {
+  constructor(gl,programs,canvas){
+    this.gl=gl;this.programs=programs;this.canvas=canvas;this.yaw=0.45;this.pitch=0.23;this.distance=310;
+    this.pointMax=gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1];this.vao=gl.createVertexArray();this.buffer=gl.createBuffer();
+    const vertices=[],segment=(a,b)=>vertices.push(...a,...b),slices=128;
+    for(let j=1;j<8;j++){const lat=-Math.PI/2+j*Math.PI/8,r=100*Math.cos(lat),y=100*Math.sin(lat);for(let i=0;i<slices;i++){let a=i*2*Math.PI/slices,b=(i+1)*2*Math.PI/slices;segment([r*Math.cos(a),y,r*Math.sin(a)],[r*Math.cos(b),y,r*Math.sin(b)]);}}
+    for(let j=0;j<12;j++){const lon=j*Math.PI/6;for(let i=0;i<slices;i++){let a=-Math.PI/2+i*Math.PI/slices,b=-Math.PI/2+(i+1)*Math.PI/slices;segment([100*Math.cos(a)*Math.cos(lon),100*Math.sin(a),100*Math.cos(a)*Math.sin(lon)],[100*Math.cos(b)*Math.cos(lon),100*Math.sin(b),100*Math.cos(b)*Math.sin(lon)]);}}
+    this.vertices=vertices.length/3;gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);gl.bindVertexArray(null);
+  }
+  viewMatrix(){
+    const cp=Math.cos(this.pitch);
+    return lookAt([this.distance*cp*Math.sin(this.yaw),this.distance*Math.sin(this.pitch),this.distance*cp*Math.cos(this.yaw)]);
+  }
+  screenDown(){
+    // view is column-major, world -> camera. Its second ROW is camera-up in
+    // world coordinates. Negating it is inverse(view rotation) * (0,-1,0).
+    // This is a direction (w=0): translation/zoom must not affect gravity.
+    const view=this.viewMatrix();
+    return [-view[1],-view[5],-view[9]];
+  }
+  draw(sim,show=true){
+    const gl=this.gl,c=this.canvas,dpr=Math.min(devicePixelRatio||1,2),w=Math.round(c.clientWidth*dpr),h=Math.round(c.clientHeight*dpr);
+    if(c.width!==w||c.height!==h){c.width=w;c.height=h;}
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.colorMask(true,true,true,true);gl.depthMask(true);gl.clearColor(0.045,0.059,0.075,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    if(!show)return;
+    const view=this.viewMatrix(),proj=perspective(48*Math.PI/180,w/Math.max(h,1),1,1200),P=this.programs;
+    gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+    gl.useProgram(P.room.p);gl.uniformMatrix4fv(P.room.u.u_view,false,view);gl.uniformMatrix4fv(P.room.u.u_projection,false,proj);gl.bindVertexArray(this.vao);gl.drawArrays(gl.LINES,0,this.vertices);
+    gl.depthMask(true);gl.disable(gl.BLEND);gl.useProgram(P.render.p);gl.uniformMatrix4fv(P.render.u.u_view,false,view);gl.uniformMatrix4fv(P.render.u.u_projection,false,proj);gl.uniform1f(P.render.u.u_height,h);gl.uniform1f(P.render.u.u_cap,sim.config.speedCap);gl.uniform1f(P.render.u.u_pointMax,this.pointMax);gl.bindVertexArray(sim.states[sim.current].vao);gl.drawArrays(gl.POINTS,0,sim.n);gl.bindVertexArray(null);
+  }
+}
+
+// Actual shader checks. Their assertions target documented invariants, not a
+// claim of exact arbitrary many-body physics. Readbacks are diagnostic only.
+async function runShaderChecks(gl,programs,onProgress=()=>{}) {
+  const cases=[],base={count:2,radius:1,spread:0,initialSpeed:0,gravityEnabled:false,gravity:12,restitution:1,friction:0,drag:0,speedCap:48,iterations:4,minSubsteps:1};
+  const body=(p,v,r=1)=>[...p,r,...v,1/(r*r*r),0,0,0,0];
+  const make=(c,rows)=>new SphereSimulation(gl,programs,{...base,...c,count:rows.length},new Float32Array(rows.flat()));
+  const close=(a,b,tol=0.0001)=>Math.abs(a-b)<tol;
+  const yieldUI=()=>new Promise(r=>setTimeout(r,0));
+  const test=async(name,fn)=>{onProgress(name);await yieldUI();let result;try{result=await fn();}catch(e){result={pass:false,error:e.message};}cases.push({name,...result});onProgress(name,cases);};
+  await test('Isolated equal-mass head-on bounce',()=>{
+    const s=make({},[body([-1.1,0,0],[6,0,0]),body([1.1,0,0],[-6,0,0])]);s.tick();const a=s.read(),audit=s.audit(a);
+    const result={pass:close(a[4],-6)&&close(a[16],6)&&audit.nonfinite===0,velocities:[a[4],a[16]],audit};s.dispose();return result;
+  });
+  await test('Unequal masses (radii 1 and 2, mass ratio 1:8)',()=>{
+    const s=make({},[body([-1.01,0,0],[6,0,0],1),body([2.01,0,0],[0,0,0],2)]);s.tick();const a=s.read();
+    const result={pass:close(a[4],-14/3)&&close(a[16],4/3),expected:[-14/3,4/3],actual:[a[4],a[16]]};s.dispose();return result;
+  });
+  await test('Tangential velocity preserved without contact friction',()=>{
+    const s=make({},[body([-0.99,0,0],[3,1,0]),body([0.99,0,0],[-3,-1,0])]);s.buildGrid(0);s.feedback(programs.contacts,2,1,0,0);s.feedback(programs.contacts,1,2,1,0);const a=s.read();
+    const result={pass:close(a[4],-3)&&close(a[5],1)&&close(a[16],3)&&close(a[17],-1),velocities:[Array.from(a.slice(4,7)),Array.from(a.slice(16,19))]};s.dispose();return result;
+  });
+  await test('Contact friction reduces relative tangential speed',()=>{
+    const s=make({friction:0.5},[body([-0.99,0,0],[3,1,0]),body([0.99,0,0],[-3,-1,0])]);s.buildGrid(0);s.feedback(programs.contacts,2,1,0,0);s.feedback(programs.contacts,1,2,1,0);const a=s.read();
+    const result={pass:Math.abs(a[5]-a[17])<0.0001&&close(a[4],-3)&&close(a[16],3),relativeTangentAfter:a[5]-a[17]};s.dispose();return result;
+  });
+  await test('Wall reflection and containment',()=>{
+    const s=make({},[body([98.9,0,0],[6,0,0])]);s.tick();const a=s.read(),audit=s.audit(a);const result={pass:close(a[4],-6)&&audit.outside===0,position:a[0],velocity:a[4],audit};s.dispose();return result;
+  });
+  await test('Wall restitution 0.5',()=>{
+    const s=make({restitution:0.5},[body([98.9,0,0],[6,0,0])]);s.tick();const a=s.read();const result={pass:close(a[4],-3),expected:-3,actual:a[4]};s.dispose();return result;
+  });
+  await test('Gravity over one simulated second',async()=>{
+    const s=make({gravityEnabled:true,gravity:12},[body([0,0,0],[0,0,0])]);for(let i=0;i<30;i++){s.tick();if(i%10===9)await yieldUI();}
+    const a=s.read(),expectedY=-6*(1+1/(30*s.substeps));const result={pass:close(a[5],-12,0.001)&&close(a[1],expectedY,0.001),expected:{vy:-12,y:expectedY},actual:{vy:a[5],y:a[1]}};s.dispose();return result;
+  });
+  await test('Exponential air drag over one simulated second',async()=>{
+    const s=make({drag:0.7},[body([0,0,0],[10,0,0])]);for(let i=0;i<30;i++){s.tick();if(i%10===9)await yieldUI();}
+    const a=s.read(),expected=10*Math.exp(-0.7);const result={pass:close(a[4],expected,0.001),expected,actual:a[4]};s.dispose();return result;
+  });
+  await test('Hard speed limit is enforced',()=>{
+    const s=make({speedCap:24},[body([0,0,0],[100,20,10])]);s.tick();const audit=s.audit();const result={pass:audit.maxSpeed<=24.0001,audit};s.dispose();return result;
+  });
+  await test('Non-power-of-two grid: sort order, IDs, cell boundaries',()=>{
+    const s=new SphereSimulation(gl,programs,{...DEFAULTS,count:1003});const grid=s.validateGrid(),audit=s.audit();const result={pass:grid.pass&&audit.residualOverlapPairs===0&&audit.outside===0,grid,audit};s.dispose();return result;
+  });
+  await test('1,024 moving spheres: finite states and containment',async()=>{
+    const s=new SphereSimulation(gl,programs,{...DEFAULTS,count:1024});for(let i=0;i<30;i++){s.tick();if(i%5===4)await yieldUI();}
+    const audit=s.audit(),grid=s.validateGrid();const result={pass:grid.pass&&audit.nonfinite===0&&audit.outside===0&&audit.maxSpeed<=s.config.speedCap+0.001,grid,audit};s.dispose();return result;
+  });
+  await test('Gravity + mixed radii: four simulated seconds',async()=>{
+    const s=new SphereSimulation(gl,programs,{...DEFAULTS,count:512,radius:4,spread:0.3,initialSpeed:12,gravityEnabled:true,gravity:24,restitution:0.3,friction:0.4,drag:0.04,speedCap:60});
+    const before=s.audit();for(let i=0;i<120;i++){s.tick();if(i%5===4)await yieldUI();}
+    const audit=s.audit();const result={pass:audit.nonfinite===0&&audit.outside===0&&audit.meanY<before.meanY-10&&audit.maxSpeed<=60.001,initialMeanY:before.meanY,audit};s.dispose();return result;
+  });
+  await test('Arbitrary gravity vector is normalized and used by the shader',()=>{
+    const s=make({gravityEnabled:true,gravity:12},[body([0,0,0],[0,0,0])]);
+    s.setGravityDirection([2,-3,6]);s.tick();const a=s.read();
+    const direction=[2/7,-3/7,6/7],expected=direction.map(x=>x*12*TICK_DT),actual=Array.from(a.slice(4,7));
+    const result={pass:actual.every((v,i)=>close(v,expected[i])),expected,actual};s.dispose();return result;
+  });
+  await test('Disabled gravity ignores the selected direction',()=>{
+    const s=make({gravityEnabled:false,gravity:100},[body([0,0,0],[0,0,0])]);
+    s.setGravityDirection([1,2,3]);s.tick();const a=s.read();
+    const result={pass:[0,1,2,4,5,6].every(i=>a[i]===0),position:Array.from(a.slice(0,3)),velocity:Array.from(a.slice(4,7))};s.dispose();return result;
+  });
+  await test('Screen-down projects downward at 25 yaw/pitch combinations',()=>{
+    const angles=[-1.4,-0.7,0,0.7,1.4],records=[];
+    for(const yaw of [-3,-1,0,1,3])for(const pitch of angles){
+      const camera={yaw,pitch,distance:310,viewMatrix:SceneRenderer.prototype.viewMatrix};
+      const direction=SceneRenderer.prototype.screenDown.call(camera),view=camera.viewMatrix();
+      const projected=[0,1,2].map(row=>view[row]*direction[0]+view[4+row]*direction[1]+view[8+row]*direction[2]);
+      const s=make({gravityEnabled:true,gravity:12},[body([0,0,0],[0,0,0])]);s.setGravityDirection(direction);s.tick();
+      const a=s.read(),velocity=Array.from(a.slice(4,7));
+      const cameraVelocity=[0,1,2].map(row=>view[row]*velocity[0]+view[4+row]*velocity[1]+view[8+row]*velocity[2]);
+      const pass=projected.every((v,i)=>close(v,i===1?-1:0))&&cameraVelocity.every((v,i)=>close(v,i===1?-12*TICK_DT:0));
+      records.push({yaw,pitch,pass,projected,cameraVelocity});s.dispose();
+    }
+    return {pass:records.every(r=>r.pass),orientations:records.length,records};
+  });
+  await test('Live direction change preserves state and existing momentum',()=>{
+    const s=make({gravityEnabled:true,gravity:12},[body([0,0,0],[2,3,4])]);s.tick();
+    const before=s.read();s.setGravityDirection([1,0,0]);const unchanged=s.read();
+    s.tick();const after=s.read(),expected=[2+12*TICK_DT,3-12*TICK_DT,4],actual=Array.from(after.slice(4,7));
+    const result={pass:before.every((v,i)=>v===unchanged[i])&&actual.every((v,i)=>close(v,expected[i])),noTeleport:before.every((v,i)=>v===unchanged[i]),expected,actual};s.dispose();return result;
+  });
+  await test('Zoom does not rotate or scale gravity',()=>{
+    const camera={yaw:1.2,pitch:-0.9,distance:160,viewMatrix:SceneRenderer.prototype.viewMatrix};
+    const near=SceneRenderer.prototype.screenDown.call(camera);camera.distance=650;
+    const far=SceneRenderer.prototype.screenDown.call(camera);
+    return {pass:near.every((v,i)=>close(v,far[i],0.000001))&&close(Math.hypot(...far),1),near,far};
+  });
+  await test('Invalid gravity directions are rejected without changing state',()=>{
+    const s=make({},[body([0,0,0],[0,0,0])]);let rejected=0;
+    for(const direction of [[0,0,0],[NaN,1,0],[1,Infinity,0],[1,2]])try{s.setGravityDirection(direction);}catch(e){rejected++;}
+    const result={pass:rejected===4&&s.gravityDirection[0]===0&&s.gravityDirection[1]===-1&&s.gravityDirection[2]===0,rejected};s.dispose();return result;
+  });
+  const error=gl.getError();cases.push({name:'WebGL error state',pass:error===gl.NO_ERROR,errorCode:error});
+  const dbg=gl.getExtension('WEBGL_debug_renderer_info');
+  return {version:2,method:'Compiled GLSL vertex shaders and integer-texture broad-phase shaders; GPU-state diagnostic readback. This is not a JavaScript physics substitute.',backend:dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER),passed:cases.filter(x=>x.pass).length,total:cases.length,cases};
+}
+
+'use strict';
+const $=id=>document.getElementById(id);
+const PRESETS={cloud:{},settle:{count:2048,radius:3,initialSpeed:12,gravityEnabled:true,gravity:30,restitution:0.28,friction:0.45,drag:0.04,iterations:8},crowd:{count:4096,radius:3.5,spread:0,initialSpeed:18,gravityEnabled:false,restitution:0.9,friction:0.05,iterations:6},elastic:{count:1024,radius:3,spread:0,initialSpeed:24,restitution:1,friction:0,drag:0,gravityEnabled:false}};
+let gl,programs,sim,renderer,running=true,busy=false,dirty=true,accumulator=0,lastTime=0,rateStart=0,rateTicks=0,lastResults=null,lastAudit=null;
+function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error);}
+function setRunning(value){running=!!value;accumulator=0;$('play').textContent=running?'Pause':'Play';$('runningLabel').textContent=running?'RUNNING':'PAUSED';$('liveDot').style.opacity=running?'1':'.35';}
+function readControls(){const c={};for(const k of Object.keys(DEFAULTS))c[k]=typeof DEFAULTS[k]==='boolean'?$(k).checked:Number($(k).value);return validConfig(c);}
+function showControls(c){for(const k of Object.keys(DEFAULTS)){if(typeof DEFAULTS[k]==='boolean')$(k).checked=c[k];else $(k).value=c[k];}updateLabels();}
+function syncGravity(){
+ if(!sim||!renderer)return;
+ sim.setGravityDirection(sim.config.gravityFollowsView?renderer.screenDown():[0,-1,0]);
+}
+function stepPhysics(){syncGravity();sim.tick();}
+function setView(values={}){
+ for(const k of ['yaw','pitch','distance'])if(values[k]!==undefined&&!Number.isFinite(values[k]))throw new Error(k+' must be finite.');
+ if(values.yaw!==undefined)renderer.yaw=values.yaw;
+ if(values.pitch!==undefined)renderer.pitch=clamp(values.pitch,-1.4,1.4);
+ if(values.distance!==undefined)renderer.distance=clamp(values.distance,160,650);
+ syncGravity();dirty=true;
+ return {yaw:renderer.yaw,pitch:renderer.pitch,distance:renderer.distance,gravityDirectionWorld:Array.from(sim.gravityDirection)};
+}
+function updateLabels(){
+ const v=k=>Number($(k).value);$('radiusValue').textContent=v('radius').toFixed(1);$('spreadValue').textContent=`±${Math.round(100*v('spread'))}%`;
+ for(const k of ['initialSpeed','speedCap'])$(k+'Value').textContent=`${v(k)} units/s`;
+ $('gravityValue').textContent=`${v('gravity')} units/s²`;$('dragValue').textContent=v('drag').toFixed(2)+' /s';
+ for(const k of ['restitution','friction'])$(k+'Value').textContent=v(k).toFixed(2);
+ $('gravityField').classList.toggle('gravity-off',!$('gravityEnabled').checked);
+ $('sizeHint').textContent=`Radii ${Math.max(1,v('radius')*(1-v('spread'))).toFixed(2)}–${Math.max(1,v('radius')*(1+v('spread'))).toFixed(2)} · mass ∝ radius³.`;
+ if(sim){$('bodyLabel').textContent=sim.n.toLocaleString()+' spheres';$('gravityLabel').textContent=sim.config.gravityEnabled?`GRAVITY ${sim.config.gravityFollowsView?'↓ SCREEN':'−Y WORLD'} · ${sim.config.gravity}`:'GRAVITY OFF';$('interactionHint').textContent=sim.config.gravityEnabled&&sim.config.gravityFollowsView?'Drag to tilt · gravity stays ↓ · scroll to zoom':'Drag to orbit · scroll to zoom';$('substepsStat').textContent=`${sim.substeps} × ${sim.config.iterations}`;$('gridStat').textContent=sim.grid+'³';$('stepHint').textContent=`30 Hz outer step → ${sim.substeps} substeps (${(1000*TICK_DT/sim.substeps).toFixed(2)} ms each). Cell width ${sim.cell.toFixed(2)}.`;}
+}
+function clearAudit(){lastAudit=null;for(const k of ['outside','nonfinite','overlaps','penetration','speeds','candidates'])$(k).textContent='Not sampled';$('auditTime').textContent='Inspection reads GPU state only when requested; it does not drive the simulation.';}
+function rebuild(config=readControls()){
+ const next=new SphereSimulation(gl,programs,config);if(sim)sim.dispose();sim=next;accumulator=0;rateStart=performance.now();rateTicks=0;
+ syncGravity();$('pending').hidden=true;clearAudit();updateLabels();dirty=true;
+ notice(`${sim.n.toLocaleString()} spheres · radii ${sim.minR.toFixed(2)}–${sim.maxR.toFixed(2)} · non-overlapping initial layout.`);
+}
+function inspect(){const a=sim.audit();lastAudit=a;$('outside').textContent=a.outside;$('nonfinite').textContent=a.nonfinite;$('overlaps').textContent=a.residualOverlapPairs;$('penetration').textContent=a.maxPenetration.toFixed(5);$('speeds').textContent=`${a.meanSpeed.toFixed(2)} / ${a.maxSpeed.toFixed(2)}`;$('candidates').textContent=a.averageCandidatesLastPass.toFixed(1);$('auditTime').textContent=`Snapshot at ${a.simulatedSeconds.toFixed(3)} s. Overlap report tolerance: ${a.overlapTolerance.toFixed(5)} units. Candidate count is from the last contact pass.`;return a;}
+function saveText(name,text,type='text/plain'){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function showSource(){const name=$('shaderSelect').value;$('shaderSource').textContent=SHADERS[name];}
+async function checks(){
+ if(busy)return;setRunning(false);busy=true;const buttons=Array.from(document.querySelectorAll('button,input,select'));buttons.forEach(b=>b.disabled=true);$('testDetails').open=true;
+ try{
+  $('testStatus').textContent='Running…';lastResults=await runShaderChecks(gl,programs,(name,cases)=>{$('testResults').textContent=(cases||[]).map(c=>`${c.pass?'PASS':'FAIL'}  ${c.name}`).join('\n')+`\n\nChecking: ${name}`;});
+  $('testStatus').textContent=`${lastResults.passed}/${lastResults.total} passed`;$('testResults').textContent=JSON.stringify(lastResults,null,2);
+  notice(`Shader checks: ${lastResults.passed}/${lastResults.total} passed. The main scene is unchanged and paused.`,lastResults.passed!==lastResults.total);
+ }catch(e){notice(e.message,true);$('testStatus').textContent='Error';$('testResults').textContent=e.stack;}
+ finally{busy=false;buttons.forEach(b=>b.disabled=false);$('saveTests').disabled=!lastResults;dirty=true;}
+ return lastResults;
+}
+function frame(now){
+ if(!lastTime)lastTime=now;let elapsed=Math.min((now-lastTime)/1000,0.15);lastTime=now;
+ try{
+  if(!busy&&sim){
+   if(running){accumulator+=elapsed*Number($('playback').value);let steps=0;while(accumulator>=TICK_DT&&steps<2){stepPhysics();accumulator-=TICK_DT;steps++;rateTicks++;dirty=true;}if(steps===2&&accumulator>TICK_DT)accumulator=TICK_DT;}
+   if(dirty){renderer.draw(sim,!$('hideRender').checked);dirty=false;}
+   $('simTime').textContent=(sim.tickCount*TICK_DT).toFixed(2)+' s';
+   if(now-rateStart>1000){$('tickRate').textContent=running?(rateTicks*1000/(now-rateStart)).toFixed(1):'Paused';rateStart=now;rateTicks=0;}
+  }
+ }catch(e){setRunning(false);notice(e.message,true);console.error(e);}
+ requestAnimationFrame(frame);
+}
+function init(){
+ gl=$('view').getContext('webgl2',{antialias:false,alpha:false,depth:true,powerPreference:'high-performance'});
+ if(!gl)throw new Error('WebGL2 is unavailable. Open this file in a browser with WebGL2 enabled. A browser/OS graphics setting or sandbox may be blocking the context.');
+ programs=makePrograms(gl,SHADERS);renderer=new SceneRenderer(gl,programs,$('view'));
+ const dbg=gl.getExtension('WEBGL_debug_renderer_info'),backend=dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+ $('backend').textContent=backend;if(/swiftshader|llvmpipe|software/i.test(backend))$('backendBadge').textContent='WebGL2 · software graphics backend';
+ const startup={...DEFAULTS,...PRESETS.settle};showControls(startup);$('preset').value='settle';rebuild();showSource();
+ const rebuildKeys=['count','radius','spread','initialSpeed','seed'];
+ for(const k of Object.keys(DEFAULTS))$(k).addEventListener('input',()=>{updateLabels();if(rebuildKeys.includes(k)){$('pending').hidden=false;return;}try{const all=readControls(),live={};for(const key of Object.keys(all))if(!rebuildKeys.includes(key))live[key]=all[key];sim.setLive(live);syncGravity();updateLabels();dirty=true;}catch(e){notice(e.message,true);}});
+ $('rebuild').onclick=()=>{try{rebuild();}catch(e){notice(e.message,true);}};
+ $('reset').onclick=()=>{try{rebuild({...sim.config});showControls(sim.config);}catch(e){notice(e.message,true);}};
+ $('play').onclick=()=>setRunning(!running);$('step').onclick=()=>{setRunning(false);stepPhysics();dirty=true;};
+ $('camera').onclick=()=>setView({yaw:.45,pitch:.23,distance:310});
+ $('inspect').onclick=()=>{try{inspect();}catch(e){notice(e.message,true);}};$('checks').onclick=checks;
+ $('saveState').onclick=()=>saveText('sphere-room-state.json',JSON.stringify({version:2,roomRadius:100,tick:sim.tickCount,dt:TICK_DT,config:sim.config,camera:{yaw:renderer.yaw,pitch:renderer.pitch,distance:renderer.distance},gravityDirectionWorld:Array.from(sim.gravityDirection),layout:['x','y','z','radius','vx','vy','vz','inverseMass','contacts','penetration','candidates','capped'],state:Array.from(sim.read()),audit:sim.audit()},null,2),'application/json');
+ $('saveTests').onclick=()=>{if(lastResults)saveText('sphere-room-checks.json',JSON.stringify(lastResults,null,2),'application/json');};
+ $('shaderSelect').onchange=showSource;$('saveShader').onclick=()=>saveText($('shaderSelect').value,SHADERS[$('shaderSelect').value]);$('hideRender').onchange=()=>dirty=true;
+ $('preset').onchange=()=>{
+  const k=$('preset').value,variants=PRESETS;
+  try{const c={...DEFAULTS,...variants[k]};rebuild(c);showControls(c);}catch(e){notice(e.message,true);}
+ };
+ let drag=null;$('view').onpointerdown=e=>{if(busy)return;drag={x:e.clientX,y:e.clientY};$('view').setPointerCapture(e.pointerId);};$('view').onpointerup=()=>drag=null;$('view').onpointercancel=()=>drag=null;
+ $('view').onpointermove=e=>{if(!drag||busy)return;setView({yaw:renderer.yaw-(e.clientX-drag.x)*0.006,pitch:renderer.pitch+(e.clientY-drag.y)*0.006});drag={x:e.clientX,y:e.clientY};};
+ $('view').addEventListener('wheel',e=>{e.preventDefault();if(!busy)setView({distance:renderer.distance*Math.exp(e.deltaY*0.001)});},{passive:false});
+ document.addEventListener('keydown',e=>{if(e.code==='Space'&&!busy&&!['INPUT','SELECT','BUTTON'].includes(document.activeElement.tagName)){e.preventDefault();setRunning(!running);}});
+ window.addEventListener('resize',()=>dirty=true);document.addEventListener('visibilitychange',()=>{lastTime=0;accumulator=0;});
+ $('view').addEventListener('webglcontextlost',e=>{e.preventDefault();setRunning(false);busy=true;notice('Graphics context lost. Reload this page to rebuild GPU state.',true);});
+ window.sphereDemo={
+  get simulation(){return sim;},get backend(){return backend;},get gl(){return gl;},get programs(){return programs;},get renderer(){return renderer;},get running(){return running;},
+  pause:()=>setRunning(false),play:()=>setRunning(true),step:(n=1)=>{if(!Number.isInteger(n)||n<0)throw new Error('Step count must be a nonnegative integer.');setRunning(false);for(let i=0;i<n;i++)stepPhysics();dirty=true;return sim.tickCount;},
+  inspect,setView,rebuild:c=>{rebuild({...DEFAULTS,...c});showControls(sim.config);},runChecks:checks,
+  createTestSimulation:(c,state)=>new SphereSimulation(gl,programs,c,state),
+  render:()=>{syncGravity();renderer.draw(sim);}, get lastResults(){return lastResults;}
+ };
+ const error=gl.getError();if(error!==gl.NO_ERROR)throw new Error('WebGL initialization error '+error);
+ window.demoReady=true;requestAnimationFrame(frame);
+}
+try{init();}catch(e){$('fatal').hidden=false;$('fatal').textContent=e.stack||e.message;notice('Initialization failed.',true);window.demoError=e.message;console.error(e);}
+
+</script>
+</body></html>

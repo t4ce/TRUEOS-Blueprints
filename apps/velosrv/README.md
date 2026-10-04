@@ -42,8 +42,25 @@ The `vmx_env` view currently displays variables; it does not edit them.
 Assets are a separate directory, selected by `VELOREN_ASSETS`. The current
 TRUEOS source also searches app-local `assets` and then
 `/common/veloren/assets` (the latter maps to `apps/common/veloren/assets`).
-The shared alias must be absolute: the asset loader canonicalizes its root
-against the app's working directory before opening it, so a relative
-`common/veloren/assets` would refer to a directory inside the app's own home.
+The absolute shared alias explicitly names the shared installation rather than
+a path below the app's working directory.
 That directory needs the actual Veloren asset tree. Setting a path does not
 grant filesystem access outside the Blueprint's app/common scope.
+
+On TRUEOS, the asset source uses `trueos::async_fs` directly for discovery,
+directory enumeration, canary checks, reads, and asset-tree traversal. Native
+listings supply each child's node kind without a separate metadata call. The
+synchronous asset-cache interface waits cooperatively for kernel-owned async
+jobs; it does not create a nested Tokio runtime. Asset IDs, extensions, and
+override precedence stay compatible with Veloren. A truncated directory listing
+is reported as an error rather than silently omitting assets.
+
+The native transport contract can be checked on the host with:
+
+```sh
+python3 ../veloren/common/assets/tests/trueos_source_contract.py
+```
+
+This runs the actual TRUEOS async client against pending mock CABI operations
+using the kernel's binary directory encoder, including short result reads,
+override merging, malformed/truncated listings, and real server asset files.

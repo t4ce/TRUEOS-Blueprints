@@ -1,0 +1,26 @@
+[package]
+name = "maxpix"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[lib]
+path = "scene.rs"
+
+[[bin]]
+name = "maxpix"
+path = "main.rs"
+
+[dependencies]
+trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { path = "../../api", features = ["ui4-scene", "default-panic-handler"] }
+trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[workspace]
