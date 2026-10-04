@@ -43,6 +43,9 @@ fn run() -> Result<(), &'static str> {
     // This guard acknowledges the existing shutdown VMCALL after every later
     // local has dropped, including the Tokio runtime and all native workers.
     let shutdown = trueos::shutdown::ShutdownGuard::register().map_err(|_| "register")?;
+    let instance = trueos::replication::current_identity()
+        .ok_or("instance-identity")?
+        .instance_guid();
     if trueos::shutdown::ShutdownGuard::register().is_ok() {
         return Err("duplicate-owner");
     }
@@ -93,7 +96,7 @@ fn run() -> Result<(), &'static str> {
         std::thread::sleep(Duration::from_millis(1));
     }
     log(format_args!(
-        "tokio_stop: READY workers=2 std=1 cleanup_owner=1"
+        "tokio_stop: READY workers=2 std=1 cleanup_owner=1 instance={instance}"
     ));
     await_stop()?;
     if !shutdown.requested().map_err(|_| "owner-poll")? {
@@ -130,6 +133,7 @@ fn run() -> Result<(), &'static str> {
     log(format_args!(
         "tokio_stop: PASS started={workers} stopped={stopped} tls_destructors={tls} cpu=joined std=joined cleanup_blocking=42"
     ));
+    log(format_args!("tokio_stop: DONE instance={instance}"));
     drop(shutdown);
     Ok(())
 }
