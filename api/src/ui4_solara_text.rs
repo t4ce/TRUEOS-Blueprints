@@ -1323,7 +1323,10 @@ impl Frame {
     }
 
     /// Acquire a back buffer for a full-frame GPU producer. No CPU clear is
-    /// performed; the producer must overwrite the complete frame.
+    /// performed; the producer must overwrite the complete frame. Import the
+    /// acquired lease with `v::vgpu::Device::acquire_ui4_surface(window_id())`.
+    /// A successful native render submission retires that import but leaves
+    /// this frame writable until [`Self::publish`] presents its render fence.
     pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_sprite_frame_begin(self.window_id, 0) })
     }
@@ -1840,9 +1843,12 @@ impl Frame {
         })
     }
 
-    /// Legacy broad publisher for callers that publish CPU or text content
-    /// through this UI4 canvas. Compute producers should use
-    /// [`Self::publish_compute`] so their release semantics stay explicit.
+    /// Publish CPU, text, or completed native graphics content through this
+    /// UI4 canvas. Native `v::vgpu` render submissions stage their completion
+    /// fence without presenting the frame; call this method after submission.
+    /// If publication is busy, retry it before acquiring another back buffer.
+    /// Compute producers use [`Self::publish_compute`] instead; that method
+    /// accepts compute fences only.
     pub fn publish(&mut self, damage: Damage) -> Result<(), Error> {
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_solara_frame_publish(

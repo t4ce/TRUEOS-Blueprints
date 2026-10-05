@@ -1,0 +1,14 @@
+[package]
+name = "trueos-wgpu"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[dependencies]
+wgpu = { path = "../../../wgpu/wgpu", default-features = false, features = ["std", "custom", "wgsl"] }
+v = { path = "../trueos-v" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
