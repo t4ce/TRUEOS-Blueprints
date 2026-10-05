@@ -937,6 +937,27 @@ impl Frame {
         }
     }
 
+    /// Whether this exact publication reached the physical display's SURFLIVE
+    /// boundary. This does not consume the first-presentation notification.
+    /// UI4 keeps a bounded recent history; waiting before the next publication
+    /// prevents an older receipt from being displaced.
+    pub fn was_presented(&self, publish_serial: u64) -> Result<bool, Error> {
+        if publish_serial == 0 {
+            return Err(Error::Invalid);
+        }
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_was_presented_v1(
+                self.window_id,
+                publish_serial,
+            )
+        };
+        match result {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => Err(error_from_status(result)),
+        }
+    }
+
     /// Sample held keys only from the keyboard routed to this selected frame.
     /// Click/tap the frame first to establish the global UI4 selection.
     pub fn keyboard_state(&self) -> Result<Option<KeyboardState>, Error> {
@@ -1859,6 +1880,28 @@ impl Frame {
                 damage.height,
             )
         })
+    }
+
+    /// Publish a foreground frame and return the serial assigned by that exact
+    /// successful broker publication. Wait for [`Self::was_presented`] to prove
+    /// physical presentation. Background and staged layered-resize handoffs
+    /// use their ordinary publish path instead.
+    pub fn publish_tracked(&mut self, damage: Damage) -> Result<u64, Error> {
+        let mut serial = 0;
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_publish_tracked_v1(
+                self.window_id,
+                damage.x,
+                damage.y,
+                damage.width,
+                damage.height,
+                &mut serial,
+            )
+        })?;
+        if serial == 0 {
+            return Err(Error::Ui4);
+        }
+        Ok(serial)
     }
 
     /// Close this UI4 frame with optional teardown work. If final-frame
