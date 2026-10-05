@@ -1,4 +1,5 @@
 #![allow(unused_variables)]
+#![cfg_attr(not(target_os = "trueos"), allow(dead_code))]
 use std::{
     fmt,
     ops::Range,
@@ -376,6 +377,38 @@ fn owned(native: &Arc<Native>, other: &Arc<Native>) {
 fn limits() -> wgpu::Limits {
     let mut limits = wgpu::Limits::downlevel_defaults();
     limits.max_buffer_size = MAX_BUFFER_BYTES;
+    limits.max_texture_dimension_1d = 0;
+    limits.max_texture_dimension_2d = 4096;
+    limits.max_texture_dimension_3d = 0;
+    limits.max_texture_array_layers = 1;
+    limits.max_bind_groups = 1;
+    limits.max_bind_groups_plus_vertex_buffers = 2;
+    limits.max_bindings_per_bind_group = 1;
+    limits.max_dynamic_uniform_buffers_per_pipeline_layout = 0;
+    limits.max_dynamic_storage_buffers_per_pipeline_layout = 0;
+    limits.max_sampled_textures_per_shader_stage = 0;
+    limits.max_samplers_per_shader_stage = 0;
+    limits.max_storage_buffers_per_shader_stage = 0;
+    limits.max_storage_buffers_in_vertex_stage = 0;
+    limits.max_storage_buffers_in_fragment_stage = 0;
+    limits.max_storage_textures_per_shader_stage = 0;
+    limits.max_storage_textures_in_vertex_stage = 0;
+    limits.max_storage_textures_in_fragment_stage = 0;
+    limits.max_uniform_buffers_per_shader_stage = 1;
+    limits.max_uniform_buffer_binding_size = 80;
+    limits.max_storage_buffer_binding_size = 0;
+    limits.max_vertex_buffers = 1;
+    limits.max_vertex_attributes = 2;
+    limits.max_vertex_buffer_array_stride = 32;
+    limits.max_inter_stage_shader_variables = 1;
+    limits.max_color_attachments = 1;
+    limits.max_color_attachment_bytes_per_sample = 4;
+    limits.max_compute_workgroup_storage_size = 0;
+    limits.max_compute_invocations_per_workgroup = 0;
+    limits.max_compute_workgroup_size_x = 0;
+    limits.max_compute_workgroup_size_y = 0;
+    limits.max_compute_workgroup_size_z = 0;
+    limits.max_compute_workgroups_per_dimension = 0;
     limits
 }
 fn info() -> wgpu::AdapterInfo {
@@ -1547,6 +1580,215 @@ impl RenderPipelineInterface for Pipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_os = "trueos"))]
+    fn cpu_context() -> Context {
+        let native = Arc::new(Native {
+            device: None,
+            queue: None,
+            package: ShaderPackage::new(VOXY_WGSL, vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64),
+            error: Mutex::new(None),
+            serial: Mutex::new(0),
+            buffer_bytes: Mutex::new(0),
+            submit_lock: Mutex::new(()),
+        });
+        Context {
+            device: wgpu::Device::from_custom(Device(native.clone())),
+            queue: wgpu::Queue::from_custom(Queue(native.clone())),
+            native,
+        }
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn camera_layout(context: &Context) -> wgpu::BindGroupLayout {
+        context
+            .device()
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            })
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn camera(context: &Context, size: u64) -> wgpu::Buffer {
+        context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    #[test]
+    fn geometry_budget_is_checked_before_copying() {
+        assert!(frame_vertices_fit(600_000, 180_000));
+        assert!(!frame_vertices_fit(600_000, 180_001));
+        assert!(!frame_vertices_fit(usize::MAX, 1));
+    }
+
+    #[test]
+    fn admitted_source_matches_kernel_identity() {
+        assert_eq!(
+            fnv(VOXY_WGSL.as_bytes()),
+            vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64
+        );
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn camera_binding_and_upload_use_public_wgpu_api() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let layout = camera_layout(&context);
+        let _binding = context
+            .device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera.as_entire_binding(),
+                }],
+            });
+        context.queue().write_buffer(&camera, 0, &[5; 80]);
+        assert_eq!(
+            *camera
+                .as_custom::<Buffer>()
+                .unwrap()
+                .0
+                .bytes
+                .lock()
+                .unwrap(),
+            [5; 80]
+        );
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "camera must contain 80 bytes")]
+    fn wrong_uniform_size_is_rejected() {
+        let context = cpu_context();
+        let camera = camera(&context, 84);
+        let layout = camera_layout(&context);
+        let _ = context
+            .device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera.as_entire_binding(),
+                }],
+            });
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "resource belongs to another device")]
+    fn foreign_resource_is_rejected() {
+        let first = cpu_context();
+        let second = cpu_context();
+        let camera = camera(&first, 80);
+        second.queue().write_buffer(&camera, 0, &[0; 80]);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "buffer range exceeds allocation")]
+    fn out_of_bounds_upload_is_rejected() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        context.queue().write_buffer(&camera, 76, &[0; 8]);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "destroyed buffer")]
+    fn destroyed_buffer_cannot_be_uploaded() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        camera.destroy();
+        context.queue().write_buffer(&camera, 0, &[0; 80]);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "unsupported vertex layout")]
+    fn wrong_vertex_stride_is_rejected_before_native_admission() {
+        let context = cpu_context();
+        let shader = context
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(VOXY_WGSL.into()),
+            });
+        let attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
+        let _ = context
+            .device()
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: 64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &attributes,
+                    })],
+                    compilation_options: Default::default(),
+                },
+                fragment: None,
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "unadmitted shader source")]
+    fn shader_module_requires_exact_source_bytes() {
+        let context = cpu_context();
+        let _ = context
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl("@compute fn unrelated() {}".into()),
+            });
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn native_submission_error_remains_visible() {
+        let context = cpu_context();
+        *context.native.error.lock().unwrap() = Some(Error {
+            code: vgpu::ERR_DEVICE_LOST,
+            operation: "completion",
+        });
+        assert_eq!(context.wait().unwrap_err().code, vgpu::ERR_DEVICE_LOST);
+        assert_eq!(context.wait().unwrap_err().code, vgpu::ERR_DEVICE_LOST);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "begin_compute_pass is unsupported")]
+    fn unsupported_compute_is_rejected() {
+        let context = cpu_context();
+        let mut encoder = context.device().create_command_encoder(&Default::default());
+        encoder.begin_compute_pass(&Default::default());
+    }
     #[test]
     fn clear_matches_linear_attachment_encoding() {
         assert_eq!(clear_word(wgpu::Color::BLACK), 0xff000000);
