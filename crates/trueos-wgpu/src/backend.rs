@@ -445,6 +445,65 @@ fn clear_word(color: wgpu::Color) -> u32 {
     unorm(color.r) | (unorm(color.g) << 8) | (unorm(color.b) << 16) | (unorm(color.a) << 24)
 }
 
+trait UploadDevice {
+    type Buffer: Copy;
+    fn create(&self, bytes: usize, usage: u32) -> Result<Self::Buffer, i32>;
+    fn write(&self, buffer: Self::Buffer, bytes: &[u8]) -> Result<usize, i32>;
+    fn destroy(&self, buffer: Self::Buffer);
+}
+
+#[cfg(target_os = "trueos")]
+impl UploadDevice for vgpu::Device {
+    type Buffer = vgpu::Buffer;
+    fn create(&self, bytes: usize, usage: u32) -> Result<Self::Buffer, i32> {
+        self.create_buffer(bytes, usage)
+    }
+    fn write(&self, buffer: Self::Buffer, bytes: &[u8]) -> Result<usize, i32> {
+        self.write_buffer(buffer, 0, bytes)
+    }
+    fn destroy(&self, buffer: Self::Buffer) {
+        let _ = self.destroy_buffer(buffer);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum UploadKind {
+    Vertex,
+    Index,
+}
+
+fn upload_buffer<D: UploadDevice>(
+    device: &D,
+    bytes: &[u8],
+    kind: UploadKind,
+) -> Result<D::Buffer, Error> {
+    let (role, allocation, upload) = match kind {
+        UploadKind::Vertex => (
+            vgpu::BUFFER_USAGE_VERTEX,
+            "vertex allocation",
+            "vertex upload",
+        ),
+        UploadKind::Index => (vgpu::BUFFER_USAGE_INDEX, "index allocation", "index upload"),
+    };
+    // Broker CPU uploads require MAP_WRITE independently of wgpu COPY_DST.
+    let usage = role | vgpu::BUFFER_USAGE_COPY_DST | vgpu::BUFFER_USAGE_MAP_WRITE;
+    let buffer = native(allocation, device.create(bytes.len(), usage))?;
+    let result = native(upload, device.write(buffer, bytes)).and_then(|written| {
+        if written == bytes.len() {
+            Ok(buffer)
+        } else {
+            Err(Error {
+                code: vgpu::ERR_IO,
+                operation: upload,
+            })
+        }
+    });
+    if result.is_err() {
+        device.destroy(buffer);
+    }
+    result
+}
+
 struct Scratch {
     native: Arc<Native>,
     vertex: vgpu::Buffer,
@@ -586,20 +645,13 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
         let mut upload = camera.expect("TRUEOS wgpu: missing camera");
         assert_eq!(upload.len(), 80);
         upload.extend_from_slice(&vertices);
-        let vb = native(
-            "vertex allocation",
-            native_gpu.device.unwrap().create_buffer(
-                upload.len(),
-                vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_COPY_DST,
-            ),
-        )?;
-        let ib = match native(
-            "index allocation",
-            native_gpu.device.unwrap().create_buffer(
-                indices.len() * 4,
-                vgpu::BUFFER_USAGE_INDEX | vgpu::BUFFER_USAGE_COPY_DST,
-            ),
-        ) {
+        let device = native_gpu.device.unwrap();
+        let vb = upload_buffer(&device, &upload, UploadKind::Vertex)?;
+        let index_bytes: Vec<u8> = indices
+            .iter()
+            .flat_map(|index| index.to_le_bytes())
+            .collect();
+        let ib = match upload_buffer(&device, &index_bytes, UploadKind::Index) {
             Ok(ib) => ib,
             Err(error) => {
                 let _ = native_gpu.device.unwrap().destroy_buffer(vb);
@@ -611,30 +663,6 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
             vertex: vb,
             index: ib,
         };
-        let index_bytes: Vec<u8> = indices
-            .iter()
-            .flat_map(|index| index.to_le_bytes())
-            .collect();
-        let written = native(
-            "vertex upload",
-            native_gpu.device.unwrap().write_buffer(vb, 0, &upload),
-        )?;
-        if written != upload.len() {
-            return Err(Error {
-                code: vgpu::ERR_IO,
-                operation: "short vertex upload",
-            });
-        }
-        let written = native(
-            "index upload",
-            native_gpu.device.unwrap().write_buffer(ib, 0, &index_bytes),
-        )?;
-        if written != index_bytes.len() {
-            return Err(Error {
-                code: vgpu::ERR_IO,
-                operation: "short index upload",
-            });
-        }
         let draw = vgpu::IndexedDraw {
             vertex_offset: 80,
             index_count: indices.len() as u32,
@@ -1580,6 +1608,74 @@ impl RenderPipelineInterface for Pipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
+
+    #[derive(Default)]
+    struct UploadBroker {
+        buffers: RefCell<Vec<Option<(u32, Vec<u8>)>>>,
+        short_write: Cell<bool>,
+    }
+
+    impl UploadDevice for UploadBroker {
+        type Buffer = usize;
+        fn create(&self, bytes: usize, usage: u32) -> Result<usize, i32> {
+            let mut buffers = self.buffers.borrow_mut();
+            let handle = buffers.len();
+            buffers.push(Some((usage, vec![0; bytes])));
+            Ok(handle)
+        }
+        fn write(&self, buffer: usize, bytes: &[u8]) -> Result<usize, i32> {
+            let mut buffers = self.buffers.borrow_mut();
+            let (usage, storage) = buffers[buffer].as_mut().unwrap();
+            if *usage & vgpu::BUFFER_USAGE_MAP_WRITE == 0 {
+                return Err(vgpu::ERR_PERMISSION);
+            }
+            if self.short_write.get() {
+                return Ok(bytes.len().saturating_sub(4));
+            }
+            storage.copy_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn destroy(&self, buffer: usize) {
+            self.buffers.borrow_mut()[buffer] = None;
+        }
+    }
+
+    #[test]
+    fn native_submission_uploads_satisfy_the_broker_write_contract() {
+        let broker = UploadBroker::default();
+        let old_usage = vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_COPY_DST;
+        let denied = broker.create(4, old_usage).unwrap();
+        assert_eq!(broker.write(denied, &[0; 4]), Err(vgpu::ERR_PERMISSION));
+        broker.destroy(denied);
+
+        let camera_and_vertices = vec![0x5a; 80 + 3 * 32];
+        let indices: Vec<u8> = [0u32, 1, 2]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        let vertex = upload_buffer(&broker, &camera_and_vertices, UploadKind::Vertex).unwrap();
+        let index = upload_buffer(&broker, &indices, UploadKind::Index).unwrap();
+        let buffers = broker.buffers.borrow();
+        for (handle, role, expected) in [
+            (vertex, vgpu::BUFFER_USAGE_VERTEX, &camera_and_vertices),
+            (index, vgpu::BUFFER_USAGE_INDEX, &indices),
+        ] {
+            let (usage, uploaded) = buffers[handle].as_ref().unwrap();
+            assert_ne!(usage & role, 0);
+            assert_eq!(uploaded, expected);
+        }
+    }
+
+    #[test]
+    fn incomplete_native_upload_is_rejected_and_released() {
+        let broker = UploadBroker::default();
+        broker.short_write.set(true);
+        let error = upload_buffer(&broker, &[0; 12], UploadKind::Index).unwrap_err();
+        assert_eq!(error.code, vgpu::ERR_IO);
+        assert_eq!(error.operation, "index upload");
+        assert!(broker.buffers.borrow().iter().all(Option::is_none));
+    }
 
     #[cfg(not(target_os = "trueos"))]
     fn cpu_context() -> Context {
