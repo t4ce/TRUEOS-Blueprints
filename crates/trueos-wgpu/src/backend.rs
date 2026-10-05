@@ -4,13 +4,16 @@ use std::{
     fmt,
     ops::Range,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
+#[cfg(any(target_os = "trueos", test))]
+use std::sync::atomic::Ordering;
 use v::vgpu;
 use wgpu::custom::*;
 use wgpu::{Blas, Tlas};
 
 const VOXY_WGSL: &str = include_str!("voxy_headless.wgsl");
+const VOXY_TEXTURED_WGSL: &str = include_str!("voxy_headless_textured.wgsl");
 const MAX_BUFFER_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_FRAME_VERTICES: usize = 780_000;
 
@@ -22,6 +25,9 @@ pub struct ShaderPackage {
 impl ShaderPackage {
     pub const fn new(wgsl: &'static str, digest: u64) -> Self {
         Self { wgsl, digest }
+    }
+    fn textured(self) -> bool {
+        self.digest == vgpu::SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64
     }
 }
 
@@ -75,9 +81,14 @@ pub struct Context {
 }
 impl Context {
     pub fn open_with_package(package: ShaderPackage) -> Result<Self, Error> {
-        if package.digest != vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64
-            || package.wgsl != VOXY_WGSL
-            || fnv(package.wgsl.as_bytes()) != package.digest
+        let source = if package.digest == vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64 {
+            Some(VOXY_WGSL)
+        } else if package.textured() {
+            Some(VOXY_TEXTURED_WGSL)
+        } else {
+            None
+        };
+        if source != Some(package.wgsl) || fnv(package.wgsl.as_bytes()) != package.digest
         {
             return Err(Error {
                 code: vgpu::ERR_UNSUPPORTED,
@@ -186,13 +197,19 @@ struct Queue(Arc<Native>);
 #[derive(Clone, Debug)]
 struct Shader(Arc<Native>);
 #[derive(Clone, Debug)]
-struct Layout(Arc<Native>);
+struct Layout {
+    native: Arc<Native>,
+    textured: bool,
+}
 #[derive(Clone, Debug)]
 struct Bind {
     native: Arc<Native>,
     camera: Arc<BufferData>,
     range: Range<usize>,
+    atlas: Option<Arc<SampledTextureData>>,
 }
+#[derive(Clone, Debug)]
+struct Sampler(Arc<Native>);
 #[derive(Clone, Debug)]
 struct Buffer(Arc<BufferData>);
 #[derive(Debug)]
@@ -241,6 +258,36 @@ type FrameLease = ();
 enum TextureKind {
     Frame(Arc<Mutex<Option<FrameLease>>>),
     Depth,
+    Sampled(Arc<SampledTextureData>),
+}
+#[derive(Debug)]
+struct AtlasPixels {
+    bytes: Vec<u8>,
+    revision: u64,
+}
+#[derive(Debug)]
+struct SampledTextureData {
+    native: Arc<Native>,
+    pixels: Mutex<AtlasPixels>,
+    upload: Mutex<Option<PixelUpload<vgpu::Buffer>>>,
+    unknown_completion: AtomicBool,
+    size: wgpu::Extent3d,
+    destroyed: Arc<Mutex<bool>>,
+}
+impl Drop for SampledTextureData {
+    fn drop(&mut self) {
+        *self.native.buffer_bytes.lock().unwrap() -= u64::from(self.size.width) * u64::from(self.size.height) * 4;
+        #[cfg(target_os = "trueos")]
+        if !self.unknown_completion.load(Ordering::Acquire)
+            && self.native.error.lock().unwrap().is_none()
+        {
+            if let Some(upload) = self.upload.get_mut().unwrap().take() {
+                // Every submit is synchronous. The last reference can disappear
+                // only after retirement; ambiguous failures retain the handle.
+                let _ = self.native.device.unwrap().destroy_buffer(upload.buffer);
+            }
+        }
+    }
 }
 #[derive(Clone, Debug)]
 struct Texture {
@@ -383,11 +430,11 @@ fn limits() -> wgpu::Limits {
     limits.max_texture_array_layers = 1;
     limits.max_bind_groups = 1;
     limits.max_bind_groups_plus_vertex_buffers = 2;
-    limits.max_bindings_per_bind_group = 1;
+    limits.max_bindings_per_bind_group = 3;
     limits.max_dynamic_uniform_buffers_per_pipeline_layout = 0;
     limits.max_dynamic_storage_buffers_per_pipeline_layout = 0;
-    limits.max_sampled_textures_per_shader_stage = 0;
-    limits.max_samplers_per_shader_stage = 0;
+    limits.max_sampled_textures_per_shader_stage = 1;
+    limits.max_samplers_per_shader_stage = 1;
     limits.max_storage_buffers_per_shader_stage = 0;
     limits.max_storage_buffers_in_vertex_stage = 0;
     limits.max_storage_buffers_in_fragment_stage = 0;
@@ -450,6 +497,90 @@ trait UploadDevice {
     fn create(&self, bytes: usize, usage: u32) -> Result<Self::Buffer, i32>;
     fn write(&self, buffer: Self::Buffer, bytes: &[u8]) -> Result<usize, i32>;
     fn destroy(&self, buffer: Self::Buffer);
+}
+
+#[derive(Debug)]
+struct PixelUpload<B> {
+    buffer: B,
+    revision: u64,
+}
+
+fn upload_pixels<D: UploadDevice>(
+    device: &D,
+    upload: &mut Option<PixelUpload<D::Buffer>>,
+    revision: u64,
+    pixels: &[u8],
+) -> Result<D::Buffer, Error> {
+    if let Some(upload) = upload.as_ref().filter(|upload| upload.revision == revision) {
+        return Ok(upload.buffer);
+    }
+    let fresh = upload.is_none();
+    let buffer = match upload.as_ref() {
+        Some(upload) => upload.buffer,
+        // The retained sampled-buffer contract intentionally uses MAP_WRITE
+        // alone. wgpu COPY_DST is enforced on the logical texture, above CABI.
+        None => native("atlas allocation", device.create(pixels.len(), vgpu::BUFFER_USAGE_MAP_WRITE))?,
+    };
+    let result = native("atlas upload", device.write(buffer, pixels)).and_then(|written| {
+        if written == pixels.len() { Ok(()) } else {
+            Err(Error { code: vgpu::ERR_IO, operation: "atlas upload" })
+        }
+    });
+    if let Err(error) = result {
+        if fresh { device.destroy(buffer); }
+        return Err(error);
+    }
+    *upload = Some(PixelUpload { buffer, revision });
+    Ok(buffer)
+}
+
+fn binding_layout_entry(entry: &wgpu::BindGroupLayoutEntry, binding: u32) -> bool {
+    if entry.binding != binding || entry.count.is_some() { return false; }
+    match binding {
+        0 => entry.visibility == wgpu::ShaderStages::VERTEX
+            && matches!(entry.ty, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size } if min_binding_size.is_none_or(|size| size.get() == 80)),
+        1 => entry.visibility == wgpu::ShaderStages::FRAGMENT
+            && matches!(entry.ty, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }),
+        2 => entry.visibility == wgpu::ShaderStages::FRAGMENT
+            && matches!(entry.ty, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering | wgpu::SamplerBindingType::NonFiltering)),
+        _ => false,
+    }
+}
+
+fn binding_layout(native: &Arc<Native>) -> Layout {
+    Layout { native: native.clone(), textured: native.package.textured() }
+}
+
+fn write_atlas(
+    atlas: &SampledTextureData,
+    data: &[u8],
+    layout: wgpu::TexelCopyBufferLayout,
+) {
+    let row = atlas.size.width as usize * 4;
+    let height = atlas.size.height as usize;
+    let pitch = layout.bytes_per_row.map_or_else(|| {
+        assert_eq!(height, 1, "TRUEOS wgpu: multi-row atlas upload needs bytes_per_row");
+        row
+    }, |pitch| pitch as usize);
+    assert!(pitch >= row && pitch % 4 == 0 && layout.rows_per_image.is_none_or(|rows| rows >= atlas.size.height),
+        "TRUEOS wgpu: invalid atlas row layout");
+    let offset = usize::try_from(layout.offset).expect("TRUEOS wgpu: atlas offset overflow");
+    let end = (height - 1).checked_mul(pitch).and_then(|tail| offset.checked_add(tail)).and_then(|tail| tail.checked_add(row));
+    assert!(end.is_some_and(|end| end <= data.len()), "TRUEOS wgpu: atlas upload exceeds data");
+    // Validate all rows before mutating any pixels or invalidating a revision.
+    for y in 0..height {
+        assert!(data[offset + y * pitch..offset + y * pitch + row].chunks_exact(4).all(|pixel| pixel[3] == 255),
+            "TRUEOS wgpu: only opaque atlas texels are supported");
+    }
+    let mut pixels = atlas.pixels.lock().unwrap();
+    if pixels.revision != 0 && (0..height).all(|y| pixels.bytes[y * row..(y + 1) * row] == data[offset + y * pitch..offset + y * pitch + row]) {
+        return;
+    }
+    let next = pixels.revision.checked_add(1).expect("TRUEOS wgpu: atlas revision overflow");
+    for y in 0..height {
+        pixels.bytes[y * row..(y + 1) * row].copy_from_slice(&data[offset + y * pitch..offset + y * pitch + row]);
+    }
+    pixels.revision = next;
 }
 
 #[cfg(target_os = "trueos")]
@@ -537,6 +668,7 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
     let mut indices = Vec::new();
     let mut camera: Option<Vec<u8>> = None;
     let mut pipeline: Option<Arc<PipelineData>> = None;
+    let mut atlas: Option<Arc<SampledTextureData>> = None;
     for draw in pass.draws {
         assert!(
             frame_vertices_fit(indices.len(), draw.vertices.len()),
@@ -564,6 +696,18 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
             );
         } else {
             pipeline = Some(draw.pipeline.clone());
+        }
+        if native_gpu.package.textured() {
+            let current = draw.bind.atlas.as_ref().expect("TRUEOS wgpu: missing atlas binding");
+            assert!(!*current.destroyed.lock().unwrap(), "TRUEOS wgpu: destroyed atlas");
+            assert!(current.pixels.lock().unwrap().revision != 0, "TRUEOS wgpu: atlas requires a complete opaque upload before drawing");
+            if let Some(atlas) = &atlas {
+                assert!(Arc::ptr_eq(atlas, current), "TRUEOS wgpu: one pass requires one atlas");
+            } else {
+                atlas = Some(current.clone());
+            }
+        } else {
+            assert!(draw.bind.atlas.is_none(), "TRUEOS wgpu: color package does not sample textures");
         }
         let buffer = draw.buffer.bytes.lock().unwrap();
         let vertex_bytes = &buffer[draw.slice.clone()];
@@ -646,6 +790,17 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
         assert_eq!(upload.len(), 80);
         upload.extend_from_slice(&vertices);
         let device = native_gpu.device.unwrap();
+        let sampled_texture = if let Some(atlas) = &atlas {
+            let pixels = atlas.pixels.lock().unwrap();
+            let result = upload_pixels(&device, &mut atlas.upload.lock().unwrap(), pixels.revision, &pixels.bytes);
+            match result {
+                Ok(buffer) => buffer.raw(),
+                Err(error) => {
+                    atlas.unknown_completion.store(true, Ordering::Release);
+                    return Err(error);
+                }
+            }
+        } else { 0 };
         let vb = upload_buffer(&device, &upload, UploadKind::Vertex)?;
         let index_bytes: Vec<u8> = indices
             .iter()
@@ -668,6 +823,11 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
             index_count: indices.len() as u32,
             clear_rgba8_srgb: clear,
             topology: 0,
+            sampled_texture,
+            texture_width: atlas.as_ref().map_or(0, |atlas| atlas.size.width),
+            texture_height: atlas.as_ref().map_or(0, |atlas| atlas.size.height),
+            texture_pitch: atlas.as_ref().map_or(0, |atlas| atlas.size.width * 4),
+            sampler_flags: 0,
             texture_reserved: vgpu::INDEXED_DRAW_DRAWABLE_DEPTH
                 | vgpu::INDEXED_DRAW_DEPTH_TEST
                 | vgpu::INDEXED_DRAW_DEPTH_WRITE
@@ -682,7 +842,7 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
                 "TRUEOS wgpu: only opaque vertex colors are supported"
             );
         }
-        let point = native(
+        let point = match native(
             "indexed submit",
             native_gpu.device.unwrap().submit_ui4_indexed(
                 native_gpu.queue.unwrap(),
@@ -692,7 +852,15 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
                 ib,
                 draw,
             ),
-        )?;
+        ) {
+            Ok(point) => point,
+            Err(error) => {
+                if let Some(atlas) = &atlas {
+                    atlas.unknown_completion.store(true, Ordering::Release);
+                }
+                return Err(error);
+            }
+        };
         if let Err(error) = native(
             "completion",
             native_gpu
@@ -700,6 +868,9 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
                 .unwrap()
                 .wait(native_gpu.queue.unwrap(), point.value),
         ) {
+            if let Some(atlas) = &atlas {
+                atlas.unknown_completion.store(true, Ordering::Release);
+            }
             std::mem::forget(scratch);
             return Err(error);
         }
@@ -746,27 +917,24 @@ impl DeviceInterface for Device {
         &self,
         desc: &wgpu::BindGroupLayoutDescriptor<'_>,
     ) -> DispatchBindGroupLayout {
-        assert!(
-            desc.entries.len() == 1
-                && desc.entries[0].binding == 0
-                && desc.entries[0].visibility == wgpu::ShaderStages::VERTEX
-                && desc.entries[0].count.is_none()
-                && matches!(desc.entries[0].ty, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size } if min_binding_size.is_none_or(|size| size.get() == 80)),
-            "TRUEOS wgpu: unsupported binding layout"
-        );
-        DispatchBindGroupLayout::custom(Layout(self.0.clone()))
+        let count = if self.0.package.textured() { 3 } else { 1 };
+        assert!(desc.entries.len() == count && (0..count as u32).all(|binding| {
+            desc.entries.iter().find(|entry| entry.binding == binding).is_some_and(|entry| binding_layout_entry(entry, binding))
+        }), "TRUEOS wgpu: unsupported binding layout");
+        DispatchBindGroupLayout::custom(binding_layout(&self.0))
     }
     fn create_bind_group(&self, desc: &wgpu::BindGroupDescriptor<'_>) -> DispatchBindGroup {
         let layout = desc
             .layout
             .as_custom::<Layout>()
             .expect("TRUEOS wgpu: foreign binding layout");
-        owned(&self.0, &layout.0);
-        assert!(
-            desc.entries.len() == 1 && desc.entries[0].binding == 0,
-            "TRUEOS wgpu: expected camera binding zero"
-        );
-        let wgpu::BindingResource::Buffer(binding) = &desc.entries[0].resource else {
+        owned(&self.0, &layout.native);
+        let count = if layout.textured { 3 } else { 1 };
+        assert!(desc.entries.len() == count && (0..count as u32).all(|binding| {
+            desc.entries.iter().filter(|entry| entry.binding == binding).count() == 1
+        }), "TRUEOS wgpu: expected admitted group-zero bindings");
+        let entry = |binding| &desc.entries.iter().find(|entry| entry.binding == binding).unwrap().resource;
+        let wgpu::BindingResource::Buffer(binding) = entry(0) else {
             panic!("TRUEOS wgpu: expected uniform buffer");
         };
         let buffer = binding
@@ -784,10 +952,28 @@ impl DeviceInterface for Device {
             binding.size.map(|size| size.get()),
         );
         assert_eq!(range.len(), 80, "TRUEOS wgpu: camera must contain 80 bytes");
+        let atlas = if layout.textured {
+            let wgpu::BindingResource::TextureView(view) = entry(1) else {
+                panic!("TRUEOS wgpu: expected sampled atlas view");
+            };
+            let view = view.as_custom::<View>().expect("TRUEOS wgpu: foreign atlas view");
+            owned(&self.0, &view.0.native);
+            assert!(!*view.0.destroyed.lock().unwrap(), "TRUEOS wgpu: destroyed atlas");
+            let TextureKind::Sampled(atlas) = &view.0.kind else {
+                panic!("TRUEOS wgpu: expected sampled RGBA8 atlas");
+            };
+            let wgpu::BindingResource::Sampler(sampler) = entry(2) else {
+                panic!("TRUEOS wgpu: expected atlas sampler");
+            };
+            let sampler = sampler.as_custom::<Sampler>().expect("TRUEOS wgpu: foreign sampler");
+            owned(&self.0, &sampler.0);
+            Some(atlas.clone())
+        } else { None };
         DispatchBindGroup::custom(Bind {
             native: self.0.clone(),
             camera: buffer.0.clone(),
             range,
+            atlas,
         })
     }
     fn create_pipeline_layout(
@@ -934,9 +1120,12 @@ impl DeviceInterface for Device {
         })))
     }
     fn create_texture(&self, desc: &wgpu::TextureDescriptor<'_>) -> DispatchTexture {
+        let depth = desc.format == wgpu::TextureFormat::Depth32Float
+            && desc.usage == wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let sampled = desc.format == wgpu::TextureFormat::Rgba8Unorm
+            && desc.usage == (wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING);
         assert!(
-            desc.format == wgpu::TextureFormat::Depth32Float
-                && desc.dimension == wgpu::TextureDimension::D2
+            (depth || sampled) && desc.dimension == wgpu::TextureDimension::D2
                 && desc.mip_level_count == 1
                 && desc.sample_count == 1
                 && desc.size.depth_or_array_layers == 1
@@ -944,15 +1133,31 @@ impl DeviceInterface for Device {
                 && desc.size.height > 0
                 && desc.size.width <= 4096
                 && desc.size.height <= 4096
-                && desc.usage == wgpu::TextureUsages::RENDER_ATTACHMENT
                 && desc.view_formats.is_empty(),
-            "TRUEOS wgpu: only a single Depth32Float attachment is supported"
+            "TRUEOS wgpu: unsupported single-level texture descriptor"
         );
+        let destroyed = Arc::new(Mutex::new(false));
+        let kind = if sampled {
+            let size = u64::from(desc.size.width) * u64::from(desc.size.height) * 4;
+            assert!(size <= MAX_BUFFER_BYTES, "TRUEOS wgpu: atlas exceeds native upload limit");
+            let mut live_bytes = self.0.buffer_bytes.lock().unwrap();
+            let next = live_bytes.checked_add(size).filter(|value| *value <= 128 * 1024 * 1024)
+                .expect("TRUEOS wgpu: texture memory budget exceeded");
+            let mut bytes = Vec::new();
+            bytes.try_reserve_exact(size as usize).expect("TRUEOS wgpu: atlas allocation failed");
+            bytes.resize(size as usize, 0);
+            *live_bytes = next;
+            TextureKind::Sampled(Arc::new(SampledTextureData {
+                native: self.0.clone(), pixels: Mutex::new(AtlasPixels { bytes, revision: 0 }),
+                upload: Mutex::new(None), unknown_completion: AtomicBool::new(false),
+                size: desc.size, destroyed: destroyed.clone(),
+            }))
+        } else { TextureKind::Depth };
         DispatchTexture::custom(Texture {
             native: self.0.clone(),
             size: desc.size,
-            kind: TextureKind::Depth,
-            destroyed: Arc::new(Mutex::new(false)),
+            kind,
+            destroyed,
         })
     }
     fn create_external_texture(
@@ -973,7 +1178,16 @@ impl DeviceInterface for Device {
         panic!("TRUEOS wgpu: create_tlas is unsupported")
     }
     fn create_sampler(&self, desc: &wgpu::SamplerDescriptor<'_>) -> DispatchSampler {
-        panic!("TRUEOS wgpu: create_sampler is unsupported")
+        assert!(desc.address_mode_u == wgpu::AddressMode::ClampToEdge
+            && desc.address_mode_v == wgpu::AddressMode::ClampToEdge
+            && desc.address_mode_w == wgpu::AddressMode::ClampToEdge
+            && desc.mag_filter == wgpu::FilterMode::Nearest
+            && desc.min_filter == wgpu::FilterMode::Nearest
+            && desc.mipmap_filter == wgpu::MipmapFilterMode::Nearest
+            && desc.lod_min_clamp == 0. && desc.lod_max_clamp == 32.
+            && desc.compare.is_none() && desc.anisotropy_clamp == 1 && desc.border_color.is_none(),
+            "TRUEOS wgpu: only the default nearest clamp sampler is supported");
+        DispatchSampler::custom(Sampler(self.0.clone()))
     }
     fn create_query_set(&self, desc: &wgpu::QuerySetDescriptor<'_>) -> DispatchQuerySet {
         panic!("TRUEOS wgpu: create_query_set is unsupported")
@@ -1074,7 +1288,17 @@ impl QueueInterface for Queue {
         data_layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        panic!("TRUEOS wgpu: write_texture is unsupported")
+        let _queue = self.0.submit_lock.lock().unwrap();
+        let target = texture.texture.as_custom::<Texture>().expect("TRUEOS wgpu: foreign texture");
+        owned(&self.0, &target.native);
+        assert!(!*target.destroyed.lock().unwrap(), "TRUEOS wgpu: destroyed atlas");
+        let TextureKind::Sampled(atlas) = &target.kind else {
+            panic!("TRUEOS wgpu: texture is not a COPY_DST atlas");
+        };
+        assert!(texture.mip_level == 0 && texture.origin == wgpu::Origin3d::ZERO
+            && texture.aspect == wgpu::TextureAspect::All && size == target.size,
+            "TRUEOS wgpu: only a complete atlas upload is supported");
+        write_atlas(atlas, data, data_layout);
     }
     fn submit(&self, command_buffers: &mut dyn Iterator<Item = DispatchCommandBuffer>) -> u64 {
         let buffers: Vec<_> = command_buffers.collect();
@@ -1173,7 +1397,9 @@ impl TextureInterface for Texture {
                 && desc.array_layer_count.is_none_or(|count| count == 1)
                 && desc
                     .usage
-                    .is_none_or(|usage| usage == wgpu::TextureUsages::RENDER_ATTACHMENT)
+                    .is_none_or(|usage| usage == if matches!(self.kind, TextureKind::Sampled(_)) {
+                        wgpu::TextureUsages::TEXTURE_BINDING
+                    } else { wgpu::TextureUsages::RENDER_ATTACHMENT })
                 && desc.aspect == wgpu::TextureAspect::All
                 && desc.swizzle == wgpu::TextureComponentSwizzle::default(),
             "TRUEOS wgpu: unsupported texture view"
@@ -1206,7 +1432,9 @@ impl TextureInterface for Texture {
         }
     }
     fn usage(&self) -> wgpu::TextureUsages {
-        wgpu::TextureUsages::RENDER_ATTACHMENT
+        if matches!(self.kind, TextureKind::Sampled(_)) {
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING
+        } else { wgpu::TextureUsages::RENDER_ATTACHMENT }
     }
 }
 
@@ -1598,10 +1826,11 @@ impl ShaderModuleInterface for Shader {
 impl BindGroupLayoutInterface for Layout {}
 impl BindGroupInterface for Bind {}
 impl TextureViewInterface for View {}
+impl SamplerInterface for Sampler {}
 impl RenderPipelineInterface for Pipeline {
     fn get_bind_group_layout(&self, index: u32) -> DispatchBindGroupLayout {
-        assert_eq!(index, 0, "TRUEOS wgpu: only camera group zero is supported");
-        DispatchBindGroupLayout::custom(Layout(self.0.native.clone()))
+        assert_eq!(index, 0, "TRUEOS wgpu: only group zero is supported");
+        DispatchBindGroupLayout::custom(binding_layout(&self.0.native))
     }
 }
 
@@ -1614,6 +1843,7 @@ mod tests {
     struct UploadBroker {
         buffers: RefCell<Vec<Option<(u32, Vec<u8>)>>>,
         short_write: Cell<bool>,
+        writes: Cell<usize>,
     }
 
     impl UploadDevice for UploadBroker {
@@ -1630,6 +1860,7 @@ mod tests {
             if *usage & vgpu::BUFFER_USAGE_MAP_WRITE == 0 {
                 return Err(vgpu::ERR_PERMISSION);
             }
+            self.writes.set(self.writes.get() + 1);
             if self.short_write.get() {
                 return Ok(bytes.len().saturating_sub(4));
             }
@@ -1677,12 +1908,169 @@ mod tests {
         assert!(broker.buffers.borrow().iter().all(Option::is_none));
     }
 
+    #[test]
+    fn retained_atlas_upload_preserves_handle_and_skips_unchanged_revision() {
+        let broker = UploadBroker::default();
+        let mut upload = None;
+        let first = upload_pixels(&broker, &mut upload, 1, &[4, 5, 6, 255]).unwrap();
+        assert_eq!(broker.buffers.borrow()[first].as_ref().unwrap().0, vgpu::BUFFER_USAGE_MAP_WRITE);
+        assert_eq!(upload_pixels(&broker, &mut upload, 1, &[4, 5, 6, 255]).unwrap(), first);
+        assert_eq!(broker.writes.get(), 1);
+        assert_eq!(upload_pixels(&broker, &mut upload, 2, &[7, 8, 9, 255]).unwrap(), first);
+        assert_eq!(broker.writes.get(), 2);
+        assert_eq!(broker.buffers.borrow().len(), 1);
+        assert_eq!(broker.buffers.borrow()[first].as_ref().unwrap().1, [7, 8, 9, 255]);
+    }
+
+    #[test]
+    fn failed_atlas_rewrite_keeps_owned_buffer_and_old_revision() {
+        let broker = UploadBroker::default();
+        let mut upload = None;
+        let buffer = upload_pixels(&broker, &mut upload, 1, &[4, 5, 6, 255]).unwrap();
+        broker.short_write.set(true);
+        assert_eq!(upload_pixels(&broker, &mut upload, 2, &[7, 8, 9, 255]).unwrap_err().code, vgpu::ERR_IO);
+        assert_eq!(upload.as_ref().unwrap().revision, 1);
+        assert!(broker.buffers.borrow()[buffer].is_some());
+    }
+
+    #[test]
+    fn new_atlas_short_upload_releases_unsubmitted_storage() {
+        let broker = UploadBroker::default();
+        broker.short_write.set(true);
+        let mut upload = None;
+        assert_eq!(upload_pixels(&broker, &mut upload, 1, &[4, 5, 6, 255]).unwrap_err().code, vgpu::ERR_IO);
+        assert!(upload.is_none());
+        assert!(broker.buffers.borrow().iter().all(Option::is_none));
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn atlas(context: &Context) -> wgpu::Texture {
+        context.device().create_texture(&wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn write_pixels(context: &Context, atlas: &wgpu::Texture, data: &[u8], pitch: u32) {
+        context.queue().write_texture(
+            atlas.as_image_copy(), data,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(pitch), rows_per_image: Some(2) },
+            atlas.size(),
+        );
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn atlas_upload_copies_rows_ignores_padding_and_tracks_actual_changes() {
+        let context = cpu_context();
+        let atlas = atlas(&context);
+        let data = [1, 2, 3, 255, 4, 5, 6, 255, 99, 99, 99, 99, 7, 8, 9, 255, 10, 11, 12, 255];
+        write_pixels(&context, &atlas, &data, 12);
+        let TextureKind::Sampled(sampled) = &atlas.as_custom::<Texture>().unwrap().kind else { unreachable!() };
+        assert_eq!(sampled.pixels.lock().unwrap().bytes, [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]);
+        assert_eq!(sampled.pixels.lock().unwrap().revision, 1);
+        write_pixels(&context, &atlas, &data, 12);
+        assert_eq!(sampled.pixels.lock().unwrap().revision, 1);
+        assert_eq!(*context.native.buffer_bytes.lock().unwrap(), 16);
+        assert!(!sampled.unknown_completion.load(Ordering::Acquire));
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn textured_layout_reflection_and_public_wgpu_bindings_agree() {
+        let context = cpu_context_with_package(ShaderPackage::new(VOXY_TEXTURED_WGSL, vgpu::SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64));
+        // CPU dispatch fixture: no native pipeline is admitted or executed.
+        let pipeline = Pipeline(Arc::new(PipelineData {
+            native: context.native.clone(), shader: None, pipeline: None,
+        }));
+        let reflected = pipeline.get_bind_group_layout(0);
+        assert!(reflected.as_custom::<Layout>().unwrap().textured);
+        let layout = context.device().create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            ],
+        });
+        let camera = camera(&context, 80);
+        let atlas = atlas(&context);
+        let view = atlas.create_view(&Default::default());
+        let sampler = context.device().create_sampler(&Default::default());
+        let bind = context.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None, layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 0, resource: camera.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+            ],
+        });
+        assert!(bind.as_custom::<Bind>().unwrap().atlas.is_some());
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "atlas upload exceeds data")]
+    fn short_atlas_rows_are_rejected() {
+        let context = cpu_context();
+        let atlas = atlas(&context);
+        write_pixels(&context, &atlas, &[255; 15], 8);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "only opaque atlas texels")]
+    fn transparent_atlas_is_rejected_before_any_write() {
+        let context = cpu_context();
+        let atlas = atlas(&context);
+        write_pixels(&context, &atlas, &[0; 16], 8);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "resource belongs to another device")]
+    fn foreign_atlas_upload_is_rejected() {
+        let first = cpu_context();
+        let second = cpu_context();
+        write_pixels(&second, &atlas(&first), &[255; 16], 8);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "destroyed atlas")]
+    fn destroyed_atlas_upload_is_rejected() {
+        let context = cpu_context();
+        let atlas = atlas(&context);
+        atlas.destroy();
+        write_pixels(&context, &atlas, &[255; 16], 8);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    #[should_panic(expected = "nearest clamp sampler")]
+    fn linear_sampler_is_rejected() {
+        let context = cpu_context();
+        let _ = context.device().create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, ..Default::default() });
+    }
+
     #[cfg(not(target_os = "trueos"))]
     fn cpu_context() -> Context {
+        cpu_context_with_package(ShaderPackage::new(VOXY_WGSL, vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64))
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn cpu_context_with_package(package: ShaderPackage) -> Context {
         let native = Arc::new(Native {
             device: None,
             queue: None,
-            package: ShaderPackage::new(VOXY_WGSL, vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64),
+            package,
             error: Mutex::new(None),
             serial: Mutex::new(0),
             buffer_bytes: Mutex::new(0),
@@ -1737,6 +2125,7 @@ mod tests {
             fnv(VOXY_WGSL.as_bytes()),
             vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64
         );
+        assert_eq!(fnv(VOXY_TEXTURED_WGSL.as_bytes()), vgpu::SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64);
     }
 
     #[cfg(not(target_os = "trueos"))]
