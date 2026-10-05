@@ -415,10 +415,10 @@ fn info() -> wgpu::AdapterInfo {
     wgpu::AdapterInfo {
         name: "TRUEOS authenticated native renderer".into(),
         vendor: 0x8086,
-        device: 0x9a49,
+        device: 0,
         device_type: wgpu::DeviceType::IntegratedGpu,
         driver: "TRUEOS".into(),
-        driver_info: "bounded custom backend".into(),
+        driver_info: "bounded custom backend; native PCI device ID is not exposed".into(),
         ..wgpu::AdapterInfo::new(wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Noop)
     }
 }
@@ -1779,6 +1779,19 @@ mod tests {
         });
         assert_eq!(context.wait().unwrap_err().code, vgpu::ERR_DEVICE_LOST);
         assert_eq!(context.wait().unwrap_err().code, vgpu::ERR_DEVICE_LOST);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn adapter_info_does_not_guess_the_native_device_id() {
+        let context = cpu_context();
+        let info = context.device().adapter_info();
+        assert_eq!(info.device, 0);
+        assert_eq!(info.vendor, 0x8086);
+        assert!(
+            info.driver_info
+                .contains("native PCI device ID is not exposed")
+        );
     }
 
     #[cfg(not(target_os = "trueos"))]

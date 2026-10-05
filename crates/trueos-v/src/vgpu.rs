@@ -52,7 +52,8 @@ pub const SAMPLER_MAG_LINEAR: u32 = 1 << 2;
 pub const SAMPLER_MIN_LINEAR: u32 = 1 << 3;
 pub const SAMPLER_FLAGS_ALL: u32 =
     SAMPLER_ADDRESS_U_REPEAT | SAMPLER_ADDRESS_V_REPEAT | SAMPLER_MAG_LINEAR | SAMPLER_MIN_LINEAR;
-/// Exact headless WGSL package; native ISA targets physical Intel 8086:9A49.
+/// Exact headless WGSL package; compiler-validated shared native ISA for physical
+/// Intel 8086:9A49 rev 01 and 8086:4680 rev 0c. Kernel device admission remains authoritative.
 /// Vertex buffer prefix: 80 camera bytes, then 32-byte float4 position/color vertices.
 pub const SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64: u64 = 0x2EAA72CFCA1B1C77;
 pub const VOXY_HEADLESS_CAMERA_BYTES: usize = 80;
