@@ -33,7 +33,7 @@ pub const BUFFER_USAGE_VERTEX: u32 = 1 << 5;
 pub const BUFFER_USAGE_INDEX: u32 = 1 << 6;
 pub const BUFFER_INFO_FLAG_VVIDEO_MEM: u32 = 1 << 0;
 /// Stable UI4 lease/storage token, not a selectable WebGPU texture format.
-/// Native graphics leases currently expose BGRA8 UNORM pixels. The historical
+/// Native graphics leases currently expose RGBA8 UNORM pixels. The historical
 /// constant name is retained for packed-application ABI compatibility.
 pub const SURFACE_FORMAT_RGBA8_UNORM_SRGB: u32 = 1;
 pub const SURFACE_FORMAT_UI4_DEFAULT: u32 = SURFACE_FORMAT_RGBA8_UNORM_SRGB;
