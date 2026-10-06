@@ -2055,6 +2055,13 @@ impl SceneTarget {
     pub fn draw_sprite_quads(&mut self, quads: &[SpriteQuad]) -> Result<(), Error> {
         self.surface.draw_sprite_quads(quads)
     }
+    /// Publish this producer's frame, including background updates and staged
+    /// paired resize handoffs. Retry Busy before acquiring another write lease.
+    pub fn publish(&mut self, damage: Damage) -> Result<(), Error> {
+        self.surface.publish(damage)
+    }
+    /// Request a foreground-only presentation receipt. Background updates and
+    /// staged paired resize handoffs must use [`Self::publish`] instead.
     pub fn publish_tracked(&mut self, damage: Damage) -> Result<u64, Error> {
         self.surface.publish_tracked(damage)
     }

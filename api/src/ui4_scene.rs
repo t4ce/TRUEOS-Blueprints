@@ -20,3 +20,12 @@ pub use crate::ui4_solara_text::{
     UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba, shell2_font_scale_steps,
     worker_slot,
 };
+
+/// Fade the entire primary display through its hardware gamma LUT. The kernel
+/// restores the previous LUT at zero and on Blueprint teardown. One owner at a time.
+pub fn display_fade(window_id: u32, amount: f32) -> Result<(), Error> {
+    if !amount.is_finite() || !(-1.0..=1.0).contains(&amount) { return Err(Error::Invalid); }
+    let rc = unsafe { v::bp_abi::trueos_cabi_ui4_scene_display_fade_v1(window_id, (amount * 65535.0).round() as i32) };
+    match rc { 0 => Ok(()), -1 => Err(Error::Invalid), -2 => Err(Error::NoBlueprintContext),
+        code => Err(Error::Unknown(code)) }
+}
