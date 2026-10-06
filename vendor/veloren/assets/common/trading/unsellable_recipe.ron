@@ -1,0 +1,36 @@
+// Loot table that exists purely for price rationalisation
+//
+// This loot table should be marked as unsellable.
+//
+// Please keep it sorted by rarity so it's easier to reason about things
+[
+    // Recipes
+    // Misc Groups
+    (1.25, Item("common.items.recipes.gliders")),
+    (1.25, Item("common.items.recipes.instruments")),
+    (0.9, Item("common.items.recipes.charms")),
+    (0.9, Item("common.items.recipes.lanterns")),
+    // Equipment
+    (0.9, Item("common.items.recipes.equipment.moderate")),
+    (0.3, Item("common.items.recipes.equipment.advanced")),
+    // Armors
+    (1.25, Item("common.items.recipes.metal.steel")),
+    (1.25, Item("common.items.recipes.armor.silken")),
+    (1.25, Item("common.items.recipes.armor.scale")),
+    (1.25, Item("common.items.recipes.weapons.hardwood")),
+    (0.65, Item("common.items.recipes.metal.cobalt")),
+    (0.65, Item("common.items.recipes.armor.druid")),
+    (0.65, Item("common.items.recipes.armor.carapace")),
+    (0.65, Item("common.items.recipes.weapons.ironwood")),
+    (0.4, Item("common.items.recipes.metal.bloodsteel")),
+    (0.4, Item("common.items.recipes.armor.moonweave")),
+    (0.4, Item("common.items.recipes.armor.primal")),
+    (0.4, Item("common.items.recipes.armor.serpentscale")),
+    (0.4, Item("common.items.recipes.weapons.frostwood")),
+    (0.25, Item("common.items.recipes.armor.sunsilk")),
+    (0.25, Item("common.items.recipes.metal.orichalcum")),
+    (0.25, Item("common.items.recipes.armor.dragonscale")),
+    (0.25, Item("common.items.recipes.weapons.eldwood")),
+    (0.25, Item("common.items.recipes.armor.brinestone")),
+    (0.25, Item("common.items.recipes.armor.golemite")),
+]

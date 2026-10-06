@@ -1,0 +1,24 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 0.75,
+    recover_duration: 0.75,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 15,
+            damage_kind: Piercing,
+        )),
+        lifetime_override: Some(20.0),
+        is_point: false,
+        hazard: true,
+    ),
+    projectile_body: Object(AdletTrap),
+    projectile_light: None,
+    projectile_speed: 20.0,
+    num_projectiles: Value(6),
+    projectile_spread: Some(Increasing(0.3)),
+    movement_modifier: (
+        buildup: Some(0.8),
+        recover: Some(0.8),
+    ),
+)

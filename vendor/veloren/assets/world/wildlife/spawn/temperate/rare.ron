@@ -1,0 +1,20 @@
+SpawnEntry (
+    name: "Temperate rare wildlife.",
+    note: "",
+    rules: [
+        Pack(
+            groups: [
+                (1, (1, 1, "common.entity.wild.aggressive.ogre")),
+            ],
+            spawn_mode: Land,
+            day_period: [Morning, Noon, Evening],
+        ),
+        Pack(
+            groups: [
+                (1, (1, 1, "common.entity.wild.aggressive.ogre")),
+            ],
+            spawn_mode: Land,
+            day_period: [Night],
+        ),
+    ],
+)

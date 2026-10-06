@@ -1,0 +1,33 @@
+[package]
+name = "veloren-rtsim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+common = { package = "veloren-common", path = "../common" }
+world = { package = "veloren-world", path = "../world" }
+serde = { workspace = true }
+hashbrown = { workspace = true }
+enum-map = { workspace = true, features = ["serde"] }
+vek = { workspace = true }
+rmp-serde = "1.1.0"
+anymap2 = "0.13"
+tracing = { workspace = true }
+atomic_refcell = { workspace = true }
+slotmap = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+fxhash = { workspace = true }
+itertools = { workspace = true }
+tokio-parallel = { workspace = true }
+specs = { workspace = true, features = ["shred-derive"] }
+take-once = "0.1.2"
+num-traits = { workspace = true }
+once_cell = { version = "1.21.3", optional = true }
+
+[features]
+airship_log = ["dep:once_cell"]

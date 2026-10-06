@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Rawhide Cloak",
+    legacy_description: "A thin cloak made up of whatever hide you had left.",
+    kind: Armor((
+        kind: Back,
+        stats: FromSet("Rawhide"),
+    )),
+    quality: Low,
+    tags: [
+        Material(Rawhide),
+        SalvageInto(Rawhide, 1),
+    ],
+)

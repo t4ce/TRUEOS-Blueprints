@@ -1,0 +1,23 @@
+/// WARNING: Localization files shall be saved in UTF-8 format without BOM
+
+/// Localization for Korean
+(
+    metadata: (
+        language_name: "한국어 (Korean)",
+        language_identifier: "ko",
+    ),
+    fonts: {
+        "universal": Font (
+            asset_key: "voxygen.font.bdfUMplus-outline",
+            scale_ratio: 0.75,
+        ),
+        "alkhemi": Font (
+            asset_key: "voxygen.font.bdfUMplus-outline",
+            scale_ratio: 0.75,
+        ),
+        "cyri": Font (
+            asset_key: "voxygen.font.bdfUMplus-outline",
+            scale_ratio: 0.75,
+        ),
+    }
+)

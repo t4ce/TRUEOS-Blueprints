@@ -1,0 +1,20 @@
+ItemDef(
+    legacy_name: "Tomato Salad",
+    legacy_description: "Leafy salad with some chopped, juicy tomatoes mixed in.",
+    kind: Consumable(
+        kind: Food,
+        effects: One(
+            Buff((
+                kind: Saturation,
+                data: (
+                    strength: 3.0,
+                    duration: Some(5),
+                    ),
+                cat_ids: [],
+            )),
+        ),
+        container: Some(Simple("common.items.crafting_ing.bowl")),
+    ),
+    quality: Common,
+    tags: [Food],
+)

@@ -1,0 +1,107 @@
+#version 440 core
+
+#include <constants.glsl>
+
+#define LIGHTING_TYPE LIGHTING_TYPE_REFLECTION
+
+#define LIGHTING_REFLECTION_KIND LIGHTING_REFLECTION_KIND_GLOSSY
+
+#if (FLUID_MODE == FLUID_MODE_LOW)
+    #define LIGHTING_TRANSPORT_MODE LIGHTING_TRANSPORT_MODE_IMPORTANCE
+#elif (FLUID_MODE >= FLUID_MODE_MEDIUM)
+    #define LIGHTING_TRANSPORT_MODE LIGHTING_TRANSPORT_MODE_RADIANCE
+#endif
+
+#define LIGHTING_DISTRIBUTION_SCHEME LIGHTING_DISTRIBUTION_SCHEME_MICROFACET
+
+#define LIGHTING_DISTRIBUTION LIGHTING_DISTRIBUTION_BECKMANN
+
+#include <globals.glsl>
+
+layout(location = 0) in vec3 f_pos;
+layout(location = 1) in vec3 f_norm;
+layout(location = 2) in vec4 f_col;
+layout(location = 3) in vec3 model_pos;
+layout(location = 4) flat in uint f_flags;
+
+const uint FLAG_SNOW_COVERED = 1;
+const uint FLAG_GLOW = 2;
+
+layout(location = 0) out vec4 tgt_color;
+layout(location = 1) out uvec4 tgt_mat;
+
+#include <sky.glsl>
+#include <light.glsl>
+#include <lod.glsl>
+
+void main() {
+#ifdef EXPERIMENTAL_BAREMINIMUM
+    tgt_color = vec4(simple_lighting(f_pos.xyz, f_col.rgb, 1.0), 1);
+#else
+
+    vec3 cam_to_frag = normalize(f_pos - cam_pos.xyz);
+    vec3 view_dir = -cam_to_frag;
+
+#if (SHADOW_MODE == SHADOW_MODE_CHEAP || SHADOW_MODE == SHADOW_MODE_MAP || FLUID_MODE >= FLUID_MODE_MEDIUM)
+    float f_alt = alt_at(f_pos.xy);
+#elif (SHADOW_MODE == SHADOW_MODE_NONE || FLUID_MODE == FLUID_MODE_LOW)
+    float f_alt = f_pos.z;
+#endif
+
+#if (SHADOW_MODE == SHADOW_MODE_CHEAP || SHADOW_MODE == SHADOW_MODE_MAP)
+    vec4 f_shadow = textureMaybeBicubic(t_horizon, s_horizon, pos_to_tex(f_pos.xy));
+    float sun_shade_frac = horizon_at2(f_shadow, f_alt, f_pos, sun_dir);
+#elif (SHADOW_MODE == SHADOW_MODE_NONE)
+    float sun_shade_frac = 1.0;
+#endif
+    float moon_shade_frac = 1.0;
+
+    DirectionalLight sun_info = get_sun_info(sun_dir, sun_shade_frac, f_pos);
+    DirectionalLight moon_info = get_moon_info(moon_dir, moon_shade_frac);
+
+    vec3 surf_color = f_col.rgb;
+    float alpha = 1.0;
+    
+    vec3 k_a = vec3(1.0);
+    vec3 k_d = vec3(1.0);
+    vec3 k_s = vec3(0.5 - abs(view_dir.z) * 0.5);
+
+    vec3 voxel_pos;
+    vec3 voxel_norm;
+    float voxel_sz;
+    float f_ao;
+    lod_voxels(f_pos, f_norm, cam_to_frag, voxel_pos, voxel_norm, voxel_sz, f_ao);
+
+    vec3 emitted_light, reflected_light;
+
+    // To account for prior saturation.
+    float max_light = 0.0;
+
+    vec3 cam_attenuation = vec3(1);
+    float fluid_alt = max(f_pos.z + 1, floor(f_alt + 1));
+    vec3 mu = medium.x == MEDIUM_WATER ? MU_WATER : vec3(0.0);
+
+    max_light += get_sun_diffuse2(sun_info, moon_info, voxel_norm, view_dir, f_pos, mu, cam_attenuation, fluid_alt, k_a, k_d, k_s, alpha, voxel_norm, 1.0, emitted_light, reflected_light);
+
+    emitted_light *= f_ao;
+    reflected_light *= f_ao;
+
+    vec3 side_color = surf_color;
+    vec3 top_color = surf_color;
+    if ((f_flags & FLAG_SNOW_COVERED) > 0u && f_norm.z > 0.0) {
+        side_color = mix(side_color, vec3(0.5, 0.6, 1.0), f_norm.z);
+        top_color = mix(top_color, surf_color * 0.3, 0.5 + f_norm.z * 0.5);
+    }
+    surf_color = mix(side_color, top_color, pow(fract(model_pos.z * 0.1), 2.0));
+
+    vec3 glow = vec3(0);
+    if ((f_flags & FLAG_GLOW) > 0u) {
+        glow += surf_color * vec3(1, 0.7, 0.3) * 4;
+    }
+
+    surf_color = illuminate(max_light, view_dir, surf_color * emitted_light + glow, surf_color * reflected_light);
+
+    tgt_color = vec4(surf_color, 1.0);
+    tgt_mat = uvec4(uvec3((f_norm + 1.0) * 127.0), MAT_LOD);
+#endif
+}

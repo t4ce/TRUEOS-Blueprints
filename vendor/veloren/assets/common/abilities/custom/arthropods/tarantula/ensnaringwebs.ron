@@ -1,0 +1,11 @@
+SpriteSummon(
+    buildup_duration: 0.5,
+    cast_duration: 0.4,
+    recover_duration: 0.3,
+    sprite: EnsnaringWeb,
+    del_timeout: Some((10, 2)),
+    summon_distance: (0, 9),
+    sparseness: 0.8,
+    angle: 360,
+    ori_modifier: 1.0,
+)

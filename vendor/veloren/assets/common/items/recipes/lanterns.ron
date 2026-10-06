@@ -1,0 +1,15 @@
+ItemDef(
+    legacy_name: "",
+    legacy_description: "",
+    kind: RecipeGroup(
+        recipes: [
+            "polaris",
+            "delvers_lamp",
+            "bloodmoon_relic",
+            "crux",
+            "seeking_eye",
+        ],
+    ),
+    quality: Common,
+    tags: [],
+)

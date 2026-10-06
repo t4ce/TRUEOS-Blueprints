@@ -1,0 +1,19 @@
+/// 警告: ローカライズファイルは、UTF-8のBOM無しで保存する必要があります
+
+/// Localization for 日本語 Japanese
+(
+    metadata: (
+        language_name: "日本語 (Japanese)",
+        language_identifier: "ja",
+    ),
+    fonts: {
+        "alkhemi": Font (
+            asset_key: "voxygen.font.bdfUMplus-outline",
+            scale_ratio: 1.0,
+        ),
+        "cyri": Font (
+            asset_key: "voxygen.font.bdfUMplus-outline",
+            scale_ratio: 0.9,
+        ),
+    }
+)

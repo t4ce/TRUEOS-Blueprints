@@ -1,0 +1,38 @@
+ComboMelee2(
+    strikes: [
+        (
+            melee_constructor: (
+                kind: Bash(
+                    damage: 39,
+                    poise: 27.5,
+                    knockback: 9,
+                    energy_regen: 0,
+                ),
+                range: 3.0,
+                angle: 60.0,
+                damage_effect: Some(Buff((
+                    kind: Ensnared,
+                    dur_secs: 6.0,
+                    strength: Value(0.5),
+                    chance: 0.6,
+                ))),
+            ),
+            buildup_duration: 0.80,
+            swing_duration: 0.25,
+            hit_timing: 0.5,
+            recover_duration: 1.85,
+            movement: (
+                swing: Some(Forward(1.0)),
+            ),
+            movement_modifier: (
+                recover: Some(0.35),
+            ),
+            ori_modifier: (
+                buildup: Some(0.75),
+                action: Some(0.25),
+                recover: Some(0.15),
+            ),
+        ),
+    ],
+    energy_cost_per_strike: 0,
+)

@@ -1,0 +1,59 @@
+ComboMelee2(
+    strikes: [
+        (
+            melee_constructor: (
+                kind: Stab(
+                    damage: 28,
+                    poise: 7.5,
+                    knockback: 3,
+                    energy_regen: 5,
+                ),
+                range: 3.0,
+                angle: 75.0,
+            ),
+            buildup_duration: 1.1,
+            swing_duration: 0.3,
+            hit_timing: 0.4,
+            recover_duration: 0.3,
+            movement: (
+                swing: Some(Forward(0.15)),
+            ),
+            movement_modifier: (
+                recover: Some(0.35),
+            ),
+            ori_modifier: (
+                buildup: Some(0.75),
+                action: Some(0.25),
+                recover: Some(0.15),
+            ),
+        ),
+        (
+            melee_constructor: (
+                kind: Stab(
+                    damage: 28,
+                    poise: 7.5,
+                    knockback: 3,
+                    energy_regen: 5,
+                ),
+                range: 3.0,
+                angle: 75.0,
+            ),
+            buildup_duration: 1.0,
+            swing_duration: 0.25,
+            hit_timing: 0.4,
+            recover_duration: 1.6,
+            movement: (
+                swing: Some(Forward(0.15)),
+            ),
+            movement_modifier: (
+                recover: Some(0.35),
+            ),
+            ori_modifier: (
+                buildup: Some(0.75),
+                action: Some(0.25),
+                recover: Some(0.15),
+            ),
+        ),
+    ],
+    energy_cost_per_strike: 0,
+)

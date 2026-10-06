@@ -1,0 +1,34 @@
+BasicRanged(
+    energy_cost: 15,
+    buildup_duration: 0.6,
+    recover_duration: 0.15,
+    projectile: (
+        kind: Explosive(
+            radius: 5,
+            min_falloff: 0.5,
+            reagent: Some(White),
+            target: EntityOnly,
+        ),
+        attack: Some((
+            damage: 15,
+            buff: Some((
+                kind: Chilled,
+                dur_secs: 10,
+                strength: Value(0.25),
+                chance: 1.0,
+            )),
+            damage_kind: Energy,
+        )),
+        lifetime_override: Some(30.0),
+        is_point: false,
+        hazard: true,
+    ),
+    projectile_body: Object(ThornStake),
+    projectile_light: None,
+    projectile_speed: 30.0,
+    marker: Some(FreezeArrow),
+    movement_modifier: (
+        buildup: Some(0.7),
+        recover: Some(0.7),
+    ),
+)

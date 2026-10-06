@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Carapace Cape",
+    legacy_description: "Made from the hard shell that once protected a gigantic specimen.",
+    kind: Armor((
+        kind: Back,
+        stats: FromSet("Carapace"),
+    )),
+    quality: High,
+    tags: [
+        Material(Carapace),
+        SalvageInto(Carapace, 1),
+    ],
+)

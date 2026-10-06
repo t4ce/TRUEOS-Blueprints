@@ -1,0 +1,27 @@
+#![enable(implicit_some)]
+(
+    name: Translate("name-custom-dungeon-sea_chapel-sea_cleric"),
+    body: RandomWith("danari"),
+    alignment: Alignment(Enemy),
+    loot: LootTable("common.loot_tables.dungeon.sea_chapel.sea_cleric"),
+    inventory: (
+        loadout: Inline((
+            inherit: Asset("common.loadout.dungeon.sea_chapel.sea_cleric"),
+            active_hands: InHands((Choice([
+                (2, ModularWeapon(tool: Axe, material: Cobalt, hands: None)),
+                (2, ModularWeapon(tool: Sword, material: Cobalt, hands: None)),
+                (2, ModularWeapon(tool: Hammer, material: Cobalt, hands: None)),
+                (2, ModularWeapon(tool: Bow, material: Ironwood, hands: None)),
+            ]), None)),
+        )),
+        items: [
+            (10, "common.items.consumable.levin_dust"),
+            (10, "common.items.consumable.gelid_gel"),
+            (10, "common.items.consumable.firedrop"),
+            (10, "common.items.consumable.poison_clot"),
+        ],
+    ),
+    meta: [
+        SkillSetAsset("common.skillset.preset.rank4.fullskill"),
+    ],
+)

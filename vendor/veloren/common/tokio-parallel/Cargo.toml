@@ -1,0 +1,24 @@
+[package]
+name = "veloren-tokio-parallel"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Scoped parallel iterators executed by Tokio, without Rayon worker pools"
+
+[lib]
+# Retained upstream tests assume the Rayon scheduler API. The executor and ECS
+# integration tests below exercise this backend's supported contract.
+test = false
+doctest = false
+
+[dependencies]
+tokio = { version = "=1.52.3", default-features = false, features = ["rt-multi-thread", "sync", "time"] }
+either = { version = "1.16", default-features = false }
+hashbrown = { version = "0.15.5", default-features = false, features = ["default-hasher"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))', 'cfg(feature, values("web_spin_lock"))', 'cfg(tokio_unstable)'] }
+
+[dev-dependencies]
+shred = { path = "../../vendor/shred" }
+specs = { path = "../../vendor/specs" }

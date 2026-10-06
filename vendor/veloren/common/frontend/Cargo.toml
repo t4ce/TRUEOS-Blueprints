@@ -1,0 +1,26 @@
+[package]
+name = "veloren-common-frontend"
+description = "common stuff that is used by server-cli and voxygen directly"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+tracy = ["common-base/tracy", "tracing-tracy"]
+
+[dependencies]
+common-base = { package = "veloren-common-base", path = "../base" }
+
+# Logging
+termcolor = "1.1"
+tracing = { workspace = true }
+tracing-appender = "0.2.0"
+tracing-subscriber =  { workspace = true, features = ["tracing-log"] }
+
+# Tracy
+# NOTE: This must be kept in sync with the `profiling` version in `common/base`.
+# NOTE: `=` since the minor version of tracing-tracy bumped a major version of `tracy-client`
+tracing-tracy = { version = "=0.11.4", optional = true }

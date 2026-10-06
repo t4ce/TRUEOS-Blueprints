@@ -1,0 +1,17 @@
+[
+    Group(Weapon(Bow)),
+
+    Skill((Bow(HeavyNock), 1)),
+    Skill((Bow(Foothold), 1)),
+
+    Skill((Bow(ArdentHunt), 1)),
+    Skill((Bow(SepticShot), 1)),
+    Skill((Bow(Barrage), 1)),
+
+    Skill((Bow(StormChaser), 1)),
+    Skill((Bow(EagleEye), 1)),
+    Skill((Bow(IgniteArrow), 1)),
+    Skill((Bow(DrenchArrow), 1)),
+    Skill((Bow(PiercingGale), 1)),
+    Skill((Bow(ThornStake), 1)),
+]

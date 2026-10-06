@@ -1,0 +1,19 @@
+#![enable(implicit_some)]
+(
+    name: Translate("name-custom-spot-grim_salvager"),
+    body: RandomWith("humanoid"),
+    alignment: Alignment(Enemy),
+    loot: LootTable("common.loot_tables.humanoids.grim_salvager"),
+    inventory: (
+        loadout: Inline((
+            inherit: Asset("common.loadout.spots.dwarf_graverobber"),
+            active_hands: InHands((
+                ModularWeapon(tool: Hammer, material: Bronze, hands: One),
+                None
+            )),
+        )),
+    ),
+    meta: [
+        SkillSetAsset("common.skillset.preset.rank1.fullskill"),
+    ],
+)

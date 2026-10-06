@@ -1,0 +1,28 @@
+ItemDef(
+    legacy_name: "Potion of Agility",
+    legacy_description: "Fly, you fools!",
+    kind: Consumable(
+        kind: Drink,
+        effects: All([
+            Buff((
+                kind: Agility,
+                data: (
+                    strength: 0.55,
+                    duration: Some(25),
+                ),
+                cat_ids: [],
+            )),
+            Buff((
+                kind: PotionSickness,
+                data: (
+                    strength: 0.5,
+                    duration: Some(60),
+                ),
+                cat_ids: [],
+            )),
+        ]),
+        container: Some(Simple("common.items.crafting_ing.empty_vial")),
+    ),
+    quality: Moderate,
+    tags: [Potion],
+)

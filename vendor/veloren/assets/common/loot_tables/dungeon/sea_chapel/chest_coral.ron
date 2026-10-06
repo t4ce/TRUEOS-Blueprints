@@ -1,0 +1,14 @@
+[
+    (1.0, All([
+        Lottery([
+            // Ingredients
+            (1.5, Item("common.items.crafting_ing.coral_branch")),
+            (0.5, Item("common.items.crafting_ing.pearl")),
+            (0.5, Item("common.items.recipes.armor.brinestone")),
+        ]),
+        Lottery([
+            (0.6, Nothing),
+            (0.4, LootTable("common.loot_tables.consumables.pyrotechnics")),
+        ])
+    ])),
+]

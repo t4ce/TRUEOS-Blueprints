@@ -1,0 +1,66 @@
+// Loot table that exists purely for price rationalisation
+//
+// This loot table should be marked as un-sellable.
+// If you want to add something that merchants can buy and sell,
+// add another loot table
+//
+// Please keep it sorted by rarity so it's easier to reason about things
+[
+    // High tier Ores
+    (0.08, Item("common.items.mineral.ore.gold")),
+    (0.1, Item("common.items.mineral.ore.bloodstone")),
+    (0.18, Item("common.items.mineral.ore.silver")),
+    (0.2, Item("common.items.mineral.ore.cobalt")),
+    (0.5, Item("common.items.mineral.ore.coal")),
+    (0.5, Item("common.items.mineral.ore.lodestone")),
+    (1.0, Item("common.items.mineral.ore.iron")),
+
+    // High tier Gems
+    (0.2, Item("common.items.mineral.gem.diamond")),
+    (0.2, Item("common.items.mineral.gem.ruby")),
+    (0.2, Item("common.items.mineral.gem.emerald")),
+
+    // High tier woods
+    (0.05, Item("common.items.log.eldwood")),
+    (0.1, Item("common.items.log.frostwood")),
+    (0.2, Item("common.items.log.ironwood")),
+    (0.5, Item("common.items.log.hardwood")),
+    (1.0, Item("common.items.log.bamboo")),
+
+    // High tier Animal Hide
+    (0.025, Item("common.items.crafting_ing.hide.dragon_scale")),
+    (0.15, Item("common.items.crafting_ing.hide.plate")),
+    (0.22, Item("common.items.crafting_ing.hide.leather_troll")),
+    (0.15, Item("common.items.crafting_ing.hide.rugged_hide")),
+    (0.15, Item("common.items.crafting_ing.hide.serpent_scale")),
+    (0.38, Item("common.items.crafting_ing.hide.carapace")),
+    (0.6, Item("common.items.crafting_ing.hide.scales")),
+    (1.1, Item("common.items.crafting_ing.hide.tough_hide")),
+
+    // High tier Mob drops
+    (0.005, Item("common.items.crafting_ing.animal_misc.phoenix_feather")),
+    (0.015, Item("common.items.crafting_ing.bloody_tear")),
+    (0.025, Item("common.items.crafting_ing.golem_core")),
+    (0.025, Item("common.items.crafting_ing.cursed_bead")),
+    (0.025, Item("common.items.mineral.ore.ancient_gold")),
+    (0.05, Item("common.items.crafting_ing.alkahest")),
+    (0.05, Item("common.items.crafting_ing.dwarven_battery")),
+    (0.3, Item("common.items.crafting_ing.animal_misc.lively_vine")),
+    (0.5, Item("common.items.crafting_ing.sticky_thread")),
+    (1.0, Item("common.items.crafting_ing.earthern_shard")),
+
+    // High tier Flowers
+    (1.0, Item("common.items.flowers.pyrebloom")),
+    (2.0, Item("common.items.flowers.moonbell")),
+
+    // Sea Materials
+    (0.05, Item("common.items.crafting_ing.abyssal_heart")),
+    (0.085, Item("common.items.crafting_ing.pearl")),
+    (0.25, Item("common.items.crafting_ing.brinestone")),
+    (1.0, Item("common.items.crafting_ing.coral_branch")),
+
+    // Ultra Rare drops
+    (0.005, Item("common.items.crafting_ing.mindflayer_bag_damaged")),
+    (0.001, Item("common.items.crafting_ing.glacial_crystal")),
+    (0.001, Item("common.items.crafting_ing.molten_core")),
+]

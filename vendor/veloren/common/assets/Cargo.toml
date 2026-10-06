@@ -1,0 +1,39 @@
+[package]
+name = "veloren-common-assets"
+description = "Crate for game loading assets for veloren."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lazy_static = { workspace = true }
+assets_manager = { version = "0.13", features = [
+    "ab_glyph",
+    "bincode",
+    "ron",
+    "json",
+] }
+ron = { workspace = true }
+dot_vox = "5.1"
+wavefront = "0.2" # TODO: Use vertex-colors branch when we have models that have them
+image = { workspace = true }
+tracing = { workspace = true }
+hashbrown = { workspace = true }
+
+# asset tweak
+serde = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos = { path = "../../../../api", default-features = false }
+
+[dev-dependencies]
+walkdir = "2.3.2"
+serde = { workspace = true }
+tempfile = "3.27.0"
+
+[features]
+hot-reloading = ["assets_manager/hot-reloading"]
+plugins = ["dep:serde", "assets_manager/tar"]

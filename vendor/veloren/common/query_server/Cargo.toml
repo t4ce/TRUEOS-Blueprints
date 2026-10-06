@@ -1,0 +1,36 @@
+[package]
+name = "veloren-query-server"
+description = "Query Server crate for veloren (client and server)"
+version = "0.1.2"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+server = ["dep:rand"]
+client = ["tokio/time"]
+example = ["tokio/macros", "tokio/rt-multi-thread", "dep:tracing-subscriber", "dep:clap", "client", "server"]
+default = []
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "sync"] }
+protocol = { version = "3.4.0", default-features = false, features = ["derive"] }
+
+tracing = { workspace = true }
+tracing-subscriber =  { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+clap = { workspace = true, features = ["derive"], optional = true }
+
+[package.metadata.docs.rs]
+features = ["client", "server"]
+
+[[example]]
+name = "query_client"
+required-features = ["example"]
+
+
+[[example]]
+name = "dummy_query_server"
+required-features = ["example"]

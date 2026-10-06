@@ -1,0 +1,25 @@
+BasicMelee(
+    energy_cost: 0,
+    buildup_duration: 0.4,
+    swing_duration: 0.05,
+    hit_timing: 0.8,
+    recover_duration: 0.6,
+    melee_constructor: (
+        kind: Bash(
+            damage: 8,
+            poise: 10,
+            knockback: 0,
+            energy_regen: 0,
+        ),
+        range: 3,
+        angle: 30,
+    ),
+    movement_modifier: (
+        recover: Some(0.35),
+    ),
+    ori_modifier: (
+        buildup: Some(0.75),
+        action: Some(0.25),
+        recover: Some(0.15),
+    ),
+)

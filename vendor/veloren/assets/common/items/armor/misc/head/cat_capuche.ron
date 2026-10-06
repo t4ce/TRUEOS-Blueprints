@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Cat Capuche",
+    legacy_description: "April Fools Special",
+    kind: Armor((
+        kind: Head,
+        stats: Direct((
+            energy_max: Some(5.0),
+            energy_reward: Some(0.05),
+        )),
+    )),
+    quality: Moderate,
+    tags: [],
+)

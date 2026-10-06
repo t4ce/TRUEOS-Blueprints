@@ -1,0 +1,58 @@
+#[cfg(not(feature = "worldgen"))]
+use crate::test_world::{IndexRef, World};
+use common::lod;
+use hashbrown::HashMap;
+use vek::*;
+#[cfg(feature = "worldgen")]
+use world::{IndexRef, World};
+
+static EMPTY_ZONE: lod::Zone = lod::Zone {
+    objects: Vec::new(),
+};
+
+#[derive(Default)]
+pub struct Lod {
+    pub zones: HashMap<Vec2<i32>, lod::Zone>,
+}
+
+impl Lod {
+    #[cfg(feature = "worldgen")]
+    pub fn from_world(world: &World, index: IndexRef, threadpool: &tokio_parallel::ThreadPool) -> Self {
+        common_base::prof_span!("Lod::from_world");
+        threadpool.install(|| {
+            let zone_sz = (world.sim().get_size() + lod::ZONE_SIZE - 1) / lod::ZONE_SIZE;
+
+            #[cfg(any(target_os = "trueos", feature = "cooperative-worldgen"))]
+            let zones = {
+                let mut zones = HashMap::with_capacity(zone_sz.product() as usize);
+                world.for_each_lod_zone(index, |position, zone| {
+                    zones.insert(position, zone);
+                });
+                zones
+            };
+
+            #[cfg(not(any(target_os = "trueos", feature = "cooperative-worldgen")))]
+            use tokio_parallel::prelude::*;
+            #[cfg(not(any(target_os = "trueos", feature = "cooperative-worldgen")))]
+            let zones = (0..zone_sz.x)
+                .into_par_iter()
+                .flat_map(|i| (0..zone_sz.y).into_par_iter().map(move |j| (i, j)))
+                .map(|(i, j)| {
+                    let zone_pos = Vec2::new(i, j).map(|e| e as i32);
+                    (zone_pos, world.get_lod_zone(zone_pos, index))
+                })
+                .collect();
+
+            Self { zones }
+        })
+    }
+
+    #[cfg(not(feature = "worldgen"))]
+    pub fn from_world(_world: &World, _index: IndexRef, _threadpool: &tokio_parallel::ThreadPool) -> Self {
+        Self::default()
+    }
+
+    pub fn zone(&self, zone_pos: Vec2<i32>) -> &lod::Zone {
+        self.zones.get(&zone_pos).unwrap_or(&EMPTY_ZONE)
+    }
+}

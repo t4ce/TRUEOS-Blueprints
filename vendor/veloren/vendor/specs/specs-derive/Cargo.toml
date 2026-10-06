@@ -1,0 +1,18 @@
+[package]
+name = "specs-derive"
+version = "0.4.1"
+authors = ["Eyal Kalderon <ebkalderon@gmail.com>"]
+description = "Custom derive macro for Specs components"
+documentation = "https://docs.rs/specs-derive"
+repository = "https://github.com/slide-rs/specs/tree/master/specs-derive"
+keywords = ["gamedev", "parallel", "specs", "ecs", "derive"]
+license = "MIT/Apache-2.0"
+edition = "2018"
+
+[dependencies]
+proc-macro2 = "1.0.8"
+syn = "1.0.14"
+quote = "1.0.2"
+
+[lib]
+proc-macro = true

@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Primal Cape",
+    legacy_description: "The sturdy leather is still soaked in blood.",
+    kind: Armor((
+        kind: Back,
+        stats: FromSet("Plate"),
+    )),
+    quality: Epic,
+    tags: [
+        Material(Plate),
+        SalvageInto(Plate, 1),
+    ],
+)

@@ -1,0 +1,221 @@
+// NOTE: Order matters here
+// (you need to unlock skillgroup to be able to unlock skills in it
+{
+    "max": [
+        // General skills
+        (Climb(Cost), 2),
+        (Climb(Speed), 2),
+        (Swim(Speed), 2),
+
+        // Sword
+        (UnlockGroup(Weapon(Sword)), 1),
+        (Sword(CrescentSlash), 1),
+        (Sword(Cascade), 1),
+        (Sword(CrossCut), 1),
+        (Sword(Skewer), 1),
+        (Sword(FellStrike), 1),
+        (Sword(Finisher), 1),
+        (Sword(HeavySweep), 1),
+        (Sword(HeavyPommelStrike), 1),
+        (Sword(HeavyFortitude), 1),
+        (Sword(HeavyPillarThrust), 1),
+        (Sword(CleavingEarthSplitter), 1),
+        (Sword(CleavingWhirlwindSlice), 1),
+        (Sword(CleavingSkySplitter), 1),
+        (Sword(CleavingBladeFever), 1),
+        (Sword(AgileQuickDraw), 1),
+        (Sword(AgileFeint), 1),
+        (Sword(AgileDancingEdge), 1),
+        (Sword(AgileFlurry), 1),
+        (Sword(CripplingHamstring), 1),
+        (Sword(CripplingGouge), 1),
+        (Sword(CripplingBloodyGash), 1),
+        (Sword(CripplingEviscerate), 1),
+        (Sword(DefensiveRiposte), 1),
+        (Sword(DefensiveDisengage), 1),
+        (Sword(DefensiveStalwartSword), 1),
+        (Sword(DefensiveDeflect), 1),
+        // Axe
+        (UnlockGroup(Weapon(Axe)), 1),
+        (Axe(BrutalSwing), 1),
+        (Axe(Berserk), 1),
+        (Axe(RisingTide), 1),
+        (Axe(SavageSense), 1),
+        (Axe(AdrenalineRush), 1),
+        (Axe(Execute), 1),
+        (Axe(Maelstrom), 1),
+        (Axe(Rake), 1),
+        (Axe(Bloodfeast), 1),
+        (Axe(FierceRaze), 1),
+        (Axe(Furor), 1),
+        (Axe(Fracture), 1),
+        (Axe(Lacerate), 1),
+        (Axe(Riptide), 1),
+        (Axe(SkullBash), 1),
+        (Axe(Sunder), 1),
+        (Axe(Plunder), 1),
+        (Axe(Defiance), 1),
+        (Axe(Keelhaul), 1),
+        (Axe(Bulkhead), 1),
+        (Axe(Capsize), 1),
+        // Hammer
+        (UnlockGroup(Weapon(Hammer)), 1),
+        (Hammer(ScornfulSwipe), 1),
+        (Hammer(Tremor), 1),
+        (Hammer(VigorousBash), 1),
+        (Hammer(Intercept), 1),
+        (Hammer(HeavyWhorl), 1),
+        (Hammer(Retaliate), 1),
+        (Hammer(Breach), 1),
+        (Hammer(SpineCracker), 1),
+        (Hammer(HelmCrusher), 1),
+        (Hammer(LungPummel), 1),
+        (Hammer(PileDriver), 1),
+        (Hammer(IronTempest), 1),
+        (Hammer(Upheaval), 1),
+        (Hammer(Tenacity), 1),
+        (Hammer(Rampart), 1),
+        (Hammer(Thunderclap), 1),
+        (Hammer(SeismicShock), 1),
+        (Hammer(Judgement), 1),
+        (Hammer(Earthshaker), 1),
+
+        // Bow
+        (UnlockGroup(Weapon(Bow)), 1),
+
+        (Bow(Foothold), 1),
+        (Bow(HeavyNock), 1),
+
+        (Bow(ArdentHunt), 1),
+        (Bow(SepticShot), 1),
+        (Bow(Barrage), 1),
+
+        (Bow(StormChaser), 1),
+        (Bow(EagleEye), 1),
+        (Bow(IgniteArrow), 1),
+        (Bow(DrenchArrow), 1),
+        (Bow(PiercingGale), 1),
+        (Bow(ThornStake), 1),
+
+        (Bow(Heartseeker), 1),
+        (Bow(Hawkstrike), 1),
+        (Bow(FreezeArrow), 1),
+        (Bow(JoltArrow), 1),
+        (Bow(Fusillade), 1),
+        (Bow(DeathVolley), 1),
+
+        // Staff
+        (UnlockGroup(Weapon(Staff)), 1),
+        (Staff(FireShockwave), 1),
+        (Staff(FireDash), 1),
+        (Staff(FlameCloak), 1),
+        (Staff(NapalmStrike), 1),
+        (Staff(FireBreath), 1),
+        (Staff(Pyroclasm), 1),
+
+
+        // Sceptre
+        (UnlockGroup(Weapon(Sceptre)), 1),
+
+        (Sceptre(LDamage), 3),
+        (Sceptre(LRange), 2),
+        (Sceptre(LLifesteal), 3),
+        (Sceptre(LRegen), 2),
+
+        (Sceptre(HHeal), 3),
+        (Sceptre(HDuration), 2),
+        (Sceptre(HCost), 2),
+        (Sceptre(HRange), 2),
+
+        (Sceptre(UnlockAura), 1),
+        (Sceptre(AStrength), 2),
+        (Sceptre(ADuration), 2),
+        (Sceptre(ARange), 2),
+        (Sceptre(ACost), 2),
+        // Mining
+        (Pick(Speed), 3),
+        (Pick(OreGain), 3),
+        (Pick(GemGain), 3),
+    ],
+    // Just copypasta from max with random reductions
+    "middle": [
+        // Sword
+        (UnlockGroup(Weapon(Sword)), 1),
+
+        // Axe
+        (UnlockGroup(Weapon(Axe)), 1),
+
+        // Hammer
+        (UnlockGroup(Weapon(Hammer)), 1),
+
+        // Bow
+        (UnlockGroup(Weapon(Bow)), 1),
+
+        (Bow(Foothold), 1),
+        (Bow(HeavyNock), 1),
+
+        (Bow(ArdentHunt), 1),
+        (Bow(SepticShot), 1),
+        (Bow(Barrage), 1),
+
+        (Bow(StormChaser), 1),
+        (Bow(EagleEye), 1),
+        (Bow(IgniteArrow), 1),
+        (Bow(DrenchArrow), 1),
+        (Bow(PiercingGale), 1),
+        (Bow(ThornStake), 1),
+
+        // Staff
+        (UnlockGroup(Weapon(Staff)), 1),
+
+        (Staff(FireShockwave), 1),
+        (Staff(FireDash), 1),
+        (Staff(FlameCloak), 1),
+        (Staff(NapalmStrike), 1),
+        (Staff(FireBreath), 1),
+        (Staff(Pyroclasm), 1),
+
+
+        // Sceptre
+        (UnlockGroup(Weapon(Sceptre)), 1),
+
+        (Sceptre(LDamage), 2),
+        (Sceptre(LRange), 2),
+        (Sceptre(LLifesteal), 2),
+        (Sceptre(LRegen), 2),
+
+        (Sceptre(HHeal), 2),
+        (Sceptre(HCost), 2),
+        (Sceptre(HRange), 2),
+
+        (Sceptre(UnlockAura), 1),
+        (Sceptre(AStrength), 2),
+        (Sceptre(ADuration), 1),
+        (Sceptre(ARange), 2),
+        (Sceptre(ACost), 2),
+    ],
+    // Basic skill preset to unlock all abilities
+    "basic": [
+        // Sword
+        (UnlockGroup(Weapon(Sword)), 1),
+
+        // Axe
+        (UnlockGroup(Weapon(Axe)), 1),
+
+        // Hammer
+        (UnlockGroup(Weapon(Hammer)), 1),
+
+        // Bow
+        (UnlockGroup(Weapon(Bow)), 1),
+
+        // Staff
+        (UnlockGroup(Weapon(Staff)), 1),
+
+        (Staff(FireShockwave), 1),
+
+        // Sceptre
+        (UnlockGroup(Weapon(Sceptre)), 1),
+
+        (Sceptre(UnlockAura), 1),
+    ],
+}

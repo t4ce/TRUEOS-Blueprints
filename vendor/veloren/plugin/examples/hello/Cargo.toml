@@ -1,0 +1,23 @@
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[workspace.lints]
+
+[package.metadata.component]
+package = "component:hello"
+
+[package.metadata.component.target]
+path = "../../wit/veloren.wit"
+world = "server-plugin"
+
+[package.metadata.component.dependencies]
+
+[dependencies]
+wit-bindgen-rt = "0.30.0"
+
+[lib]
+crate-type = ["cdylib"]

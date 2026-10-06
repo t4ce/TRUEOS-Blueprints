@@ -1,0 +1,20 @@
+[package]
+name = "conrod_derive"
+version = "0.63.0"
+authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
+description = "A crate providing procedural macros for the conrod library"
+license = "MIT OR Apache-2.0"
+keywords = ["conrod", "gui", "derive", "procedural", "macro"]
+repository = "https://github.com/pistondevelopers/conrod.git"
+homepage = "https://github.com/pistondevelopers/conrod"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["extra-traits", "full"] }
+
+[dev-dependencies]
+conrod_core = { path = "../conrod_core" }

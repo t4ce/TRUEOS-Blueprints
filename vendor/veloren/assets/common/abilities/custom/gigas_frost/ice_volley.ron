@@ -1,0 +1,33 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 0.5,
+    recover_duration: 0.9,
+    projectile: (
+        kind: Explosive(
+            radius: 3,
+            min_falloff: 0.1,
+            reagent: Some(White),
+            terrain: Some((30, IceBomb)),
+        ),
+        attack: Some((
+            damage: 30,
+            knockback: Some(12),
+            buff: Some((
+                kind: Frozen,
+                dur_secs: 5,
+                // TODO: Change from DamageFraction to Value (probably?)
+                strength: DamageFraction(0.05),
+                chance: 1.0,
+            )),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(IceBomb),
+    projectile_speed: 40.0,
+    num_projectiles: Value(5),
+    projectile_spread: Some(Increasing(0.05)),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

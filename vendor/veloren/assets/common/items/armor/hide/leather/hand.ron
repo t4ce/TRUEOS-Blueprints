@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Leather Gloves",
+    legacy_description: "The thick leather covering your hands has stopped shaking.",
+    kind: Armor((
+        kind: Hand,
+        stats: FromSet("Leather"),
+    )),
+    quality: Common,
+    tags: [
+        Material(Leather),
+        SalvageInto(Leather, 1),
+    ],
+)

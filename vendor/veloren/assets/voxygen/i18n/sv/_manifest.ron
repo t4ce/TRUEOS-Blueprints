@@ -1,0 +1,19 @@
+/// WARNING: Localization files shall be saved in UTF-8 format without BOM
+
+/// Localization for sweden Swedish
+(
+    metadata: (
+        language_name: "Svenska (Swedish)",
+        language_identifier: "sv",
+    ),
+    fonts: {
+        "alkhemi": Font (
+            asset_key: "voxygen.font.Alkhemikal",
+            scale_ratio: 1.0,
+        ),
+        "cyri": Font (
+            asset_key: "voxygen.font.EnterCommand",
+            scale_ratio: 1.0,
+        ),
+    }
+)

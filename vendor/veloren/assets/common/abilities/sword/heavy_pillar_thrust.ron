@@ -1,0 +1,34 @@
+DiveMelee(
+    energy_cost: 15,
+    vertical_speed: 5,
+    buildup_duration: Some(0.1),
+    movement_duration: 5,
+    swing_duration: 0.1,
+    recover_duration: 0.3,
+    melee_constructor: (
+        kind: Slash(
+            damage: 16,
+            poise: 40,
+            knockback: 0,
+            energy_regen: 0,
+        ),
+        scaled: Some((
+            kind: Slash(
+                damage: 8,
+                poise: 12,
+                knockback: 0,
+                energy_regen: 0,
+            ))),
+        range: 2.0,
+        angle: 45.0,
+        multi_target: Some(Normal),
+        attack_effect: Some((
+            AdditionalDamage(0.9),
+            TargetPoised,
+        )),
+    ),
+    max_scaling: 3,
+    meta: (
+        requirements: (stance: Some(Sword(Heavy))),
+    ),
+)

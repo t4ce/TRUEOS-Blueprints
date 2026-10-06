@@ -1,0 +1,16 @@
+ItemDef(
+    legacy_name: "Mitre",
+    legacy_description: "Calls strength down from above.",
+    kind: Armor((
+        kind: Head,
+        stats: Direct((
+            protection: Some(Normal(2.0)),
+            energy_max: Some(12.0),
+            energy_reward: Some(0.09),
+        )),
+    )),
+    quality: High,
+    tags: [
+        SalvageInto(Silver, 1),
+    ],
+)

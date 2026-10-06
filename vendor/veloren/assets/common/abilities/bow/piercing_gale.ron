@@ -1,0 +1,26 @@
+BasicRanged(
+    energy_cost: 15,
+    buildup_duration: 0.45,
+    recover_duration: 0.1,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 8.5,
+            damage_kind: Piercing,
+        )),
+        override_collider: Some((
+            p0: (x: 0, y: 0),
+            p1: (x: 0, y: 0),
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 1.0,
+        )),
+        pierce_entities: true,
+    ),
+    projectile_body: Object(Arrow),
+    projectile_speed: 200.0,
+    movement_modifier: (
+        buildup: Some(0.7),
+        recover: Some(0.9),
+    ),
+)

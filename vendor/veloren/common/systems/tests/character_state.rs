@@ -1,0 +1,139 @@
+#[cfg(test)]
+mod tests {
+    use common::{
+        SkillSetBuilder,
+        comp::{
+            CharacterActivity, CharacterState, Controller, Energy, Ori, PhysicsState, Poise, Pos,
+            Stats, Vel, item::MaterialStatManifest, tool::AbilityMap,
+        },
+        resources::{DeltaTime, GameMode, Time},
+        shared_server_config::ServerConstants,
+        terrain::{MapSizeLg, TerrainChunk},
+        uid::Uid,
+        util::Dir,
+    };
+    use common_ecs::dispatch;
+    use common_state::State;
+    use rand::rng;
+    use specs::{Builder, Entity, WorldExt};
+    use std::{num::NonZeroU64, sync::Arc, time::Duration};
+    use vek::{Vec2, Vec3, approx::AbsDiffEq};
+    use veloren_common_systems::character_behavior;
+
+    const DEFAULT_WORLD_CHUNKS_LG: MapSizeLg =
+        if let Ok(map_size_lg) = MapSizeLg::new(Vec2 { x: 1, y: 1 }) {
+            map_size_lg
+        } else {
+            panic!("Default world chunk size does not satisfy required invariants.");
+        };
+
+    fn setup() -> State {
+        let pools = State::pools(GameMode::Server);
+        let mut state = State::new(
+            GameMode::Server,
+            pools,
+            DEFAULT_WORLD_CHUNKS_LG,
+            Arc::new(TerrainChunk::water(0)),
+            |dispatch_builder| {
+                dispatch::<character_behavior::Sys>(dispatch_builder, &[]);
+            },
+            #[cfg(feature = "plugins")]
+            common_state::plugin::PluginMgr::default(),
+        );
+        let msm = MaterialStatManifest::load().cloned();
+        state.ecs_mut().insert(msm);
+        state.ecs_mut().insert(AbilityMap::load().cloned());
+        state.ecs_mut().read_resource::<Time>();
+        state.ecs_mut().read_resource::<DeltaTime>();
+        state
+    }
+
+    fn create_entity(state: &mut State, ori: Ori) -> Entity {
+        let body = common::comp::Body::Humanoid(common::comp::humanoid::Body::random_with(
+            &mut rng(),
+            &common::comp::humanoid::Species::Human,
+        ));
+        let skill_set = SkillSetBuilder::default().build();
+        state
+            .ecs_mut()
+            .create_entity()
+            .with(CharacterState::Idle(common::states::idle::Data::default()))
+            .with(CharacterActivity::default())
+            .with(Pos(Vec3::zero()))
+            .with(Vel::default())
+            .with(ori)
+            .with(body.mass())
+            .with(body.density())
+            .with(body)
+            .with(Energy::new(body))
+            .with(Controller::default())
+            .with(Poise::new(body))
+            .with(skill_set)
+            .with(PhysicsState::default())
+            .with(Stats::empty(body))
+            .with(Uid(NonZeroU64::new(1).unwrap()))
+            .build()
+    }
+
+    fn tick(state: &mut State, dt: Duration) {
+        state.tick(
+            dt,
+            false,
+            None,
+            &ServerConstants {
+                day_cycle_coefficient: 24.0,
+            },
+            |_, _| {},
+        );
+    }
+
+    #[test]
+    fn orientation_shortcut() {
+        let mut state = setup();
+        const TESTCASES: usize = 5;
+        let testcases: [(Vec3<f32>, Vec3<f32>); TESTCASES] = [
+            // horizontal is unchanged
+            (Vec3::unit_x(), Vec3::unit_x()),
+            // nearly vertical takes time to adjust
+            (
+                Vec3::new(0.1, 0.1, 1.0),
+                Vec3::new(0.13193887, 0.13193902, 0.98243797),
+            ),
+            // intermediate case
+            (
+                Vec3::new(0.6, 0.6, 0.1),
+                Vec3::new(0.70256203, 0.70256203, 0.11319534),
+            ),
+            // edge case: nearly horizontal after system
+            (
+                Vec3::new(0.6, 0.6, 0.0556),
+                Vec3::new(0.7056918, 0.70569193, 0.063229896),
+            ),
+            // small enough to be horizontal in one step
+            (
+                Vec3::new(0.6, 0.6, 0.04),
+                Vec3::new(0.70637333, 0.70637333, 0.04553493),
+            ),
+        ];
+        let mut entities: [Option<Entity>; TESTCASES] = [None; TESTCASES];
+        for i in 0..TESTCASES {
+            entities[i] = Some(create_entity(
+                &mut state,
+                Ori::from_unnormalized_vec(testcases[i].0).unwrap_or_default(),
+            ));
+        }
+        tick(&mut state, Duration::from_secs_f32(0.033));
+        let results = state.ecs().read_storage::<Ori>();
+        for i in 0..TESTCASES {
+            if let Some(e) = entities[i] {
+                let result = Dir::from(*results.get(e).expect("Ori missing"));
+                assert!(
+                    result.abs_diff_eq(&testcases[i].1, 0.005),
+                    "{:?} != {:?}",
+                    result,
+                    testcases[i].1
+                );
+            }
+        }
+    }
+}

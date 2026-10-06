@@ -1,0 +1,15 @@
+ItemDef(
+    legacy_name: "Cultist Amulet",
+    legacy_description: "You can still feel the Mindflayer's presence within this amulet...",
+    kind: Armor((
+        kind: Neck,
+        stats: Direct((
+            protection: Some(Normal(1.0)),
+            energy_max: Some(3.0),
+            energy_reward: Some(0.03),
+            precision_power: Some(0.015),
+        )),
+    )),
+    quality: Epic,
+    tags: [],
+)

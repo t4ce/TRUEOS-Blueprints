@@ -9,7 +9,7 @@ description = "Experimental TRUEOS Blueprint build of the Veloren server CLI"
 replicatable = false
 
 [package.metadata.trueos-blueprint.build-env-paths]
-CARGO_WORKSPACE_DIR = "../../../veloren"
+CARGO_WORKSPACE_DIR = "../../vendor/veloren"
 
 
 [workspace]
@@ -30,13 +30,13 @@ name = "velosrv"
 path = "src/main.rs"
 
 [dependencies]
-server = { package = "veloren-server", path = "../../../veloren/server", default-features = false, features = ["simd", "redb-backend", "embedded-auth-roots"] }
-agent = { package = "veloren-server-agent", path = "../../../veloren/server/agent", optional = true }
-common = { package = "veloren-common", path = "../../../veloren/common" }
-common-base = { package = "veloren-common-base", path = "../../../veloren/common/base" }
-common-net = { package = "veloren-common-net", path = "../../../veloren/common/net" }
-common-frontend = { package = "veloren-common-frontend", path = "../../../veloren/common/frontend" }
-world = { package = "veloren-world", path = "../../../veloren/world", optional = true }
+server = { package = "veloren-server", path = "../../vendor/veloren/server", default-features = false, features = ["simd", "redb-backend", "embedded-auth-roots"] }
+agent = { package = "veloren-server-agent", path = "../../vendor/veloren/server/agent", optional = true }
+common = { package = "veloren-common", path = "../../vendor/veloren/common" }
+common-base = { package = "veloren-common-base", path = "../../vendor/veloren/common/base" }
+common-net = { package = "veloren-common-net", path = "../../vendor/veloren/common/net" }
+common-frontend = { package = "veloren-common-frontend", path = "../../vendor/veloren/common/frontend" }
+world = { package = "veloren-world", path = "../../vendor/veloren/world", optional = true }
 
 tokio = { version = "=1.52.3", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std", "fs", "net"] }
 num_cpus = "1.0"
@@ -62,23 +62,23 @@ chrono = { version = "0.4.24", default-features = false, features = ["clock", "s
 mimalloc = "0.1"
 
 [patch.crates-io]
-atomicwrites = { path = "../../../veloren/vendor/atomicwrites-0.4.4" }
-tynm = { path = "../../../veloren/vendor/tynm-0.1.10" }
-wavefront = { path = "../../../veloren/vendor/wavefront-0.2.3" }
-lz-fear = { path = "../../../veloren/vendor/lz-fear-0.2.0" }
-png = { path = "../../../veloren/vendor/png-0.18.1" }
-backtrace = { path = "../../../veloren/vendor/backtrace-0.3.76" }
-hashbrown_015 = { package = "hashbrown", path = "../../../veloren/vendor/hashbrown-0.15.5" }
-rust-argon2 = { path = "../../../veloren/vendor/rust-argon2-2.1.0" }
-specs = { path = "../../../veloren/vendor/specs" }
-shred = { path = "../../../veloren/vendor/shred" }
-hibitset = { path = "../../../veloren/vendor/hibitset" }
-hashbrown = { path = "../../../veloren/vendor/hashbrown" }
-indexmap = { path = "../../../veloren/vendor/indexmap" }
+atomicwrites = { path = "../../vendor/veloren/vendor/atomicwrites-0.4.4" }
+tynm = { path = "../../vendor/veloren/vendor/tynm-0.1.10" }
+wavefront = { path = "../../vendor/veloren/vendor/wavefront-0.2.3" }
+lz-fear = { path = "../../vendor/veloren/vendor/lz-fear-0.2.0" }
+png = { path = "../../vendor/veloren/vendor/png-0.18.1" }
+backtrace = { path = "../../vendor/veloren/vendor/backtrace-0.3.76" }
+hashbrown_015 = { package = "hashbrown", path = "../../vendor/veloren/vendor/hashbrown-0.15.5" }
+rust-argon2 = { path = "../../vendor/veloren/vendor/rust-argon2-2.1.0" }
+specs = { path = "../../vendor/veloren/vendor/specs" }
+shred = { path = "../../vendor/veloren/vendor/shred" }
+hibitset = { path = "../../vendor/veloren/vendor/hibitset" }
+hashbrown = { path = "../../vendor/veloren/vendor/hashbrown" }
+indexmap = { path = "../../vendor/veloren/vendor/indexmap" }
 thread-priority = { path = "stubs/thread-priority" }
 tracing-appender = { path = "vendor/tracing-appender" }
 
 # Retain the SHA 0.10 APIs while sharing cpufeatures 0.3.1 with SHA 0.11.
-sha1 = { path = "../../../veloren/vendor/sha1-0.10.6" }
+sha1 = { path = "../../vendor/veloren/vendor/sha1-0.10.6" }
 
-sha2 = { path = "../../../veloren/vendor/sha2-0.10.9" }
+sha2 = { path = "../../vendor/veloren/vendor/sha2-0.10.9" }

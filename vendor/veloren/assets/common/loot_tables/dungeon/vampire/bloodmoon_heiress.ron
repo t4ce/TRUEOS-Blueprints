@@ -1,0 +1,15 @@
+[
+    (1, All([
+            MultiDrop(Item("common.items.utility.coins"), 200, 500),
+            Lottery([
+                // Weapons
+                (4.35, LootTable("common.loot_tables.weapons.tier-4")),
+                // Armor
+                (4.35, LootTable("common.loot_tables.armor.tier-4")),
+                // Misc
+    		    (0.8, Item("common.items.crafting_ing.bloody_tear")),
+    		    (0.5, Item("common.items.tool.instruments.viola_pizzicato")),
+            ]),
+        ],
+    )),
+]

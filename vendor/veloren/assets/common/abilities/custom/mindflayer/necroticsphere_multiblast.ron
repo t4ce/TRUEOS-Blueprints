@@ -1,0 +1,26 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 6.0,
+    recover_duration: 0.5,
+    projectile: (
+        kind: Explosive(
+            radius: 10,
+            min_falloff: 0.2,
+            reagent: Some(Purple),
+        ),
+        attack: Some((
+            damage: 30,
+            energy: Some(40),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(FireworkPurple),
+    projectile_speed: 10.0,
+    num_projectiles: Value(6),
+    projectile_spread: Some(Increasing(0.5)),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)
+

@@ -1,0 +1,41 @@
+[package]
+name = "veloren-common-systems"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+simd = ["vek/platform_intrinsics"]
+plugins = ["common-state/plugins"]
+
+default = ["simd"]
+
+[dependencies]
+common = { package = "veloren-common", path = ".." }
+common-net = { package = "veloren-common-net", path = "../net" }
+common-ecs = { package = "veloren-common-ecs", path = "../ecs" }
+common-base = { package = "veloren-common-base", path = "../base" }
+
+rand = { workspace = true }
+tokio-parallel = { workspace = true }
+tracing = { workspace = true }
+vek = { workspace = true }
+ordered-float = { workspace = true }
+itertools = { workspace = true }
+
+# ECS
+specs = { workspace = true, features = [
+    "serde",
+    "storage-event-control",
+    "derive",
+] }
+
+# Tweak running code
+# inline_tweak = { workspace = true, features = ["release_tweak"] }
+
+[dev-dependencies]
+# Setup a State
+common-state = { package = "veloren-common-state", path = "../state" }

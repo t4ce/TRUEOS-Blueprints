@@ -1,0 +1,22 @@
+ItemDef(
+    legacy_name: "Stone Pickaxe",
+    legacy_description: "Strike the earth!",
+    kind: Tool((
+        kind: Pick,
+        hands: Two,
+        stats: (
+            equip_time_secs: 0.3,
+            power: 1.0,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+    )),
+    quality: Low,
+    tags: [
+        CraftingTool,
+    ],
+    ability_spec: None,
+)

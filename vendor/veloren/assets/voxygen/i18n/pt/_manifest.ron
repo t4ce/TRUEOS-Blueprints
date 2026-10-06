@@ -1,0 +1,17 @@
+/// Localization for portuguese (Portugal)
+(
+    metadata: (
+        language_name: "Português (Portuguese - Portugal)",
+        language_identifier: "pt",
+    ),
+    fonts: {
+        "alkhemi": Font (
+            asset_key: "voxygen.font.Alkhemikal",
+            scale_ratio: 1.0,
+        ),
+        "cyri": Font (
+            asset_key: "voxygen.font.haxrcorp_4089_cyrillic_altgr_extended",
+            scale_ratio: 1.0,
+        ),
+    }
+)

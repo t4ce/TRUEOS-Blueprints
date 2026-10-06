@@ -1,0 +1,16 @@
+hud-group = Skupina
+hud-group-invite = Povabi
+hud-group-kick = Vrzi ven
+hud-group-dead = Mrtvi
+hud-group-assign_leader = Določi vodjo
+hud-group-leave = Zapusti skupino
+hud-group-out_of_range = Zunaj dosega
+hud-group-add_friend = Dodaj med prijatelje
+hud-group-link_group = Poveži skupine
+hud-group-in_menu = V meniju
+hud-group-members = Člani skupine
+hud-group-invite-timed_out = Skupinsko vabilo v { $target } je poteklo.
+hud-group-invite_to_join = { "[" }{ $name }] te je povabil_a v svojo skupino!
+hud-group-invite_to_trade = { "[" }{ $name }] želi skleniti kupčijo s tabo.
+hud-group-invite-accepted = { $target } je sprejel_a tvoje povabilo v skupino.
+hud-group-invite-declined = { $target } je odklonil_a tvoje povabilo v skupino.

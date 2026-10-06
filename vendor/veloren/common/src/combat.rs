@@ -1,0 +1,2440 @@
+use crate::{
+    assets::{AssetExt, Ron},
+    comp::{
+        Alignment, Body, Buffs, CharacterState, Combo, Energy, Group, Health, HealthChange,
+        InputKind, Inventory, Mass, Ori, Player, Poise, PoiseChange, SkillSet, Stats,
+        ability::Capability,
+        aura::{AuraKindVariant, EnteredAuras},
+        buff::{Buff, BuffChange, BuffData, BuffDescriptor, BuffKind, BuffSource, DestInfo},
+        inventory::{
+            item::{
+                ItemDesc, ItemKind, MaterialStatManifest,
+                armor::Protection,
+                tool::{self, ToolKind},
+            },
+            slot::EquipSlot,
+        },
+        skillset::SkillGroupKind,
+    },
+    effect::BuffEffect,
+    event::{
+        BuffEvent, ComboChangeEvent, EmitExt, EnergyChangeEvent, EntityAttackedHookEvent,
+        HealthChangeEvent, KnockbackEvent, ParryHookEvent, PoiseChangeEvent, TransformEvent,
+    },
+    generation::{EntityConfig, EntityInfo},
+    outcome::Outcome,
+    resources::{Secs, Time},
+    states::utils::{AbilityInfo, StageSection},
+    uid::{IdMaps, Uid},
+    util::Dir,
+};
+use rand::RngExt;
+use serde::{Deserialize, Serialize};
+use specs::{Entity as EcsEntity, ReadStorage};
+use std::ops::{Mul, MulAssign};
+use tracing::error;
+use vek::*;
+
+pub enum AttackTarget {
+    AllInRange(f32),
+    Pos(Vec3<f32>),
+    Entity(EcsEntity),
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum GroupTarget {
+    InGroup,
+    OutOfGroup,
+    All,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum StatEffectTarget {
+    Attacker,
+    Target,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
+pub enum AttackSource {
+    Melee,
+    Projectile,
+    Beam,
+    GroundShockwave,
+    AirShockwave,
+    UndodgeableShockwave,
+    Explosion,
+    Arc,
+    Pool,
+}
+
+pub const FULL_FLANK_ANGLE: f32 = std::f32::consts::PI / 4.0;
+pub const PARTIAL_FLANK_ANGLE: f32 = std::f32::consts::PI * 3.0 / 4.0;
+pub const BEAM_DURATION_PRECISION: f32 = 2.5;
+pub const MAX_BACK_FLANK_PRECISION: f32 = 0.75;
+pub const MAX_SIDE_FLANK_PRECISION: f32 = 0.25;
+pub const MAX_HEADSHOT_PRECISION: f32 = 1.0;
+pub const MAX_TOP_HEADSHOT_PRECISION: f32 = 0.5;
+pub const MAX_BEAM_DUR_PRECISION: f32 = 0.25;
+pub const MAX_MELEE_POISE_PRECISION: f32 = 0.5;
+pub const MAX_BLOCK_POISE_COST: f32 = 25.0;
+pub const FALLBACK_BLOCK_STRENGTH: f32 = 3.3;
+pub const BEHIND_TARGET_ANGLE: f32 = 45.0;
+pub const BASE_PARRIED_POISE_PUNISHMENT: f32 = 100.0 / 3.5;
+
+#[derive(Copy, Clone)]
+pub struct AttackerInfo<'a> {
+    pub entity: EcsEntity,
+    pub uid: Uid,
+    pub group: Option<&'a Group>,
+    pub energy: Option<&'a Energy>,
+    pub combo: Option<&'a Combo>,
+    pub inventory: Option<&'a Inventory>,
+    pub stats: Option<&'a Stats>,
+    pub mass: Option<&'a Mass>,
+    pub pos: Option<Vec3<f32>>,
+}
+
+#[derive(Copy, Clone)]
+pub struct TargetInfo<'a> {
+    pub entity: EcsEntity,
+    pub uid: Uid,
+    pub inventory: Option<&'a Inventory>,
+    pub stats: Option<&'a Stats>,
+    pub health: Option<&'a Health>,
+    pub pos: Vec3<f32>,
+    pub ori: Option<&'a Ori>,
+    pub char_state: Option<&'a CharacterState>,
+    pub energy: Option<&'a Energy>,
+    pub buffs: Option<&'a Buffs>,
+    pub mass: Option<&'a Mass>,
+    pub player: Option<&'a Player>,
+}
+
+#[derive(Clone, Copy)]
+pub struct AttackOptions {
+    pub target_dodging: bool,
+    /// Result of [`permit_pvp`]
+    pub permit_pvp: bool,
+    pub target_group: GroupTarget,
+    /// When set to `true`, entities in the same group or pets & pet owners may
+    /// hit eachother albeit the target_group being OutOfGroup
+    pub allow_friendly_fire: bool,
+    pub precision_mult: Option<f32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)] // TODO: Yeet clone derive
+pub struct Attack {
+    damages: Vec<AttackDamage>,
+    effects: Vec<AttackEffect>,
+    precision_multiplier: f32,
+    pub(crate) blockable: bool,
+    ability_info: Option<AbilityInfo>,
+}
+
+impl Attack {
+    pub fn new(ability_info: Option<AbilityInfo>) -> Self {
+        Self {
+            damages: Vec::new(),
+            effects: Vec::new(),
+            precision_multiplier: 1.0,
+            blockable: true,
+            ability_info,
+        }
+    }
+
+    #[must_use]
+    pub fn with_damage(mut self, damage: AttackDamage) -> Self {
+        self.damages.push(damage);
+        self
+    }
+
+    #[must_use]
+    pub fn with_effect(mut self, effect: AttackEffect) -> Self {
+        self.effects.push(effect);
+        self
+    }
+
+    #[must_use]
+    pub fn with_precision(mut self, precision_multiplier: f32) -> Self {
+        self.precision_multiplier = precision_multiplier;
+        self
+    }
+
+    #[must_use]
+    pub fn with_blockable(mut self, blockable: bool) -> Self {
+        self.blockable = blockable;
+        self
+    }
+
+    #[must_use]
+    pub fn with_combo_requirement(self, combo: i32, requirement: CombatRequirement) -> Self {
+        self.with_effect(
+            AttackEffect::new(None, CombatEffect::Combo(combo)).with_requirement(requirement),
+        )
+    }
+
+    #[must_use]
+    pub fn with_combo(self, combo: i32) -> Self {
+        self.with_combo_requirement(combo, CombatRequirement::AnyDamage)
+    }
+
+    #[must_use]
+    pub fn with_combo_increment(self) -> Self { self.with_combo(1) }
+
+    pub fn effects(&self) -> impl Iterator<Item = &AttackEffect> { self.effects.iter() }
+
+    pub fn compute_block_damage_decrement(
+        blockable: bool,
+        attacker: Option<&AttackerInfo>,
+        target: &TargetInfo,
+        source: AttackSource,
+        dir: Dir,
+        damage: f32,
+        msm: &MaterialStatManifest,
+        time: Time,
+        emitters: &mut (impl EmitExt<ParryHookEvent> + EmitExt<PoiseChangeEvent>),
+        mut emit_outcome: impl FnMut(Outcome),
+    ) -> f32 {
+        if blockable && damage > 0.0 {
+            if let (Some(char_state), Some(ori), Some(inventory)) =
+                (target.char_state, target.ori, target.inventory)
+            {
+                let is_parry = char_state.is_parry(source);
+                let is_block = char_state.is_block(source);
+                let mut block_strength = block_strength(inventory, char_state);
+
+                if ori.look_vec().angle_between(-dir.with_z(0.0)) < char_state.block_angle()
+                    && (is_parry || is_block)
+                    && block_strength > 0.0
+                {
+                    if is_parry {
+                        block_strength = damage;
+
+                        emitters.emit(ParryHookEvent {
+                            defender: target.entity,
+                            attacker: attacker.map(|a| a.entity),
+                            source,
+                            poise_multiplier: 2.0 - (damage / block_strength).min(1.0),
+                        });
+                    }
+
+                    let poise_cost = (damage / block_strength).min(1.0) * MAX_BLOCK_POISE_COST;
+
+                    let poise_change = Poise::apply_poise_reduction(
+                        poise_cost,
+                        target.inventory,
+                        msm,
+                        target.char_state,
+                        target.stats,
+                    );
+
+                    emit_outcome(Outcome::Block {
+                        parry: is_parry,
+                        pos: target.pos,
+                        uid: target.uid,
+                    });
+                    emitters.emit(PoiseChangeEvent {
+                        entity: target.entity,
+                        change: PoiseChange {
+                            amount: -poise_change,
+                            impulse: *dir,
+                            by: attacker.map(|x| (*x).into()),
+                            cause: Some(DamageSource::from(source)),
+                            time,
+                        },
+                    });
+
+                    block_strength
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    }
+
+    pub fn compute_damage_reduction(
+        attacker: Option<&AttackerInfo>,
+        target: &TargetInfo,
+        damage: Damage,
+        msm: &MaterialStatManifest,
+    ) -> f32 {
+        if damage.value > 0.0 {
+            let attacker_penetration = attacker
+                .and_then(|a| a.stats)
+                .map_or(0.0, |s| s.mitigations_penetration)
+                .clamp(0.0, 1.0);
+            let raw_damage_reduction =
+                Damage::compute_damage_reduction(Some(damage), target.inventory, target.stats, msm);
+
+            if raw_damage_reduction >= 1.0 {
+                raw_damage_reduction
+            } else {
+                (1.0 - attacker_penetration) * raw_damage_reduction
+            }
+        } else {
+            0.0
+        }
+    }
+
+    pub fn apply_attack(
+        &self,
+        attacker: Option<AttackerInfo>,
+        target: &TargetInfo,
+        dir: Dir,
+        options: AttackOptions,
+        // Currently strength_modifier just modifies damage,
+        // maybe look into modifying strength of other effects?
+        strength_modifier: f32,
+        attack_source: AttackSource,
+        time: Time,
+        emitters: &mut (
+                 impl EmitExt<HealthChangeEvent>
+                 + EmitExt<EnergyChangeEvent>
+                 + EmitExt<ParryHookEvent>
+                 + EmitExt<KnockbackEvent>
+                 + EmitExt<BuffEvent>
+                 + EmitExt<PoiseChangeEvent>
+                 + EmitExt<ComboChangeEvent>
+                 + EmitExt<EntityAttackedHookEvent>
+                 + EmitExt<TransformEvent>
+             ),
+        mut emit_outcome: impl FnMut(Outcome),
+        rng: &mut rand::rngs::ThreadRng,
+        damage_instance_offset: u64,
+    ) -> bool {
+        // TODO: Maybe move this higher and pass it as argument into this function?
+        let msm = &MaterialStatManifest::load().read();
+
+        let AttackOptions {
+            target_dodging,
+            permit_pvp,
+            allow_friendly_fire,
+            target_group,
+            precision_mult,
+        } = options;
+
+        // target == OutOfGroup is basic heuristic that this
+        // "attack" has negative effects.
+        //
+        // so if target dodges this "attack" or we don't want to harm target,
+        // it should avoid such "damage" or effect
+        let avoid_damage = |attack_damage: &AttackDamage| {
+            target_dodging
+                || (!permit_pvp && matches!(attack_damage.target, Some(GroupTarget::OutOfGroup)))
+        };
+        let avoid_effect = |attack_effect: &AttackEffect| {
+            target_dodging
+                || (!permit_pvp && matches!(attack_effect.target, Some(GroupTarget::OutOfGroup)))
+        };
+
+        let from_precision_mult = attacker
+            .and_then(|a| a.stats)
+            .and_then(|s| {
+                s.conditional_precision_modifiers
+                    .iter()
+                    .filter_map(|(req, mult, ovrd)| {
+                        req.is_none_or(|r| {
+                            r.requirement_met(
+                                (
+                                    target.health,
+                                    target.buffs,
+                                    target.char_state,
+                                    target.ori,
+                                    Some(target.uid),
+                                ),
+                                (
+                                    attacker.map(|a| a.entity),
+                                    attacker.and_then(|a| a.energy),
+                                    attacker.and_then(|a| a.combo),
+                                ),
+                                attacker.map(|a| a.uid),
+                                0.0,
+                                emitters,
+                                dir,
+                                Some(attack_source),
+                                self.ability_info,
+                            )
+                        })
+                        .then_some((*mult, *ovrd))
+                    })
+                    .chain(precision_mult.iter().map(|val| (*val, false)))
+                    .reduce(|(val_a, ovrd_a), (val_b, ovrd_b)| {
+                        if ovrd_a || ovrd_b {
+                            (val_a.min(val_b), true)
+                        } else {
+                            (val_a.max(val_b), false)
+                        }
+                    })
+            })
+            .map(|(val, _)| val);
+
+        let from_precision_vulnerability_mult = target
+            .stats
+            .and_then(|s| s.precision_vulnerability_multiplier_override);
+
+        let precision_mult = match (from_precision_mult, from_precision_vulnerability_mult) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+
+        let precision_power = 1.0
+            + ((self.precision_multiplier - 1.0)
+                * attacker
+                    .and_then(|a| a.stats)
+                    .map_or(1.0, |s| s.precision_power_mult));
+
+        let attacked_modifiers = AttackedModification::attacked_modifiers(
+            target,
+            attacker,
+            emitters,
+            dir,
+            Some(attack_source),
+            self.ability_info,
+        );
+
+        let mut is_applied = false;
+        let mut accumulated_damage = 0.0;
+        let damage_modifier = attacker
+            .and_then(|a| a.stats)
+            .map_or(1.0, |s| s.attack_damage_modifier);
+        for damage in self
+            .damages
+            .iter()
+            .filter(|d| {
+                allow_friendly_fire
+                    || d.target
+                        .is_none_or(|t| t == GroupTarget::All || t == target_group)
+            })
+            .filter(|d| !avoid_damage(d))
+        {
+            let damage_instance = damage.instance + damage_instance_offset;
+            is_applied = true;
+
+            let damage_reduction =
+                Attack::compute_damage_reduction(attacker.as_ref(), target, damage.damage, msm);
+
+            let damage_with_modifier = damage.damage.value * strength_modifier * damage_modifier;
+            let damage_with_precision = damage_with_modifier
+                * (1.0 + precision_mult.unwrap_or(0.0) * (precision_power - 1.0));
+
+            let block_damage_decrement = Attack::compute_block_damage_decrement(
+                self.blockable,
+                attacker.as_ref(),
+                target,
+                attack_source,
+                dir,
+                damage_with_precision,
+                msm,
+                time,
+                emitters,
+                &mut emit_outcome,
+            );
+
+            let change = damage.damage.calculate_health_change(
+                damage_reduction,
+                block_damage_decrement,
+                attacker.map(|x| x.into()),
+                precision_mult,
+                precision_power,
+                strength_modifier * damage_modifier,
+                time,
+                damage_instance,
+                DamageSource::from(attack_source),
+            );
+            let applied_damage = -change.amount;
+            accumulated_damage += applied_damage;
+
+            if change.amount.abs() > Health::HEALTH_EPSILON {
+                emitters.emit(HealthChangeEvent {
+                    entity: target.entity,
+                    change,
+                });
+                match damage.damage.kind {
+                    DamageKind::Slashing => {
+                        // For slashing damage, reduce target energy by some fraction of applied
+                        // damage. When target would lose more energy than they have, deal an
+                        // equivalent amount of damage
+                        if let Some(target_energy) = target.energy {
+                            let energy_change = applied_damage * SLASHING_ENERGY_FRACTION;
+                            if energy_change > target_energy.current() {
+                                let health_damage = energy_change - target_energy.current();
+                                accumulated_damage += health_damage;
+                                let health_change = HealthChange {
+                                    amount: -health_damage,
+                                    by: attacker.map(|x| x.into()),
+                                    cause: Some(DamageSource::from(attack_source)),
+                                    time,
+                                    precise: precision_mult.is_some(),
+                                    instance: damage_instance,
+                                };
+                                emitters.emit(HealthChangeEvent {
+                                    entity: target.entity,
+                                    change: health_change,
+                                });
+                            }
+                            emitters.emit(EnergyChangeEvent {
+                                entity: target.entity,
+                                change: -energy_change,
+                                reset_rate: false,
+                            });
+                        }
+                    },
+                    DamageKind::Crushing => {
+                        // For crushing damage, reduce target poise by some fraction of the amount
+                        // of damage that was reduced by target's protection
+                        // Damage reduction should never equal 1 here as otherwise the check above
+                        // that health change amount is greater than 0 would fail.
+                        let reduced_damage =
+                            applied_damage * damage_reduction / (1.0 - damage_reduction);
+                        let poise = reduced_damage
+                            * CRUSHING_POISE_FRACTION
+                            * attacker
+                                .and_then(|a| a.stats)
+                                .map_or(1.0, |s| s.poise_damage_modifier);
+                        let change = -Poise::apply_poise_reduction(
+                            poise,
+                            target.inventory,
+                            msm,
+                            target.char_state,
+                            target.stats,
+                        );
+                        let poise_change = PoiseChange {
+                            amount: change,
+                            impulse: *dir,
+                            by: attacker.map(|x| x.into()),
+                            cause: Some(DamageSource::from(attack_source)),
+                            time,
+                        };
+                        if change.abs() > Poise::POISE_EPSILON {
+                            // If target is in a stunned state, apply extra poise damage as health
+                            // damage instead
+                            if let Some(CharacterState::Stunned(data)) = target.char_state {
+                                let health_change =
+                                    change * data.static_data.poise_state.damage_multiplier();
+                                let health_change = HealthChange {
+                                    amount: health_change,
+                                    by: attacker.map(|x| x.into()),
+                                    cause: Some(DamageSource::from(attack_source)),
+                                    instance: damage_instance,
+                                    precise: precision_mult.is_some(),
+                                    time,
+                                };
+                                accumulated_damage -= health_change.amount;
+                                emitters.emit(HealthChangeEvent {
+                                    entity: target.entity,
+                                    change: health_change,
+                                });
+                            } else {
+                                emitters.emit(PoiseChangeEvent {
+                                    entity: target.entity,
+                                    change: poise_change,
+                                });
+                            }
+                        }
+                    },
+                    // Piercing damage ignores some penetration, and is handled when damage
+                    // reduction is computed Energy is a placeholder damage type
+                    DamageKind::Piercing | DamageKind::Energy => {},
+                }
+                for effect in damage.effects.iter() {
+                    match effect {
+                        CombatEffect::Knockback(kb) => {
+                            let impulse = kb.calculate_impulse(
+                                dir,
+                                target.char_state,
+                                attacker.and_then(|a| a.stats),
+                            ) * strength_modifier;
+                            if !impulse.is_approx_zero() {
+                                emitters.emit(KnockbackEvent {
+                                    entity: target.entity,
+                                    impulse,
+                                });
+                            }
+                        },
+                        CombatEffect::EnergyReward(ec) => {
+                            if let Some(attacker) = attacker {
+                                emitters.emit(EnergyChangeEvent {
+                                    entity: attacker.entity,
+                                    change: *ec
+                                        * compute_energy_reward_mod(attacker.inventory, msm)
+                                        * strength_modifier
+                                        * attacker.stats.map_or(1.0, |s| s.energy_reward_modifier)
+                                        * attacked_modifiers.energy_reward,
+                                    reset_rate: false,
+                                });
+                            }
+                        },
+                        CombatEffect::Buff(b) => {
+                            if rng.random::<f32>() < b.chance {
+                                emitters.emit(BuffEvent {
+                                    entity: target.entity,
+                                    buff_change: BuffChange::Add(b.to_buff(
+                                        time,
+                                        (attacker.map(|a| a.uid), attacker.and_then(|a| a.mass)),
+                                        (target.stats, target.mass),
+                                        applied_damage,
+                                        strength_modifier,
+                                        self.ability_info,
+                                    )),
+                                });
+                            }
+                        },
+                        CombatEffect::Lifesteal(l) => {
+                            if let Some(attacker_entity) = attacker.map(|a| a.entity) {
+                                let change = HealthChange {
+                                    amount: applied_damage * l * strength_modifier,
+                                    by: attacker.map(|a| a.into()),
+                                    cause: None,
+                                    time,
+                                    precise: false,
+                                    instance: rand::random(),
+                                };
+                                if change.amount.abs() > Health::HEALTH_EPSILON {
+                                    emitters.emit(HealthChangeEvent {
+                                        entity: attacker_entity,
+                                        change,
+                                    });
+                                }
+                            }
+                        },
+                        CombatEffect::Poise(p) => {
+                            let change = -Poise::apply_poise_reduction(
+                                *p,
+                                target.inventory,
+                                msm,
+                                target.char_state,
+                                target.stats,
+                            ) * strength_modifier
+                                * attacker
+                                    .and_then(|a| a.stats)
+                                    .map_or(1.0, |s| s.poise_damage_modifier);
+                            if change.abs() > Poise::POISE_EPSILON {
+                                let poise_change = PoiseChange {
+                                    amount: change,
+                                    impulse: *dir,
+                                    by: attacker.map(|x| x.into()),
+                                    cause: Some(DamageSource::from(attack_source)),
+                                    time,
+                                };
+                                emitters.emit(PoiseChangeEvent {
+                                    entity: target.entity,
+                                    change: poise_change,
+                                });
+                            }
+                        },
+                        CombatEffect::Heal(h) => {
+                            let change = HealthChange {
+                                amount: *h * strength_modifier,
+                                by: attacker.map(|a| a.into()),
+                                cause: None,
+                                time,
+                                precise: false,
+                                instance: rand::random(),
+                            };
+                            if change.amount.abs() > Health::HEALTH_EPSILON {
+                                emitters.emit(HealthChangeEvent {
+                                    entity: target.entity,
+                                    change,
+                                });
+                            }
+                        },
+                        CombatEffect::Combo(c) => {
+                            if let Some(attacker_entity) = attacker.map(|a| a.entity) {
+                                emitters.emit(ComboChangeEvent {
+                                    entity: attacker_entity,
+                                    change: (*c as f32 * strength_modifier).ceil() as i32,
+                                });
+                            }
+                        },
+                        CombatEffect::AdditionalDamage(damage) => {
+                            let change = {
+                                let mut change = change;
+                                change.amount *= damage * strength_modifier;
+                                change.instance = rand::random();
+                                change
+                            };
+                            accumulated_damage -= change.amount;
+                            emitters.emit(HealthChangeEvent {
+                                entity: target.entity,
+                                change,
+                            });
+                        },
+                        CombatEffect::RefreshBuff(chance, b) => {
+                            if rng.random::<f32>() < *chance {
+                                emitters.emit(BuffEvent {
+                                    entity: target.entity,
+                                    buff_change: BuffChange::Refresh(*b),
+                                });
+                            }
+                        },
+                        CombatEffect::SelfBuff(b) => {
+                            if let Some(attacker) = attacker
+                                && rng.random::<f32>() < b.chance
+                            {
+                                emitters.emit(BuffEvent {
+                                    entity: attacker.entity,
+                                    buff_change: BuffChange::Add(b.to_self_buff(
+                                        time,
+                                        (Some(attacker.uid), attacker.stats, attacker.mass),
+                                        applied_damage,
+                                        strength_modifier,
+                                        self.ability_info,
+                                    )),
+                                });
+                            }
+                        },
+                        CombatEffect::Energy(e) => {
+                            emitters.emit(EnergyChangeEvent {
+                                entity: target.entity,
+                                change: e * strength_modifier,
+                                reset_rate: true,
+                            });
+                        },
+                        CombatEffect::Transform {
+                            entity_spec,
+                            allow_players,
+                        } => {
+                            if target.player.is_none() || *allow_players {
+                                emitters.emit(TransformEvent {
+                                    target_entity: target.uid,
+                                    entity_info: {
+                                        let Ok(entity_config) = Ron::<EntityConfig>::load(
+                                            entity_spec,
+                                        )
+                                        .inspect_err(|error| {
+                                            error!(
+                                                ?entity_spec,
+                                                ?error,
+                                                "Could not load entity configuration for death \
+                                                 effect"
+                                            )
+                                        }) else {
+                                            continue;
+                                        };
+
+                                        EntityInfo::at(target.pos).with_entity_config(
+                                            entity_config.read().clone().into_inner(),
+                                            Some(entity_spec),
+                                            rng,
+                                            None,
+                                        )
+                                    },
+                                    allow_players: *allow_players,
+                                    delete_on_failure: false,
+                                });
+                            }
+                        },
+                        CombatEffect::DebuffsVulnerable {
+                            mult,
+                            scaling,
+                            filter_attacker,
+                            filter_weapon,
+                        } => {
+                            if let Some(buffs) = target.buffs {
+                                let num_debuffs = buffs.iter_active().flatten().filter(|b| {
+                                    let debuff_filter = matches!(b.kind.differentiate(), BuffDescriptor::SimpleNegative);
+                                    let attacker_filter = !filter_attacker || matches!(b.source, BuffSource::Character { by, .. } if Some(by) == attacker.map(|a| a.uid));
+                                    let weapon_filter = filter_weapon.is_none_or(|w| matches!(b.source, BuffSource::Character { tool_kind, .. } if Some(w) == tool_kind));
+                                    debuff_filter && attacker_filter && weapon_filter
+                                }).count();
+                                if num_debuffs > 0 {
+                                    let change = {
+                                        let mut change = change;
+                                        change.amount *= scaling.factor(num_debuffs as f32, 1.0)
+                                            * mult
+                                            * strength_modifier;
+                                        change.instance = rand::random();
+                                        change
+                                    };
+                                    accumulated_damage -= change.amount;
+                                    emitters.emit(HealthChangeEvent {
+                                        entity: target.entity,
+                                        change,
+                                    });
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+        }
+        for effect in self
+            .effects
+            .iter()
+            .chain(
+                attacker
+                    .and_then(|a| a.stats)
+                    .map(|s| s.effects_on_attack.iter())
+                    .into_iter()
+                    .flatten(),
+            )
+            .filter(|e| {
+                allow_friendly_fire
+                    || e.target
+                        .is_none_or(|t| t == GroupTarget::All || t == target_group)
+            })
+            .filter(|e| !avoid_effect(e))
+        {
+            let requirements_met = effect.requirements.iter().all(|req| {
+                req.requirement_met(
+                    (
+                        target.health,
+                        target.buffs,
+                        target.char_state,
+                        target.ori,
+                        Some(target.uid),
+                    ),
+                    (
+                        attacker.map(|a| a.entity),
+                        attacker.and_then(|a| a.energy),
+                        attacker.and_then(|a| a.combo),
+                    ),
+                    attacker.map(|a| a.uid),
+                    accumulated_damage,
+                    emitters,
+                    dir,
+                    Some(attack_source),
+                    self.ability_info,
+                )
+            });
+            if requirements_met {
+                let mut strength_modifier = strength_modifier;
+                for modification in effect.modifications.iter() {
+                    modification.apply_mod(
+                        attacker.and_then(|a| a.pos),
+                        Some(target.pos),
+                        &mut strength_modifier,
+                    );
+                }
+                let strength_modifier = strength_modifier;
+                is_applied = true;
+                match &effect.effect {
+                    CombatEffect::Knockback(kb) => {
+                        let impulse = kb.calculate_impulse(
+                            dir,
+                            target.char_state,
+                            attacker.and_then(|a| a.stats),
+                        ) * strength_modifier;
+                        if !impulse.is_approx_zero() {
+                            emitters.emit(KnockbackEvent {
+                                entity: target.entity,
+                                impulse,
+                            });
+                        }
+                    },
+                    CombatEffect::EnergyReward(ec) => {
+                        if let Some(attacker) = attacker {
+                            emitters.emit(EnergyChangeEvent {
+                                entity: attacker.entity,
+                                change: ec
+                                    * compute_energy_reward_mod(attacker.inventory, msm)
+                                    * strength_modifier
+                                    * attacker.stats.map_or(1.0, |s| s.energy_reward_modifier)
+                                    * attacked_modifiers.energy_reward,
+                                reset_rate: false,
+                            });
+                        }
+                    },
+                    CombatEffect::Buff(b) => {
+                        if rng.random::<f32>() < b.chance {
+                            emitters.emit(BuffEvent {
+                                entity: target.entity,
+                                buff_change: BuffChange::Add(b.to_buff(
+                                    time,
+                                    (attacker.map(|a| a.uid), attacker.and_then(|a| a.mass)),
+                                    (target.stats, target.mass),
+                                    accumulated_damage,
+                                    strength_modifier,
+                                    self.ability_info,
+                                )),
+                            });
+                        }
+                    },
+                    CombatEffect::Lifesteal(l) => {
+                        if let Some(attacker_entity) = attacker.map(|a| a.entity) {
+                            let change = HealthChange {
+                                amount: accumulated_damage * l * strength_modifier,
+                                by: attacker.map(|a| a.into()),
+                                cause: None,
+                                time,
+                                precise: false,
+                                instance: rand::random(),
+                            };
+                            if change.amount.abs() > Health::HEALTH_EPSILON {
+                                emitters.emit(HealthChangeEvent {
+                                    entity: attacker_entity,
+                                    change,
+                                });
+                            }
+                        }
+                    },
+                    CombatEffect::Poise(p) => {
+                        let change = -Poise::apply_poise_reduction(
+                            *p,
+                            target.inventory,
+                            msm,
+                            target.char_state,
+                            target.stats,
+                        ) * strength_modifier
+                            * attacker
+                                .and_then(|a| a.stats)
+                                .map_or(1.0, |s| s.poise_damage_modifier);
+                        if change.abs() > Poise::POISE_EPSILON {
+                            let poise_change = PoiseChange {
+                                amount: change,
+                                impulse: *dir,
+                                by: attacker.map(|x| x.into()),
+                                cause: Some(attack_source.into()),
+                                time,
+                            };
+                            emitters.emit(PoiseChangeEvent {
+                                entity: target.entity,
+                                change: poise_change,
+                            });
+                        }
+                    },
+                    CombatEffect::Heal(h) => {
+                        let change = HealthChange {
+                            amount: h * strength_modifier,
+                            by: attacker.map(|a| a.into()),
+                            cause: None,
+                            time,
+                            precise: false,
+                            instance: rand::random(),
+                        };
+                        if change.amount.abs() > Health::HEALTH_EPSILON {
+                            emitters.emit(HealthChangeEvent {
+                                entity: target.entity,
+                                change,
+                            });
+                        }
+                    },
+                    CombatEffect::Combo(c) => {
+                        if let Some(attacker_entity) = attacker.map(|a| a.entity) {
+                            emitters.emit(ComboChangeEvent {
+                                entity: attacker_entity,
+                                change: (*c as f32 * strength_modifier).ceil() as i32,
+                            });
+                        }
+                    },
+                    CombatEffect::AdditionalDamage(damage) => {
+                        let change = HealthChange {
+                            amount: -accumulated_damage * damage * strength_modifier,
+                            by: attacker.map(|a| a.into()),
+                            cause: Some(DamageSource::from(attack_source)),
+                            time,
+                            precise: precision_mult.is_some(),
+                            instance: rand::random(),
+                        };
+                        accumulated_damage -= change.amount;
+                        emitters.emit(HealthChangeEvent {
+                            entity: target.entity,
+                            change,
+                        });
+                    },
+                    CombatEffect::RefreshBuff(chance, b) => {
+                        if rng.random::<f32>() < *chance {
+                            emitters.emit(BuffEvent {
+                                entity: target.entity,
+                                buff_change: BuffChange::Refresh(*b),
+                            });
+                        }
+                    },
+                    CombatEffect::SelfBuff(b) => {
+                        if let Some(attacker) = attacker
+                            && rng.random::<f32>() < b.chance
+                        {
+                            emitters.emit(BuffEvent {
+                                entity: attacker.entity,
+                                buff_change: BuffChange::Add(b.to_self_buff(
+                                    time,
+                                    (Some(attacker.uid), attacker.stats, attacker.mass),
+                                    accumulated_damage,
+                                    strength_modifier,
+                                    self.ability_info,
+                                )),
+                            });
+                        }
+                    },
+                    CombatEffect::Energy(e) => {
+                        emitters.emit(EnergyChangeEvent {
+                            entity: target.entity,
+                            change: e * strength_modifier,
+                            reset_rate: true,
+                        });
+                    },
+                    CombatEffect::Transform {
+                        entity_spec,
+                        allow_players,
+                    } => {
+                        if target.player.is_none() || *allow_players {
+                            emitters.emit(TransformEvent {
+                                target_entity: target.uid,
+                                entity_info: {
+                                    let Ok(entity_config) = Ron::<EntityConfig>::load(entity_spec)
+                                        .inspect_err(|error| {
+                                            error!(
+                                                ?entity_spec,
+                                                ?error,
+                                                "Could not load entity configuration for death \
+                                                 effect"
+                                            )
+                                        })
+                                    else {
+                                        continue;
+                                    };
+
+                                    EntityInfo::at(target.pos).with_entity_config(
+                                        entity_config.read().clone().into_inner(),
+                                        Some(entity_spec),
+                                        rng,
+                                        None,
+                                    )
+                                },
+                                allow_players: *allow_players,
+                                delete_on_failure: false,
+                            });
+                        }
+                    },
+                    CombatEffect::DebuffsVulnerable {
+                        mult,
+                        scaling,
+                        filter_attacker,
+                        filter_weapon,
+                    } => {
+                        if let Some(buffs) = target.buffs {
+                            let num_debuffs = buffs.iter_active().flatten().filter(|b| {
+                                let debuff_filter = matches!(b.kind.differentiate(), BuffDescriptor::SimpleNegative);
+                                let attacker_filter = !filter_attacker || matches!(b.source, BuffSource::Character { by, .. } if Some(by) == attacker.map(|a| a.uid));
+                                let weapon_filter = filter_weapon.is_none_or(|w| matches!(b.source, BuffSource::Character { tool_kind, .. } if Some(w) == tool_kind));
+                                debuff_filter && attacker_filter && weapon_filter
+                            }).count();
+                            if num_debuffs > 0 {
+                                let change = HealthChange {
+                                    amount: -accumulated_damage
+                                        * scaling.factor(num_debuffs as f32, 1.0)
+                                        * mult
+                                        * strength_modifier,
+                                    by: attacker.map(|a| a.into()),
+                                    cause: Some(DamageSource::from(attack_source)),
+                                    time,
+                                    precise: precision_mult.is_some(),
+                                    instance: rand::random(),
+                                };
+                                accumulated_damage -= change.amount;
+                                emitters.emit(HealthChangeEvent {
+                                    entity: target.entity,
+                                    change,
+                                });
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        // Emits event to handle things that should happen for any successful attack,
+        // regardless of if the attack had any damages or effects in it
+        if is_applied {
+            emitters.emit(EntityAttackedHookEvent {
+                entity: target.entity,
+                attacker: attacker.map(|a| a.entity),
+                attack_dir: dir,
+                damage_dealt: accumulated_damage,
+                attack_source,
+            });
+        }
+        is_applied
+    }
+}
+
+pub fn allow_friendly_fire(
+    entered_auras: &ReadStorage<EnteredAuras>,
+    attacker: EcsEntity,
+    target: EcsEntity,
+) -> bool {
+    entered_auras
+        .get(attacker)
+        .zip(entered_auras.get(target))
+        .and_then(|(attacker, target)| {
+            Some((
+                attacker.auras.get(&AuraKindVariant::FriendlyFire)?,
+                target.auras.get(&AuraKindVariant::FriendlyFire)?,
+            ))
+        })
+        // Only allow friendly fire if both entities are affectd by the same FriendlyFire aura
+        .is_some_and(|(attacker, target)| attacker.intersection(target).next().is_some())
+}
+
+/// Function that checks for unintentional PvP between players.
+///
+/// Returns `false` if attack will create unintentional conflict,
+/// e.g. if player with PvE mode will harm pets of other players
+/// or other players will do the same to such player.
+///
+/// If both players have PvP mode enabled, interact with NPC and
+/// in any other case, this function will return `true`
+// TODO: add parameter for doing self-harm?
+pub fn permit_pvp(
+    alignments: &ReadStorage<Alignment>,
+    players: &ReadStorage<Player>,
+    entered_auras: &ReadStorage<EnteredAuras>,
+    id_maps: &IdMaps,
+    attacker: Option<EcsEntity>,
+    target: EcsEntity,
+) -> bool {
+    // Return owner entity if pet,
+    // or just return entity back otherwise
+    let owner_if_pet = |entity| {
+        let alignment = alignments.get(entity).copied();
+        if let Some(Alignment::Owned(uid)) = alignment {
+            // return original entity
+            // if can't get owner
+            id_maps.uid_entity(uid).unwrap_or(entity)
+        } else {
+            entity
+        }
+    };
+
+    // Just return ok if attacker is unknown, it's probably
+    // environment or command.
+    let attacker = match attacker {
+        Some(attacker) => attacker,
+        None => return true,
+    };
+
+    // "Dereference" to owner if this is a pet.
+    let attacker_owner = owner_if_pet(attacker);
+    let target_owner = owner_if_pet(target);
+
+    // If both players are in the same ForcePvP aura, allow them to harm eachother
+    if let (Some(attacker_auras), Some(target_auras)) = (
+        entered_auras.get(attacker_owner),
+        entered_auras.get(target_owner),
+    ) && attacker_auras
+        .auras
+        .get(&AuraKindVariant::ForcePvP)
+        .zip(target_auras.auras.get(&AuraKindVariant::ForcePvP))
+        // Only allow forced pvp if both entities are affectd by the same FriendlyFire aura
+        .is_some_and(|(attacker, target)| attacker.intersection(target).next().is_some())
+    {
+        return true;
+    }
+
+    // Prevent PvP between pets, unless friendly fire is enabled
+    //
+    // This code is NOT intended to prevent pet <-> owner combat,
+    // pets and their owners being in the same group should take care of that
+    if attacker_owner == target_owner {
+        return allow_friendly_fire(entered_auras, attacker, target);
+    }
+
+    // Get player components
+    let attacker_info = players.get(attacker_owner);
+    let target_info = players.get(target_owner);
+
+    // Return `true` if not players.
+    attacker_info
+        .zip(target_info)
+        .is_none_or(|(a, t)| a.may_harm(t))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttackDamage {
+    damage: Damage,
+    target: Option<GroupTarget>,
+    effects: Vec<CombatEffect>,
+    /// A random ID, used to group up attacks
+    instance: u64,
+}
+
+impl AttackDamage {
+    pub fn new(damage: Damage, target: Option<GroupTarget>, instance: u64) -> Self {
+        Self {
+            damage,
+            target,
+            effects: Vec::new(),
+            instance,
+        }
+    }
+
+    #[must_use]
+    pub fn with_effect(mut self, effect: CombatEffect) -> Self {
+        self.effects.push(effect);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AttackEffect {
+    target: Option<GroupTarget>,
+    effect: CombatEffect,
+    requirements: Vec<CombatRequirement>,
+    modifications: Vec<CombatModification>,
+}
+
+impl AttackEffect {
+    pub fn new(target: Option<GroupTarget>, effect: CombatEffect) -> Self {
+        Self {
+            target,
+            effect,
+            requirements: Vec::new(),
+            modifications: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_requirement(mut self, requirement: CombatRequirement) -> Self {
+        self.requirements.push(requirement);
+        self
+    }
+
+    #[must_use]
+    pub fn with_modification(mut self, modification: CombatModification) -> Self {
+        self.modifications.push(modification);
+        self
+    }
+
+    pub fn effect(&self) -> &CombatEffect { &self.effect }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct StatEffect {
+    pub target: StatEffectTarget,
+    pub effect: CombatEffect,
+    requirements: Vec<CombatRequirement>,
+    modifications: Vec<CombatModification>,
+}
+
+impl StatEffect {
+    pub fn new(target: StatEffectTarget, effect: CombatEffect) -> Self {
+        Self {
+            target,
+            effect,
+            requirements: Vec::new(),
+            modifications: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_requirement(mut self, requirement: CombatRequirement) -> Self {
+        self.requirements.push(requirement);
+        self
+    }
+
+    #[must_use]
+    pub fn with_modification(mut self, modification: CombatModification) -> Self {
+        self.modifications.push(modification);
+        self
+    }
+
+    pub fn requirements(&self) -> impl Iterator<Item = &CombatRequirement> {
+        self.requirements.iter()
+    }
+
+    pub fn modifications(&self) -> impl Iterator<Item = &CombatModification> {
+        self.modifications.iter()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum CombatEffect {
+    Heal(f32),
+    Buff(CombatBuff),
+    Knockback(Knockback),
+    EnergyReward(f32),
+    Lifesteal(f32),
+    Poise(f32),
+    Combo(i32),
+    /// Intended to be used when gating additional damage behind some
+    /// requirement
+    AdditionalDamage(f32),
+    /// Resets duration of all buffs of this buffkind, with some probability
+    RefreshBuff(f32, BuffKind),
+    /// Applies buff to yourself after attack is applied
+    SelfBuff(CombatBuff),
+    /// Changes energy of target
+    Energy(f32),
+    /// String is the entity_spec
+    Transform {
+        entity_spec: String,
+        /// Whether this effect applies to players or not
+        #[serde(default)]
+        allow_players: bool,
+    },
+    /// If the target hit by an attack has debuffs, they will take increased
+    /// damage scaling with the number of active debuffs they have
+    DebuffsVulnerable {
+        mult: f32,
+        scaling: ScalingKind,
+        /// Should debuffs only be counted if they were inflicted by the
+        /// attacker
+        filter_attacker: bool,
+        /// Should debuffs only be counted if they were inflicted by a specific
+        /// weapon
+        filter_weapon: Option<ToolKind>,
+    },
+}
+
+impl CombatEffect {
+    pub fn apply_multiplier(self, mult: f32) -> Self {
+        match self {
+            CombatEffect::Heal(h) => CombatEffect::Heal(h * mult),
+            CombatEffect::Buff(CombatBuff {
+                kind,
+                dur_secs,
+                strength,
+                chance,
+            }) => CombatEffect::Buff(CombatBuff {
+                kind,
+                dur_secs,
+                strength: strength * mult,
+                chance,
+            }),
+            CombatEffect::Knockback(Knockback {
+                direction,
+                strength,
+            }) => CombatEffect::Knockback(Knockback {
+                direction,
+                strength: strength * mult,
+            }),
+            CombatEffect::EnergyReward(e) => CombatEffect::EnergyReward(e * mult),
+            CombatEffect::Lifesteal(l) => CombatEffect::Lifesteal(l * mult),
+            CombatEffect::Poise(p) => CombatEffect::Poise(p * mult),
+            CombatEffect::Combo(c) => CombatEffect::Combo((c as f32 * mult).ceil() as i32),
+            CombatEffect::AdditionalDamage(v) => CombatEffect::AdditionalDamage(v * mult),
+            CombatEffect::RefreshBuff(c, b) => CombatEffect::RefreshBuff(c, b),
+            CombatEffect::SelfBuff(CombatBuff {
+                kind,
+                dur_secs,
+                strength,
+                chance,
+            }) => CombatEffect::SelfBuff(CombatBuff {
+                kind,
+                dur_secs,
+                strength: strength * mult,
+                chance,
+            }),
+            CombatEffect::Energy(e) => CombatEffect::Energy(e * mult),
+            effect @ CombatEffect::Transform { .. } => effect,
+            CombatEffect::DebuffsVulnerable {
+                mult: a,
+                scaling,
+                filter_attacker,
+                filter_weapon,
+            } => CombatEffect::DebuffsVulnerable {
+                mult: a * mult,
+                scaling,
+                filter_attacker,
+                filter_weapon,
+            },
+        }
+    }
+
+    pub fn adjusted_by_stats(self, stats: tool::Stats) -> Self {
+        match self {
+            CombatEffect::Heal(h) => CombatEffect::Heal(h * stats.effect_power),
+            CombatEffect::Buff(CombatBuff {
+                kind,
+                dur_secs,
+                strength,
+                chance,
+            }) => CombatEffect::Buff(CombatBuff {
+                kind,
+                dur_secs,
+                strength: strength * stats.buff_strength,
+                chance,
+            }),
+            CombatEffect::Knockback(Knockback {
+                direction,
+                strength,
+            }) => CombatEffect::Knockback(Knockback {
+                direction,
+                strength: strength * stats.effect_power,
+            }),
+            CombatEffect::EnergyReward(e) => CombatEffect::EnergyReward(e),
+            CombatEffect::Lifesteal(l) => CombatEffect::Lifesteal(l * stats.effect_power),
+            CombatEffect::Poise(p) => CombatEffect::Poise(p * stats.effect_power),
+            CombatEffect::Combo(c) => CombatEffect::Combo(c),
+            CombatEffect::AdditionalDamage(v) => {
+                CombatEffect::AdditionalDamage(v * stats.effect_power)
+            },
+            CombatEffect::RefreshBuff(c, b) => CombatEffect::RefreshBuff(c, b),
+            CombatEffect::SelfBuff(CombatBuff {
+                kind,
+                dur_secs,
+                strength,
+                chance,
+            }) => CombatEffect::SelfBuff(CombatBuff {
+                kind,
+                dur_secs,
+                strength: strength * stats.buff_strength,
+                chance,
+            }),
+            CombatEffect::Energy(e) => CombatEffect::Energy(e * stats.effect_power),
+            effect @ CombatEffect::Transform { .. } => effect,
+            CombatEffect::DebuffsVulnerable {
+                mult,
+                scaling,
+                filter_attacker,
+                filter_weapon,
+            } => CombatEffect::DebuffsVulnerable {
+                mult: mult * stats.effect_power,
+                scaling,
+                filter_attacker,
+                filter_weapon,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+struct AttackedModifiers {
+    energy_reward: f32,
+    damage_mult: f32,
+}
+
+impl Default for AttackedModifiers {
+    fn default() -> Self {
+        Self {
+            energy_reward: 1.0,
+            damage_mult: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AttackedModification {
+    modifier: AttackedModifier,
+    requirements: Vec<CombatRequirement>,
+    modifications: Vec<CombatModification>,
+}
+
+impl AttackedModification {
+    pub fn new(modifier: AttackedModifier) -> Self {
+        Self {
+            modifier,
+            requirements: Vec::new(),
+            modifications: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_requirement(mut self, requirement: CombatRequirement) -> Self {
+        self.requirements.push(requirement);
+        self
+    }
+
+    #[must_use]
+    pub fn with_modification(mut self, modification: CombatModification) -> Self {
+        self.modifications.push(modification);
+        self
+    }
+
+    fn attacked_modifiers(
+        target: &TargetInfo,
+        attacker: Option<AttackerInfo>,
+        emitters: &mut (impl EmitExt<EnergyChangeEvent> + EmitExt<ComboChangeEvent>),
+        dir: Dir,
+        attack_source: Option<AttackSource>,
+        ability_info: Option<AbilityInfo>,
+    ) -> AttackedModifiers {
+        if let Some(stats) = target.stats {
+            stats.attacked_modifications.iter().fold(
+                AttackedModifiers::default(),
+                |mut a_mods, a_mod| {
+                    let requirements_met = a_mod.requirements.iter().all(|req| {
+                        req.requirement_met(
+                            (
+                                target.health,
+                                target.buffs,
+                                target.char_state,
+                                target.ori,
+                                Some(target.uid),
+                            ),
+                            (
+                                attacker.map(|a| a.entity),
+                                attacker.and_then(|a| a.energy),
+                                attacker.and_then(|a| a.combo),
+                            ),
+                            attacker.map(|a| a.uid),
+                            0.0, /* When we call this function, no damage has been
+                                  * calculated yet, so the AnyDamage requirement is
+                                  * effectively broken, not sure if this will be issue in
+                                  * future? */
+                            emitters,
+                            dir,
+                            attack_source,
+                            ability_info,
+                        )
+                    });
+
+                    let mut strength_modifier = 1.0;
+                    for modification in a_mod.modifications.iter() {
+                        modification.apply_mod(
+                            attacker.and_then(|a| a.pos),
+                            Some(target.pos),
+                            &mut strength_modifier,
+                        );
+                    }
+                    let strength_modifier = strength_modifier;
+
+                    if requirements_met {
+                        match a_mod.modifier {
+                            AttackedModifier::EnergyReward(er) => {
+                                a_mods.energy_reward *= 1.0 + (er * strength_modifier);
+                            },
+                            AttackedModifier::DamageMultiplier(dm) => {
+                                a_mods.damage_mult *= 1.0 + (dm * strength_modifier);
+                            },
+                        }
+                    }
+
+                    a_mods
+                },
+            )
+        } else {
+            AttackedModifiers::default()
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum AttackedModifier {
+    EnergyReward(f32),
+    DamageMultiplier(f32),
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum CombatRequirement {
+    AnyDamage,
+    Energy(f32),
+    Combo(u32),
+    TargetHasBuff(BuffKind),
+    TargetPoised,
+    BehindTarget,
+    TargetBlocking,
+    TargetUnwielded,
+    AttackSource(AttackSource),
+    AttackInput(InputKind),
+    Attacker(Uid),
+    Target(Uid),
+    StageSection(StageSection),
+}
+
+impl CombatRequirement {
+    pub fn requirement_met(
+        &self,
+        target: (
+            Option<&Health>,
+            Option<&Buffs>,
+            Option<&CharacterState>,
+            Option<&Ori>,
+            Option<Uid>,
+        ),
+        // originator refers to the cause of the effect that requirements are being checked for.
+        // For combat effects on an attack this will be the attacker, for damaged and death effects
+        // this will be the target.
+        originator: (Option<EcsEntity>, Option<&Energy>, Option<&Combo>),
+        attacker: Option<Uid>,
+        damage: f32,
+        emitters: &mut (impl EmitExt<EnergyChangeEvent> + EmitExt<ComboChangeEvent>),
+        dir: Dir,
+        attack_source: Option<AttackSource>,
+        ability_info: Option<AbilityInfo>,
+    ) -> bool {
+        let (target_health, target_buffs, target_char_state, target_ori, target_uid) = target;
+        let (originator_entity, originator_energy, originator_combo) = originator;
+        match self {
+            CombatRequirement::AnyDamage => {
+                damage > Health::HEALTH_EPSILON && target_health.is_some()
+            },
+            CombatRequirement::Energy(r) => {
+                if let (Some(entity), Some(energy)) = (originator_entity, originator_energy) {
+                    let sufficient_energy = energy.current() >= *r;
+                    if sufficient_energy {
+                        emitters.emit(EnergyChangeEvent {
+                            entity,
+                            change: -*r,
+                            reset_rate: false,
+                        });
+                    }
+
+                    sufficient_energy
+                } else {
+                    false
+                }
+            },
+            CombatRequirement::Combo(r) => {
+                if let (Some(entity), Some(combo)) = (originator_entity, originator_combo) {
+                    let sufficient_combo = combo.counter() >= *r;
+                    if sufficient_combo {
+                        emitters.emit(ComboChangeEvent {
+                            entity,
+                            change: -(*r as i32),
+                        });
+                    }
+
+                    sufficient_combo
+                } else {
+                    false
+                }
+            },
+            CombatRequirement::TargetHasBuff(buff) => {
+                target_buffs.is_some_and(|buffs| buffs.contains(*buff))
+            },
+            CombatRequirement::TargetPoised => target_char_state.is_some_and(|cs| cs.is_stunned()),
+            CombatRequirement::BehindTarget => {
+                if let Some(ori) = target_ori {
+                    ori.look_vec().angle_between(dir.with_z(0.0)) < BEHIND_TARGET_ANGLE.to_radians()
+                } else {
+                    false
+                }
+            },
+            CombatRequirement::TargetBlocking => target_char_state
+                .zip(attack_source)
+                .is_some_and(|(cs, attack)| cs.is_block(attack) || cs.is_parry(attack)),
+            CombatRequirement::TargetUnwielded => {
+                target_char_state.is_some_and(|cs| !cs.is_wield())
+            },
+            CombatRequirement::AttackSource(source) => attack_source == Some(*source),
+            CombatRequirement::AttackInput(input) => {
+                ability_info.is_some_and(|ai| ai.input == *input)
+            },
+            CombatRequirement::Attacker(uid) => Some(*uid) == attacker,
+            CombatRequirement::Target(uid) => Some(*uid) == target_uid,
+            CombatRequirement::StageSection(s) => {
+                Some(*s) == target_char_state.and_then(|cs| cs.stage_section())
+            },
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum CombatModification {
+    /// Linearly decreases effect strength starting with 1 strength at some
+    /// distance, ending at a minimum strength by some end distance
+    RangeWeakening {
+        start_dist: f32,
+        end_dist: f32,
+        min_str: f32,
+    },
+}
+
+impl CombatModification {
+    pub fn apply_mod(
+        &self,
+        attacker_pos: Option<Vec3<f32>>,
+        target_pos: Option<Vec3<f32>>,
+        strength_mod: &mut f32,
+    ) {
+        match self {
+            Self::RangeWeakening {
+                start_dist,
+                end_dist,
+                min_str,
+            } => {
+                if let Some((attacker_pos, target_pos)) = attacker_pos.zip(target_pos) {
+                    let dist = attacker_pos.distance(target_pos);
+                    // a = (y2 - y1) / (x2 - x1)
+                    let gradient = (*min_str - 1.0) / (end_dist - start_dist).max(0.1);
+                    // c = y2 - a*x1
+                    let intercept = 1.0 - gradient * start_dist;
+                    // y = clamp(a*x + c)
+                    let strength = (gradient * dist + intercept).clamp(*min_str, 1.0);
+                    *strength_mod *= strength;
+                }
+            },
+        }
+    }
+}
+
+/// Effects applied to the rider of this entity while riding.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RiderEffects(pub Vec<BuffEffect>);
+
+impl specs::Component for RiderEffects {
+    type Storage = specs::DenseVecStorage<RiderEffects>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// Permanent entity death effects (unlike `Stats::effects_on_death` which is
+/// only active as long as ie. it has a certain buff)
+pub struct DeathEffects(pub Vec<StatEffect>);
+
+impl specs::Component for DeathEffects {
+    type Storage = specs::DenseVecStorage<DeathEffects>;
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DamageContributor {
+    Solo(Uid),
+    Group { entity_uid: Uid, group: Group },
+}
+
+impl DamageContributor {
+    pub fn new(uid: Uid, group: Option<Group>) -> Self {
+        if let Some(group) = group {
+            DamageContributor::Group {
+                entity_uid: uid,
+                group,
+            }
+        } else {
+            DamageContributor::Solo(uid)
+        }
+    }
+
+    pub fn uid(&self) -> Uid {
+        match self {
+            DamageContributor::Solo(uid) => *uid,
+            DamageContributor::Group {
+                entity_uid,
+                group: _,
+            } => *entity_uid,
+        }
+    }
+}
+
+impl From<AttackerInfo<'_>> for DamageContributor {
+    fn from(attacker_info: AttackerInfo) -> Self {
+        DamageContributor::new(attacker_info.uid, attacker_info.group.copied())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DamageSource {
+    Buff(BuffKind),
+    Attack(AttackSource),
+    Falling,
+    Other,
+}
+
+impl From<AttackSource> for DamageSource {
+    fn from(attack: AttackSource) -> Self { DamageSource::Attack(attack) }
+}
+
+/// DamageKind for the purpose of differentiating damage reduction
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DamageKind {
+    /// Bypasses some protection from armor
+    Piercing,
+    /// Reduces energy of target, dealing additional damage when target energy
+    /// is 0
+    Slashing,
+    /// Deals additional poise damage the more armored the target is
+    Crushing,
+    /// Catch all for remaining damage kinds (TODO: differentiate further with
+    /// staff/sceptre reworks
+    Energy,
+}
+
+const PIERCING_PENETRATION_FRACTION: f32 = 0.75;
+const SLASHING_ENERGY_FRACTION: f32 = 0.5;
+const CRUSHING_POISE_FRACTION: f32 = 1.0;
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Damage {
+    pub kind: DamageKind,
+    pub value: f32,
+}
+
+impl Damage {
+    /// Returns the total damage reduction provided by all equipped items
+    pub fn compute_damage_reduction(
+        damage: Option<Self>,
+        inventory: Option<&Inventory>,
+        stats: Option<&Stats>,
+        msm: &MaterialStatManifest,
+    ) -> f32 {
+        let protection = compute_protection(inventory, msm);
+
+        let penetration = if let Some(damage) = damage {
+            if let DamageKind::Piercing = damage.kind {
+                (damage.value * PIERCING_PENETRATION_FRACTION)
+                    .clamp(0.0, protection.unwrap_or(0.0).max(0.0))
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let protection = protection.map(|p| p - penetration);
+
+        const FIFTY_PERCENT_DR_THRESHOLD: f32 = 60.0;
+
+        let inventory_dr = match protection {
+            Some(dr) => dr / (FIFTY_PERCENT_DR_THRESHOLD + dr.abs()),
+            None => 1.0,
+        };
+
+        let stats_dr = if let Some(stats) = stats {
+            stats.damage_reduction.modifier()
+        } else {
+            0.0
+        };
+        // Return 100% if either DR is at 100% (admin tabard or safezone buff)
+        if protection.is_none() || stats_dr >= 1.0 {
+            1.0
+        } else {
+            1.0 - (1.0 - inventory_dr) * (1.0 - stats_dr)
+        }
+    }
+
+    pub fn calculate_health_change(
+        self,
+        damage_reduction: f32,
+        block_damage_decrement: f32,
+        damage_contributor: Option<DamageContributor>,
+        precision_mult: Option<f32>,
+        precision_power: f32,
+        damage_modifier: f32,
+        time: Time,
+        instance: u64,
+        damage_source: DamageSource,
+    ) -> HealthChange {
+        let mut damage = self.value * damage_modifier;
+        let precise_damage = damage * precision_mult.unwrap_or(0.0) * (precision_power - 1.0);
+        match damage_source {
+            DamageSource::Attack(_) => {
+                // Precise hit
+                damage += precise_damage;
+                // Block
+                damage = f32::max(damage - block_damage_decrement, 0.0);
+                // Armor
+                damage *= 1.0 - damage_reduction;
+
+                HealthChange {
+                    amount: -damage,
+                    by: damage_contributor,
+                    cause: Some(damage_source),
+                    time,
+                    precise: precision_mult.is_some(),
+                    instance,
+                }
+            },
+            DamageSource::Falling => {
+                // Armor
+                if (damage_reduction - 1.0).abs() < f32::EPSILON {
+                    damage = 0.0;
+                }
+                HealthChange {
+                    amount: -damage,
+                    by: None,
+                    cause: Some(damage_source),
+                    time,
+                    precise: false,
+                    instance,
+                }
+            },
+            DamageSource::Buff(_) | DamageSource::Other => HealthChange {
+                amount: -damage,
+                by: None,
+                cause: Some(damage_source),
+                time,
+                precise: false,
+                instance,
+            },
+        }
+    }
+
+    pub fn interpolate_damage(&mut self, frac: f32, min: f32) {
+        let new_damage = min + frac * (self.value - min);
+        self.value = new_damage;
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Knockback {
+    pub direction: KnockbackDir,
+    pub strength: f32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KnockbackDir {
+    Away,
+    Towards,
+    Up,
+    TowardsUp,
+}
+
+impl Knockback {
+    pub fn calculate_impulse(
+        self,
+        dir: Dir,
+        tgt_char_state: Option<&CharacterState>,
+        attacker_stats: Option<&Stats>,
+    ) -> Vec3<f32> {
+        let from_char = {
+            let resistant = tgt_char_state
+                .and_then(|cs| cs.ability_info())
+                .map(|a| a.ability_meta)
+                .is_some_and(|a| a.capabilities.contains(Capability::KNOCKBACK_RESISTANT));
+            if resistant { 0.5 } else { 1.0 }
+        };
+        // TEMP: 50.0 multiplication kept until source knockback values have been
+        // updated
+        50.0 * self.strength
+            * from_char
+            * attacker_stats.map_or(1.0, |s| s.knockback_mult)
+            * match self.direction {
+                KnockbackDir::Away => *Dir::slerp(dir, Dir::new(Vec3::unit_z()), 0.5),
+                KnockbackDir::Towards => *Dir::slerp(-dir, Dir::new(Vec3::unit_z()), 0.5),
+                KnockbackDir::Up => Vec3::unit_z(),
+                KnockbackDir::TowardsUp => *Dir::slerp(-dir, Dir::new(Vec3::unit_z()), 0.85),
+            }
+    }
+
+    #[must_use]
+    pub fn modify_strength(mut self, power: f32) -> Self {
+        self.strength *= power;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CombatBuff {
+    pub kind: BuffKind,
+    pub dur_secs: Secs,
+    pub strength: CombatBuffStrength,
+    pub chance: f32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub enum CombatBuffStrength {
+    DamageFraction(f32),
+    Value(f32),
+}
+
+impl CombatBuffStrength {
+    fn to_strength(self, damage: f32, strength_modifier: f32) -> f32 {
+        match self {
+            // Not affected by strength modifier as damage already is
+            CombatBuffStrength::DamageFraction(f) => damage * f,
+            CombatBuffStrength::Value(v) => v * strength_modifier,
+        }
+    }
+}
+
+impl MulAssign<f32> for CombatBuffStrength {
+    fn mul_assign(&mut self, mul: f32) { *self = *self * mul; }
+}
+
+impl Mul<f32> for CombatBuffStrength {
+    type Output = Self;
+
+    fn mul(self, mult: f32) -> Self {
+        match self {
+            Self::DamageFraction(val) => Self::DamageFraction(val * mult),
+            Self::Value(val) => Self::Value(val * mult),
+        }
+    }
+}
+
+impl CombatBuff {
+    pub fn to_buff(
+        self,
+        time: Time,
+        attacker_info: (Option<Uid>, Option<&Mass>),
+        target_info: (Option<&Stats>, Option<&Mass>),
+        damage: f32,
+        strength_modifier: f32,
+        ability_info: Option<AbilityInfo>,
+    ) -> Buff {
+        let (attacker_uid, attacker_mass) = attacker_info;
+        let (target_stats, target_mass) = target_info;
+        // TODO: Generate BufCategoryId vec (probably requires damage overhaul?)
+        let source = if let Some(uid) = attacker_uid {
+            BuffSource::Character {
+                by: uid,
+                tool_kind: ability_info.and_then(|ai| ai.tool),
+            }
+        } else {
+            BuffSource::Unknown
+        };
+        let dest_info = DestInfo {
+            stats: target_stats,
+            mass: target_mass,
+        };
+        let target_uid = ability_info
+            .and_then(|ai| ai.input_attr)
+            .and_then(|ia| ia.target_entity);
+        Buff::new(
+            self.kind,
+            BuffData::new(
+                self.strength.to_strength(damage, strength_modifier),
+                Some(self.dur_secs),
+            ),
+            Vec::new(),
+            source,
+            time,
+            dest_info,
+            attacker_mass,
+            target_uid,
+        )
+    }
+
+    pub fn to_self_buff(
+        self,
+        time: Time,
+        entity_info: (Option<Uid>, Option<&Stats>, Option<&Mass>),
+        damage: f32,
+        strength_modifier: f32,
+        ability_info: Option<AbilityInfo>,
+    ) -> Buff {
+        let (entity_uid, entity_stats, entity_mass) = entity_info;
+        // TODO: Generate BufCategoryId vec (probably requires damage overhaul?)
+        let source = if let Some(uid) = entity_uid {
+            BuffSource::Character {
+                by: uid,
+                tool_kind: ability_info.and_then(|ai| ai.tool),
+            }
+        } else {
+            BuffSource::Unknown
+        };
+        let dest_info = DestInfo {
+            stats: entity_stats,
+            mass: entity_mass,
+        };
+        let target_uid = ability_info
+            .and_then(|ai| ai.input_attr)
+            .and_then(|ia| ia.target_entity);
+        Buff::new(
+            self.kind,
+            BuffData::new(
+                self.strength.to_strength(damage, strength_modifier),
+                Some(self.dur_secs),
+            ),
+            Vec::new(),
+            source,
+            time,
+            dest_info,
+            entity_mass,
+            target_uid,
+        )
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScalingKind {
+    Linear,
+    Sqrt,
+}
+
+impl ScalingKind {
+    pub fn factor(&self, val: f32, norm: f32) -> f32 {
+        match self {
+            Self::Linear => val / norm,
+            Self::Sqrt => (val / norm).sqrt(),
+        }
+    }
+}
+
+pub fn get_weapon_kinds(inv: &Inventory) -> (Option<ToolKind>, Option<ToolKind>) {
+    (
+        inv.equipped(EquipSlot::ActiveMainhand).and_then(|i| {
+            if let ItemKind::Tool(tool) = &*i.kind() {
+                Some(tool.kind)
+            } else {
+                None
+            }
+        }),
+        inv.equipped(EquipSlot::ActiveOffhand).and_then(|i| {
+            if let ItemKind::Tool(tool) = &*i.kind() {
+                Some(tool.kind)
+            } else {
+                None
+            }
+        }),
+    )
+}
+
+// TODO: Either remove msm or use it as argument in fn kind
+fn weapon_rating<T: ItemDesc>(item: &T, _msm: &MaterialStatManifest) -> f32 {
+    const POWER_WEIGHT: f32 = 2.0;
+    const SPEED_WEIGHT: f32 = 3.0;
+    const RANGE_WEIGHT: f32 = 0.8;
+    const EFFECT_WEIGHT: f32 = 1.5;
+    const EQUIP_TIME_WEIGHT: f32 = 0.0;
+    const ENERGY_EFFICIENCY_WEIGHT: f32 = 1.5;
+    const BUFF_STRENGTH_WEIGHT: f32 = 1.5;
+
+    let rating = if let ItemKind::Tool(tool) = &*item.kind() {
+        let stats = tool.stats(item.stats_durability_multiplier());
+
+        // TODO: Look into changing the 0.5 to reflect armor later maybe?
+        // Since it is only for weapon though, it probably makes sense to leave
+        // independent for now
+
+        let power_rating = stats.power;
+        let speed_rating = stats.speed - 1.0;
+        let range_rating = stats.range - 1.0;
+        let effect_rating = stats.effect_power - 1.0;
+        let equip_time_rating = 0.5 - stats.equip_time_secs;
+        let energy_efficiency_rating = stats.energy_efficiency - 1.0;
+        let buff_strength_rating = stats.buff_strength - 1.0;
+
+        power_rating * POWER_WEIGHT
+            + speed_rating * SPEED_WEIGHT
+            + range_rating * RANGE_WEIGHT
+            + effect_rating * EFFECT_WEIGHT
+            + equip_time_rating * EQUIP_TIME_WEIGHT
+            + energy_efficiency_rating * ENERGY_EFFICIENCY_WEIGHT
+            + buff_strength_rating * BUFF_STRENGTH_WEIGHT
+    } else {
+        0.0
+    };
+    rating.max(0.0)
+}
+
+fn weapon_skills(inventory: &Inventory, skill_set: &SkillSet) -> f32 {
+    let (mainhand, offhand) = get_weapon_kinds(inventory);
+    let mainhand_skills = if let Some(tool) = mainhand {
+        skill_set.earned_sp(SkillGroupKind::Weapon(tool)) as f32
+    } else {
+        0.0
+    };
+    let offhand_skills = if let Some(tool) = offhand {
+        skill_set.earned_sp(SkillGroupKind::Weapon(tool)) as f32
+    } else {
+        0.0
+    };
+    mainhand_skills.max(offhand_skills)
+}
+
+fn get_weapon_rating(inventory: &Inventory, msm: &MaterialStatManifest) -> f32 {
+    let mainhand_rating = if let Some(item) = inventory.equipped(EquipSlot::ActiveMainhand) {
+        weapon_rating(item, msm)
+    } else {
+        0.0
+    };
+
+    let offhand_rating = if let Some(item) = inventory.equipped(EquipSlot::ActiveOffhand) {
+        weapon_rating(item, msm)
+    } else {
+        0.0
+    };
+
+    mainhand_rating.max(offhand_rating)
+}
+
+pub fn combat_rating(
+    inventory: &Inventory,
+    health: &Health,
+    energy: &Energy,
+    poise: &Poise,
+    skill_set: &SkillSet,
+    body: Body,
+    msm: &MaterialStatManifest,
+) -> f32 {
+    const WEAPON_WEIGHT: f32 = 1.0;
+    const HEALTH_WEIGHT: f32 = 1.5;
+    const ENERGY_WEIGHT: f32 = 0.5;
+    const SKILLS_WEIGHT: f32 = 1.0;
+    const POISE_WEIGHT: f32 = 0.5;
+    const PRECISION_WEIGHT: f32 = 0.5;
+    // Normalized with a standard max health of 100
+    let health_rating = health.base_max()
+        / 100.0
+        / (1.0 - Damage::compute_damage_reduction(None, Some(inventory), None, msm)).max(0.00001);
+
+    // Normalized with a standard max energy of 100 and energy reward multiplier of
+    // x1
+    let energy_rating = (energy.base_max() + compute_max_energy_mod(Some(inventory), msm)) / 100.0
+        * compute_energy_reward_mod(Some(inventory), msm);
+
+    // Normalized with a standard max poise of 100
+    let poise_rating = poise.base_max()
+        / 100.0
+        / (1.0 - Poise::compute_poise_damage_reduction(Some(inventory), msm, None, None))
+            .max(0.00001);
+
+    // Normalized with a standard precision multiplier of 1.2
+    let precision_rating = compute_precision_mult(Some(inventory), msm) / 1.2;
+
+    // Assumes a standard person has earned 20 skill points in the general skill
+    // tree and 10 skill points for the weapon skill tree
+    let skills_rating = (skill_set.earned_sp(SkillGroupKind::General) as f32 / 20.0
+        + weapon_skills(inventory, skill_set) / 10.0)
+        / 2.0;
+
+    let weapon_rating = get_weapon_rating(inventory, msm);
+
+    let combined_rating = (health_rating * HEALTH_WEIGHT
+        + energy_rating * ENERGY_WEIGHT
+        + poise_rating * POISE_WEIGHT
+        + precision_rating * PRECISION_WEIGHT
+        + skills_rating * SKILLS_WEIGHT
+        + weapon_rating * WEAPON_WEIGHT)
+        / (HEALTH_WEIGHT
+            + ENERGY_WEIGHT
+            + POISE_WEIGHT
+            + PRECISION_WEIGHT
+            + SKILLS_WEIGHT
+            + WEAPON_WEIGHT);
+
+    // Body multiplier meant to account for an enemy being harder than equipment and
+    // skills would account for. It should only not be 1.0 for non-humanoids
+    combined_rating * body.combat_multiplier()
+}
+
+pub fn compute_precision_mult(inventory: Option<&Inventory>, msm: &MaterialStatManifest) -> f32 {
+    // Starts with a value of 0.1 when summing the stats from each armor piece, and
+    // defaults to a value of 0.1 if no inventory is equipped. Precision multiplier
+    // cannot go below 1
+    1.0 + inventory
+        .map_or(0.1, |inv| {
+            inv.equipped_items()
+                .filter_map(|item| {
+                    if let ItemKind::Armor(armor) = &*item.kind() {
+                        armor
+                            .stats(msm, item.stats_durability_multiplier())
+                            .precision_power
+                    } else {
+                        None
+                    }
+                })
+                .fold(0.1, |a, b| a + b)
+        })
+        .max(0.0)
+}
+
+/// Computes the energy reward modifier from worn armor
+pub fn compute_energy_reward_mod(inventory: Option<&Inventory>, msm: &MaterialStatManifest) -> f32 {
+    // Starts with a value of 1.0 when summing the stats from each armor piece, and
+    // defaults to a value of 1.0 if no inventory is present
+    inventory.map_or(1.0, |inv| {
+        inv.equipped_items()
+            .filter_map(|item| {
+                if let ItemKind::Armor(armor) = &*item.kind() {
+                    armor
+                        .stats(msm, item.stats_durability_multiplier())
+                        .energy_reward
+                } else {
+                    None
+                }
+            })
+            .fold(1.0, |a, b| a + b)
+    })
+}
+
+/// Computes the additive modifier that should be applied to max energy from the
+/// currently equipped items
+pub fn compute_max_energy_mod(inventory: Option<&Inventory>, msm: &MaterialStatManifest) -> f32 {
+    // Defaults to a value of 0 if no inventory is present
+    inventory.map_or(0.0, |inv| {
+        inv.equipped_items()
+            .filter_map(|item| {
+                if let ItemKind::Armor(armor) = &*item.kind() {
+                    armor
+                        .stats(msm, item.stats_durability_multiplier())
+                        .energy_max
+                } else {
+                    None
+                }
+            })
+            .sum()
+    })
+}
+
+/// Returns a value to be included as a multiplicative factor in perception
+/// distance checks.
+pub fn perception_dist_multiplier_from_stealth(
+    inventory: Option<&Inventory>,
+    character_state: Option<&CharacterState>,
+    msm: &MaterialStatManifest,
+) -> f32 {
+    const SNEAK_MULTIPLIER: f32 = 0.7;
+
+    let item_stealth_multiplier = stealth_multiplier_from_items(inventory, msm);
+    let is_sneaking = character_state.is_some_and(|state| state.is_stealthy());
+
+    let multiplier = item_stealth_multiplier * if is_sneaking { SNEAK_MULTIPLIER } else { 1.0 };
+
+    multiplier.clamp(0.0, 1.0)
+}
+
+pub fn compute_stealth(inventory: Option<&Inventory>, msm: &MaterialStatManifest) -> f32 {
+    inventory.map_or(0.0, |inv| {
+        inv.equipped_items()
+            .filter_map(|item| {
+                if let ItemKind::Armor(armor) = &*item.kind() {
+                    armor.stats(msm, item.stats_durability_multiplier()).stealth
+                } else {
+                    None
+                }
+            })
+            .sum()
+    })
+}
+
+pub fn stealth_multiplier_from_items(
+    inventory: Option<&Inventory>,
+    msm: &MaterialStatManifest,
+) -> f32 {
+    let stealth_sum = compute_stealth(inventory, msm);
+
+    (1.0 / (1.0 + stealth_sum)).clamp(0.0, 1.0)
+}
+
+/// Computes the total protection provided from armor. Is used to determine the
+/// damage reduction applied to damage received by an entity None indicates that
+/// the armor equipped makes the entity invulnerable
+pub fn compute_protection(
+    inventory: Option<&Inventory>,
+    msm: &MaterialStatManifest,
+) -> Option<f32> {
+    inventory.map_or(Some(0.0), |inv| {
+        inv.equipped_items()
+            .filter_map(|item| {
+                if let ItemKind::Armor(armor) = &*item.kind() {
+                    armor
+                        .stats(msm, item.stats_durability_multiplier())
+                        .protection
+                } else {
+                    None
+                }
+            })
+            .map(|protection| match protection {
+                Protection::Normal(protection) => Some(protection),
+                Protection::Invincible => None,
+            })
+            .sum::<Option<f32>>()
+    })
+}
+
+/// Computes the total resilience provided from armor. Is used to determine the
+/// reduction applied to poise damage received by an entity. None indicates that
+/// the armor equipped makes the entity invulnerable to poise damage.
+pub fn compute_poise_resilience(
+    inventory: Option<&Inventory>,
+    msm: &MaterialStatManifest,
+) -> Option<f32> {
+    inventory.map_or(Some(0.0), |inv| {
+        inv.equipped_items()
+            .filter_map(|item| {
+                if let ItemKind::Armor(armor) = &*item.kind() {
+                    armor
+                        .stats(msm, item.stats_durability_multiplier())
+                        .poise_resilience
+                } else {
+                    None
+                }
+            })
+            .map(|protection| match protection {
+                Protection::Normal(protection) => Some(protection),
+                Protection::Invincible => None,
+            })
+            .sum::<Option<f32>>()
+    })
+}
+
+/// Used to compute the precision multiplier achieved by flanking a target
+pub fn precision_mult_from_flank(
+    attack_dir: Vec3<f32>,
+    target_ori: Option<&Ori>,
+    precision_flank_multipliers: FlankMults,
+    precision_flank_invert: bool,
+) -> Option<f32> {
+    let angle = target_ori.map(|t_ori| {
+        t_ori.look_dir().angle_between(if precision_flank_invert {
+            -attack_dir
+        } else {
+            attack_dir
+        })
+    });
+    match angle {
+        Some(angle) if angle < FULL_FLANK_ANGLE => Some(
+            MAX_BACK_FLANK_PRECISION
+                * if precision_flank_invert {
+                    precision_flank_multipliers.front
+                } else {
+                    precision_flank_multipliers.back
+                },
+        ),
+        Some(angle) if angle < PARTIAL_FLANK_ANGLE => {
+            Some(MAX_SIDE_FLANK_PRECISION * precision_flank_multipliers.side)
+        },
+        Some(_) | None => None,
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FlankMults {
+    pub back: f32,
+    pub front: f32,
+    pub side: f32,
+}
+
+impl Default for FlankMults {
+    fn default() -> Self {
+        FlankMults {
+            back: 1.0,
+            front: 1.0,
+            side: 1.0,
+        }
+    }
+}
+
+pub fn block_strength(inventory: &Inventory, char_state: &CharacterState) -> f32 {
+    let (ability_block_strength, hand) = match char_state {
+        CharacterState::BasicBlock(data) => (
+            data.static_data.block_strength,
+            data.static_data.ability_info.hand,
+        ),
+        CharacterState::RiposteMelee(data) => (
+            data.static_data.block_strength,
+            data.static_data.ability_info.hand,
+        ),
+        _ => char_state
+            .ability_info()
+            .map(|ability| (ability.ability_meta.capabilities, ability.hand))
+            .map_or((0.0, None), |(capabilities, hand)| {
+                (
+                    if capabilities.contains(Capability::PARRIES)
+                        || capabilities.contains(Capability::PARRIES_MELEE)
+                        || capabilities.contains(Capability::BLOCKS)
+                    {
+                        FALLBACK_BLOCK_STRENGTH
+                    } else {
+                        0.0
+                    },
+                    hand,
+                )
+            }),
+    };
+
+    let tool_block_strength = hand
+        .and_then(|hand| inventory.equipped(hand.to_equip_slot()))
+        .map_or(1.0, |item| match &*item.kind() {
+            ItemKind::Tool(tool) => tool.stats(item.stats_durability_multiplier()).power,
+            _ => 1.0,
+        });
+
+    ability_block_strength * tool_block_strength
+}
+
+pub fn get_equip_slot_by_block_priority(inventory: Option<&Inventory>) -> EquipSlot {
+    inventory
+        .map(get_weapon_kinds)
+        .map_or(
+            EquipSlot::ActiveMainhand,
+            |weapon_kinds| match weapon_kinds {
+                (Some(mainhand), Some(offhand)) => {
+                    if mainhand.block_priority() >= offhand.block_priority() {
+                        EquipSlot::ActiveMainhand
+                    } else {
+                        EquipSlot::ActiveOffhand
+                    }
+                },
+                (Some(_), None) => EquipSlot::ActiveMainhand,
+                (None, Some(_)) => EquipSlot::ActiveOffhand,
+                (None, None) => EquipSlot::ActiveMainhand,
+            },
+        )
+}

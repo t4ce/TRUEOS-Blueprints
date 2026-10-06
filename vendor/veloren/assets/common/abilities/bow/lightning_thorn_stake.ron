@@ -1,0 +1,36 @@
+BasicRanged(
+    energy_cost: 15,
+    buildup_duration: 0.6,
+    recover_duration: 0.15,
+    projectile: (
+        kind: Arcing((
+            distance: 10,
+            arcs: 5,
+            min_delay: 0.25,
+            // Make sure max delay is greater than or equal to lifetime override
+            max_delay: 60,
+        )),
+        attack: Some((
+            damage: 15,
+            damage_kind: Energy,
+        )),
+        lifetime_override: Some(30.0),
+        override_collider: Some((
+            p0: (x: 0, y: 0),
+            p1: (x: 0, y: 0),
+            radius: 3.0,
+            z_min: -3.0,
+            z_max: 3.0,
+        )),
+        is_point: false,
+        hazard: true,
+    ),
+    projectile_body: Object(ThornStake),
+    projectile_light: None,
+    projectile_speed: 30.0,
+    marker: Some(JoltArrow),
+    movement_modifier: (
+        buildup: Some(0.7),
+        recover: Some(0.7),
+    ),
+)

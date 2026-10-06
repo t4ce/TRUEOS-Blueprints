@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Dragonscale Leggings",
+    legacy_description: "Fiery scales urge you forward.",
+    kind: Armor((
+        kind: Pants,
+        stats: FromSet("Dragonscale"),
+    )),
+    quality: Legendary,
+    tags: [
+        Material(Dragonscale),
+        SalvageInto(Dragonscale, 2),
+    ],
+)

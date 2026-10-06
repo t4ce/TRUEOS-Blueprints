@@ -1,0 +1,11 @@
+#![enable(implicit_some)]
+(
+    name: Translate("name-custom-dungeon-cultist-hound"),
+    body: RandomWith("darkhound"),
+    alignment: Alignment(Enemy),
+    loot: LootTable("common.loot_tables.dungeon.cultist.hound"),
+    inventory: (
+        loadout: FromBody,
+    ),
+    meta: [],
+)

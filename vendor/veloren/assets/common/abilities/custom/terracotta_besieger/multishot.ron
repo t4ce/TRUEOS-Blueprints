@@ -1,0 +1,29 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 1.0,
+    recover_duration: 2.5,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 25,
+            knockback: Some(12),
+            energy: Some(4),
+            buff: Some((
+                kind: Bleeding,
+                dur_secs: 10,
+                strength: DamageFraction(0.1),
+                chance: 0.1,
+            )),
+            damage_kind: Piercing,
+        )),
+    ),
+    projectile_body: Object(BoltBesieger),
+    projectile_light: None,
+    projectile_speed: 60.0,
+    num_projectiles: Value(4),
+    projectile_spread: Some(Increasing(0.05)),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

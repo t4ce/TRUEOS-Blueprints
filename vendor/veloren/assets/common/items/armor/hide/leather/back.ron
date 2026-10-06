@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Leather Cloak",
+    legacy_description: "A thick cloak to mask the shape of a hunter from its prey.",
+    kind: Armor((
+        kind: Back,
+        stats: FromSet("Leather"),
+    )),
+    quality: Common,
+    tags: [
+        Material(Leather),
+        SalvageInto(Leather, 1),
+    ],
+)

@@ -1,0 +1,13 @@
+[
+    (1, All([
+            Item("common.items.keys.terracotta_key_door"),
+
+            Lottery([
+                // Misc
+                (1.0, MultiDrop(Item("common.items.mineral.ore.ancient_gold"), 1, 2)),
+                (0.1, Item("common.items.tool.instruments.steeltonguedrum")),
+                (0.9, MultiDrop(Item("common.items.crafting_ing.cursed_bead"), 1, 2)),
+            ]),
+        ],
+    )),
+]

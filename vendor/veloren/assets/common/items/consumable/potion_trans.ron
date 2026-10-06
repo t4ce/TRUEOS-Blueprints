@@ -1,0 +1,11 @@
+ItemDef(
+    legacy_name: "Hastened Reformation Tincture",
+    legacy_description: "Permanently changes your body type",
+    kind: Consumable(
+        kind: Drink,
+        effects: One(Permanent(CycleBodyType)),
+        container: Some(Simple("common.items.crafting_ing.empty_vial")),
+    ),
+    quality: Legendary,
+    tags: [Potion],
+)

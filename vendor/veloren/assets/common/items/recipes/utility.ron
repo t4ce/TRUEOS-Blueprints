@@ -1,0 +1,15 @@
+ItemDef(
+    legacy_name: "",
+    legacy_description: "",
+    kind: RecipeGroup(
+        recipes: [
+            "collar_basic",
+            "lockpick_iron",
+            "lockpick_cobalt",
+            "gold_ingot",
+            "silver_ingot",
+        ],
+    ),
+    quality: Common,
+    tags: [],
+)

@@ -1,0 +1,20 @@
+ItemDef(
+    legacy_name: "Damaged Greatsword",
+    legacy_description: "The blade could snap at any moment, but you hope it will endure future fights.",
+    kind: Tool((
+        kind: Sword,
+        hands: Two,
+        stats: (
+            equip_time_secs: 0.25,
+            power: 0.6,
+            effect_power: 1.0,
+            speed: 0.8,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+    )),
+    quality: Low,
+    tags: [],
+    ability_spec: None,
+)

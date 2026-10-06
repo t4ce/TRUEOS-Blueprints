@@ -1,0 +1,36 @@
+ComboMelee2(
+    strikes: [
+        (
+            melee_constructor: (
+                kind: Bash(
+                    damage: 60,
+                    poise: 40,
+                    knockback: 35.0,
+                    energy_regen: 0,
+                ),
+                range: 4.0,
+                angle: 60.0,
+            ),
+            buildup_duration: 2.0,
+            swing_duration: 1.0,
+            hit_timing: 0.45,
+            recover_duration: 3.0,
+            movement: (
+                buildup: Some(Forward(1.0)),
+            ),
+            movement_modifier: (
+                action: Some(0.35),
+                recover: Some(0.0),
+            ),
+            ori_modifier: (
+                buildup: Some(0.75),
+                action: Some(0.25),
+                recover: Some(0.0),
+            ),
+        ),
+    ],
+    energy_cost_per_strike: 0,
+    auto_progress: true,
+    specifier: Some(ClayGolemDash),
+)
+

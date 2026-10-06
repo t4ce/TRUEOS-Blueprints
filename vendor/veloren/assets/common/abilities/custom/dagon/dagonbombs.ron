@@ -1,0 +1,32 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 1.0,
+    recover_duration: 2.0,
+    projectile: (
+        kind: Explosive(
+            radius: 5,
+            min_falloff: 0.1,
+            reagent: Some(Blue),
+            terrain: Some((25, Black)),
+        ),
+        attack: Some((
+            damage: 46,
+            knockback: Some(15),
+            buff: Some((
+                kind: Burning,
+                dur_secs: 5,
+                strength: DamageFraction(0.2),
+                chance: 1.0,
+            )),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(DagonBomb),
+    projectile_light: None,
+    projectile_speed: 15.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

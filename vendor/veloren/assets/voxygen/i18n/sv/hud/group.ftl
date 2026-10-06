@@ -1,0 +1,16 @@
+hud-group = Grupp
+hud-group-invite_to_join = { "[" }{ $name }] bjöd in dig till sin grupp!
+hud-group-invite_to_trade = { "[" }{ $name }] skulle vilja byteshandla med dig.
+hud-group-invite = Bjud in
+hud-group-kick = Sparka ut
+hud-group-assign_leader = Utse ledare
+hud-group-leave = Lämna grupp
+hud-group-dead = Död
+hud-group-out_of_range = Utom räckhåll
+hud-group-add_friend = Lägg till som vän
+hud-group-link_group = Koppla grupper
+hud-group-in_menu = I meny
+hud-group-members = Gruppmedlemmar
+hud-group-invite-declined = { $target } avböjde din gruppinbjudan.
+hud-group-invite-timed_out = Gruppinbjudan till { $target } utgick.
+hud-group-invite-accepted = { $target } accepterade din gruppinbjudan.

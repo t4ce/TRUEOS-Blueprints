@@ -1,0 +1,29 @@
+ChargedRanged(
+    energy_cost: 10,
+    energy_drain: 50,
+    idle_drain: 10,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 10,
+            damage_kind: Piercing,
+        )),
+        scaled: Some((
+            damage: 120,
+            energy: Some(100),
+        )),
+        homing_rate: Some(10.0),
+    ),
+    buildup_duration: 0.3,
+    charge_duration: 5,
+    recover_duration: 0.3,
+    projectile_body: Object(Arrow),
+    projectile_light: None,
+    initial_projectile_speed: 125.0,
+    scaled_projectile_speed: 25.0,
+    marker: Some(JoltArrow),
+    move_speed: 0.3,
+    meta: (
+        init_event: Some(EnterStance(None)),
+    ),
+)

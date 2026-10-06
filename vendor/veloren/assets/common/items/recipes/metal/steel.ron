@@ -1,0 +1,20 @@
+ItemDef(
+    legacy_name: "",
+    legacy_description: "",
+    kind: RecipeGroup(
+        recipes: [
+            "steel_ingot",
+            "steel_back",
+            "steel_belt",
+            "steel_chest",
+            "steel_feet",
+            "steel_hands",
+            "steel_pants",
+            "steel_shoulder",
+            "steel_head",
+            "steel_weapons",
+        ],
+    ),
+    quality: Moderate,
+    tags: [],
+)

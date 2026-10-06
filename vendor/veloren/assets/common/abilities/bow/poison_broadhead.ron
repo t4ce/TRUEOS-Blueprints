@@ -1,0 +1,33 @@
+ChargedRanged(
+    energy_cost: 0,
+    energy_drain: 6,
+    idle_drain: 12,
+    projectile: (
+        kind: Explosive(
+            radius: 3,
+            min_falloff: 0.5,
+            reagent: Some(Purple),
+        ),
+        attack: Some((
+            damage: 1,
+            damage_effect: Some(Energy(-4)),
+            damage_kind: Energy,
+        )),
+        scaled: Some((
+            damage: 8,
+            damage_effect: Some(8),
+        )),
+    ),
+    buildup_duration: 0.3,
+    charge_duration: 1.3,
+    recover_duration: 0.1,
+    projectile_body: Object(Arrow),
+    projectile_light: None,
+    initial_projectile_speed: 50.0,
+    scaled_projectile_speed: 150.0,
+    marker: Some(DrenchArrow),
+    move_speed: 0.4,
+    meta: (
+        init_event: Some(RemoveBuff(DrenchArrow)),
+    ),
+)

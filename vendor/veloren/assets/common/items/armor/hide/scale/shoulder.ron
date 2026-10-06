@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Scale Shoulderguards",
+    legacy_description: "Each scale represents what you've taken.",
+    kind: Armor((
+        kind: Shoulder,
+        stats: FromSet("Scale"),
+    )),
+    quality: Moderate,
+    tags: [
+        Material(Scale),
+        SalvageInto(Scale, 1),
+    ],
+)

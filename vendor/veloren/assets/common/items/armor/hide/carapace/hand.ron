@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Carapace Grips",
+    legacy_description: "The heavy carapace adds weight to your swings.",
+    kind: Armor((
+        kind: Hand,
+        stats: FromSet("Carapace"),
+    )),
+    quality: High,
+    tags: [
+        Material(Carapace),
+        SalvageInto(Carapace, 1),
+    ],
+)

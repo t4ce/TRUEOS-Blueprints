@@ -1,0 +1,17 @@
+/// Localization for Traditional Chinese
+(
+    metadata: (
+        language_name: "正體中文 (Traditional Chinese - Taiwan)",
+        language_identifier: "zh-Hant-TW",
+    ),
+    fonts: {
+        "alkhemi": Font (
+            asset_key: "voxygen.font.NotoSansTC-Regular",
+            scale_ratio: 1.0,
+        ),
+        "cyri": Font (
+            asset_key: "voxygen.font.NotoSansTC-Regular",
+            scale_ratio: 1.0,
+        ),
+    }
+)

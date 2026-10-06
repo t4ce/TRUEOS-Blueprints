@@ -1,0 +1,9 @@
+SelfBuff(
+    buildup_duration: 0.25,
+    cast_duration: 0.8,
+    recover_duration: 0.25,
+    buffs: [
+        BuffDesc(kind: Frenzied, data: BuffData(strength: 0.5, duration: Some(300.0))),
+    ],
+    energy_cost: 0,
+)

@@ -1,0 +1,174 @@
+use crate::{
+    combat,
+    comp::{CharacterState, MeleeConstructor, StateUpdate, character_state::OutputEvents},
+    event::LocalEvent,
+    outcome::Outcome,
+    states::{
+        behavior::{CharacterBehavior, JoinData},
+        utils::{StageSection, *},
+    },
+};
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// Separated out to condense update portions of character state
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StaticData {
+    /// How long the state is moving
+    pub movement_duration: Duration,
+    /// How long until state should deal damage
+    pub buildup_duration: Duration,
+    /// How long the weapon swings
+    pub swing_duration: Duration,
+    /// How long the state has until exiting
+    pub recover_duration: Duration,
+    /// Used to construct the Melee attack
+    pub melee_constructor: MeleeConstructor,
+    /// Used to specify the sfx to the frontend
+    pub specifier: Option<FrontendSpecifier>,
+    /// Affects how far forward the player leaps
+    pub forward_leap_strength: f32,
+    /// Affects how high the player leaps
+    pub vertical_leap_strength: f32,
+    /// What key is used to press ability
+    pub ability_info: AbilityInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Data {
+    /// Struct containing data that does not change over the course of the
+    /// character state
+    pub static_data: StaticData,
+    /// Timer for each stage
+    pub timer: Duration,
+    /// What section the character stage is in
+    pub stage_section: StageSection,
+    /// Whether the attack can deal more damage
+    pub exhausted: bool,
+}
+
+impl CharacterBehavior for Data {
+    fn behavior(&self, data: &JoinData, output_events: &mut OutputEvents) -> StateUpdate {
+        let mut update = StateUpdate::from(data);
+
+        handle_orientation(data, &mut update, 1.0, None);
+        handle_move(data, &mut update, 0.3);
+        handle_jump(data, output_events, &mut update, 1.0);
+
+        match self.stage_section {
+            // Delay before leaping into the air
+            StageSection::Buildup => {
+                // Wait for `buildup_duration` to expire
+                if self.timer < self.static_data.buildup_duration {
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = tick_attack_or_default(data, self.timer, None);
+                    }
+                } else {
+                    // Transitions to leap portion of state after buildup delay
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = Duration::default();
+                        c.stage_section = StageSection::Movement
+                    }
+
+                    // Send local event used for frontend shenanigans
+                    match self.static_data.specifier {
+                        Some(FrontendSpecifier::LeapWhoosh) => {
+                            output_events.emit_local(LocalEvent::CreateOutcome(Outcome::Whoosh {
+                                pos: data.pos.0 + *data.ori.look_dir() * (data.body.max_radius()),
+                            }));
+                        },
+                        Some(FrontendSpecifier::LeapSwoosh) => {
+                            output_events.emit_local(LocalEvent::CreateOutcome(Outcome::Swoosh {
+                                pos: data.pos.0 + *data.ori.look_dir() * (data.body.max_radius()),
+                            }));
+                        },
+                        _ => {},
+                    };
+                }
+            },
+            StageSection::Movement => {
+                if self.timer < self.static_data.movement_duration {
+                    // Apply jumping force
+                    let progress = 1.0
+                        - self.timer.as_secs_f32()
+                            / self.static_data.movement_duration.as_secs_f32();
+                    handle_forced_movement(data, &mut update, ForcedMovement::Leap {
+                        vertical: self.static_data.vertical_leap_strength,
+                        forward: self.static_data.forward_leap_strength,
+                        progress,
+                        direction: MovementDirection::Look,
+                    });
+
+                    // Increment duration
+                    // If we were to set a timeout for state, this would be
+                    // outside if block and have else check for > movement
+                    // duration * some multiplier
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = tick_attack_or_default(data, self.timer, None);
+                    }
+                } else if data.physics.on_ground.is_some() | data.physics.in_liquid().is_some() {
+                    // Transitions to swing portion of state upon hitting ground
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = Duration::default();
+                        c.stage_section = StageSection::Action;
+                    }
+                }
+            },
+            StageSection::Action => {
+                if self.timer < self.static_data.swing_duration {
+                    // Swings weapons
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = tick_attack_or_default(data, self.timer, None);
+                    }
+                } else {
+                    // Transitions to recover portion
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = Duration::default();
+                        c.stage_section = StageSection::Recover;
+                    }
+                }
+            },
+            StageSection::Recover => {
+                if !self.exhausted {
+                    let precision_mult = combat::compute_precision_mult(data.inventory, data.msm);
+
+                    data.updater.insert(
+                        data.entity,
+                        self.static_data
+                            .melee_constructor
+                            .clone()
+                            .create_melee(precision_mult, self.static_data.ability_info),
+                    );
+
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = tick_attack_or_default(data, self.timer, None);
+                        c.exhausted = true;
+                    }
+                } else if self.timer < self.static_data.recover_duration {
+                    // Complete recovery delay before finishing state
+                    if let CharacterState::LeapMelee(c) = &mut update.character {
+                        c.timer = tick_attack_or_default(data, self.timer, None);
+                    }
+                } else {
+                    // Done
+                    end_melee_ability(data, &mut update);
+                }
+            },
+            _ => {
+                // If it somehow ends up in an incorrect stage section
+                end_melee_ability(data, &mut update);
+            },
+        }
+
+        // At end of state logic so an interrupt isn't overwritten
+        handle_interrupts(data, &mut update, output_events);
+
+        update
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FrontendSpecifier {
+    LeapWhoosh,
+    LeapSwoosh,
+}

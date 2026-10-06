@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Carapace Belt",
+    legacy_description: "The chitin clicks together neatly around your waist.",
+    kind: Armor((
+        kind: Belt,
+        stats: FromSet("Carapace"),
+    )),
+    quality: High,
+    tags: [
+        Material(Carapace),
+        SalvageInto(Carapace, 1),
+    ],
+)

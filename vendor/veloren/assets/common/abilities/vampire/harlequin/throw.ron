@@ -1,0 +1,27 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 0.8,
+    recover_duration: 0.8,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 16,
+            knockback: Some(1),
+            buff: Some((
+                kind: Bleeding,
+                dur_secs: 10,
+                strength: DamageFraction(0.1),
+                chance: 0.1,
+            )),
+            damage_kind: Piercing,
+        )),
+    ),
+    projectile_body: Object(HarlequinDagger),
+    projectile_light: None,
+    projectile_speed: 40.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(1.0),
+        recover: Some(1.0),
+    ),
+)

@@ -1,0 +1,32 @@
+ComboMelee2(
+    strikes: [
+        (
+            melee_constructor: (
+                kind: Bash(
+                    damage: 35,
+                    poise: 40,
+                    knockback: 35.0,
+                    energy_regen: 0,
+                ),
+                range: 5.5,
+                angle: 60.0,
+            ),
+            buildup_duration: 1.0,
+            swing_duration: 0.1,
+            hit_timing: 0.5,
+            recover_duration: 1.35,
+            movement_modifier: (
+                action: Some(0.35),
+                recover: Some(0.0),
+            ),
+            ori_modifier: (
+                buildup: Some(0.75),
+                action: Some(0.25),
+                recover: Some(0.0),
+            ),
+        ),
+    ],
+    energy_cost_per_strike: 0,
+    auto_progress: true,
+    specifier: Some(IronGolemFist),
+)

@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Rawhide Belt",
+    legacy_description: "A makeshift belt made up of tightly coiled pelt and sinew.",
+    kind: Armor((
+        kind: Belt,
+        stats: FromSet("Rawhide"),
+    )),
+    quality: Low,
+    tags: [
+        Material(Rawhide),
+        SalvageInto(Rawhide, 1),
+    ],
+)

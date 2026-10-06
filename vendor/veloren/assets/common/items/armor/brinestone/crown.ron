@@ -1,0 +1,16 @@
+ItemDef(
+    legacy_name: "Brinestone Crown",
+    legacy_description: "Makes you look taller.",
+    kind: Armor((
+        kind: Head,
+        stats: Direct((
+            protection: Some(Normal(10.0)),
+            poise_resilience: Some(Normal(3.0)),
+            energy_max: Some(6.0),
+            energy_reward: Some(0.06),
+            precision_power: Some(-0.02),
+        )),
+    )),
+    quality: Legendary,
+    tags: [],
+)

@@ -1,0 +1,16 @@
+#![enable(implicit_some)]
+(
+    name: Translate("name-custom-spot-witch_dark"),
+    body: RandomWith("humanoid"),
+    alignment: Alignment(Enemy),
+    loot: Nothing,
+    inventory: (
+        loadout: Inline((
+            inherit: Asset("common.loadout.spots.witch"),
+            active_hands: InHands((Item("common.items.weapons.sceptre.belzeshrub"), None)),
+        )),
+    ),
+    meta: [
+        SkillSetAsset("common.skillset.preset.rank3.fullskill"),
+    ],
+)

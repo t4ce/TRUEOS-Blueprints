@@ -1,0 +1,75 @@
+[package]
+name = "shred"
+version = "0.16.1"
+authors = ["torkleyy <torkleyy@gmail.com>"]
+description = """
+Dispatches systems in parallel which need read access to some resources,
+and write access to others.
+"""
+readme = "README.md"
+documentation = "https://docs.rs/shred"
+repository = "https://github.com/amethyst/shred"
+keywords = ["parallel", "systems", "resources", "ecs"]
+categories = ["concurrency"]
+license = "MIT OR Apache-2.0"
+exclude = ["bors.toml"]
+edition = "2021"
+rust-version = "1.65.0"
+
+[dependencies]
+ahash = "0.8.6"
+arrayvec = "0.7.2"
+atomic_refcell = "0.1.10" # part of public API
+rayon = { version = "1.5.0", optional = true }
+shred-derive = { path = "shred-derive", version = "0.7.0", optional = true }
+smallvec = "1.6.1"
+tynm = "0.1.7"
+
+[workspace]
+members = ["shred-derive"]
+
+[dev-dependencies]
+cgmath = "0.18.0"
+shred-derive = { path = "shred-derive", version = "0.7.0" }
+
+[features]
+default = ["parallel", "shred-derive"]
+parallel = ["rayon"]
+nightly = []
+
+[[example]]
+name = "async"
+required-features = ["parallel"]
+
+[[example]]
+name = "basic_dispatch"
+
+[[example]]
+name = "custom_bundle"
+
+[[example]]
+name = "derive_bundle"
+
+[[example]]
+name = "dyn_sys_data"
+
+[[example]]
+name = "fetch_opt"
+
+[[example]]
+name = "generic_derive"
+
+[[example]]
+name = "par_seq"
+required-features = ["parallel"]
+
+[[example]]
+name = "seq_dispatch"
+
+[[example]]
+name = "thread_local"
+
+[[example]]
+name = "batch_dispatching"
+required-features = ["parallel"]
+

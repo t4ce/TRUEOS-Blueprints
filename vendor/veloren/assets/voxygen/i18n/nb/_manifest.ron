@@ -1,0 +1,21 @@
+/// Translation document instructions
+///
+/// WARNING: Localization files shall be saved in UTF-8 format without BOM
+
+/// Lokalisering for norsk bokmål
+(
+    metadata: (
+        language_name: "Norsk bokmål (Norwegian Bokmål)",
+        language_identifier: "nb",
+    ),
+    fonts: {
+        "alkhemi": Font (
+            asset_key: "voxygen.font.Alkhemikal",
+            scale_ratio: 1.0,
+        ),
+        "cyri": Font (
+            asset_key: "voxygen.font.EnterCommand",
+            scale_ratio: 1.0,
+        ),
+    }
+)

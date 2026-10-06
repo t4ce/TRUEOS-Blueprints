@@ -1,0 +1,22 @@
+ItemDef(
+    legacy_name: "Magical Cultist Warhammer",
+    legacy_description: "This belonged to an evil Cult Leader.",
+    kind: Tool((
+        kind: Hammer,
+        hands: Two,
+        stats: (
+            equip_time_secs: 0.25,
+            power: 2.175,
+            effect_power: 1.2,
+            speed: 0.7,
+            range: 1.0,
+            energy_efficiency: 0.8,
+            buff_strength: 1.2,
+        ),
+    )),
+    quality: Epic,
+    tags: [
+        Cultist,
+    ],
+    ability_spec: None,
+)

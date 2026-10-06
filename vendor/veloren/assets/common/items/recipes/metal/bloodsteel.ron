@@ -1,0 +1,20 @@
+ItemDef(
+    legacy_name: "",
+    legacy_description: "",
+    kind: RecipeGroup(
+        recipes: [
+            "bloodsteel_ingot",
+            "bloodsteel_back",
+            "bloodsteel_belt",
+            "bloodsteel_chest",
+            "bloodsteel_feet",
+            "bloodsteel_hands",
+            "bloodsteel_pants",
+            "bloodsteel_shoulder",
+            "bloodsteel_head",
+            "bloodsteel_weapons",
+        ],
+    ),
+    quality: Epic,
+    tags: [],
+)

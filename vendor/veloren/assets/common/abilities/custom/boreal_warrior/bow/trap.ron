@@ -1,0 +1,30 @@
+BasicRanged(
+    energy_cost: 20,
+    buildup_duration: 0.75,
+    recover_duration: 0.75,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 32,
+            buff: Some((
+                kind: Frozen,
+                dur_secs: 10,
+                strength: Value(0.3),
+                chance: 1.0,
+            )),
+            damage_kind: Piercing,
+        )),
+        lifetime_override: Some(80.0),
+        is_point: false,
+        hazard: true,
+    ),
+    projectile_body: Object(BorealTrap),
+    projectile_light: None,
+    projectile_speed: 20.0,
+    num_projectiles: Value(3),
+    projectile_spread: Some(Increasing(1.0)),
+    movement_modifier: (
+        buildup: Some(0.8),
+        recover: Some(0.8),
+    ),
+)

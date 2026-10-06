@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Rawhide Shoulderpads",
+    legacy_description: "You carry the burden of the many lives you've taken.",
+    kind: Armor((
+        kind: Shoulder,
+        stats: FromSet("Rawhide"),
+    )),
+    quality: Low,
+    tags: [
+        Material(Rawhide),
+        SalvageInto(Rawhide, 1),
+    ],
+)

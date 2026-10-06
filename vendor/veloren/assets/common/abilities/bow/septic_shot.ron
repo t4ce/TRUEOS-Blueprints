@@ -1,0 +1,28 @@
+BasicRanged(
+    energy_cost: 20,
+    buildup_duration: 0.5,
+    recover_duration: 0.1,
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 12,
+            knockback: Some(4),
+            damage_kind: Piercing,
+            attack_effect: Some((
+                DebuffsVulnerable(
+                    mult: 0.4,
+                    scaling: Sqrt,
+                    filter_attacker: false,
+                ),
+                AttackSource(Projectile),
+            ))
+        )),
+    ),
+    projectile_body: Object(Arrow),
+    projectile_speed: 110.0,
+    movement_modifier: (
+        buildup: Some(0.7),
+        action: Some(0.7),
+        recover: Some(0.7),
+    ),
+)

@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Scale Leggings",
+    legacy_description: "The lightweight scales help you stay quiet as you stalk through grass.",
+    kind: Armor((
+        kind: Pants,
+        stats: FromSet("Scale"),
+    )),
+    quality: Moderate,
+    tags: [
+        Material(Scale),
+        SalvageInto(Scale, 2),
+    ],
+)

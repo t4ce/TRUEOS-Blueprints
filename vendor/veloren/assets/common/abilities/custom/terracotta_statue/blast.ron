@@ -1,0 +1,25 @@
+BasicRanged(
+    energy_cost: 0.0,
+    buildup_duration: 1.5,
+    recover_duration: 2.5,
+    projectile: (
+        kind: Explosive(
+            radius: 9,
+            min_falloff: 0.15,
+            reagent: Some(Yellow),
+            terrain: Some((9, Black)),
+        ),
+        attack: Some((
+            damage: 50,
+            knockback: Some(35),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(LaserBeamSmall),
+    projectile_speed: 45.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

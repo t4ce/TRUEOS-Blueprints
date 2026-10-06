@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Primal Gauntlets",
+    legacy_description: "The blood on your hands will never wash out.",
+    kind: Armor((
+        kind: Hand,
+        stats: FromSet("Plate"),
+    )),
+    quality: Epic,
+    tags: [
+        Material(Plate),
+        SalvageInto(Plate, 1),
+    ],
+)

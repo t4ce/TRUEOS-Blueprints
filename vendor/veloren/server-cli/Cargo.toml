@@ -1,0 +1,64 @@
+[package]
+name = "veloren-server-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.nix]
+build = true
+app = true
+longDescription = """
+Veloren is a multiplayer voxel RPG written in Rust.
+It is inspired by games such as Cube World, Legend of Zelda: Breath of the Wild, Dwarf Fortress and Minecraft.
+
+This package includes the official server CLI.
+"""
+
+[features]
+worldgen = ["server/worldgen"]
+persistent_world = ["server/persistent_world"]
+# needed to stay compatible with voxygens format
+default-publish = ["default"]
+default = ["worldgen", "persistent_world"]
+tracy = ["common-frontend/tracy"]
+plugins = ["server/plugins"]
+hot-reloading = ["server/hot-reloading"]
+hot-agent = ["server/hot-agent", "agent"]
+hot-site = ["server/hot-site", "world"]
+
+[dependencies]
+server = { package = "veloren-server", path = "../server", default-features = false, features = [
+    "simd",
+] }
+agent = { package = "veloren-server-agent", path = "../server/agent", optional = true }
+common = { package = "veloren-common", path = "../common" }
+common-base = { package = "veloren-common-base", path = "../common/base" }
+common-net = { package = "veloren-common-net", path = "../common/net" }
+common-frontend = { package = "veloren-common-frontend", path = "../common/frontend" }
+world = { package = "veloren-world", path = "../world", optional = true }
+
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+num_cpus = "1.0"
+clap = { workspace = true }
+lazy_static = { workspace = true }
+signal-hook = { workspace = true }
+shell-words = "1.0.0"
+tracing = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true, features = ["rc", "derive"] }
+rand = { workspace = true }
+# ECS
+specs = { workspace = true }
+
+#HTTP
+axum = { version = "0.8.9" }
+hyper = "1.10"
+http-body-util = "0.1"
+prometheus = { workspace = true }
+chrono = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+mimalloc = { workspace = true }

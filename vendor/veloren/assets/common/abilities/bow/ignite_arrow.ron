@@ -1,0 +1,16 @@
+SelfBuff(
+    buildup_duration: 0.1,
+    cast_duration: 0.1,
+    recover_duration: 0.1,
+    buffs: [
+        BuffDesc(kind: IgniteArrow, data: BuffData(strength: 0.25, duration: None, secondary_duration: Some(20.0))),
+    ],
+    buff_cat: Some(WeaponCoating),
+    energy_cost: 10,
+    enforced_limit: false,
+    meta: (
+        requirements: (
+            item: Some(Firedrop),
+        ),
+    ),
+)

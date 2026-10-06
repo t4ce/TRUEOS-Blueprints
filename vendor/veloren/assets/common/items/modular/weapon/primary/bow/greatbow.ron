@@ -1,0 +1,23 @@
+ItemDef(
+    legacy_name: "Greatbow Limbs",
+    legacy_description: "",
+    kind: ModularComponent(
+        ToolPrimaryComponent(
+            toolkind: Bow,
+            stats: (
+                equip_time_secs: 0.25,
+                power: 1.1,
+                effect_power: 1.4,
+                speed: 0.9,
+                range: 0.8,
+                energy_efficiency: 0.8,
+                buff_strength: 1.2,
+            ),
+            hand_restriction: Some(Two),
+            weapon_name: Universal("Greatbow"),
+        )
+    ),
+    quality: Low,
+    tags: [],
+)
+

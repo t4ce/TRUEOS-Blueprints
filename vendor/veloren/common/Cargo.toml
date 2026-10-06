@@ -1,0 +1,142 @@
+[package]
+name = "veloren-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+no-assets = []
+hot-reloading = ["common-assets/hot-reloading"]
+simd = ["vek/platform_intrinsics"]
+bin_csv = ["csv", "clap"]
+bin_graphviz = ["petgraph", "clap"]
+bin_asset_migrate = []
+rrt_pathfinding = ["kiddo"]
+calendar_events = []
+plugins = ["common-assets/plugins"]
+
+default = ["simd"]
+
+[dependencies]
+
+common-base = { package = "veloren-common-base", path = "base" }
+common-i18n = { package = "veloren-common-i18n", path = "i18n" }
+# inline_tweak = { workspace = true }
+
+# Serde
+serde = { workspace = true, features = ["rc"] }
+
+# Util
+enum-map = { workspace = true, features = ["serde"] }
+enumset = { workspace = true }
+vek = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+itertools = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+ahash = { workspace = true }
+inline_tweak = { workspace = true }
+
+# Strum
+strum = { workspace = true }
+
+approx = "0.5.1"
+crossbeam-utils = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
+lazy_static = { workspace = true }
+num-derive = "0.4.0"
+num-traits = { workspace = true }
+ordered-float = { workspace = true }
+tokio-parallel = { workspace = true }
+ron = { workspace = true }
+roots = "0.0.8"
+spin_sleep = "1.0"
+tracing = { workspace = true }
+uuid = { version = "1.4.1", default-features = false, features = [
+    "serde",
+    "v4",
+] }
+rand = { workspace = true }
+fxhash = { workspace = true }
+thread-priority = { workspace = true }
+
+# Assets
+common-assets = { package = "veloren-common-assets", path = "assets" }
+dot_vox = "5.1"
+serde_repr = "0.1.6"
+
+# csv export
+csv = { version = "1.1.3", optional = true }
+# graphviz exporters
+petgraph = { version = "0.8.1", optional = true }
+# K-d trees used for RRT pathfinding
+kiddo = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+
+# Data structures
+hashbrown = { workspace = true }
+slab = { workspace = true }
+slotmap = { workspace = true }
+indexmap = { version = "=2.14.2", features = ["rayon"] }
+
+# ECS
+specs = { workspace = true, features = [
+    "serde",
+    "storage-event-control",
+    "shred-derive",
+] }
+
+[dev-dependencies]
+#bench
+criterion = { workspace = true }
+rand_chacha = { workspace = true }
+
+#test
+tracing-subscriber =  { workspace = true }
+petgraph = "0.8.1"
+
+[build-dependencies]
+regex = "1"
+
+[[bench]]
+name = "chonk_benchmark"
+harness = false
+
+[[bench]]
+name = "color_benchmark"
+harness = false
+
+[[bench]]
+name = "loot_benchmark"
+harness = false
+
+[[bin]]
+name = "csv_export"
+required-features = ["bin_csv"]
+
+[[bin]]
+name = "csv_import"
+required-features = ["bin_csv"]
+
+[[bin]]
+name = "asset_migrate"
+required-features = ["bin_asset_migrate"]
+
+[[bin]]
+name = "recipe_graphviz"
+required-features = ["bin_graphviz"]
+
+[[bin]]
+name = "skill_graphviz"
+required-features = ["bin_graphviz"]
+
+[[bin]]
+name = "find_unused"
+required-features = []
+
+[[bin]]
+name = "names_to_json"

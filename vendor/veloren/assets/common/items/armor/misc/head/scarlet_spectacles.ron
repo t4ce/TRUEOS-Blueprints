@@ -1,0 +1,14 @@
+ItemDef(
+    legacy_name: "Scarlet Spectacles",
+    legacy_description: "Perfect for pulling pranks on your fellow adventurers by pretending to be a devilish creature of the night! We are not liable for any resulting damage, injuries, or angry mobs.",
+    kind: Armor((
+        kind: Head,
+        stats: Direct((
+            precision_power: Some(0.06),
+            energy_max: Some(2.5),
+            energy_reward: Some(-0.025),
+        )),
+    )),
+    quality: Epic,
+    tags: [],
+)

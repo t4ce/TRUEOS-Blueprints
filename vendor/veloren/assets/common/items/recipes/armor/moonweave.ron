@@ -1,0 +1,19 @@
+ItemDef(
+    legacy_name: "",
+    legacy_description: "",
+    kind: RecipeGroup(
+        recipes: [
+            "moonweave",
+            "moonweave_back",
+            "moonweave_belt",
+            "moonweave_chest",
+            "moonweave_feet",
+            "moonweave_hands",
+            "moonweave_pants",
+            "moonweave_shoulder",
+            "moonweave_head",
+        ],
+    ),
+    quality: Epic,
+    tags: [],
+)

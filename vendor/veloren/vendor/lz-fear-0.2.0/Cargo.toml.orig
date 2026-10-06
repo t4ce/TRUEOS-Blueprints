@@ -1,0 +1,33 @@
+[package]
+name = "lz-fear"
+version = "0.2.0"
+authors = ["main() <main@ehvag.de>"]
+edition = "2021"
+
+description = "A fast pure-rust no-unsafe implementation of LZ4 compression and decompression"
+keywords = ["compression", "lz4", "compress", "decompression", "decompress"]
+categories = [ "algorithms", "compression", "encoding" ]
+license = "MIT"
+readme = "README.md"
+
+repository = "https://github.com/main--/rust-lz-fear"
+
+[dependencies]
+byteorder = "1.5"
+twox-hash = { version = "1.6.3", default-features = false }
+thiserror = "=2.0.21"
+culpa = "1.0"
+bitflags = "2.4.2"
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8.5"
+tempfile = "3.10.0"
+
+[[bench]]
+name = "my_benchmark"
+harness = false
+
+[profile.release]
+debug = true
+lto = "thin"

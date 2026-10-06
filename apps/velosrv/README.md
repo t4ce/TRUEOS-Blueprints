@@ -1,31 +1,32 @@
 # Veloren server Blueprint build attempt
 
-This package tries the existing `veloren-server-cli` source through the TRUEOS
-Blueprint packer without adding Veloren to the TRUEOS-Blueprints Cargo
-workspace. Veloren's root manifest selects the local Tokio executor and ECS
-vendor patches described below. `src/main.rs` includes the
-upstream CLI as the crate root, so its console commands, web UI, and server
-logic remain the same.
+This package builds the Veloren server CLI with the TRUEOS Blueprint packer.
+The server source, supporting workspace crates, dependency forks, and assets
+are checked into `../../vendor/veloren`. The CLI source in `src/` is a regular
+copy of that tree's `server-cli/src`; it no longer depends on external symlinks.
+The imported tree includes the local changes from `veloren-srvlocal`.
 
 The default build enables `worldgen` for the full generated world rather than
 the basic test terrain. `persistent_world` remains optional for saving terrain
 changes. World generation requires the Veloren world assets at runtime.
 
-From `TRUEOS-Blueprints`, with the Veloren checkout beside it at
-`../veloren`, run:
+From `TRUEOS-Blueprints`, run:
 
 ```sh
-VELOREN_SOURCE_ROOT="$(realpath ../veloren)" \
-CARGO_WORKSPACE_DIR="$(realpath ../veloren)" \
-TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 \
-cargo bp apps/velosrv
+cargo bp velosrv
 ```
 
-The environment variables provide the source and compile-time workspace path
-to Veloren's included modules. Publication is disabled so this is a local pack
-attempt only. Build failures identify the next platform dependency that needs
-an adapter; a successful `.bp` build still needs a runtime launch check before
-the server can be considered supported.
+For a local pack without publication:
+
+```sh
+TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp velosrv
+```
+
+The manifest supplies the compile-time workspace path. No external Veloren
+checkout or source environment variable is needed. The imported tree excludes
+build caches, userdata, Git history, and the graphical client. Its assets are
+available for installation at runtime; packing the executable does not by itself
+install the asset tree.
 
 ## Runtime storage paths
 
@@ -59,7 +60,7 @@ is reported as an error rather than silently omitting assets.
 The native transport contract can be checked on the host with:
 
 ```sh
-python3 ../veloren/common/assets/tests/trueos_source_contract.py
+python3 vendor/veloren/common/assets/tests/trueos_source_contract.py
 ```
 
 This runs the actual TRUEOS async client against pending mock CABI operations

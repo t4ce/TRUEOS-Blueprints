@@ -1,0 +1,23 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 0.6,
+    recover_duration: 1.8,
+    projectile: (
+        kind: Explosive(
+            radius: 5,
+            min_falloff: 0.5,
+            reagent: Some(White),
+        ),
+        attack: Some((
+            damage: 24,
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(BoltIcicle),
+    projectile_speed: 60.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

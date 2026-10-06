@@ -1,0 +1,33 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 0.8,
+    recover_duration: 0.8,
+    projectile: (
+        kind: Explosive(
+            radius: 20,
+            min_falloff: 0.1,
+            reagent: Some(Yellow),
+            terrain: Some((1, Black))
+        ),
+        attack: Some((
+            damage: 50,
+            knockback: Some(25),
+            buff: Some((
+                kind: Bleeding,
+                dur_secs: 10,
+                strength: DamageFraction(0.1),
+                chance: 0.1,
+            )),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(MinotaurAxe),
+    projectile_light: None,
+    projectile_speed: 80.0,
+    num_projectiles: Value(2),
+    projectile_spread: Some(Increasing(0.4)),
+    movement_modifier: (
+        buildup: Some(1.0),
+        recover: Some(1.0),
+    ),
+)

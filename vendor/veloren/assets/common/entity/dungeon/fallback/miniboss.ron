@@ -1,0 +1,11 @@
+#![enable(implicit_some)]
+(
+    name: Translate("name-custom-dungeon-fallback-miniboss"),
+    body: RandomWith("goose"),
+    alignment: Alignment(Enemy),
+    loot: LootTable("common.loot_tables.fallback"),
+    inventory: (
+        loadout: FromBody,
+    ),
+    meta: [],
+)

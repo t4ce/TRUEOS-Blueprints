@@ -1,0 +1,353 @@
+// Keep in mind that material stats are multiplied by the form stats, not added (e.g. equip_time_secs is most sensitive to this)
+(
+    tool_stats: {
+        // Metals
+        "common.items.mineral.ingot.bronze": (
+            equip_time_secs: 1.0,
+            power: 0.75,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.mineral.ingot.iron": (
+            equip_time_secs: 1.0,
+            power: 1.0,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.mineral.ingot.steel": (
+            equip_time_secs: 1.0,
+            power: 1.2,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.mineral.ingot.cobalt": (
+            equip_time_secs: 1.0,
+            power: 1.35,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.mineral.ingot.bloodsteel": (
+            equip_time_secs: 1.0,
+            power: 1.45,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.mineral.ingot.orichalcum": (
+            equip_time_secs: 1.0,
+            power: 1.5,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        // Woods
+        "common.items.log.wood": (
+            equip_time_secs: 1.0,
+            power: 0.75,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.log.bamboo": (
+            equip_time_secs: 1.0,
+            power: 1.0,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.log.hardwood": (
+            equip_time_secs: 1.0,
+            power: 1.2,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.log.ironwood": (
+            equip_time_secs: 1.0,
+            power: 1.35,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.log.frostwood": (
+            equip_time_secs: 1.0,
+            power: 1.45,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+        "common.items.log.eldwood": (
+            equip_time_secs: 1.0,
+            power: 1.5,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        ),
+    },
+    armor_stats: {
+        // Metals
+        // Address these ratios to have a consistent prot to poise res.
+        "Bronze": (
+            protection: Some(Normal(45.0)),
+            poise_resilience: Some(Normal(27.0)),
+        ),
+        "Iron": (
+            protection: Some(Normal(75.0)),
+            poise_resilience: Some(Normal(36.0)),
+        ),
+        "Steel": (
+            protection: Some(Normal(102.0)),
+            poise_resilience: Some(Normal(40.5)),
+        ),
+        "Cobalt": (
+            protection: Some(Normal(117.0)),
+            poise_resilience: Some(Normal(46.8)),
+        ),
+        "Bloodsteel": (
+            protection: Some(Normal(129.0)),
+            poise_resilience: Some(Normal(52.2)),
+        ),
+        "Orichalcum": (
+            protection: Some(Normal(135.0)),
+            poise_resilience: Some(Normal(54.0)),
+        ),
+        // Hides
+        "Rawhide": (
+            protection: Some(Normal(18.0)),
+            precision_power: Some(0.36),
+            stealth: Some(0.675),
+        ),
+        "Leather": (
+            protection: Some(Normal(30.0)),
+            precision_power: Some(0.48),
+            stealth: Some(0.9),
+        ),
+        "Scale": (
+            protection: Some(Normal(39.6)),
+            precision_power: Some(0.576),
+            stealth: Some(1.08),
+        ),
+        "Carapace": (
+            protection: Some(Normal(46.8)),
+            precision_power: Some(0.648),
+            stealth: Some(1.215),
+        ),
+        // Currently set to a ~60:40 ration for precision and stealth respectively (11.1% increase in precision power)
+        "Serpentscale": (
+            protection: Some(Normal(46.8)),
+            precision_power: Some(0.72),
+            stealth: Some(1.08),
+        ),
+        "Plate": (
+            protection: Some(Normal(51.6)),
+            precision_power: Some(0.696),
+            stealth: Some(1.305),
+        ),
+        "Dragonscale": (
+            protection: Some(Normal(54.0)),
+            precision_power: Some(0.72),
+            stealth: Some(1.35),
+        ),
+        // Cloths
+        "Linen": (
+            protection: Some(Normal(12.0)),
+            energy_max: Some(45.0),
+            energy_reward: Some(0.45),
+        ),
+        // Note that T2 and under horizontal sets are identical stat wise and only deviate through armor set perks.
+        // As such, Cotton Armor uses the stats from Wool (no need to make another identical, renamed value).
+        "Wool": (
+            protection: Some(Normal(20.0)),
+            energy_max: Some(60.0),
+            energy_reward: Some(0.6),
+        ),
+        "Silk": (
+            protection: Some(Normal(26.4)),
+            energy_max: Some(72.0),
+            energy_reward: Some(0.72),
+        ),
+        "Lifecloth": (
+            protection: Some(Normal(31.2)),
+            energy_max: Some(81.0),
+            energy_reward: Some(0.81),
+        ),
+        "Moonweave": (
+            protection: Some(Normal(34.4)),
+            energy_max: Some(87.0),
+            energy_reward: Some(0.87),
+        ),
+        "Sunsilk": (
+            protection: Some(Normal(36.0)),
+            energy_max: Some(90.0),
+            energy_reward: Some(0.9),
+        ),
+        // Misc Sets
+        "Alchemist": (
+            protection: Some(Normal(120.0)),
+            poise_resilience: Some(Normal(20.0)),
+            energy_max: Some(45.0),
+            energy_reward: Some(0.5),
+            precision_power: Some(0.4),
+        ),
+        "Assassin": (
+            protection: Some(Normal(50.0)),
+            poise_resilience: Some(Normal(5.0)),
+        ),
+        "Blacksmith": (
+            protection: Some(Normal(120.0)),
+            poise_resilience: Some(Normal(20.0)),
+            energy_max: Some(45.0),
+            energy_reward: Some(0.5),
+            precision_power: Some(0.4),
+        ),
+        "Bonerattler": (
+            protection: Some(Normal(80.0)),
+        ),
+        "Chef": (
+            protection: Some(Normal(120.0)),
+            poise_resilience: Some(Normal(20.0)),
+            energy_max: Some(45.0),
+            energy_reward: Some(0.5),
+            precision_power: Some(0.4),
+        ),
+        "Cloth Blue": (
+            protection: Some(Normal(10.0)),
+        ),
+        "Cloth Green": (
+            protection: Some(Normal(10.0)),
+        ),
+        "Cloth Purple": (
+            protection: Some(Normal(10.0)),
+        ),
+        "Cultist": (
+            protection: Some(Normal(72.0)),
+            poise_resilience: Some(Normal(18.0)),
+            energy_max: Some(27.0),
+            energy_reward: Some(0.36),
+            precision_power: Some(0.225),
+            stealth: Some(0.36),
+        ),
+        "Ferocious": (
+            protection: Some(Normal(135.0)),
+        ),
+        "Leather Plate": (
+            protection: Some(Normal(120.0)),
+            poise_resilience: Some(Normal(30.0)),
+        ),
+        "Merchant": (
+            protection: Some(Normal(120.0)),
+            poise_resilience: Some(Normal(20.0)),
+            energy_max: Some(45.0),
+            energy_reward: Some(0.5),
+            precision_power: Some(0.4284),
+        ),
+        "Buccaneer": (
+            protection: Some(Normal(35.2836)),
+            energy_max: Some(21.384),
+            energy_reward: Some(0.21384),
+            precision_power: Some(0.399168),
+        ),
+        "Pirate": (
+            protection: Some(Normal(27.45)),
+            energy_max: Some(17.82),
+            energy_reward: Some(0.1782),
+            precision_power: Some(0.3024),
+        ),
+        "Savage": (
+            protection: Some(Normal(60.0)),
+        ),
+        "Tarasque": (
+            protection: Some(Normal(60.0)),
+        ),
+        "Twigs Flowers": (
+            protection: Some(Normal(14.0)),
+            energy_max: Some(65.0),
+            energy_reward: Some(0.65),
+            stealth: Some(0.55),
+        ),
+        "Twigs Leaves": (
+            protection: Some(Normal(20.0)),
+        ),
+        "Velorite Battlemage": (
+            protection: Some(Normal(100.0)),
+        ),
+        "Witch": (
+            protection: Some(Normal(13.023)),
+            energy_max: Some(78.1596),
+            energy_reward: Some(0.5211),
+            precision_power: Some(0.192456),
+        ),
+        "Cardinal": (
+            protection: Some(Normal(540.0)),
+            poise_resilience: Some(Normal(60.0)),
+            energy_max: Some(45.0),
+            energy_reward: Some(0.5),
+            precision_power: Some(0.8),
+        ),
+        "Boreal": (
+            protection: Some(Normal(90.0)),
+            poise_resilience: Some(Normal(36.0)),
+            energy_max: Some(-45.0),
+            precision_power: Some(0.45),
+            stealth: Some(0.45),
+        ),
+        "Brinestone": (
+            protection: Some(Normal(90.0)),
+            poise_resilience: Some(Normal(27.0)),
+            energy_max: Some(54.0),
+            energy_reward: Some(0.54),
+            precision_power: Some(-0.18),
+        ),
+        "Miner": (
+            protection: Some(Normal(120.0)),
+            poise_resilience: Some(Normal(5.0)),
+            energy_max: Some(100.0),
+            energy_reward: Some(0.4),
+            precision_power: Some(0.5),
+        ),
+        "Golemite": (
+            protection: Some(Normal(117.0)),
+            poise_resilience: Some(Normal(40.5)),
+            energy_max: Some(63.0),
+            energy_reward: Some(-0.45),
+        ),
+        "Ashen": (
+            energy_max: Some(72.9),
+            energy_reward: Some(0.729),
+            precision_power: Some(0.388),
+        ),
+        "Adventurer": (
+            protection: Some(Normal(18.225)),
+            poise_resilience: Some(Normal(10.935)),
+            stealth: Some(0.62775),
+        ),
+    },
+)

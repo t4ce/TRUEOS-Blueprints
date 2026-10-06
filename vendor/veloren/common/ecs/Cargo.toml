@@ -1,0 +1,22 @@
+[package]
+name = "veloren-common-ecs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+
+[dependencies]
+
+tracing = { workspace = true }
+common-base = { package = "veloren-common-base", path = "../base" }
+
+# ECS
+specs = { workspace = true, features = ["serde", "storage-event-control"] }
+
+[dev-dependencies]
+#bench
+float-cmp = "0.10.0"

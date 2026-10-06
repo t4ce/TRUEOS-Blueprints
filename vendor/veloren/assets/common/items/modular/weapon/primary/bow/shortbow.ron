@@ -1,0 +1,23 @@
+ItemDef(
+    legacy_name: "Shortbow Limbs",
+    legacy_description: "",
+    kind: ModularComponent(
+        ToolPrimaryComponent(
+            toolkind: Bow,
+            stats: (
+                equip_time_secs: 0.25,
+                power: 0.7,
+                effect_power: 1.0,
+                speed: 1.4,
+                range: 0.8,
+                energy_efficiency: 1.2,
+                buff_strength: 1.1,
+            ),
+            hand_restriction: Some(Two),
+            weapon_name: Universal("Shortbow"),
+        )
+    ),
+    quality: Low,
+    tags: [],
+)
+

@@ -1,0 +1,10 @@
+[
+    // Crafting Ingredients
+    (4.0, LootTable("common.loot_tables.materials.common")),
+    // Cheese, with about the same drop rate as coconuts
+    (0.3, Item("common.items.food.cheese")),
+    // Consumables
+    (2.0, Item("common.items.consumable.potion_minor")),
+    // Gold
+    (2.0, MultiDrop(Item("common.items.utility.coins"), 25, 50)),
+]

@@ -1,0 +1,25 @@
+BasicRanged(
+    energy_cost: 10,
+    buildup_duration: 0.3,
+    recover_duration: 0.2,
+    projectile: (
+        kind: Explosive(
+            radius: 2,
+            min_falloff: 0.25,
+            target: SolidOnlyEntityAttack,
+            reagent: Some(Earth),
+        ),
+        attack: Some((
+            damage: 15,
+            knockback: Some(25),
+            damage_kind: Crushing,
+        )),
+    ),
+    projectile_body: Object(Arrow),
+    projectile_speed: 40.0,
+    vertical_angle_offset: 0.2,
+    movement_modifier: (
+        buildup: Some(0.6),
+        recover: Some(0.6),
+    ),
+)

@@ -1,0 +1,29 @@
+char_selection-loading_characters = Chargement des personnages...
+char_selection-delete_permanently = Supprimer définitivement ce personnage ?
+char_selection-enter_world = Rejoindre
+char_selection-spectate = Spectateur
+char_selection-joining_character = Entrée dans le monde...
+char_selection-logout = Déconnexion
+char_selection-create_new_character = Créer un nouveau personnage
+char_selection-creating_character = Création du personnage...
+char_selection-uncanny_valley = Région sauvage
+char_selection-beard = Barbe
+char_selection-hair_style = Coupe de cheveux
+char_selection-hair_color = Couleur des cheveux
+char_selection-eye_color = Couleur des yeux
+char_selection-skin = Couleur de la peau
+char_selection-eyeshape = Forme des yeux
+char_selection-accessories = Accessoires
+char_selection-starting_site = Selectionner la zone de départ
+char_selection-starting_site_next = Suivant
+char_selection-starting_site_prev = Précédent
+char_selection-starting_site_kind = Type : { $kind }
+char_selection-create_info_name = Votre personnage doit avoir un nom !
+char_selection-version_mismatch = ATTENTION ! Ce serveur fonctionne sur une version différente et est possiblement incompatible avec celle de votre jeu. Veuillez mettre à jour votre jeu.
+char_selection-rules = Règles
+char_selection-hardcore = Hardcore
+char_selection-hardcore_tooltip =
+    Les personnages hardcore seront supprimés à leur mort, sans autre changement de difficulté.
+
+    Le mode Hardcore n'est pas recommandé si vous manquez d'expérience avec Veloren.
+char_selection-editing_character = Sauvegarde du personnage...

@@ -1,0 +1,28 @@
+SpawnEntry (
+    name: "Desert hot area wildlife.",
+    note: "",
+    rules: [
+        Pack(
+            groups: [
+                // Casual
+                (2, (1, 1, "common.entity.wild.peaceful.camel")),
+                (2, (1, 1, "common.entity.wild.peaceful.sand_hare")),
+                (2, (1, 1, "common.entity.wild.peaceful.salamander")),
+                (2, (1, 1, "common.entity.wild.peaceful.gecko")),
+                (2, (1, 1, "common.entity.wild.aggressive.cactid")),                                
+                // Rare
+                (1, (1, 1, "common.entity.wild.peaceful.crawler_sand")),
+            ],
+            spawn_mode: Land,
+            day_period: [Morning, Noon, Evening],
+        ),
+        Pack(
+            groups: [
+                (1, (1, 1, "common.entity.wild.peaceful.porcupine")),
+                (1, (1, 1, "common.entity.wild.peaceful.pangolin")),
+            ],
+            spawn_mode: Land,
+            day_period: [Night],
+        ),
+    ],
+)

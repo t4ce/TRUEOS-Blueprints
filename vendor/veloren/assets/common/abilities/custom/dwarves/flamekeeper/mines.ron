@@ -1,0 +1,30 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 1.5,
+    recover_duration: 1.75,
+    projectile: (
+        kind: Explosive(
+            radius: 2,
+            min_falloff: 0.3,
+            reagent: Some(Yellow),
+            target: EntityOnly,
+        ),
+        attack: Some((
+            damage: 25,
+            damage_kind: Energy,
+        )),
+        lifetime_override: Some(10.0),
+        is_point: false,
+        is_sticky: false,
+        hazard: true,
+    ),
+    projectile_body: Object(Mine),
+    projectile_light: None,
+    projectile_speed: 20.0,
+    num_projectiles: Value(6),
+    projectile_spread: Some(Increasing(0.6)),
+    movement_modifier: (
+        buildup: Some(0.5),
+        recover: Some(0.8),
+    ),
+)

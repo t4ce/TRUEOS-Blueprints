@@ -1,0 +1,103 @@
+use std::path::PathBuf;
+use tracing::warn;
+
+const VELOREN_USERDATA_ENV: &str = "VELOREN_USERDATA";
+
+// TODO: consider expanding this to a general install strategy variable that is
+// also used for finding assets
+// TODO: Ensure there are no NUL (\0) characters in userdata_dir (possible on
+// MacOS but not Windows or Linux) as SQLite requires the database path does not
+// include this character.
+/// Determines common user data directory used by veloren frontends.
+///
+/// The first specified in this list is used.
+///   1. The VELOREN_USERDATA runtime environment variable
+///   2. On TRUEOS, the app-relative `userdata` directory
+///   3. The VELOREN_USERDATA_STRATEGY compile time environment variable
+///   4. The CARGO_WORKSPACE_DIR/userdata compile time environment variable
+///      defined in .cargo/config.toml
+///
+/// ### `VELOREN_USERDATA_STRATEGY` environment variable
+///
+/// Read during compilation and useful to set when compiling for distribution.
+///
+/// Available options are:
+/// * "system" => system specific project data directory
+/// * "executable" => `<executable dir>/userdata`
+///
+/// > **Note:** _case insensitive_
+pub fn userdata_dir() -> PathBuf {
+    // 1. The VELOREN_USERDATA runtime environment variable
+    std::env::var_os(VELOREN_USERDATA_ENV)
+        .map(PathBuf::from)
+        // TRUEOS resolves relative paths inside the app's filesystem root.
+        // Executable discovery is unsupported; shared storage can be selected
+        // explicitly with VELOREN_USERDATA=common/veloren/userdata.
+        .or_else(|| {
+            #[cfg(target_os = "trueos")]
+            { Some(PathBuf::from("userdata")) }
+            #[cfg(not(target_os = "trueos"))]
+            { None }
+        })
+        // 3. The VELOREN_USERDATA_STRATEGY compile time environment variable
+        .or_else(|| match option_env!("VELOREN_USERDATA_STRATEGY") {
+            // "system" => system specific project data directory
+            Some(s) if s.eq_ignore_ascii_case("system") => Some(directories_next::ProjectDirs::from("net", "veloren", "veloren")
+                .expect("System's $HOME directory path not found!")
+                .data_dir()
+                .join("userdata")
+            ),
+            // "executable" => <executable dir>/userdata
+            Some(s) if s.eq_ignore_ascii_case("executable") => {
+                let mut path = std::env::current_exe()
+                    .expect("Failed to retrieve executable path!");
+                path.pop();
+                path.push("userdata");
+                Some(path)
+            },
+            Some(s) => {
+                warn!(
+                    "Compiled with an invalid VELOREN_USERDATA_STRATEGY: \"{}\". \
+                    Valid values are unset, \"system\", and \"executable\". \
+                    Falling back to unset case.",
+                    s,
+                );
+                None
+            },
+            _ => None,
+        })
+        // 4. The CARGO_WORKSPACE_DIR/userdata compile time environment variable
+        //    defined in .cargo/config.toml
+        .unwrap_or_else(|| {
+            let mut path = PathBuf::from(env!("CARGO_WORKSPACE_DIR"));
+            let exe_path = std::env::current_exe()
+                .expect("Failed to retrieve executable path!");
+            // If this path exists
+            // and the binary path is prefixed by this path
+            // put the userdata folder there
+            if path.exists() && exe_path.starts_with(&path) {
+                path.push("userdata");
+                path
+            } else {
+                // otherwise warn and fallback to the executable strategy
+                let project_path = path;
+                let mut path = exe_path;
+                path.pop();
+                path.push("userdata");
+                warn!(
+                    "This binary is outside the project folder where it was compiled ({}) \
+                    and was not compiled with VELOREN_USERDATA_STRATEGY set to \"system\" or \"executable\". \
+                    Falling back the to the \"executable\" strategy (the userdata folder will be placed in the \
+                    same folder as the executable: {}) \n\
+                    NOTE: You can manually select a userdata folder (overriding this automatic selection) by \
+                    setting the environment variable {} to the desired directory before running. \n\
+                    NOTE: If you have not moved the executable this can occur when using a custom cargo \
+                    target-dir that is not inside the project folder.",
+                    project_path.display(),
+                    path.display(),
+                    VELOREN_USERDATA_ENV,
+                );
+                path
+            }
+        })
+}

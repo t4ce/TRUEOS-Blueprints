@@ -1,0 +1,188 @@
+((
+    default: (
+        vox_spec: ("armor.empty", (0.0, 0.0, 0.0)),
+        color: None
+    ),
+    map: {
+        "common.items.armor.misc.back.short_0": (
+            vox_spec: ("armor.misc.back.short-0", (-5.0, -1.5, -11.0)),
+            color: None
+        ),
+        "common.items.armor.misc.back.rat_tail": (
+            vox_spec: ("armor.misc.back.rat-tail", (-0.5, -8.0, -11.0)),
+            color: None
+        ),
+        "common.items.armor.misc.back.admin": (
+            vox_spec: ("armor.misc.back.admin", (-5.0, -1.5, -11.0)),
+            color: None
+        ),
+        "common.items.debug.admin_back": (
+            vox_spec: ("armor.misc.back.admin", (-5.0, -1.5, -11.0)),
+            color: None
+        ),
+        "common.items.armor.misc.back.dungeon_purple": (
+            vox_spec: ("armor.misc.back.dungeon_purple", (-5.0, -1.5, -14.0)),
+            color: None
+        ),
+        "common.items.armor.misc.back.short_1": (
+            vox_spec: ("armor.misc.back.short-1", (-5.0, -1.5, -11.0)),
+            color: None
+        ),
+        "common.items.armor.ferocious.back": (
+            vox_spec: ("armor.ferocious.back", (-5.0, -1.5, -14.0)),
+            color: None
+        ),
+        "common.items.armor.boreal.back": (
+            vox_spec: ("armor.boreal.back", (-5.0, -2.5, -13.0)),
+            color: None
+        ),
+        "common.items.armor.brinestone.back": (
+            vox_spec: ("armor.brinestone.back", (-5.0, -2.5, -12.0)),
+            color: None
+        ),
+        "common.items.armor.misc.back.backpack": (
+            vox_spec: ("armor.misc.back.backpack", (-7.0, -5.5, -10.0)),
+            color: None
+        ),
+        "common.items.npc_armor.back.backpack_blue": (
+            vox_spec: ("armor.misc.back.backpack-grey", (-7.0, -5.5, -10.0)),
+            color: Some((76, 72, 178))
+        ),
+        "common.items.armor.velorite_mage.back": (
+            vox_spec: ("armor.velorite_battlemage.back", (-5.0, -1.5, -14.0)),
+            color: None
+        ),
+        "common.items.debug.admin_back": (
+            vox_spec: ("armor.velorite_battlemage.back", (-5.0, -1.5, -14.0)),
+            color: None
+        ),
+        "common.items.debug.admin_back": (
+            vox_spec: ("armor.velorite_battlemage.back", (-5.0, -1.5, -14.0)),
+            color: None
+        ),
+        "common.items.debug.dungeon_purple": (
+            vox_spec: ("armor.velorite_battlemage.back", (-5.0, -1.5, -14.0)),
+            color: None
+        ),
+        "common.items.npc_armor.back.leather_blue": (
+            vox_spec: ("armor.leather_blue.back", (-5.0, -1.5, -10.0)),
+            color: None
+        ),
+        "common.items.armor.hide.rawhide.back": (
+            vox_spec: ("armor.hide.rawhide", (-4.0, -1.5, -7.0), 1),
+            color: None
+        ),
+        "common.items.armor.hide.leather.back": (
+            vox_spec: ("armor.hide.leather", (-5.0, -1.5, -10.0), 1),
+            color: None
+        ),
+        "common.items.armor.miner.back": (
+            vox_spec: ("armor.hide.leather", (-5.0, -1.5, -10.0), 1),
+            color: None
+        ),
+        "common.items.armor.hide.scale.back": (
+            vox_spec: ("armor.hide.scale", (-4.0, -1.5, -8.0), 1),
+            color: None
+        ),
+        "common.items.armor.hide.carapace.back": (
+            vox_spec: ("armor.hide.carapace", (-5.0, -2.0, -10.5), 1),
+            color: None
+        ),
+        "common.items.armor.hide.serpentscale.back": (
+            vox_spec: ("armor.hide.serpentscale", (-5.0, -2.0, -9.5), 1),
+            color: None
+        ),
+        "common.items.armor.hide.primal.back": (
+            vox_spec: ("armor.hide.primal", (-5.0, -3.0, -10.0), 1),
+            color: None
+        ),
+        "common.items.armor.hide.dragonscale.back": (
+            vox_spec: ("armor.hide.dragonscale", (-6.0, -2.5, -12.0), 1),
+            color: None
+        ),
+        "common.items.armor.savage.back": (
+            vox_spec: ("armor.savage.back", (-5.0, -2.5, -11.0)),
+            color: None
+        ),
+        "common.items.armor.witch.back": (
+            vox_spec: ("armor.witch.witch", (-4.0, -1.5, -11.0), 1),
+            color: None
+        ),
+        "common.items.armor.buccaneer.back": (
+            vox_spec: ("armor.buccaneer.buccaneer", (-4.0, -1.5, -10.5), 1),
+            color: None
+        ),
+        "common.items.armor.pirate.back": (
+            vox_spec: ("armor.pirate.pirate", (-4.0, -4.5, -7.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.linen.back": (
+            vox_spec: ("armor.cloth.linen", (-4.0, -1.5, -8.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.cotton.back": (
+            vox_spec: ("armor.cloth.cotton", (-4.0, -1.5, -9.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.woolen.back": (
+            vox_spec: ("armor.cloth.woolen", (-5.0, -1.5, -8.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.silken.back": (
+            vox_spec: ("armor.cloth.silken", (-4.0, -1.5, -11.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.druid.back": (
+            vox_spec: ("armor.cloth.druid", (-5.0, -3.5, -10.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.moonweave.back": (
+            vox_spec: ("armor.cloth.moonweave", (-4.0, -1.5, -12.0), 1),
+            color: None
+        ),
+        "common.items.armor.cloth.sunsilk.back": (
+            vox_spec: ("armor.cloth.sunsilk", (-5.0, -1.5, -11.5), 1),
+            color: None
+        ),
+        "common.items.armor.mail.bronze.back": (
+            vox_spec: ("armor.mail.bronze", (-4.0, -1.5, -7.0), 1),
+            color: None
+        ),
+        "common.items.armor.mail.iron.back": (
+            vox_spec: ("armor.mail.iron", (-4.0, -1.5, -10.0), 1),
+            color: None
+        ),
+        "common.items.armor.mail.steel.back": (
+            vox_spec: ("armor.mail.steel", (-4.0, -1.5, -11.0), 1),
+            color: None
+        ),
+        "common.items.armor.mail.cobalt.back": (
+            vox_spec: ("armor.mail.cobalt", (-5.0, -3.5, -13.0), 1),
+            color: None
+        ),
+        "common.items.armor.mail.bloodsteel.back": (
+            vox_spec: ("armor.mail.bloodsteel", (-5.0, -2.5, -12.0), 1),
+            color: None
+        ),
+        "common.items.armor.mail.orichalcum.back": (
+            vox_spec: ("armor.mail.orichalcum", (-5.0, -1.5, -14.0), 1),
+            color: None
+        ),
+        "common.items.armor.golemite.back": (
+            vox_spec: ("armor.golemite.golemite", (-4.0, -1.5, -12.0), 1),
+            color: None
+        ),
+        "common.items.armor.ashen.back": (
+            vox_spec: ("armor.ashen.ashen", (-5.0, -2.5, -13.0), 1),
+            color: None
+        ),
+        "common.items.armor.merchant.back": (
+            vox_spec: ("armor.merchant.back", (-8.0, -8.5, -11.0)),
+            color: None
+        ),
+        "common.items.armor.adventurer.back": (
+            vox_spec: ("armor.adventurer.adventurer", (-4.0, -1.5, -8.0), 1),
+            color: None
+        ),
+    },
+))

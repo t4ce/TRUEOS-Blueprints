@@ -1,0 +1,256 @@
+[workspace]
+resolver = "2"
+exclude = ["vendor/euc", "vendor/conrod/conrod_core", "vendor/conrod/conrod_derive", "vendor/specs", "vendor/shred", "vendor/hibitset", "vendor/hashbrown", "vendor/indexmap"]
+members = [
+    "client",
+    "client/i18n",
+    "common",
+    "common/assets",
+    "common/base",
+    "common/dynlib",
+    "common/ecs",
+    "common/frontend",
+    "common/i18n",
+    "common/net",
+    "common/query_server",
+    "common/state",
+    "common/systems",
+    "common/tokio-parallel",
+    "network",
+    "network/protocol",
+    "rtsim",
+    "server",
+    "server/agent",
+    "server-cli",
+    "world",
+]
+
+### PACKAGE ###
+[workspace.package]
+version = "0.18.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+### LINTS ###
+
+# Note, crates not in this workspace don't include these lints. We have added a
+# [workspace.lints] entry to those crates, so they can be found by searching
+# for this.
+[workspace.lints]
+rust.rust_2024_compatibility = { level = "warn", priority = 0 }
+rust.if_let_rescope = { level = "allow", priority = 1 }
+rust.tail_expr_drop_order = { level = "allow", priority = 1 }
+rust.edition_2024_expr_fragment_specifier = { level = "allow", priority = 1 }
+rust.keyword_idents_2024 = { level = "allow", priority = 1 }
+
+[workspace.lints.clippy]
+# This lint is widely considered an annoyance by Veloren developers and doesn't pay its way.
+unnecessary_map_or = "allow"
+# This suggests turning if statements into if guards in the match. This is
+# often not ideal because this can make the match arms inconsistent and make
+# them reliant on being followed by a no-op wildcard arm.
+collapsible_match = "allow"
+# bug in current version (fixed in latest nightly)
+manual_option_zip = "allow"
+
+### PROFILES ###
+
+# default profile for devs, fast to compile, okay enough to run, no debug information
+[profile.dev]
+opt-level = 2
+overflow-checks = true
+debug-assertions = true
+panic = "abort"
+debug = false
+lto = false
+incremental = true
+# All packages that aren't members of this workspace
+[profile.dev.package."*"]
+# TODO: seems like opt-level=2 should be sufficient here....
+opt-level = 3
+[profile.dev.package."veloren-network-protocol"]
+opt-level = 3
+[profile.dev.package."veloren-voxygen"]
+debug = "line-tables-only"
+
+# this profile is used by developers if dev doesn't has enough debug information,
+# the name must != debug, as debug is used by dev because....
+#
+# Please note: to generate flamegraphs, `RUSTFLAGS="-Clink-arg=-Wl,--no-rosegment"` must be set.
+# See https://github.com/flamegraph-rs/flamegraph#linux
+[profile.debuginfo]
+inherits = 'dev'
+debug = true
+
+
+# used to perform things that do a *lot* of math (i.e. worldgen) but still need reasonable compilation time.  Ideally this would also
+# add -C target-cpu=native, but I don't think you can set this by profile currently.
+[profile.no_overflow]
+inherits = 'dev'
+overflow-checks = false
+debug-assertions = false
+
+[profile.no_overflow.package."veloren-world"]
+opt-level = 3
+[profile.no_overflow.package."veloren-voxygen-anim"]
+opt-level = 3
+
+# this profile is for profiling with using the no_overflow profile, since release can take signifcant times to build.
+[profile.no_overflow_debuginfo]
+inherits = 'no_overflow'
+debug = 1
+
+# this profile is used for veloren releases, compile time doesn't matter
+# we need stacktraces, light debug information, as much checks as possible
+# I would like to put it in a seperate `official_release` target, but that doesnt share caches with `cargo test` and `cargo bench`
+[profile.release]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+lto = true
+debug = false
+panic = "abort"          # don't need unwinding so we can skip including the landing pads for that
+# line tables so we can have useful backtraces for in-house crates
+[profile.release.package."veloren-network"]
+debug = "line-tables-only"
+[profile.release.package."veloren-network-protocol"]
+debug = "line-tables-only"
+[profile.release.package."veloren-common"]
+debug = "line-tables-only"
+[profile.release.package."veloren-common-systems"]
+debug = "line-tables-only"
+[profile.release.package."veloren-client"]
+debug = "line-tables-only"
+[profile.release.package."veloren-server"]
+debug = "line-tables-only"
+[profile.release.package."veloren-server-cli"]
+debug = "line-tables-only"
+[profile.release.package."veloren-voxygen"]
+debug = "line-tables-only"
+[profile.release.package."veloren-world"]
+debug = "line-tables-only"
+
+[profile.release-thinlto]
+inherits = 'release'
+lto = "thin"
+
+# used for cargo bench
+[profile.bench]
+opt-level = 2
+incremental = true
+
+# this profile is used by developers for release profiling
+[profile.releasedebuginfo]
+inherits = 'release'
+debug = 1
+
+### NIX ###
+
+[workspace.metadata.nix]
+systems = ["x86_64-linux"]
+
+[workspace.metadata.nix.cachix]
+name = "veloren-nix"
+key = "veloren-nix.cachix.org-1:zokfKJqVsNV6kI/oJdLF6TYBdNPYGSb+diMVQPn/5Rc="
+
+### DEPENDENCIES ###
+
+[workspace.dependencies]
+ahash = { version = "0.8" }
+async-trait = "0.1.42"
+atomic_refcell = "0.1.13"
+bincode = { version = "2", features = ["serde"] }
+bitflags = { version = "2.2.1" }
+clap = { version = "4.2", features = ["derive", "env"] }
+chrono = { version = "0.4.24", default-features = false, features = [
+    "clock",
+    "std",
+    "wasmbind",
+    "serde",
+] }
+chrono-tz = { version = "0.10", features = ["serde"] }
+criterion = { version = "0.8", default-features = false, features = [
+    "rayon",
+    "cargo_bench_support",
+] }
+crossbeam-channel = { version = "0.5.15" }
+crossbeam-utils = { version = "0.8.7" }
+enum-map = { version = "2.4" }
+enumset = "1.1.3"
+futures-util = { version = "0.3.7", default-features = false }
+fxhash = { version = "0.2.1" }
+hashbrown = { version = "0.17", default-features = false, features = [
+    "rayon",
+    "serde",
+    "nightly",
+    "default-hasher",
+    "inline-more",
+    "equivalent",
+] }
+hex = "0.4.3"
+inline_tweak = { version = "1.0.8" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+itertools = { version = "0.14" }
+kiddo = "5"
+lazy_static = "1.4.0"
+mimalloc = "0.1"
+noise = { version = "0.9", default-features = false }
+num = { version = "0.4" }
+num-traits = { version = "0.2" }
+num-integer = { version = "0.1" }
+ordered-float = { version = "5", default-features = true }
+prometheus = { version = "0.14", default-features = false }
+prometheus-hyper = "0.2.1"
+regex = { version = "1.11" }
+rand = { version = "0.10", features = ["alloc"] }
+rand_chacha = { version = "0.10" }
+tokio-parallel = { package = "veloren-tokio-parallel", path = "common/tokio-parallel" }
+ron = { version = "0.12", default-features = false, features = ["std"] }
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+rusqlite = { version = "0.37", features = [
+    "array",
+    "vtab",
+    "bundled",
+    "trace",
+] }
+serde = { version = "1.0.118", features = ["derive"] }
+serde_json = { version = "1.0.50" }
+sha2 = "0.11"
+signal-hook = "0.4.3"
+slab = { version = "0.4.2" }
+slotmap = { version = "1.0", features = ["serde"] }
+specs = { version = "0.20", features = ["nightly"] }
+strum = { version = "0.28", features = ["derive"] }
+thread-priority = { version = "3.0.0" }
+tokio = { version = "=1.52.3", default-features = false, features = ["rt"] }
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3.22", default-features = false, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "time",
+] }
+vek = { version = "0.17.0", features = ["serde", "mint"] }
+quinn = { version = "0.11" }
+
+[patch.crates-io]
+atomicwrites = { path = "vendor/atomicwrites-0.4.4" }
+tynm = { path = "vendor/tynm-0.1.10" }
+wavefront = { path = "vendor/wavefront-0.2.3" }
+lz-fear = { path = "vendor/lz-fear-0.2.0" }
+png = { path = "vendor/png-0.18.1" }
+backtrace = { path = "vendor/backtrace-0.3.76" }
+hashbrown_015 = { package = "hashbrown", path = "vendor/hashbrown-0.15.5" }
+# Keep hashlink compatible with the aligned foldhash 0.2 default hasher.
+hashlink = { path = "vendor/hashlink-0.10.0" }
+rust-argon2 = { path = "vendor/rust-argon2-2.1.0" }
+sha2 = { path = "vendor/sha2-0.10.9" }
+# Retain the SHA 0.10 APIs while sharing cpufeatures 0.3.1 with SHA 0.11.
+sha1 = { path = "vendor/sha1-0.10.6" }
+# until next specs release
+specs = { path = "vendor/specs" }
+shred = { path = "vendor/shred" }
+hibitset = { path = "vendor/hibitset" }
+hashbrown = { path = "vendor/hashbrown" }
+indexmap = { path = "vendor/indexmap" }

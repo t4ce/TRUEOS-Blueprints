@@ -1,0 +1,16 @@
+[
+    (1.0, All([
+        MultiDrop(Item("common.items.utility.coins"), 200, 500),
+        MultiDrop(Item("common.items.consumable.potion_minor"), 2, 4),
+
+        // Special drop
+        Lottery([
+            // Lantern drop
+            (0.15, Item("common.items.lantern.blue_0")),
+            // Hat drop
+            (0.3, Item("common.items.armor.misc.head.mitre")),
+            //  Nothing
+            (1.05, Nothing),
+        ]),
+    ]))
+]

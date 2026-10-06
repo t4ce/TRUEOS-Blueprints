@@ -1,0 +1,419 @@
+use super::{
+    Density, Ori, Vel,
+    body::{Body, object},
+};
+use crate::{
+    consts::{AIR_DENSITY, GRAVITY, LAVA_DENSITY, WATER_DENSITY},
+    util::{Dir, Plane, Projection},
+};
+use serde::{Deserialize, Serialize};
+use std::f32::consts::PI;
+use vek::*;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString)]
+pub enum LiquidKind {
+    Water,
+    Lava,
+}
+
+impl LiquidKind {
+    /// If an entity is in multiple overlapping liquid blocks, which one takes
+    /// precedence? (should be a rare edge case, since checkerboard patterns of
+    /// water and lava shouldn't show up in worldgen)
+    #[inline]
+    #[must_use]
+    pub fn merge(self, other: Self) -> Self {
+        use LiquidKind::{Lava, Water};
+        match (self, other) {
+            (Water, Water) => Water,
+            (Water, Lava) => Lava,
+            (Lava, _) => Lava,
+        }
+    }
+}
+
+/// Fluid medium in which the entity exists
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Fluid {
+    Air {
+        vel: Vel,
+        elevation: f32,
+    },
+    Liquid {
+        kind: LiquidKind,
+        vel: Vel,
+        depth: f32,
+    },
+}
+
+impl Fluid {
+    /// Specific mass
+    pub fn density(&self) -> Density {
+        match self {
+            Self::Air { .. } => Density(AIR_DENSITY),
+            Self::Liquid {
+                kind: LiquidKind::Water,
+                ..
+            } => Density(WATER_DENSITY),
+            Self::Liquid {
+                kind: LiquidKind::Lava,
+                ..
+            } => Density(LAVA_DENSITY),
+        }
+    }
+
+    /// Pressure from entity velocity
+    pub fn dynamic_pressure(&self, vel: &Vel) -> f32 {
+        0.5 * self.density().0 * self.relative_flow(vel).0.magnitude_squared()
+    }
+
+    /*
+        pub fn static_pressure(&self) -> f32 {
+            match self {
+                Self::Air { elevation, .. } => Self::air_pressure(*elevation),
+                Self::Water { depth, .. } => Self::water_pressure(*depth),
+            }
+        }
+
+        /// Absolute static pressure of air at elevation
+        pub fn air_pressure(elevation: f32) -> f32 {
+            // At low altitudes above sea level, the pressure decreases by about 1.2 kPa for
+            // every 100 metres.
+            // https://en.wikipedia.org/wiki/Atmospheric_pressure#Altitude_variation
+            ATMOSPHERE - elevation / 12.0
+        }
+
+        /// Absolute static pressure of water at depth
+        pub fn water_pressure(depth: f32) -> f32 { WATER_DENSITY * GRAVITY * depth + ATMOSPHERE }
+    */
+    /// Velocity of fluid, if applicable
+    pub fn flow_vel(&self) -> Vel {
+        match self {
+            Self::Air { vel, .. } => *vel,
+            Self::Liquid { vel, .. } => *vel,
+        }
+    }
+
+    // Very simple but useful in reducing mental overhead
+    pub fn relative_flow(&self, vel: &Vel) -> Vel { Vel(self.flow_vel().0 - vel.0) }
+
+    pub fn is_liquid(&self) -> bool { matches!(self, Fluid::Liquid { .. }) }
+
+    pub fn is_water(&self) -> bool {
+        matches!(self, Fluid::Liquid {
+            kind: LiquidKind::Water,
+            ..
+        })
+    }
+
+    pub fn elevation(&self) -> Option<f32> {
+        match self {
+            Fluid::Air { elevation, .. } => Some(*elevation),
+            _ => None,
+        }
+    }
+
+    pub fn depth(&self) -> Option<f32> {
+        match self {
+            Fluid::Liquid { depth, .. } => Some(*depth),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Fluid {
+    fn default() -> Self {
+        Self::Air {
+            elevation: 0.0,
+            vel: Vel::zero(),
+        }
+    }
+}
+
+pub struct Wings {
+    pub aspect_ratio: f32,
+    pub planform_area: f32,
+    pub ori: Ori,
+}
+
+impl Body {
+    pub fn aerodynamic_forces(
+        &self,
+        rel_flow: &Vel,
+        fluid_density: f32,
+        wings: Option<&Wings>,
+        scale: f32,
+    ) -> Vec3<f32> {
+        let v_sq = rel_flow.0.magnitude_squared();
+        if v_sq < 0.25 {
+            // don't bother with minuscule forces
+            Vec3::zero()
+        } else {
+            let rel_flow_dir = Dir::new(rel_flow.0 / v_sq.sqrt());
+            let power_vec = match wings {
+                Some(&Wings {
+                    aspect_ratio,
+                    planform_area,
+                    ori,
+                }) => {
+                    if aspect_ratio > 25.0 {
+                        tracing::warn!(
+                            "Calculating lift for wings with an aspect ratio of {}. The formulas \
+                             are only valid for aspect ratios below 25.",
+                            aspect_ratio
+                        )
+                    };
+                    let ar = aspect_ratio.min(24.0);
+                    // We have an elliptical wing; proceed to calculate its lift and drag
+
+                    // aoa will be positive when we're pitched up and negative otherwise
+                    let aoa = angle_of_attack(&ori, &rel_flow_dir);
+                    // c_l will be positive when aoa is positive (we have positive lift,
+                    // producing an upward force) and negative otherwise
+                    let c_l = lift_coefficient(ar, aoa);
+
+                    // lift dir will be orthogonal to the local relative flow vector.
+                    // Local relative flow is the resulting vector of (relative) freestream
+                    // flow + downwash (created by the vortices
+                    // of the wing tips)
+                    let lift_dir: Dir = {
+                        // induced angle of attack
+                        let aoa_i = c_l / (PI * ar);
+                        // effective angle of attack; the aoa as seen by aerofoil after
+                        // downwash
+                        let aoa_eff = aoa - aoa_i;
+                        // Angle between chord line and local relative wind is aoa_eff
+                        // radians. Direction of lift is
+                        // perpendicular to local relative wind.
+                        // At positive lift, local relative wind will be below our cord line
+                        // at an angle of aoa_eff. Thus if
+                        // we pitch down by aoa_eff radians then
+                        // our chord line will be colinear with local relative wind vector
+                        // and our up will be the direction
+                        // of lift.
+                        ori.pitched_down(aoa_eff).up()
+                    };
+
+                    // induced drag coefficient (drag due to lift)
+                    let cdi = {
+                        // Oswald's efficiency factor (empirically derived--very magical)
+                        // (this definition should not be used for aspect ratios > 25)
+                        let e = 1.78 * (1.0 - 0.045 * ar.powf(0.68)) - 0.64;
+                        c_l.powi(2) / (PI * e * ar)
+                    };
+
+                    // drag coefficient
+                    let c_d = zero_lift_drag_coefficient() + cdi;
+                    debug_assert!(c_d.is_sign_positive());
+                    debug_assert!(c_l.is_sign_positive() || aoa.is_sign_negative());
+
+                    planform_area * scale.powf(2.0) * (c_l * *lift_dir + c_d * *rel_flow_dir)
+                        + self.parasite_drag(scale) * *rel_flow_dir
+                },
+
+                _ => self.parasite_drag(scale) * *rel_flow_dir,
+            };
+
+            // This is the drag equation for a body in a fluid.
+            // F_d = 0.5 * rho * velocity^2 * drag_coefficient * reference_area,
+            // where rho is the fluid density, velocity is the velocity of the body
+            // relative to the fluid, drag_coefficient is a dimensionless coefficient
+            // that we assume is 1.0, and reference_area is related to the cross-section
+            // of the body in the direction of the flow. power_vec is the "reference area"
+            // in 3D, accounting for the flow direction. If the body has wings,
+            // this accounts for both lift and parasite drag. If the body
+            // does not have wings, this is for parasite drag only.
+            0.5 * fluid_density * v_sq * power_vec
+        }
+    }
+
+    /// Physically incorrect (but relatively dt-independent) way to calculate
+    /// drag coefficients for liquids.
+    // TODO: Remove this in favour of `aerodynamic_forces` (see: `integrate_forces`)
+    pub fn drag_coefficient_liquid(&self, fluid_density: f32, scale: f32) -> f32 {
+        fluid_density * self.parasite_drag(scale)
+    }
+
+    /// Parasite drag is the sum of pressure drag and skin friction.
+    /// Skin friction is the drag arising from the shear forces between a fluid
+    /// and a surface, while pressure drag is due to flow separation. Both are
+    /// viscous effects. The returned value is alternatively called the
+    /// Reference Area of the body, and is used in the drag force equation.
+    pub fn parasite_drag(&self, scale: f32) -> f32 {
+        let from_terminal_velocity =
+            |vel: f32| 2.0 * self.mass().0 * GRAVITY * scale * scale / (vel * vel * AIR_DENSITY);
+
+        // Reference area and drag coefficient assumes best-case scenario of the
+        // orientation producing least amount of drag
+        match self {
+            Body::Humanoid(_) => from_terminal_velocity(90.0),
+
+            Body::QuadrupedSmall(_) => from_terminal_velocity(20.0),
+
+            Body::QuadrupedMedium(_) => from_terminal_velocity(70.0),
+
+            Body::BirdMedium(_) => from_terminal_velocity(100.0),
+
+            Body::FishMedium(_) => from_terminal_velocity(120.0),
+
+            Body::Dragon(_) => from_terminal_velocity(150.0),
+
+            Body::BirdLarge(_) => from_terminal_velocity(130.0),
+
+            Body::FishSmall(_) => from_terminal_velocity(100.0),
+
+            Body::BipedLarge(_) => from_terminal_velocity(120.0),
+
+            Body::BipedSmall(_) => from_terminal_velocity(50.0),
+
+            Body::Golem(_) => from_terminal_velocity(200.0),
+
+            Body::Theropod(_) => from_terminal_velocity(130.0),
+
+            Body::QuadrupedLow(_) => from_terminal_velocity(60.0),
+
+            Body::Arthropod(_) => from_terminal_velocity(50.0),
+
+            Body::Crustacean(_) => from_terminal_velocity(50.0),
+
+            Body::Object(object) => match object {
+                // very streamlined objects
+                object::Body::Arrow
+                | object::Body::ArrowSnake
+                | object::Body::ArrowTurret
+                | object::Body::ArrowClay
+                | object::Body::FireworkBlue
+                | object::Body::FireworkGreen
+                | object::Body::FireworkPurple
+                | object::Body::FireworkRed
+                | object::Body::FireworkWhite
+                | object::Body::FireworkYellow
+                | object::Body::MultiArrow
+                | object::Body::BoltBesieger
+                | object::Body::Dart
+                | object::Body::BubbleBomb => {
+                    let dim = self.dimensions().map(|a| a * 0.5 * scale);
+                    const CD: f32 = 0.02;
+                    CD * PI * dim.x * dim.z
+                },
+
+                // spherical-ish objects
+                object::Body::BoltFire
+                | object::Body::BoltFireBig
+                | object::Body::BoltNature
+                | object::Body::Bomb
+                | object::Body::Pumpkin
+                | object::Body::Pebble
+                | object::Body::IronPikeBomb
+                | object::Body::StrigoiHead => {
+                    let dim = self.dimensions().map(|a| a * 0.5 * scale);
+                    const CD: f32 = 0.5;
+                    CD * PI * dim.x * dim.z
+                },
+
+                // frictionless
+                object::Body::FireRing => 0.0,
+                object::Body::PyroclasmBolt => 0.0,
+
+                _ => {
+                    let dim = self.dimensions().map(|a| a * scale);
+                    const CD: f32 = 2.0;
+                    CD * (PI / 6.0 * dim.x * dim.y * dim.z).powf(2.0 / 3.0)
+                },
+            },
+
+            Body::Item(_) => {
+                let dim = self.dimensions().map(|a| a * scale);
+                const CD: f32 = 2.0;
+                CD * (PI / 6.0 * dim.x * dim.y * dim.z).powf(2.0 / 3.0)
+            },
+
+            Body::Ship(_) => {
+                // Airships tend to use the square of the cube root of its volume for
+                // reference area
+                let dim = self.dimensions().map(|a| a * scale);
+                (PI / 6.0 * dim.x * dim.y * dim.z).powf(2.0 / 3.0)
+            },
+
+            Body::Plugin(body) => body.parasite_drag(),
+        }
+    }
+}
+
+/// Geometric angle of attack
+///
+/// # Note
+/// This ignores spanwise flow (i.e. we remove the spanwise flow component).
+/// With greater yaw comes greater loss of accuracy as more flow goes
+/// unaccounted for.
+pub fn angle_of_attack(ori: &Ori, rel_flow_dir: &Dir) -> f32 {
+    rel_flow_dir
+        .projected(&Plane::from(ori.right()))
+        .map(|flow_dir| PI / 2.0 - ori.up().angle_between(flow_dir.to_vec()))
+        .unwrap_or(0.0)
+}
+
+/// Total lift coefficient for a finite wing of symmetric aerofoil shape and
+/// elliptical pressure distribution.
+pub fn lift_coefficient(aspect_ratio: f32, aoa: f32) -> f32 {
+    let aoa_abs = aoa.abs();
+    let stall_angle = PI * 0.1;
+    if aoa_abs < stall_angle {
+        lift_slope(aspect_ratio, None) * aoa
+    } else {
+        // This is when flow separation and turbulence starts to kick in.
+        // Going to just make something up (based on some data), as the alternative is
+        // to just throw your hands up and return 0
+        let aoa_s = aoa.signum();
+        let c_l_max = lift_slope(aspect_ratio, None) * stall_angle;
+        let deg_45 = PI / 4.0;
+        if aoa_abs < deg_45 {
+            // drop directly to 0.6 * max lift at stall angle
+            // then climb back to max at 45°
+            Lerp::lerp(0.6 * c_l_max, c_l_max, aoa_abs / deg_45) * aoa_s
+        } else {
+            // let's just say lift goes down linearly again until we're at 90°
+            Lerp::lerp(c_l_max, 0.0, (aoa_abs - deg_45) / deg_45) * aoa_s
+        }
+    }
+}
+
+/// The zero-lift profile drag coefficient is the parasite drag on the wings
+/// at the angle of attack which generates no lift
+pub fn zero_lift_drag_coefficient() -> f32 { 0.026 }
+
+/// The change in lift over change in angle of attack¹. Multiplying by angle
+/// of attack gives the lift coefficient (for a finite wing, not aerofoil).
+/// Aspect ratio is the ratio of total wing span squared over planform area.
+///
+/// # Notes
+/// Only valid for symmetric, elliptical wings at small² angles of attack³.
+/// Does not apply to twisted, cambered or delta wings. (It still gives a
+/// reasonably accurate approximation if the wing shape is not truly
+/// elliptical.)
+///   1. geometric angle of attack, i.e. the pitch angle relative to freestream
+///      flow
+///   2. up to around ~18°, at which point maximum lift has been achieved and
+///      thereafter falls precipitously, causing a stall (this is the stall
+///      angle)
+///   3. effective aoa, i.e. geometric aoa - induced aoa; assumes no sideslip
+// TODO: Look into handling tapered wings
+fn lift_slope(aspect_ratio: f32, sweep_angle: Option<f32>) -> f32 {
+    // lift slope for a thin aerofoil, given by Thin Aerofoil Theory
+    let a0 = 2.0 * PI;
+    if let Some(sweep) = sweep_angle {
+        // for swept wings we use Kuchemann's modification to Helmbold's
+        // equation
+        let a0_cos_sweep = a0 * sweep.cos();
+        let x = a0_cos_sweep / (PI * aspect_ratio);
+        a0_cos_sweep / ((1.0 + x.powi(2)).sqrt() + x)
+    } else if aspect_ratio < 4.0 {
+        // for low aspect ratio wings (AR < 4) we use Helmbold's equation
+        let x = a0 / (PI * aspect_ratio);
+        a0 / ((1.0 + x.powi(2)).sqrt() + x)
+    } else {
+        // for high aspect ratio wings (AR > 4) we use the equation given by
+        // Prandtl's lifting-line theory
+        a0 / (1.0 + (a0 / (PI * aspect_ratio)))
+    }
+}

@@ -1,0 +1,20 @@
+RapidRanged(
+    energy_cost: 10,
+    buildup_duration: 0.55,
+    shoot_duration: 0.05,
+    recover_duration: 0.1,
+    options: (
+        max_projectiles: Some(5),
+        fire_all: true,
+    ),
+    projectile: (
+        kind: Simple,
+        attack: Some((
+            damage: 4.5,
+            without_combo: true,
+            damage_kind: Piercing,
+        )),
+    ),
+    projectile_body: Object(Arrow),
+    projectile_speed: 120.0,
+)

@@ -1,0 +1,27 @@
+SpawnEntry (
+    name: "Tundra snow animals.",
+    note: "Usually you can find them in snowy areas.",
+    rules: [
+        Pack(
+            groups: [
+                (1, (2, 3, "common.entity.wild.aggressive.frostfang")),
+                (1, (2, 4, "common.entity.wild.aggressive.snow_raptor")),
+                (3, (1, 1, "common.entity.wild.peaceful.snowy_owl")),
+                (2, (1, 1, "common.entity.wild.peaceful.arctic_fox")),
+            ],
+            spawn_mode: Land,
+            day_period: [Night, Morning, Noon, Evening],
+        ),
+        Pack(
+            groups: [
+                (1, (1, 1, "common.entity.wild.aggressive.akhlut")),
+                (1, (1, 1, "common.entity.wild.aggressive.icedrake")),
+                (1, (1, 1, "common.entity.wild.aggressive.roshwalr")),
+
+
+            ],
+            spawn_mode: Ice,
+            day_period: [Night, Morning, Noon, Evening],
+        ),
+    ],
+)

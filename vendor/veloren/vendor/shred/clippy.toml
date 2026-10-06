@@ -1,0 +1,2 @@
+msrv = "1.65.0"
+disallowed-types = ["std::collections::HashMap"]

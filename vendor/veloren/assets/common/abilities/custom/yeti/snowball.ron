@@ -1,0 +1,28 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 0.75,
+    recover_duration: 1.8,
+    projectile: (
+        kind: Explosive(
+            radius: 5,
+            min_falloff: 0.7,
+            reagent: Some(White),
+            target: EntityOnly,
+        ),
+        attack: Some((
+            damage: 35,
+            damage_kind: Energy,
+        )),
+        lifetime_override: Some(120.0),
+        is_point: false,
+        is_sticky: false,
+        hazard: true,
+    ),
+    projectile_body: Object(Snowball),
+    projectile_speed: 37.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

@@ -1,0 +1,307 @@
+#![enable(unwrap_newtypes)]
+
+{
+    DefaultAirship: (
+        bone0: (
+            offset: (-17.5, -39.0, 1.0),
+            central: "airship_human.structure",
+        ),
+        bone1: (
+            offset: (-8.5, -2.0, -8.5),
+            central: "airship_human.propeller-l",
+        ),
+        bone2: (
+            offset: (-8.5, -2.0, -8.5),
+            central: "airship_human.propeller-r",
+        ),
+        bone3: (
+            offset: (-1.5, -10.0, -4.5),
+            central: "airship_human.rudder",
+        ),
+
+        custom_indices: {
+            1: Air(SeatWoodBlueSide(2)),
+            2: Air(Helm(0)),
+            3: Air(DoorWideAirship(4)),
+            4: Air(SeatWoodBlueSide(6, true)),
+            5: Air(SeatWoodBlueMiddle(2)),
+            6: Air(LanternAirshipWallBrownS(0)),
+            7: Air(LanternAirshipWallBrownS(4)),
+            8: Air(DoorWideAirship(0)),
+            9: Air(CraftingBench()),
+            11: Air(RepairBench()),
+            12: Air(DismantlingBench()),
+            15: Air(Anvil(2)),
+            17: Air(CookingPot()),
+            18: Air(LanternAirshipWallBrownS(2)),
+            23: Air(LanternAirshipGroundBrownS(4)),
+        },
+    ),
+    AirBalloon: (
+        bone0: (
+            offset: (-14.5, -16.0, 0.0),
+            central: "air_balloon.structure",
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone2: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone3: (
+            offset: (-1.5, -6.0, -6.0),
+            central: "air_balloon.rudder",
+        ),
+
+        custom_indices: {
+            1: Air(Helm(0)),
+        },
+    ),
+    SailBoat: (
+        bone0: (
+            offset: (-6.5, -13.5, 0.0),
+            central: "sail_boat.structure",
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone2: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone3: (
+            offset: (-1.5, -6.0, -5.0),
+            central: "empty",
+        ),
+
+        custom_indices: {
+            1: Air(ChairWoodWoodland2(2)),
+            2: Air(Helm(0)),
+            3: Air(Door(6)),
+            4: Air(Door(2)),
+            9: Air(CraftingBench(0)),
+            10: Air(Window1(0)),
+            11: Air(RepairBench(0)),
+            12: Air(DismantlingBench(4)),
+            13: Air(Window1(2)),
+            14: Air(Crate(0)),
+            15: Air(Anvil(2)),
+            16: Air(Tent(0)),
+            17: Air(CookingPot(0)),
+            18: Air(WallLampSmall(4)),
+            19: Air(Lantern(4)),
+        },
+    ),
+    Galleon: (
+        bone0: (
+            offset: (-12.5, -24.5, -3.0),
+            central: "galleon.structure",
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone2: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone3: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+
+        custom_indices: {
+            1: Air(ChairWoodWoodland2(2)),
+            2: Air(Helm(0)),
+            3: Air(DoorWide(4)),
+            4: Air(DoorWide(0)),
+            9: Air(CraftingBench(0)),
+            10: Air(Window1(0)),
+            11: Air(RepairBench(0)),
+            12: Air(DismantlingBench(4)),
+            13: Air(Window1(2)),
+            14: Air(Crate(0)),
+            15: Air(Cauldron(2)),
+            16: Air(Tent(0)),
+            17: Air(CookingPot(0)),
+            18: Air(WallLamp(4)),
+            19: Air(Lantern(4)),
+        },
+    ),
+    Skiff: (
+        bone0: (
+            offset: (-4.5, -7, -0.5),
+            central: "skiff.structure",
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone2: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone3: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+
+        custom_indices: {
+            1: Air(BenchWood2Side(6, true)),
+            2: Air(Helm(0)),
+            3: Air(Door(4)),
+            4: Air(Door(0)),
+            5: Air(BenchWood2Middle(2)),
+            6: Air(BenchWood2Side(2)),
+            9: Air(CraftingBench(0)),
+            10: Air(Window1(0)),
+            11: Air(RepairBench(0)),
+            12: Air(DismantlingBench(4)),
+            13: Air(Window1(2)),
+            14: Air(Crate(0)),
+            15: Air(Cauldron(2)),
+            16: Air(Tent(0)),
+            17: Air(CookingPot(0)),
+            18: Air(LanternAirshipWallChestnutS(2)),
+            19: Air(LanternAirshipGroundChestnutS(0)),
+        },
+    ),
+    Submarine: (
+        bone0: (
+            offset: (-5.5, -18.0, -1.0),
+            central: "submarine.structure",
+        ),
+        bone1: (
+            offset: (-3.5, -1.0, -3.5),
+            central: "submarine.prop",
+        ),
+        bone2: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+        bone3: (
+            offset: (-3.5, -3.0, -3.5),
+            central: "submarine.rudder",
+        ),
+
+        custom_indices: {
+            1: Air(ChairWoodWoodland2(2)),
+            2: Air(Helm(0)),
+            3: Air(Door(4)),
+            4: Air(Door(0)),
+            9: Air(CraftingBench(0)),
+            10: Air(Window1(0)),
+            11: Air(RepairBench(0)),
+            12: Air(DismantlingBench(4)),
+            13: Air(Window1(2)),
+            14: Air(Crate(0)),
+            15: Air(Cauldron(2)),
+            16: Air(Tent(0)),
+            17: Air(CookingPot(0)),
+            18: Air(WallLampSmall(4)),
+            19: Air(Lantern(4)),
+        },
+    ),
+    Carriage: (
+        bone0: (
+            offset: (-4.5, -7.0, -0.5),
+            central: "carriage.structure",
+        ),
+        bone1: (
+            offset: (-2.0, -5.0, -2.0),
+            central: "carriage.axle",
+        ),
+        bone2: (
+            offset: (-2.0, -5.0, -2.0),
+            central: "carriage.axle",
+        ),
+        bone3: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+
+        custom_indices: {
+            1: Air(ChairWoodWoodland2(2)),
+            2: Air(Helm(0)),
+            3: Air(Door(4)),
+            4: Air(Door(0)),
+            9: Air(CraftingBench(0)),
+            10: Air(Window1(0)),
+            11: Air(RepairBench(0)),
+            12: Air(DismantlingBench(4)),
+            13: Air(Window1(2)),
+            14: Air(Crate(0)),
+            15: Air(Cauldron(2)),
+            16: Air(ChairWoodWoodland2(6)),
+            17: Air(CookingPot(0)),
+            18: Air(WallLampSmall(4)),
+            19: Air(Lantern(4)),
+        },
+    ),
+    Cart: (
+        bone0: (
+            offset: (-3.5, -3.5, 0.5),
+            central: "cart.structure",
+        ),
+        bone1: (
+            offset: (-1.0, -2.5, -1.0),
+            central: "cart.axle",
+        ),
+        bone2: (
+            offset: (-1.0, -2.5, -1.0),
+            central: "cart.axle",
+        ),
+        bone3: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+
+        custom_indices: {
+            1: Air(ChairWoodWoodland2(2)),
+            2: Air(Helm(0)),
+            3: Air(ChairWoodWoodland2(4)),
+            4: Air(ChairWoodWoodland2(0)),
+            9: Air(CraftingBench(0)),
+            10: Air(Window1(0)),
+            11: Air(RepairBench(0)),
+            12: Air(DismantlingBench(4)),
+            13: Air(Window1(2)),
+            14: Air(Crate(0)),
+            15: Air(Cauldron(2)),
+            16: Air(ChairWoodWoodland2(2)),
+            17: Air(CookingPot(0)),
+            18: Air(WallLampSmall(4)),
+            19: Air(Lantern(4)),
+        },
+    ),
+    Train: (
+        bone0: (
+            offset: (-7.5, -22.0, 0.0),
+            central: "train.loco",
+        ),
+        bone1: (
+            offset: (-2.5, -7.5, -2.5),
+            central: "train.large_wheels",
+        ),
+        bone2: (
+            offset: (-2.5, -7.5, -2.5),
+            central: "train.large_wheels",
+        ),
+        bone3: (
+            offset: (0.0, 0.0, 0.0),
+            central: "empty",
+        ),
+
+        custom_indices: {
+            145: Air(Helm(0)),
+            146: Air(Lantern(4)),
+            147: Block(GlowingRock),
+            148: Air(TrainSmoke()),
+            149: Block(Lava),
+            150: Air(Bell(0)),
+        },
+    ),
+}

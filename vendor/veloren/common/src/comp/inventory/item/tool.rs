@@ -1,0 +1,742 @@
+// Note: If you changes here "break" old character saves you can change the
+// version in voxygen\src\meta.rs in order to reset save files to being empty
+
+use crate::{
+    assets::{Asset, AssetCache, AssetExt, AssetHandle, BoxedError, Ron, SharedString},
+    comp::{
+        CharacterAbility, Combo, SkillSet,
+        ability::Stance,
+        buff::{BuffKind, Buffs},
+        inventory::{
+            Inventory,
+            item::{DurabilityMultiplier, ItemKind},
+            slot::EquipSlot,
+        },
+        skills::Skill,
+    },
+};
+use hashbrown::HashMap;
+use serde::{Deserialize, Serialize};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Sub};
+use strum::EnumIter;
+use tracing::error;
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, EnumIter,
+)]
+pub enum ToolKind {
+    // weapons
+    Sword,
+    Axe,
+    Hammer,
+    Bow,
+    Staff,
+    Sceptre,
+    // future weapons
+    Dagger,
+    Shield,
+    Spear,
+    Blowgun,
+    // tools
+    Debug,
+    Farming,
+    Pick,
+    Shovel,
+    /// Music Instruments
+    Instrument,
+    /// Throwable item
+    Throwable,
+    // npcs
+    /// Intended for invisible weapons (e.g. a creature using its claws or
+    /// biting)
+    Natural,
+    /// This is an placeholder item, it is used by non-humanoid npcs to attack
+    Empty,
+}
+
+impl ToolKind {
+    pub fn identifier_name(&self) -> &'static str {
+        match self {
+            ToolKind::Sword => "sword",
+            ToolKind::Axe => "axe",
+            ToolKind::Hammer => "hammer",
+            ToolKind::Bow => "bow",
+            ToolKind::Dagger => "dagger",
+            ToolKind::Staff => "staff",
+            ToolKind::Spear => "spear",
+            ToolKind::Blowgun => "blowgun",
+            ToolKind::Sceptre => "sceptre",
+            ToolKind::Shield => "shield",
+            ToolKind::Natural => "natural",
+            ToolKind::Debug => "debug",
+            ToolKind::Farming => "farming",
+            ToolKind::Pick => "pickaxe",
+            ToolKind::Shovel => "shovel",
+            ToolKind::Instrument => "instrument",
+            ToolKind::Throwable => "throwable",
+            ToolKind::Empty => "empty",
+        }
+    }
+
+    pub fn gains_combat_xp(&self) -> bool {
+        matches!(
+            self,
+            ToolKind::Sword
+                | ToolKind::Axe
+                | ToolKind::Hammer
+                | ToolKind::Bow
+                | ToolKind::Dagger
+                | ToolKind::Staff
+                | ToolKind::Spear
+                | ToolKind::Blowgun
+                | ToolKind::Sceptre
+                | ToolKind::Shield
+        )
+    }
+
+    pub fn can_block(&self) -> bool {
+        matches!(
+            self,
+            ToolKind::Sword
+                | ToolKind::Axe
+                | ToolKind::Hammer
+                | ToolKind::Shield
+                | ToolKind::Dagger
+        )
+    }
+
+    pub fn block_priority(&self) -> i32 {
+        match self {
+            ToolKind::Debug => 0,
+            ToolKind::Blowgun => 1,
+            ToolKind::Bow => 2,
+            ToolKind::Staff => 3,
+            ToolKind::Sceptre => 4,
+            ToolKind::Empty => 5,
+            ToolKind::Natural => 6,
+            ToolKind::Throwable => 7,
+            ToolKind::Instrument => 8,
+            ToolKind::Farming => 9,
+            ToolKind::Shovel => 10,
+            ToolKind::Pick => 11,
+            ToolKind::Dagger => 12,
+            ToolKind::Spear => 13,
+            ToolKind::Hammer => 14,
+            ToolKind::Axe => 15,
+            ToolKind::Sword => 16,
+            ToolKind::Shield => 17,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Hands {
+    One,
+    Two,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stats {
+    pub equip_time_secs: f32,
+    pub power: f32,
+    pub effect_power: f32,
+    pub speed: f32,
+    pub range: f32,
+    pub energy_efficiency: f32,
+    pub buff_strength: f32,
+}
+
+impl Stats {
+    pub fn zero() -> Stats {
+        Stats {
+            equip_time_secs: 0.0,
+            power: 0.0,
+            effect_power: 0.0,
+            speed: 0.0,
+            range: 0.0,
+            energy_efficiency: 0.0,
+            buff_strength: 0.0,
+        }
+    }
+
+    pub fn one() -> Stats {
+        Stats {
+            equip_time_secs: 1.0,
+            power: 1.0,
+            effect_power: 1.0,
+            speed: 1.0,
+            range: 1.0,
+            energy_efficiency: 1.0,
+            buff_strength: 1.0,
+        }
+    }
+
+    /// Calculates a diminished buff strength where the buff strength is clamped
+    /// by the power, and then excess buff strength above the power is added
+    /// with diminishing returns.
+    // TODO: Remove this later when there are more varied high tier materials.
+    // Mainly exists for now as a hack to allow some progression in strength of
+    // directly applied buffs.
+    pub fn diminished_buff_strength(&self) -> f32 {
+        let base = self.buff_strength.clamp(0.0, self.power);
+        let diminished = (self.buff_strength - base + 1.0).log(5.0);
+        base + diminished
+    }
+
+    pub fn with_durability_mult(&self, dur_mult: DurabilityMultiplier) -> Self {
+        let less_scaled = dur_mult.0 * 0.5 + 0.5;
+        Self {
+            equip_time_secs: self.equip_time_secs / less_scaled.max(0.01),
+            power: self.power * dur_mult.0,
+            effect_power: self.effect_power * dur_mult.0,
+            speed: self.speed * less_scaled,
+            range: self.range * less_scaled,
+            energy_efficiency: self.energy_efficiency * less_scaled,
+            buff_strength: self.buff_strength * dur_mult.0,
+        }
+    }
+}
+
+impl Add<Stats> for Stats {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            equip_time_secs: self.equip_time_secs + other.equip_time_secs,
+            power: self.power + other.power,
+            effect_power: self.effect_power + other.effect_power,
+            speed: self.speed + other.speed,
+            range: self.range + other.range,
+            energy_efficiency: self.energy_efficiency + other.energy_efficiency,
+            buff_strength: self.buff_strength + other.buff_strength,
+        }
+    }
+}
+
+impl AddAssign<Stats> for Stats {
+    fn add_assign(&mut self, other: Stats) { *self = *self + other; }
+}
+
+impl Sub<Stats> for Stats {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
+        Self {
+            equip_time_secs: self.equip_time_secs - other.equip_time_secs,
+            power: self.power - other.power,
+            effect_power: self.effect_power - other.effect_power,
+            speed: self.speed - other.speed,
+            range: self.range - other.range,
+            energy_efficiency: self.energy_efficiency - other.energy_efficiency,
+            buff_strength: self.buff_strength - other.buff_strength,
+        }
+    }
+}
+
+impl Mul<Stats> for Stats {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
+        Self {
+            equip_time_secs: self.equip_time_secs * other.equip_time_secs,
+            power: self.power * other.power,
+            effect_power: self.effect_power * other.effect_power,
+            speed: self.speed * other.speed,
+            range: self.range * other.range,
+            energy_efficiency: self.energy_efficiency * other.energy_efficiency,
+            buff_strength: self.buff_strength * other.buff_strength,
+        }
+    }
+}
+
+impl MulAssign<Stats> for Stats {
+    fn mul_assign(&mut self, other: Stats) { *self = *self * other; }
+}
+
+impl Div<f32> for Stats {
+    type Output = Self;
+
+    fn div(self, scalar: f32) -> Self {
+        Self {
+            equip_time_secs: self.equip_time_secs / scalar,
+            power: self.power / scalar,
+            effect_power: self.effect_power / scalar,
+            speed: self.speed / scalar,
+            range: self.range / scalar,
+            energy_efficiency: self.energy_efficiency / scalar,
+            buff_strength: self.buff_strength / scalar,
+        }
+    }
+}
+
+impl Mul<DurabilityMultiplier> for Stats {
+    type Output = Self;
+
+    fn mul(self, value: DurabilityMultiplier) -> Self { self.with_durability_mult(value) }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Tool {
+    pub kind: ToolKind,
+    pub hands: Hands,
+    stats: Stats,
+    // TODO: item specific abilities
+}
+
+impl Tool {
+    // DO NOT USE UNLESS YOU KNOW WHAT YOU ARE DOING
+    // Added for CSV import of stats
+    pub fn new(kind: ToolKind, hands: Hands, stats: Stats) -> Self { Self { kind, hands, stats } }
+
+    pub fn empty() -> Self {
+        Self {
+            kind: ToolKind::Empty,
+            hands: Hands::One,
+            stats: Stats {
+                equip_time_secs: 0.0,
+                power: 1.00,
+                effect_power: 1.00,
+                speed: 1.00,
+                range: 1.0,
+                energy_efficiency: 1.0,
+                buff_strength: 1.0,
+            },
+        }
+    }
+
+    pub fn stats(&self, durability_multiplier: DurabilityMultiplier) -> Stats {
+        self.stats * durability_multiplier
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbilitySet<T> {
+    pub guard: Option<AbilityKind<T>>,
+    pub primary: AbilityKind<T>,
+    pub secondary: AbilityKind<T>,
+    pub abilities: Vec<AbilityKind<T>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AbilityKind<T> {
+    Simple(Option<Skill>, T),
+    Contextualized {
+        pseudo_id: String,
+        abilities: Vec<(AbilityContext, (Option<Skill>, T))>,
+    },
+}
+
+/// The contextual index indicates which entry in a contextual ability was used.
+/// This should only be necessary for the frontend to distinguish between the
+/// options when a contextual ability is used.
+#[derive(Clone, Debug, Serialize, Deserialize, Copy, Eq, PartialEq)]
+pub struct ContextualIndex(pub usize);
+
+impl<T> AbilityKind<T> {
+    pub fn map<U, F: FnMut(T) -> U>(self, mut f: F) -> AbilityKind<U> {
+        match self {
+            Self::Simple(s, x) => AbilityKind::<U>::Simple(s, f(x)),
+            Self::Contextualized {
+                pseudo_id,
+                abilities,
+            } => AbilityKind::<U>::Contextualized {
+                pseudo_id,
+                abilities: abilities
+                    .into_iter()
+                    .map(|(c, (s, x))| (c, (s, f(x))))
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn map_ref<U, F: FnMut(&T) -> U>(&self, mut f: F) -> AbilityKind<U> {
+        match self {
+            Self::Simple(s, x) => AbilityKind::<U>::Simple(*s, f(x)),
+            Self::Contextualized {
+                pseudo_id,
+                abilities,
+            } => AbilityKind::<U>::Contextualized {
+                pseudo_id: pseudo_id.clone(),
+                abilities: abilities
+                    .iter()
+                    .map(|(c, (s, x))| (*c, (*s, f(x))))
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn ability(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        let unlocked = |s: Option<Skill>, a| {
+            // If there is a skill requirement and the skillset does not contain the
+            // required skill, return None
+            s.is_none_or(|s| skillset.is_some_and(|ss| ss.has_skill(s)))
+                .then_some(a)
+        };
+
+        match self {
+            AbilityKind::Simple(s, a) => unlocked(*s, a).map(|a| (a, None)),
+            AbilityKind::Contextualized {
+                pseudo_id: _,
+                abilities,
+            } => abilities
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (req_contexts, (s, a)))| {
+                    unlocked(*s, a).map(|a| (i, (req_contexts, a)))
+                })
+                .find_map(|(i, (req_context, a))| {
+                    req_context
+                        .fulfilled_by(stance, inv, combo, buffs)
+                        .then_some((a, Some(ContextualIndex(i))))
+                }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Copy, Eq, PartialEq, Hash, Default)]
+pub struct AbilityContext {
+    /// Note, in this context `Stance::None` isn't intended to be used. e.g. the
+    /// stance field should be `None` instead of `Some(Stance::None)` in the
+    /// ability map config files(s).
+    pub stance: Option<Stance>,
+    #[serde(default)]
+    pub dual_wielding_same_kind: bool,
+    pub combo: Option<u32>,
+    pub buff: Option<BuffKind>,
+}
+
+impl AbilityContext {
+    fn fulfilled_by(
+        &self,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> bool {
+        let dual_wielding_same_kind = if let Some(inv) = inv {
+            let tool_kind = |slot| {
+                inv.equipped(slot).and_then(|i| {
+                    if let ItemKind::Tool(tool) = &*i.kind() {
+                        Some(tool.kind)
+                    } else {
+                        None
+                    }
+                })
+            };
+            tool_kind(EquipSlot::ActiveMainhand) == tool_kind(EquipSlot::ActiveOffhand)
+        } else {
+            false
+        };
+
+        // Either stance not required or context is in the same stance
+        let stance_check = self.stance.is_none_or(|s| stance.copied() == Some(s));
+        // Either dual wield not required or context is dual wielding
+        let dual_wield_check = !self.dual_wielding_same_kind || dual_wielding_same_kind;
+        // Either no minimum combo needed or context has sufficient combo
+        let combo_check = self
+            .combo
+            .is_none_or(|c_req| combo.is_some_and(|c| c.counter() >= c_req));
+        // Either no buff requored or entity has buff present
+        let buff_check = self
+            .buff
+            .is_none_or(|b| buffs.is_some_and(|buffs| buffs.contains(b)));
+
+        stance_check && dual_wield_check && combo_check && buff_check
+    }
+}
+
+impl AbilitySet<AbilityItem> {
+    #[must_use]
+    pub fn modified_by_tool(
+        self,
+        tool: &Tool,
+        durability_multiplier: DurabilityMultiplier,
+    ) -> Self {
+        self.map(|a| AbilityItem {
+            id: a.id,
+            ability: a
+                .ability
+                .adjusted_by_stats(tool.stats(durability_multiplier)),
+        })
+    }
+}
+
+impl<T> AbilitySet<T> {
+    pub fn map<U, F: FnMut(T) -> U>(self, mut f: F) -> AbilitySet<U> {
+        AbilitySet {
+            guard: self.guard.map(|g| g.map(&mut f)),
+            primary: self.primary.map(&mut f),
+            secondary: self.secondary.map(&mut f),
+            abilities: self.abilities.into_iter().map(|x| x.map(&mut f)).collect(),
+        }
+    }
+
+    pub fn map_ref<U, F: FnMut(&T) -> U>(&self, mut f: F) -> AbilitySet<U> {
+        AbilitySet {
+            guard: self.guard.as_ref().map(|g| g.map_ref(&mut f)),
+            primary: self.primary.map_ref(&mut f),
+            secondary: self.secondary.map_ref(&mut f),
+            abilities: self.abilities.iter().map(|x| x.map_ref(&mut f)).collect(),
+        }
+    }
+
+    pub fn guard(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.guard
+            .as_ref()
+            .and_then(|g| g.ability(skillset, stance, inv, combo, buffs))
+    }
+
+    pub fn primary(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.primary.ability(skillset, stance, inv, combo, buffs)
+    }
+
+    pub fn secondary(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.secondary.ability(skillset, stance, inv, combo, buffs)
+    }
+
+    pub fn auxiliary(
+        &self,
+        index: usize,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.abilities
+            .get(index)
+            .and_then(|a| a.ability(skillset, stance, inv, combo, buffs))
+    }
+}
+
+impl Default for AbilitySet<AbilityItem> {
+    fn default() -> Self {
+        AbilitySet {
+            guard: None,
+            primary: AbilityKind::Simple(None, AbilityItem {
+                id: String::new(),
+                ability: CharacterAbility::default(),
+            }),
+            secondary: AbilityKind::Simple(None, AbilityItem {
+                id: String::new(),
+                ability: CharacterAbility::default(),
+            }),
+            abilities: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum AbilitySpec {
+    Tool(ToolKind),
+    Custom(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbilityItem {
+    pub id: String,
+    pub ability: CharacterAbility,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum AbilityMapEntry<T = AbilityItem> {
+    AbilitySet(AbilitySet<T>),
+    AbilitySetOverride {
+        parent: AbilitySpec,
+        guard: Option<AbilityKind<T>>,
+        primary: Option<AbilityKind<T>>,
+        secondary: Option<AbilityKind<T>>,
+        added_abilities: Vec<AbilityKind<T>>,
+        removed_abilities: Vec<AbilityKind<T>>,
+    },
+}
+
+impl<T: Clone + Eq> AbilityMapEntry<T> {
+    pub fn map_ref<U, F: FnMut(&T) -> U>(&self, mut f: F) -> AbilityMapEntry<U> {
+        match self {
+            AbilityMapEntry::AbilitySet(ability_set) => {
+                AbilityMapEntry::AbilitySet(ability_set.map_ref(f))
+            },
+            AbilityMapEntry::AbilitySetOverride {
+                parent,
+                guard,
+                primary,
+                secondary,
+                added_abilities,
+                removed_abilities,
+            } => AbilityMapEntry::AbilitySetOverride {
+                parent: parent.clone(),
+                guard: guard.as_ref().map(|g| g.map_ref(&mut f)),
+                primary: primary.as_ref().map(|p| p.map_ref(&mut f)),
+                secondary: secondary.as_ref().map(|s| s.map_ref(&mut f)),
+                added_abilities: added_abilities.iter().map(|x| x.map_ref(&mut f)).collect(),
+                removed_abilities: removed_abilities
+                    .iter()
+                    .map(|x| x.map_ref(&mut f))
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn inherit(self, parent: &Self) -> Self {
+        match self {
+            AbilityMapEntry::AbilitySet(_) => self,
+            AbilityMapEntry::AbilitySetOverride {
+                guard,
+                primary,
+                secondary,
+                mut added_abilities,
+                mut removed_abilities,
+                ..
+            } => match parent {
+                AbilityMapEntry::AbilitySet(parent) => {
+                    added_abilities.extend(
+                        parent
+                            .abilities
+                            .iter()
+                            .filter(|x| !removed_abilities.contains(x))
+                            .cloned(),
+                    );
+
+                    AbilityMapEntry::AbilitySet(AbilitySet {
+                        guard: guard.or(parent.guard.clone()),
+                        primary: primary.unwrap_or(parent.primary.clone()),
+                        secondary: secondary.unwrap_or(parent.secondary.clone()),
+                        abilities: added_abilities,
+                    })
+                },
+                AbilityMapEntry::AbilitySetOverride {
+                    parent: p_parent,
+                    guard: p_guard,
+                    primary: p_primary,
+                    secondary: p_secondary,
+                    added_abilities: p_added_abilities,
+                    removed_abilities: p_removed_abilities,
+                } => {
+                    added_abilities.extend(
+                        p_added_abilities
+                            .iter()
+                            .filter(|x| !removed_abilities.contains(x))
+                            .cloned(),
+                    );
+                    removed_abilities.extend(
+                        p_removed_abilities
+                            .iter()
+                            .filter(|x| !added_abilities.contains(x))
+                            .cloned(),
+                    );
+
+                    AbilityMapEntry::AbilitySetOverride {
+                        parent: p_parent.clone(),
+                        guard: guard.or(p_guard.clone()),
+                        primary: primary.or(p_primary.clone()),
+                        secondary: secondary.or(p_secondary.clone()),
+                        added_abilities,
+                        removed_abilities,
+                    }
+                },
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbilityMap<T = AbilityItem>(HashMap<AbilitySpec, AbilityMapEntry<T>>);
+
+impl AbilityMap {
+    pub fn load() -> AssetHandle<Self> {
+        Self::load_expect("common.abilities.ability_set_manifest")
+    }
+}
+
+impl<T> AbilityMap<T> {
+    pub fn get_ability_set(&self, key: &AbilitySpec) -> Option<&AbilitySet<T>> {
+        self.0.get(key).and_then(|entry| match entry {
+            AbilityMapEntry::AbilitySet(ability_set) => Some(ability_set),
+            AbilityMapEntry::AbilitySetOverride { .. } => None,
+        })
+    }
+}
+
+impl Asset for AbilityMap {
+    fn load(cache: &AssetCache, specifier: &SharedString) -> Result<Self, BoxedError> {
+        let mut ability_map = cache
+            .load::<Ron<AbilityMap<String>>>(specifier)?
+            .read()
+            .0
+            .0
+            .clone();
+
+        // Find child entries and inherit from their parent
+        while let Some((spec, mut entry)) = {
+            let spec = ability_map
+                .iter()
+                .find(|(_, entry)| matches!(entry, AbilityMapEntry::AbilitySetOverride { .. }))
+                .map(|(spec, _)| spec.clone());
+
+            spec.and_then(|spec| ability_map.remove_entry(&spec))
+        } {
+            let parent = if let AbilityMapEntry::AbilitySetOverride { parent, .. } = &entry {
+                Some(parent)
+            } else {
+                None
+            }
+            .and_then(|parent| ability_map.get(parent));
+
+            if let Some(parent) = parent {
+                entry = entry.inherit(parent);
+            }
+
+            ability_map.insert(spec, entry);
+        }
+
+        Ok(AbilityMap(
+            ability_map
+                .into_iter()
+                .map(|(kind, set)| {
+                    (
+                        kind.clone(),
+                        set.map_ref(|s| AbilityItem {
+                            id: s.clone(),
+                            ability: match cache.load::<Ron<CharacterAbility>>(s) {
+                                Ok(handle) => handle.cloned().into_inner(),
+                                Err(e) => {
+                                    error!(?e, "Failed to load specified ability file!");
+                                    CharacterAbility::default()
+                                },
+                            },
+                        }),
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
+        ))
+    }
+}

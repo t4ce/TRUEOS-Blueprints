@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Carapace Shoulderpads",
+    legacy_description: "The heavy carapace feels light compared to your burdens.",
+    kind: Armor((
+        kind: Shoulder,
+        stats: FromSet("Carapace"),
+    )),
+    quality: High,
+    tags: [
+        Material(Carapace),
+        SalvageInto(Carapace, 1),
+    ],
+)

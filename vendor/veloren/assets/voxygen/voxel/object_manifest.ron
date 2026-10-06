@@ -1,0 +1,761 @@
+({
+    Arrow: (
+        bone0: (
+            offset: (-0.5, -6.0, -1.5),
+            central: ("weapon.projectile.simple-arrow"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    ArrowHeavy: (
+        bone0: (
+            offset: (-0.5, -6.0, -1.5),
+            central: ("weapon.projectile.heavy-arrow"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    ThornStake: (
+        bone0: (
+            offset: (-0.5, -6.0, -1.5),
+            central: ("weapon.projectile.thorn-stake"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Bomb: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("sprite.bomb.bomb"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Mine: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("object.mine"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    DagonBomb: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("object.dagon_bomb"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    TerracottaDemolisherBomb: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("object.terracotta_demolisher_bomb"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BloodBomb: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("object.blood_bomb"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireworkBlue: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.fireworks_blue-0"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireworkGreen: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.fireworks_green-0"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireworkPurple: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.fireworks_purple-0"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireworkRed: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.fireworks_red-0"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireworkWhite: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.fireworks_white-0"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireworkYellow: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.fireworks_yellow-0"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Pumpkin: (
+        bone0: (
+            offset: (-5.5, -4.0, 0.0),
+            central: ("object.pumpkin"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    StrigoiHead: (
+        bone0: (
+            offset: (-9.5, -5.5, 0.0),
+            central: ("weapon.projectile.strigoi_head"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Campfire: (
+        bone0: (
+            offset: (-9.0, -10.0, 0.0),
+            central: ("object.campfire"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    CampfireLit: (
+        bone0: (
+            offset: (-9.0, -10.0, 0.0),
+            central: ("object.campfire_lit"),
+            custom_indices: {
+                14: (attr: Fire),
+                15: (attr: Fire),
+                16: (attr: Fire),
+                129: (attr: Fire),
+                130: (attr: Fire),
+            },
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BarrelOrgan: (
+        bone0: (
+            offset: (-9.0, -10.0, 0.0),
+            central: ("object.barrel_organ"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    MinotaurAxe: (
+        bone0: (
+            offset: (-9.0, -10.0, 0.0),
+            central: ("weapon.axe.2haxe_minotaur"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    ArrowSnake: (
+        bone0: (
+            offset: (-1.5, -6.5, 0.0),
+            central: ("weapon.projectile.snake-arrow"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BoltFire: (
+        bone0: (
+            offset: (-3.0, -5.5, -3.0),
+            central: ("weapon.projectile.fire-bolt-0"),
+            custom_indices: {
+                104: (attr: Fire),
+                105: (attr: Fire),
+                106: (attr: Fire),
+                107: (attr: Fire),
+                108: (attr: Fire),
+                109: (attr: Fire),
+                110: (attr: Fire),
+                111: (attr: Fire),
+                119: (attr: Fire),
+            },
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BoltFireBig: (
+        bone0: (
+            offset: (-6.0, -6.0, -6.0),
+            central: ("weapon.projectile.fire-bolt-1"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FireRainDrop: (
+        bone0: (
+            offset: (-2.0, -10.0, -2.0),
+            central: ("weapon.projectile.firerain_droplet1"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    TrainingDummy: (
+        bone0: (
+            offset: (-7.0, -5.0, 0.0),
+            central: ("object.training_dummy"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    MultiArrow: (
+        bone0: (
+            offset: (-4.0, -9.5, -5.0),
+            central: ("weapon.projectile.multi-arrow"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BoltNature: (
+        bone0: (
+            offset: (-6.0, -6.0, -6.0),
+            central: ("weapon.projectile.nature-bolt"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Crossbow: (
+        bone0: (
+            offset: (-18.0, -15.5, -8.0),
+            central: ("object.crossbow.bone0"),
+        ),
+        bone1: (
+            offset: (-9.0, -7.0, -5.0),
+            central: ("object.crossbow.bone1"),
+        )
+    ),
+    Flamethrower: (
+        bone0: (
+            offset: (-6.0, -16.5, -8.0),
+            central: ("object.flamethrower.bone0"),
+        ),
+        bone1: (
+            offset: (-9.0, -7.0, -8.0),
+            central: ("object.flamethrower.bone1"),
+        )
+    ),
+    Lavathrower: (
+        bone0: (
+            offset: (-6.0, -16.5, 4.0),
+            central: ("object.lavathrower.bone0"),
+        ),
+        bone1: (
+            offset: (-9.0, -7.0, 0.0),
+            central: ("object.lavathrower.bone1"),
+        )
+    ),
+    ArrowTurret: (
+        bone0: (
+            offset: (-1.5, -6.5, -1.5),
+            central: ("weapon.projectile.turret-arrow"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    ArrowClay: (
+        bone0: (
+            offset: (-1.5, -6.0, -1.5),
+            central: ("weapon.projectile.clay-arrow"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BoltBesieger: (
+        bone0: (
+            offset: (-2.5, -10.0, -2.5),
+            central: ("weapon.projectile.besieger_bolt"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    ClayRocket: (
+        bone0: (
+            offset: (-0.5, -6.0, -1.5),
+            central: ("weapon.projectile.clay-missile"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    GrenadeClay: (
+        bone0: (
+            offset: (-0.5, -6.0, -1.5),
+            central: ("weapon.projectile.clay-missile"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    HaniwaSentry: (
+        bone0: (
+            offset: (-5.5, -4.5, -5.5),
+            central: ("object.haniwa_sentry.bone"),
+            model_index: 0,
+        ),
+        bone1: (
+            offset: (-5.5, -5.5, -3.0),
+            central: ("object.haniwa_sentry.bone"),
+            model_index: 1,
+        )
+    ),
+    SeaLantern: (
+        bone0: (
+            offset: (-4.5, -4.5, 0.0),
+            central: ("object.sea_lantern"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Snowball: (
+        bone0: (
+            offset: (-12.5, -12.5, 0.0),
+            central: ("weapon.projectile.snowball"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Tornado: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    FieryTornado: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Apple: (
+        bone0: (
+            offset: (-3.5, -3.5, 0.0),
+            central: ("sprite.fruit.apple"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Hive: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("sprite.beehive.beehive"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Coconut: (
+        bone0: (
+            offset: (-4.5, -4.5, 0.0),
+            central: ("sprite.fruit.coconut"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BoltIcicle: (
+        bone0: (
+            offset: (-2.5, -6.0, -2.5),
+            central: ("weapon.projectile.icicle-bolt"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    SpitPoison: (
+        bone0: (
+            offset: (-3.0, -5.0, -3.0),
+            central: ("weapon.projectile.poison-spit"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Dart: (
+        bone0: (
+            offset: (-0.5, -5.5, -1.5),
+            central: ("weapon.projectile.dart"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    GnarlingTotemRed: (
+        bone0: (
+            offset: (-6.0, -5.0, 0.0),
+            central: ("object.gnarling_totem_red"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    GnarlingTotemGreen: (
+        bone0: (
+            offset: (-9.0, -5.0, 0.0),
+            central: ("object.gnarling_totem_green"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    GnarlingTotemWhite: (
+        bone0: (
+            offset: (-8.0, -5.0, 0.0),
+            central: ("object.gnarling_totem_white"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    IceBomb: (
+        bone0: (
+            offset: (-12.5, -12.5, 0.0),
+            central: ("weapon.projectile.ice_bomb"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    SpectralSwordSmall: (
+        bone0: (
+            offset: (-0.5, -25.0, -8.5),
+            central: ("weapon.projectile.spectral_sword_small"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    SpectralSwordLarge: (
+        bone0: (
+            offset: (-0.5, -30.0, -8.5),
+            central: ("weapon.projectile.spectral_sword_large"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    LaserBeam: (
+        bone0: (
+            offset: (-6.0, -60.0, -17.0),
+            central: ("weapon.projectile.laser_beam"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    LaserBeamSmall: (
+        bone0: (
+            offset: (-1.0, -9.0, -3.0),
+            central: ("weapon.projectile.laser_beam_small"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    LightningBolt: (
+        bone0: (
+            offset: (-4.5, -80.0, -3.0),
+            central: ("weapon.projectile.lightning_bolt"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    SpearIcicle: (
+        bone0: (
+            offset: (-2.5, -30.0, -2.5),
+            central: ("weapon.projectile.icicle-spear"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    AdletSpear: (
+        bone0: (
+            offset: (5.0, -22.0, -2.0),
+            central: ("weapon.projectile.adlet-spear"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    AdletTrap: (
+        bone0: (
+            offset: (-4.5, -2.5, 0.0),
+            central: ("weapon.projectile.adlet-trap"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    TerracottaStatue: (
+        bone0: (
+            offset: (-21.0, -19.0, -0.0),
+            central: ("object.terracotta_statue"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Portal: (
+        bone0: (
+            offset: (-33.0, -33.0, 0.0),
+            central: ("object.portal"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    PortalActive: (
+        bone0: (
+            offset: (-33.0, -33.0, 0.0),
+            central: ("object.portal_active"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Pebble: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.pebble"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    SurpriseEgg: (
+        bone0: (
+            offset: (-5.5, -5.5, 0.0),
+            central: ("object.surprise_egg"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BubbleBomb: (
+        bone0: (
+            offset: (-3.5, -3.5, -3.5),
+            central: ("weapon.projectile.bubble_bomb"),
+            custom_indices: {
+                81: (attr: Water),
+                82: (attr: Water),
+                83: (attr: Water),
+                84: (attr: Water),
+                85: (attr: Water),
+                86: (attr: Water),
+                87: (attr: Water),
+            },
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    IronPikeBomb: (
+        bone0: (
+            offset: (-3.5, -8.0, -3.5),
+            central: ("weapon.projectile.iron_pike_bomb"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    HarlequinDagger: (
+        bone0: (
+            offset: (-0.5, -7.0, -1.0),
+            central: ("weapon.projectile.harlequin-dagger"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    BorealTrap: (
+        bone0: (
+            offset: (-4.5, -2.5, 0.0),
+            central: ("weapon.projectile.boreal-trap"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    PoisonBall: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.poison_ball"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    Crux: (
+        bone0: (
+            offset: (-10.5, -10.5, 0.0),
+            central: ("object.crux"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+        FireRing: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    PyroclasmBolt: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.firerain_droplet1"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    NapalmShot: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.napalm_shot"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+    NapalmPool: (
+        bone0: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("weapon.projectile.napalm_pool"),
+        ),
+        bone1: (
+            offset: (0.0, 0.0, 0.0),
+            central: ("armor.empty"),
+        )
+    ),
+})

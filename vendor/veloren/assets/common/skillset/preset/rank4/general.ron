@@ -1,0 +1,5 @@
+[
+    Skill((Climb(Cost), 2)),
+    Skill((Climb(Speed), 1)),
+    Skill((Swim(Speed), 2)),
+]

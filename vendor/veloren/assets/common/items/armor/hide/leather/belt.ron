@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Leather Belt",
+    legacy_description: "A vicious hunter must never be caught with their pants down.",
+    kind: Armor((
+        kind: Belt,
+        stats: FromSet("Leather"),
+    )),
+    quality: Common,
+    tags: [
+        Material(Leather),
+        SalvageInto(Leather, 1),
+    ],
+)

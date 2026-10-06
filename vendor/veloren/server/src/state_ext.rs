@@ -1,0 +1,1439 @@
+#[cfg(feature = "worldgen")]
+use crate::rtsim::RtSim;
+use crate::{
+    BattleModeBuffer, SpawnPoint,
+    automod::AutoMod,
+    chat::ChatExporter,
+    client::Client,
+    events::{self, shared::update_map_markers},
+    persistence::PersistedComponents,
+    pet::restore_pet,
+    presence::RepositionToFreeSpace,
+    settings::Settings,
+    sys::sentinel::DeletedEntities,
+    wiring,
+};
+use common::{
+    LoadoutBuilder, ViewDistances,
+    character::CharacterId,
+    comp::{
+        self, BASE_ABILITY_LIMIT, CapsulePrism, ChatType, Content, Group, Inventory, LootOwner,
+        Object, Player, Poise, Presence, PresenceKind, item::ItemKind, misc::PortalData, object,
+    },
+    interaction::Interaction,
+    link::{Is, Link, LinkHandle},
+    mounting::{Mounting, Rider, VolumeMounting, VolumeRider},
+    resources::{Secs, Time},
+    rtsim,
+    tether::Tethered,
+    uid::{IdMaps, Uid},
+    util::Dir,
+};
+#[cfg(feature = "worldgen")]
+use common::{calendar::Calendar, resources::TimeOfDay, slowjob::SlowJobPool};
+use common_net::{
+    msg::{CharacterInfo, PlayerListUpdate, ServerGeneral},
+    sync::WorldSyncExt,
+};
+use common_state::State;
+use specs::{
+    Builder, Entity as EcsEntity, EntityBuilder as EcsEntityBuilder, Join, WorldExt, WriteStorage,
+    storage::{GenericReadStorage, GenericWriteStorage},
+};
+use std::time::{Duration, Instant};
+use tracing::{error, trace, warn};
+use vek::*;
+
+pub trait StateExt {
+    /// Build a non-player character
+    fn create_npc(
+        &mut self,
+        pos: comp::Pos,
+        ori: comp::Ori,
+        stats: comp::Stats,
+        skill_set: comp::SkillSet,
+        health: Option<comp::Health>,
+        poise: Poise,
+        inventory: Inventory,
+        body: comp::Body,
+        scale: comp::Scale,
+    ) -> EcsEntityBuilder<'_>;
+    /// Create an entity with only a position
+    fn create_empty(&mut self, pos: comp::Pos) -> EcsEntityBuilder<'_>;
+    /// Build a static object entity
+    fn create_object(&mut self, pos: comp::Pos, object: comp::object::Body)
+    -> EcsEntityBuilder<'_>;
+    /// Create an item drop or merge the item with an existing drop, if a
+    /// suitable candidate exists.
+    fn create_item_drop(
+        &mut self,
+        pos: comp::Pos,
+        ori: comp::Ori,
+        vel: comp::Vel,
+        item: comp::PickupItem,
+        loot_owner: Option<LootOwner>,
+    ) -> Option<EcsEntity>;
+    fn create_ship<F: FnOnce(comp::ship::Body) -> comp::Collider>(
+        &mut self,
+        pos: comp::Pos,
+        ori: comp::Ori,
+        ship: comp::ship::Body,
+        make_collider: F,
+    ) -> EcsEntityBuilder<'_>;
+    /// Build a projectile
+    fn create_projectile(
+        &mut self,
+        pos: comp::Pos,
+        vel: comp::Vel,
+        body: comp::Body,
+        projectile: comp::Projectile,
+    ) -> EcsEntityBuilder<'_>;
+    /// Build a shockwave entity
+    fn create_shockwave(
+        &mut self,
+        properties: comp::shockwave::Properties,
+        pos: comp::Pos,
+        ori: comp::Ori,
+    ) -> EcsEntityBuilder<'_>;
+    fn create_arcing(
+        &mut self,
+        arc: comp::ArcProperties,
+        target: Uid,
+        owner: Option<Uid>,
+        pos: comp::Pos,
+    ) -> EcsEntityBuilder<'_>;
+    fn create_pool(
+        &mut self,
+        properties: comp::pool::PoolProperties,
+        owner: Option<Uid>,
+        pos: comp::Pos,
+        ori: comp::Ori,
+    ) -> EcsEntityBuilder<'_>;
+    /// Creates a safezone
+    fn create_safezone(&mut self, range: Option<f32>, pos: comp::Pos) -> EcsEntityBuilder<'_>;
+    fn create_wiring(
+        &mut self,
+        pos: comp::Pos,
+        object: comp::object::Body,
+        wiring_element: wiring::WiringElement,
+    ) -> EcsEntityBuilder<'_>;
+    // NOTE: currently only used for testing
+    /// Queues chunk generation in the view distance of the persister, this
+    /// entity must be built before those chunks are received (the builder
+    /// borrows the ecs world so that is kind of impossible in practice)
+    #[cfg(feature = "worldgen")]
+    fn create_persister(
+        &mut self,
+        pos: comp::Pos,
+        view_distance: u32,
+        world: &std::sync::Arc<world::World>,
+        index: &world::IndexOwned,
+    ) -> EcsEntityBuilder<'_>;
+    /// Creates a teleporter entity, which allows players to teleport to the
+    /// `target` position. You might want to require the teleporting entity
+    /// to not have agro for teleporting.
+    fn create_teleporter(&mut self, pos: comp::Pos, portal: PortalData) -> EcsEntityBuilder<'_>;
+    /// Insert common/default components for a new character joining the server
+    fn initialize_character_data(
+        &mut self,
+        entity: EcsEntity,
+        character_id: CharacterId,
+        view_distances: ViewDistances,
+    );
+    /// Insert common/default components for a new spectator joining the server
+    fn initialize_spectator_data(&mut self, entity: EcsEntity, view_distances: ViewDistances);
+    /// Update the components associated with the entity's current character.
+    /// Performed after loading component data from the database
+    fn update_character_data(
+        &mut self,
+        entity: EcsEntity,
+        components: PersistedComponents,
+    ) -> Result<(), String>;
+    /// Iterates over registered clients and send each `ServerMsg`
+    fn validate_chat_msg(
+        &self,
+        player: EcsEntity,
+        chat_type: &comp::ChatType<comp::Group>,
+        msg: &Content,
+        // Whether the message is directly from a client or was generated on the server.
+        //
+        // Note, clients can influence the content of messages generated on the server (e.g. via
+        // chat commands like `/tell`), this is just used for logging purposes.
+        from_client: bool,
+    ) -> bool;
+    fn send_chat(&self, msg: comp::UnresolvedChatMsg, from_client: bool);
+    fn notify_players(&self, msg: ServerGeneral);
+    fn notify_in_game_clients(&self, msg: ServerGeneral);
+    /// Create a new link between entities (see [`common::mounting`] for an
+    /// example).
+    fn link<L: Link>(&mut self, link: L) -> Result<(), L::Error>;
+    /// Maintain active links between entities
+    fn maintain_links(&mut self);
+    /// Delete an entity, recording the deletion in [`DeletedEntities`]
+    fn delete_entity_recorded(
+        &mut self,
+        entity: EcsEntity,
+    ) -> Result<(), specs::error::WrongGeneration>;
+    /// Mutate the position of an entity or, if the entity is mounted, the
+    /// mount.
+    ///
+    /// If `dismount_volume` is `true`, an entity mounted on a volume entity
+    /// (such as an airship) will be dismounted to avoid teleporting the volume
+    /// entity.
+    fn position_mut<T>(
+        &mut self,
+        entity: EcsEntity,
+        dismount_volume: bool,
+        f: impl for<'a> FnOnce(&'a mut comp::Pos) -> T,
+    ) -> Result<T, Content>;
+
+    /// Mutate the position of an entity or, if the entity is mounted, the
+    /// mount.
+    ///
+    /// If `needs_ground` is set to false, the entity will strictly be mutated
+    /// to the nearest available space on the ground
+    /// otherwise, the entity will be mutated to the nearest available space
+    /// regardless of it being the ground or the sky.
+    ///
+    /// If `dismount_volume` is `true`, an entity mounted on a volume entity
+    /// (such as an airship) will be dismounted to avoid teleporting the volume
+    /// entity.
+    fn position_mut_reposition<T>(
+        &mut self,
+        entity: EcsEntity,
+        dismount_volume: bool,
+        f: impl for<'a> FnOnce(&'a mut comp::Pos) -> T,
+        needs_ground: bool,
+        modify_waypoints: bool,
+    ) -> Result<T, Content>;
+}
+
+impl StateExt for State {
+    fn create_npc(
+        &mut self,
+        pos: comp::Pos,
+        ori: comp::Ori,
+        stats: comp::Stats,
+        skill_set: comp::SkillSet,
+        health: Option<comp::Health>,
+        poise: Poise,
+        inventory: Inventory,
+        body: comp::Body,
+        scale: comp::Scale,
+    ) -> EcsEntityBuilder<'_> {
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(comp::Vel(Vec3::zero()))
+            .with(ori)
+            .with(comp::Mass(body.mass().0 * scale.0.powi(3)))
+            .with(body.density())
+            .with(body.collider())
+            .with(scale)
+            .with(comp::Controller::default())
+            .with(body)
+            .with(comp::Energy::new(body))
+            .with(stats)
+            .with(if body.is_humanoid() {
+                comp::ActiveAbilities::default_limited(BASE_ABILITY_LIMIT)
+            } else {
+                comp::ActiveAbilities::default()
+            })
+            .with(skill_set)
+            .maybe_with(health)
+            .with(poise)
+            .with(comp::Alignment::Npc)
+            .with(comp::CharacterState::default())
+            .with(comp::CharacterActivity::default())
+            .with(inventory)
+            .with(comp::Buffs::default())
+            .with(comp::Combo::default())
+            .with(comp::Auras::default())
+            .with(comp::EnteredAuras::default())
+            .with(comp::Stance::default())
+            .with(comp::projectile::ProjectileHitEntities::default())
+            .maybe_with(body.heads().map(comp::body::parts::Heads::new))
+    }
+
+    fn create_empty(&mut self, pos: comp::Pos) -> EcsEntityBuilder<'_> {
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(comp::Vel(Vec3::zero()))
+            .with(comp::Ori::default())
+    }
+
+    fn create_object(
+        &mut self,
+        pos: comp::Pos,
+        object: comp::object::Body,
+    ) -> EcsEntityBuilder<'_> {
+        let body = comp::Body::Object(object);
+        self.create_empty(pos)
+            .with(body.mass())
+            .with(body.density())
+            .with(body.collider())
+            .with(body)
+    }
+
+    fn create_item_drop(
+        &mut self,
+        pos: comp::Pos,
+        ori: comp::Ori,
+        vel: comp::Vel,
+        world_item: comp::PickupItem,
+        loot_owner: Option<LootOwner>,
+    ) -> Option<EcsEntity> {
+        // Attempt merging with any nearby entities if possible
+        {
+            use crate::sys::item::get_nearby_mergeable_items;
+
+            let positions = self.ecs().read_storage::<comp::Pos>();
+            let loot_owners = self.ecs().read_storage::<LootOwner>();
+            let mut items = self.ecs().write_storage::<comp::PickupItem>();
+            let entities = self.ecs().entities();
+            let spatial_grid = self.ecs().read_resource();
+
+            let nearby_items = get_nearby_mergeable_items(
+                &world_item,
+                &pos,
+                loot_owner.as_ref(),
+                (&entities, &items, &positions, &loot_owners, &spatial_grid),
+            );
+
+            // Merge the nearest item if possible, skip to creating a drop otherwise
+            if let Some((mergeable_item, _)) =
+                nearby_items.min_by_key(|(_, dist)| (dist * 1000.0) as i32)
+            {
+                items
+                    .get_mut(mergeable_item)
+                    .expect("we know that the item exists")
+                    .try_merge(world_item)
+                    .expect("`try_merge` should succeed because `can_merge` returned `true`");
+                return None;
+            }
+        }
+
+        let spawned_at = *self.ecs().read_resource::<Time>();
+
+        let item_body = comp::body::item::Body::from(world_item.item());
+        let body = comp::Body::Item(item_body);
+        let light_emitter = match &*world_item.item().kind() {
+            ItemKind::Lantern(lantern) => Some(comp::LightEmitter {
+                col: lantern.color(),
+                strength: lantern.strength(),
+                flicker: lantern.flicker(),
+                animated: true,
+                dir: lantern.dir,
+            }),
+            _ => None,
+        };
+        Some(
+            self.ecs_mut()
+                .create_entity_synced()
+                .with(world_item)
+                .with(pos)
+                .with(ori)
+                .with(vel)
+                .with(item_body.orientation(&mut rand::rng()))
+                .with(item_body.mass())
+                .with(item_body.density())
+                .with(body.collider())
+                .with(body)
+                .with(Object::DeleteAfter {
+                    spawned_at,
+                    // Delete the item drop after 5 minutes
+                    timeout: Duration::from_secs(300),
+                })
+                .maybe_with(loot_owner)
+                .maybe_with(light_emitter)
+                .build(),
+        )
+    }
+
+    fn create_ship<F: FnOnce(comp::ship::Body) -> comp::Collider>(
+        &mut self,
+        pos: comp::Pos,
+        ori: comp::Ori,
+        ship: comp::ship::Body,
+        make_collider: F,
+    ) -> EcsEntityBuilder<'_> {
+        let body = comp::Body::Ship(ship);
+
+        self
+            .ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(comp::Vel(Vec3::zero()))
+            .with(ori)
+            .with(body.mass())
+            .with(body.density())
+            .with(make_collider(ship))
+            .with(body)
+            .with(comp::Controller::default())
+            .with(Inventory::with_empty())
+            .with(comp::CharacterState::default())
+            .with(comp::CharacterActivity::default())
+            // TODO: some of these are required in order for the
+            // character_behavior system to recognize a possesed airship;
+            // that system should be refactored to use `.maybe()`
+            .with(comp::Energy::new(ship.into()))
+            .with(comp::Stats::new({
+                // TODO: I hope it is possible to localize it safely, but
+                // at the same time it's not visible anyway, so let's postpone
+                // this.
+                Content::Plain("Airship".to_string())
+            }, body))
+            .with(comp::SkillSet::default())
+            .with(comp::ActiveAbilities::default())
+            .with(comp::Combo::default())
+    }
+
+    fn create_projectile(
+        &mut self,
+        pos: comp::Pos,
+        vel: comp::Vel,
+        body: comp::Body,
+        projectile: comp::Projectile,
+    ) -> EcsEntityBuilder<'_> {
+        let mut projectile_base = self
+            .ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(vel)
+            .with(comp::Ori::from_unnormalized_vec(vel.0).unwrap_or_default())
+            .with(body.mass())
+            .with(body.density());
+
+        if projectile.is_sticky {
+            projectile_base = projectile_base.with(comp::Sticky);
+        }
+        if projectile.is_point {
+            projectile_base = projectile_base.with(comp::Collider::Point);
+        } else {
+            projectile_base = projectile_base.with(body.collider());
+        }
+
+        projectile_base.with(projectile).with(body)
+    }
+
+    fn create_shockwave(
+        &mut self,
+        properties: comp::shockwave::Properties,
+        pos: comp::Pos,
+        ori: comp::Ori,
+    ) -> EcsEntityBuilder<'_> {
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(ori)
+            .with(comp::Shockwave {
+                properties,
+                creation: None,
+            })
+            .with(comp::ShockwaveHitEntities {
+                hit_entities: Vec::<Uid>::new(),
+            })
+    }
+
+    fn create_arcing(
+        &mut self,
+        arc: comp::ArcProperties,
+        target: Uid,
+        owner: Option<Uid>,
+        pos: comp::Pos,
+    ) -> EcsEntityBuilder<'_> {
+        let time = self.get_time();
+
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(comp::Arcing {
+                properties: arc,
+                last_arc_time: Time(time),
+                hit_entities: vec![target],
+                owner,
+            })
+    }
+
+    fn create_pool(
+        &mut self,
+        properties: comp::pool::PoolProperties,
+        owner: Option<Uid>,
+        pos: comp::Pos,
+        ori: comp::Ori,
+    ) -> EcsEntityBuilder<'_> {
+        let time = self.get_time();
+        let tick_dur = properties.tick_dur;
+
+        let body = comp::Body::Object(comp::object::Body::NapalmPool);
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(ori)
+            .with(comp::Vel(Vec3::zero()))
+            .with(body.mass())
+            .with(body.density())
+            .with(body.collider())
+            .with(body)
+            .with(comp::LightEmitter {
+                col: Rgb::new(1.0, 0.35, 0.05),
+                strength: 3.5,
+                flicker: 1.0,
+                animated: true,
+                dir: None,
+            })
+            .with(comp::pool::Pool {
+                properties,
+                start_time: Time(time),
+                last_tick: Time(time - tick_dur.0),
+                owner,
+            })
+    }
+
+    fn create_safezone(&mut self, range: Option<f32>, pos: comp::Pos) -> EcsEntityBuilder<'_> {
+        use comp::{
+            aura::{Aura, AuraKind, AuraTarget, Auras},
+            buff::{BuffData, BuffKind, BuffSource},
+        };
+        let time = self.get_time();
+        // TODO: Consider using the area system for this
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(Auras::new(vec![Aura::new(
+                AuraKind::Buff {
+                    kind: BuffKind::Invulnerability,
+                    data: BuffData::new(1.0, Some(Secs(1.0))),
+                    category: None,
+                    source: BuffSource::World,
+                },
+                range.unwrap_or(100.0),
+                None,
+                AuraTarget::All,
+                Time(time),
+                None,
+            )]))
+    }
+
+    fn create_wiring(
+        &mut self,
+        pos: comp::Pos,
+        object: comp::object::Body,
+        wiring_element: wiring::WiringElement,
+    ) -> EcsEntityBuilder<'_> {
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(comp::Vel(Vec3::zero()))
+            .with(comp::Ori::default())
+            .with({
+                let body: comp::Body = object.into();
+                body.collider()
+            })
+            .with(comp::Body::Object(object))
+            .with(comp::Mass(100.0))
+            // .with(comp::Sticky)
+            .with(wiring_element)
+            .with(comp::LightEmitter {
+                col: Rgb::new(0.0, 0.0, 0.0),
+                strength: 2.0,
+                flicker: 1.0,
+                animated: true,
+                dir: None,
+            })
+    }
+
+    // NOTE: currently only used for testing
+    /// Queues chunk generation in the view distance of the persister, this
+    /// entity must be built before those chunks are received (the builder
+    /// borrows the ecs world so that is kind of impossible in practice)
+    #[cfg(feature = "worldgen")]
+    fn create_persister(
+        &mut self,
+        pos: comp::Pos,
+        view_distance: u32,
+        world: &std::sync::Arc<world::World>,
+        index: &world::IndexOwned,
+    ) -> EcsEntityBuilder<'_> {
+        use common::{terrain::TerrainChunkSize, vol::RectVolSize};
+        use std::sync::Arc;
+        // Request chunks
+        {
+            let ecs = self.ecs();
+            let slow_jobs = ecs.write_resource::<SlowJobPool>();
+            let rtsim = ecs.read_resource::<RtSim>();
+            let mut chunk_generator =
+                ecs.write_resource::<crate::chunk_generator::ChunkGenerator>();
+            let chunk_pos = self.terrain().pos_key(pos.0.map(|e| e as i32));
+            (-(view_distance as i32)..view_distance as i32 + 1)
+            .flat_map(|x| {
+                (-(view_distance as i32)..view_distance as i32 + 1).map(move |y| Vec2::new(x, y))
+            })
+            .map(|offset| offset + chunk_pos)
+            // Filter chunks outside the view distance
+            // Note: calculation from client chunk request filtering
+            .filter(|chunk_key| {
+                pos.0.xy().map(|e| e as f64).distance(
+                    chunk_key.map(|e| e as f64 + 0.5) * TerrainChunkSize::RECT_SIZE.map(|e| e as f64),
+                ) < (view_distance as f64 - 1.0 + 2.5 * 2.0_f64.sqrt())
+                    * TerrainChunkSize::RECT_SIZE.x as f64
+            })
+            .for_each(|chunk_key| {
+                {
+                    let time = (*ecs.read_resource::<TimeOfDay>(), (*ecs.read_resource::<Calendar>()).clone());
+                    chunk_generator.generate_chunk(None, chunk_key, &slow_jobs, Arc::clone(world), &rtsim, index.clone(), time);
+                }
+            });
+        }
+
+        self.ecs_mut()
+            .create_entity_synced()
+            .with(pos)
+            .with(Presence::new(
+                ViewDistances {
+                    terrain: view_distance,
+                    entity: view_distance,
+                },
+                PresenceKind::Spectator,
+            ))
+    }
+
+    fn create_teleporter(&mut self, pos: comp::Pos, portal: PortalData) -> EcsEntityBuilder<'_> {
+        self.create_object(pos, object::Body::Portal)
+            .with(comp::Immovable)
+            .with(comp::Object::from(portal))
+    }
+
+    fn initialize_character_data(
+        &mut self,
+        entity: EcsEntity,
+        character_id: CharacterId,
+        view_distances: ViewDistances,
+    ) {
+        let spawn_point = self.ecs().read_resource::<SpawnPoint>().0;
+
+        if let Some(player_uid) = self.read_component_copied::<Uid>(entity) {
+            // NOTE: By fetching the player_uid, we validated that the entity exists, and we
+            // call nothing that can delete it in any of the subsequent
+            // commands, so we can assume that all of these calls succeed,
+            // justifying ignoring the result of insertion.
+            self.write_component_ignore_entity_dead(entity, comp::Controller::default());
+            self.write_component_ignore_entity_dead(entity, comp::Pos(spawn_point));
+            self.write_component_ignore_entity_dead(entity, comp::Vel(Vec3::zero()));
+            self.write_component_ignore_entity_dead(entity, comp::Ori::default());
+            self.write_component_ignore_entity_dead(
+                entity,
+                comp::Collider::CapsulePrism(CapsulePrism {
+                    p0: Vec2::zero(),
+                    p1: Vec2::zero(),
+                    radius: 0.4,
+                    z_min: 0.0,
+                    z_max: 1.75,
+                }),
+            );
+            self.write_component_ignore_entity_dead(entity, comp::CharacterState::default());
+            self.write_component_ignore_entity_dead(entity, comp::CharacterActivity::default());
+            self.write_component_ignore_entity_dead(entity, comp::Alignment::Owned(player_uid));
+            self.write_component_ignore_entity_dead(entity, comp::Buffs::default());
+            self.write_component_ignore_entity_dead(entity, comp::Auras::default());
+            self.write_component_ignore_entity_dead(entity, comp::EnteredAuras::default());
+            self.write_component_ignore_entity_dead(entity, comp::Combo::default());
+            self.write_component_ignore_entity_dead(entity, comp::Stance::default());
+            self.write_component_ignore_entity_dead(
+                entity,
+                comp::projectile::ProjectileHitEntities::default(),
+            );
+
+            // Make sure physics components are updated
+            self.write_component_ignore_entity_dead(entity, comp::ForceUpdate::forced());
+
+            self.write_component_ignore_entity_dead(
+                entity,
+                Presence::new(view_distances, PresenceKind::LoadingCharacter(character_id)),
+            );
+
+            // Tell the client its request was successful.
+            if let Some(client) = self.ecs().read_storage::<Client>().get(entity) {
+                client.send_fallible(ServerGeneral::CharacterSuccess);
+            }
+        }
+    }
+
+    fn initialize_spectator_data(&mut self, entity: EcsEntity, view_distances: ViewDistances) {
+        let spawn_point = self.ecs().read_resource::<SpawnPoint>().0;
+
+        if self.read_component_copied::<Uid>(entity).is_some() {
+            // NOTE: By fetching the player_uid, we validated that the entity exists, and we
+            // call nothing that can delete it in any of the subsequent
+            // commands, so we can assume that all of these calls succeed,
+            // justifying ignoring the result of insertion.
+            self.write_component_ignore_entity_dead(entity, comp::Pos(spawn_point));
+
+            // Make sure physics components are updated
+            self.write_component_ignore_entity_dead(entity, comp::ForceUpdate::forced());
+
+            self.write_component_ignore_entity_dead(
+                entity,
+                Presence::new(view_distances, PresenceKind::Spectator),
+            );
+
+            // Tell the client its request was successful.
+            if let Some(client) = self.ecs().read_storage::<Client>().get(entity) {
+                client.send_fallible(ServerGeneral::SpectatorSuccess(spawn_point));
+            }
+        }
+    }
+
+    /// Returned error intended to be sent to the client.
+    fn update_character_data(
+        &mut self,
+        entity: EcsEntity,
+        components: PersistedComponents,
+    ) -> Result<(), String> {
+        let PersistedComponents {
+            body,
+            hardcore,
+            stats,
+            skill_set,
+            inventory,
+            waypoint,
+            pets,
+            active_abilities,
+            map_marker,
+        } = components;
+
+        if let Some(player_uid) = self.read_component_copied::<Uid>(entity) {
+            let result =
+                if let Some(presence) = self.ecs().write_storage::<Presence>().get_mut(entity) {
+                    if let PresenceKind::LoadingCharacter(id) = presence.kind {
+                        presence.kind = PresenceKind::Character(id);
+                        self.ecs()
+                            .write_resource::<IdMaps>()
+                            .add_character(id, entity);
+                        Ok(())
+                    } else {
+                        Err("PresenceKind is not LoadingCharacter")
+                    }
+                } else {
+                    Err("Presence component missing")
+                };
+            if let Err(err) = result {
+                let err = format!("Unexpected state when applying loaded character info: {err}");
+                error!("{err}");
+                // TODO: we could produce a `comp::Content` for this to allow localization.
+                return Err(err);
+            }
+
+            let name = stats.name.clone();
+            // NOTE: hack, read docs on body::Gender for more
+            let gender = stats.original_body.humanoid_gender();
+
+            // NOTE: By fetching the player_uid, we validated that the entity exists,
+            // and we call nothing that can delete it in any of the subsequent
+            // commands, so we can assume that all of these calls succeed,
+            // justifying ignoring the result of insertion.
+            self.write_component_ignore_entity_dead(entity, body.collider());
+            self.write_component_ignore_entity_dead(entity, body);
+            self.write_component_ignore_entity_dead(entity, body.mass());
+            self.write_component_ignore_entity_dead(entity, body.density());
+            self.write_component_ignore_entity_dead(entity, comp::Health::new(body));
+            self.write_component_ignore_entity_dead(entity, comp::Energy::new(body));
+            self.write_component_ignore_entity_dead(entity, Poise::new(body));
+            self.write_component_ignore_entity_dead(entity, stats);
+            self.write_component_ignore_entity_dead(entity, active_abilities);
+            self.write_component_ignore_entity_dead(entity, skill_set);
+            self.write_component_ignore_entity_dead(entity, inventory);
+            self.write_component_ignore_entity_dead(
+                entity,
+                comp::InventoryUpdateBuffer::new(comp::InventoryUpdateEvent::Init),
+            );
+
+            if let Some(hardcore) = hardcore {
+                self.write_component_ignore_entity_dead(entity, hardcore);
+            }
+
+            if let Some(waypoint) = waypoint {
+                self.write_component_ignore_entity_dead(entity, RepositionToFreeSpace {
+                    needs_ground: true,
+                    modify_waypoints: true,
+                });
+                self.write_component_ignore_entity_dead(entity, waypoint);
+                self.write_component_ignore_entity_dead(entity, comp::Pos(waypoint.get_pos()));
+                self.write_component_ignore_entity_dead(entity, comp::Vel(Vec3::zero()));
+                // TODO: We probably want to increment the existing force update counter since
+                // it is added in initialized_character (to be robust we can also insert it if
+                // it doesn't exist)
+                self.write_component_ignore_entity_dead(entity, comp::ForceUpdate::forced());
+            }
+
+            if let Some(map_marker) = map_marker {
+                self.write_component_ignore_entity_dead(entity, map_marker);
+            }
+
+            let player_pos = self.ecs().read_storage::<comp::Pos>().get(entity).copied();
+            if let Some(player_pos) = player_pos {
+                trace!(
+                    "Loading {} pets for player at pos {:?}",
+                    pets.len(),
+                    player_pos
+                );
+                let mut rng = rand::rng();
+
+                for (pet, body, stats) in pets {
+                    let ori = comp::Ori::from(Dir::random_2d(&mut rng));
+                    let pet_entity = self
+                        .create_npc(
+                            player_pos,
+                            ori,
+                            stats,
+                            comp::SkillSet::default(),
+                            Some(comp::Health::new(body)),
+                            Poise::new(body),
+                            Inventory::with_loadout(
+                                LoadoutBuilder::from_default(&body).build(),
+                                body,
+                            ),
+                            body,
+                            comp::Scale(1.0),
+                        )
+                        .with(comp::Vel(Vec3::new(0.0, 0.0, 0.0)))
+                        .build();
+
+                    restore_pet(self.ecs(), pet_entity, entity, pet);
+                }
+            } else {
+                error!("Player has no pos, cannot load {} pets", pets.len());
+            }
+
+            let mut char_battle_mode = self
+                .ecs()
+                .read_resource::<Settings>()
+                .gameplay
+                .battle_mode
+                .default_mode();
+            let presence_kind = self
+                .ecs()
+                .read_storage::<Presence>()
+                .get(entity)
+                .map(|p| p.kind);
+            if let Some(PresenceKind::Character(char_id)) = presence_kind {
+                if let Some(mut player_info) =
+                    self.ecs().write_storage::<comp::Player>().get_mut(entity)
+                {
+                    if let Some((mode, change)) =
+                        self.ecs().fetch::<BattleModeBuffer>().get(&char_id)
+                    {
+                        char_battle_mode = *mode;
+                        player_info.last_battlemode_change = Some(*change);
+                    } else {
+                        // TODO: this sounds related to handle_exit_ingame? Actually, sounds like
+                        // trying to place character specific info on the `Player` component. TODO
+                        // document component better.
+                        // FIXME:
+                        // ???
+                        //
+                        // This probably shouldn't exist,
+                        // but without this code, character gets battle_mode from
+                        // another character on this account.
+                        player_info.last_battlemode_change = None;
+                    }
+
+                    player_info.battle_mode = char_battle_mode;
+                }
+
+                #[cfg(feature = "worldgen")]
+                {
+                    use ::rtsim::data::{Actor, actor::SimulationMode};
+                    let actor_id = {
+                        let rtsim = self.ecs().write_resource::<RtSim>();
+                        let mut data = rtsim.state().data_mut();
+                        data
+                            .actors
+                            .iter()
+                            .find(|(_, a)| a.character().map_or(false, |c| c.id == char_id))
+                            .map(|(id, _)| id)
+                            // Create actors for characters that don't have one
+                            .unwrap_or_else(|| data.actors.create_actor(Actor::new_character(
+                                char_id,
+                                !(char_id.0 as u32), // TODO: This is a rubbish seed
+                                player_pos.map_or(Vec3::zero(), |p| p.0),
+                                // This sucks. Because the character body is not retrieved from
+                                // storage immedaitely, we have to give players a 'default body' for
+                                // a brief moment until it arrives. Don't worry, it gets replaced
+                                // very soon afterwards as part of server <-> rtsim sync.
+                                comp::Body::default(),
+                                SimulationMode::Loaded,
+                            )))
+                    };
+                    self.write_component_ignore_entity_dead(entity, actor_id);
+                    self.ecs()
+                        .write_resource::<IdMaps>()
+                        .add_rtsim(actor_id, entity);
+                }
+            }
+
+            if self
+                .ecs()
+                .read_component::<Client>()
+                .get(entity)
+                .is_some_and(|client| client.client_type.emit_login_events())
+            {
+                // Notify clients of a player list update
+                self.notify_players(ServerGeneral::PlayerListUpdate(
+                    PlayerListUpdate::SelectedCharacter(player_uid, CharacterInfo {
+                        name,
+                        gender,
+                        battle_mode: char_battle_mode,
+                    }),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_chat_msg(
+        &self,
+        entity: EcsEntity,
+        chat_type: &comp::ChatType<comp::Group>,
+        msg: &Content,
+        from_client: bool,
+    ) -> bool {
+        let mut automod = self.ecs().write_resource::<AutoMod>();
+        let client = self.ecs().read_storage::<Client>();
+        let player = self.ecs().read_storage::<Player>();
+        let Some(client) = client.get(entity) else {
+            return true;
+        };
+        let Some(player) = player.get(entity) else {
+            return true;
+        };
+
+        // Don't permit players to send non-plain content sent from their clients...
+        // yet. TODO: Eventually, it would be nice for players to be able to
+        // send messages that get localised on their client!
+        let Some(msg) = msg.as_plain() else {
+            return !from_client;
+        };
+
+        match automod.validate_chat_msg(
+            player.uuid(),
+            self.ecs()
+                .read_storage::<comp::Admin>()
+                .get(entity)
+                .map(|a| a.0),
+            Instant::now(),
+            chat_type,
+            msg,
+        ) {
+            Ok(note) => {
+                if let Some(note) = note {
+                    let _ = client.send(ServerGeneral::server_msg(
+                        ChatType::CommandInfo,
+                        Content::Plain(format!("{}", note)),
+                    ));
+                }
+                true
+            },
+            Err(err) => {
+                let _ = client.send(ServerGeneral::server_msg(
+                    ChatType::CommandError,
+                    Content::Plain(format!("{}", err)),
+                ));
+                false
+            },
+        }
+    }
+
+    /// Send the chat message to the proper players. Say and region are limited
+    /// by location. Faction and group are limited by component.
+    fn send_chat(&self, msg: comp::UnresolvedChatMsg, from_client: bool) {
+        let ecs = self.ecs();
+        let is_within =
+            |target, a: &comp::Pos, b: &comp::Pos| a.0.distance_squared(b.0) < target * target;
+
+        let group_manager = ecs.read_resource::<comp::group::GroupManager>();
+        let chat_exporter = ecs.read_resource::<ChatExporter>();
+
+        let group_info = msg.get_group().and_then(|g| group_manager.group_info(*g));
+
+        if let Some(exported_message) = ChatExporter::generate(&msg, ecs) {
+            chat_exporter.send(exported_message);
+        }
+
+        let resolved_msg = msg
+            .clone()
+            .map_group(|_| group_info.map_or_else(|| "???".to_string(), |i| i.name.clone()));
+
+        let id_maps = ecs.read_resource::<IdMaps>();
+        let entity_from_uid = |uid| id_maps.uid_entity(uid);
+
+        if msg.chat_type.uid().is_none_or(|sender| {
+            entity_from_uid(sender).is_some_and(|e| {
+                self.validate_chat_msg(e, &msg.chat_type, msg.content(), from_client)
+            })
+        }) {
+            match &msg.chat_type {
+                comp::ChatType::Offline(_)
+                | comp::ChatType::CommandInfo
+                | comp::ChatType::CommandError
+                | comp::ChatType::Meta
+                | comp::ChatType::World(_) => {
+                    self.notify_players(ServerGeneral::ChatMsg(resolved_msg))
+                },
+                comp::ChatType::Online(u) => {
+                    for (client, uid) in
+                        (&ecs.read_storage::<Client>(), &ecs.read_storage::<Uid>()).join()
+                    {
+                        if uid != u {
+                            client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                        }
+                    }
+                },
+                &comp::ChatType::Tell(from, to) => {
+                    let clients = ecs.read_storage::<Client>();
+                    if let Some(from_client) = entity_from_uid(from).and_then(|e| clients.get(e)) {
+                        from_client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                    }
+                    if let Some(to_client) = entity_from_uid(to).and_then(|e| clients.get(e)) {
+                        to_client.send_fallible(ServerGeneral::ChatMsg(resolved_msg));
+                    }
+                },
+                comp::ChatType::Kill(kill_source, uid) => {
+                    let clients = ecs.read_storage::<Client>();
+                    let clients_count = clients.count();
+                    // Avoid chat spam, send kill message only to group or nearby players if a
+                    // certain amount of clients are online
+                    if clients_count
+                        > ecs
+                            .fetch::<Settings>()
+                            .max_player_for_kill_broadcast
+                            .unwrap_or_default()
+                    {
+                        // Send kill message to the dead player's group
+                        let killed_entity = entity_from_uid(*uid);
+                        let groups = ecs.read_storage::<Group>();
+                        let killed_group = killed_entity.and_then(|e| groups.get(e));
+                        if let Some(g) = &killed_group {
+                            send_to_group(g, ecs, &resolved_msg);
+                        }
+
+                        // Send kill message to nearby players that aren't part of the deceased's
+                        // group
+                        let positions = ecs.read_storage::<comp::Pos>();
+                        if let Some(died_player_pos) = killed_entity.and_then(|e| positions.get(e))
+                        {
+                            for (ent, client, pos) in
+                                (&*ecs.entities(), &clients, &positions).join()
+                            {
+                                let client_group = groups.get(ent);
+                                let is_different_group =
+                                    !(killed_group == client_group && client_group.is_some());
+                                if is_within(comp::ChatMsg::SAY_DISTANCE, pos, died_player_pos)
+                                    && is_different_group
+                                {
+                                    client.send_fallible(ServerGeneral::ChatMsg(
+                                        resolved_msg.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        self.notify_players(ServerGeneral::server_msg(
+                            comp::ChatType::Kill(kill_source.clone(), *uid),
+                            msg.into_content(),
+                        ))
+                    }
+                },
+                comp::ChatType::Say(uid) => {
+                    let entity_opt = entity_from_uid(*uid);
+
+                    let positions = ecs.read_storage::<comp::Pos>();
+                    if let Some(speaker_pos) = entity_opt.and_then(|e| positions.get(e)) {
+                        for (client, pos) in (&ecs.read_storage::<Client>(), &positions).join() {
+                            if is_within(comp::ChatMsg::SAY_DISTANCE, pos, speaker_pos) {
+                                client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                            }
+                        }
+                    }
+                },
+                comp::ChatType::Region(uid) => {
+                    let entity_opt = entity_from_uid(*uid);
+
+                    let positions = ecs.read_storage::<comp::Pos>();
+                    if let Some(speaker_pos) = entity_opt.and_then(|e| positions.get(e)) {
+                        for (client, pos) in (&ecs.read_storage::<Client>(), &positions).join() {
+                            if is_within(comp::ChatMsg::REGION_DISTANCE, pos, speaker_pos) {
+                                client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                            }
+                        }
+                    }
+                },
+                comp::ChatType::Npc(uid) => {
+                    let entity_opt = entity_from_uid(*uid);
+
+                    let positions = ecs.read_storage::<comp::Pos>();
+                    if let Some(speaker_pos) = entity_opt.and_then(|e| positions.get(e)) {
+                        for (client, pos) in (&ecs.read_storage::<Client>(), &positions).join() {
+                            if is_within(comp::ChatMsg::NPC_DISTANCE, pos, speaker_pos) {
+                                client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                            }
+                        }
+                    }
+                },
+                comp::ChatType::NpcSay(uid) => {
+                    let entity_opt = entity_from_uid(*uid);
+
+                    let positions = ecs.read_storage::<comp::Pos>();
+                    if let Some(speaker_pos) = entity_opt.and_then(|e| positions.get(e)) {
+                        for (client, pos) in (&ecs.read_storage::<Client>(), &positions).join() {
+                            if is_within(comp::ChatMsg::NPC_SAY_DISTANCE, pos, speaker_pos) {
+                                client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                            }
+                        }
+                    }
+                },
+                &comp::ChatType::NpcTell(from, to) => {
+                    let clients = ecs.read_storage::<Client>();
+                    if let Some(from_client) = entity_from_uid(from).and_then(|e| clients.get(e)) {
+                        from_client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                    }
+                    if let Some(to_client) = entity_from_uid(to).and_then(|e| clients.get(e)) {
+                        to_client.send_fallible(ServerGeneral::ChatMsg(resolved_msg));
+                    }
+                },
+                comp::ChatType::FactionMeta(s) | comp::ChatType::Faction(_, s) => {
+                    for (client, faction) in (
+                        &ecs.read_storage::<Client>(),
+                        &ecs.read_storage::<comp::Faction>(),
+                    )
+                        .join()
+                    {
+                        if s == &faction.0 {
+                            client.send_fallible(ServerGeneral::ChatMsg(resolved_msg.clone()));
+                        }
+                    }
+                },
+                comp::ChatType::Group(from, g) => {
+                    if group_info.is_none() {
+                        // Group not found, reply with command error
+                        // This should usually NEVER happen since now it is checked whether the
+                        // sender is still in the group upon emitting the message (TODO: Can this be
+                        // triggered if the message is sent in the same tick as the sender is
+                        // removed from the group?)
+
+                        let reply = comp::ChatType::CommandError
+                            .into_msg(Content::localized("command-message-group-missing"));
+
+                        let clients = ecs.read_storage::<Client>();
+                        if let Some(client) =
+                            entity_from_uid(*from).and_then(|entity| clients.get(entity))
+                        {
+                            client.send_fallible(ServerGeneral::ChatMsg(reply));
+                        }
+                    } else {
+                        send_to_group(g, ecs, &resolved_msg);
+                    }
+                },
+                comp::ChatType::GroupMeta(g) => {
+                    send_to_group(g, ecs, &resolved_msg);
+                },
+            }
+        }
+    }
+
+    /// Sends the message to all connected clients
+    fn notify_players(&self, msg: ServerGeneral) {
+        let mut msg = Some(msg);
+        let mut lazy_msg = None;
+        for (client, _) in (
+            &self.ecs().read_storage::<Client>(),
+            &self.ecs().read_storage::<comp::Player>(),
+        )
+            .join()
+        {
+            if let Some(msg) = msg.take() {
+                lazy_msg = Some(client.prepare(msg));
+            }
+            lazy_msg.as_ref().map(|msg| client.send_prepared(msg));
+        }
+    }
+
+    /// Sends the message to all clients playing in game
+    fn notify_in_game_clients(&self, msg: ServerGeneral) {
+        let mut msg = Some(msg);
+        let mut lazy_msg = None;
+        for (client, _) in (
+            &mut self.ecs().write_storage::<Client>(),
+            &self.ecs().read_storage::<Presence>(),
+        )
+            .join()
+        {
+            if let Some(msg) = msg.take() {
+                lazy_msg = Some(client.prepare(msg));
+            }
+            lazy_msg.as_ref().map(|msg| client.send_prepared(msg));
+        }
+    }
+
+    fn link<L: Link>(&mut self, link: L) -> Result<(), L::Error> {
+        let linker = LinkHandle::from_link(link);
+
+        L::create(&linker, &mut self.ecs().system_data())?;
+
+        self.ecs_mut()
+            .entry::<Vec<LinkHandle<L>>>()
+            .or_insert_with(Vec::new)
+            .push(linker);
+
+        Ok(())
+    }
+
+    fn maintain_links(&mut self) {
+        fn maintain_link<L: Link>(state: &State) {
+            if let Some(mut handles) = state.ecs().try_fetch_mut::<Vec<LinkHandle<L>>>() {
+                let mut persist_data = None;
+                handles.retain(|link| {
+                    if L::persist(
+                        link,
+                        persist_data.get_or_insert_with(|| state.ecs().system_data()),
+                    ) {
+                        true
+                    } else {
+                        // Make sure to drop persist data before running deletion to avoid potential
+                        // access violations
+                        persist_data.take();
+                        L::delete(link, &mut state.ecs().system_data());
+                        false
+                    }
+                });
+            }
+        }
+
+        maintain_link::<Mounting>(self);
+        maintain_link::<VolumeMounting>(self);
+        maintain_link::<Tethered>(self);
+        maintain_link::<Interaction>(self);
+    }
+
+    fn delete_entity_recorded(
+        &mut self,
+        entity: EcsEntity,
+    ) -> Result<(), specs::error::WrongGeneration> {
+        // NOTE: both this and handle_exit_ingame call delete_entity_common, so cleanup
+        // added here may need to be duplicated in handle_exit_ingame (depending
+        // on its nature).
+
+        // Remove entity from a group if they are in one.
+        {
+            let clients = self.ecs().read_storage::<Client>();
+            let uids = self.ecs().read_storage::<Uid>();
+            let mut group_manager = self.ecs().write_resource::<comp::group::GroupManager>();
+            let map_markers = self.ecs().read_storage::<comp::MapMarker>();
+            group_manager.entity_deleted(
+                entity,
+                &mut self.ecs().write_storage(),
+                &self.ecs().read_storage(),
+                &uids,
+                &self.ecs().entities(),
+                &mut |entity, group_change| {
+                    clients
+                        .get(entity)
+                        .and_then(|c| {
+                            group_change
+                                .try_map_ref(|e| uids.get(*e).copied())
+                                .map(|g| (g, c))
+                        })
+                        .map(|(g, c)| {
+                            update_map_markers(&map_markers, &uids, c, &group_change);
+                            c.send_fallible(ServerGeneral::GroupUpdate(g));
+                        });
+                },
+            );
+        }
+
+        // Cancel extant trades
+        events::shared::cancel_trades_for(self, entity);
+
+        // NOTE: We expect that these 3 components are never removed from an entity (nor
+        // mutated) (at least not without updating the relevant mappings)!
+        let maybe_uid = self.read_component_copied::<Uid>(entity);
+        let (maybe_character, sync_me) = self
+            .read_storage::<Presence>()
+            .get(entity)
+            .map(|p| (p.kind.character_id(), p.kind.sync_me()))
+            .unzip();
+        let maybe_rtsim = self.read_component_copied::<rtsim::ActorId>(entity);
+
+        self.mut_resource::<IdMaps>().remove_entity(
+            Some(entity),
+            maybe_uid,
+            maybe_character.flatten(),
+            maybe_rtsim,
+        );
+
+        delete_entity_common(self, entity, maybe_uid, sync_me.unwrap_or(true))
+    }
+
+    fn position_mut<T>(
+        &mut self,
+        entity: EcsEntity,
+        dismount_volume: bool,
+        f: impl for<'a> FnOnce(&'a mut comp::Pos) -> T,
+    ) -> Result<T, Content> {
+        let ecs = self.ecs_mut();
+        position_mut(
+            entity,
+            dismount_volume,
+            f,
+            &ecs.read_resource(),
+            &mut ecs.write_storage(),
+            ecs.write_storage(),
+            ecs.write_storage(),
+            ecs.read_storage(),
+            ecs.read_storage(),
+            ecs.read_storage(),
+        )
+    }
+
+    fn position_mut_reposition<T>(
+        &mut self,
+        entity: EcsEntity,
+        dismount_volume: bool,
+        f: impl for<'a> FnOnce(&'a mut comp::Pos) -> T,
+        needs_ground: bool,
+        modify_waypoints: bool,
+    ) -> Result<T, Content> {
+        self.position_mut(entity, dismount_volume, f).inspect(|_| {
+            self.write_component_ignore_entity_dead(entity, RepositionToFreeSpace {
+                needs_ground,
+                modify_waypoints,
+            });
+        })
+    }
+}
+
+pub fn position_mut<T>(
+    entity: EcsEntity,
+    dismount_volume: bool,
+    f: impl for<'a> FnOnce(&'a mut comp::Pos) -> T,
+    id_maps: &IdMaps,
+    is_volume_riders: &mut WriteStorage<Is<VolumeRider>>,
+    mut positions: impl GenericWriteStorage<Component = comp::Pos>,
+    mut force_updates: impl GenericWriteStorage<Component = comp::ForceUpdate>,
+    is_riders: impl GenericReadStorage<Component = Is<Rider>>,
+    presences: impl GenericReadStorage<Component = Presence>,
+    clients: impl GenericReadStorage<Component = Client>,
+) -> Result<T, Content> {
+    if dismount_volume {
+        is_volume_riders.remove(entity);
+    }
+
+    let entity = is_riders
+        .get(entity)
+        .and_then(|is_rider| id_maps.uid_entity(is_rider.mount))
+        .map(Ok)
+        .or_else(|| {
+            is_volume_riders.get(entity).and_then(|volume_rider| {
+                Some(match volume_rider.pos.kind {
+                    common::mounting::Volume::Terrain => {
+                        Err(Content::Plain("Tried to move the world.".to_string()))
+                    },
+                    common::mounting::Volume::Entity(uid) => Ok(id_maps.uid_entity(uid)?),
+                })
+            })
+        })
+        .unwrap_or(Ok(entity))?;
+
+    let mut maybe_pos = None;
+
+    let res = positions
+        .get_mut(entity)
+        .map(|pos| {
+            let res = f(pos);
+            maybe_pos = Some(pos.0);
+            res
+        })
+        .ok_or(Content::localized_with_args(
+            "command-position-unavailable",
+            [("target", "entity")],
+        ));
+
+    if let Some(pos) = maybe_pos {
+        if presences
+            .get(entity)
+            .map(|presence| presence.kind == PresenceKind::Spectator)
+            .unwrap_or(false)
+        {
+            clients.get(entity).map(|client| {
+                client.send_fallible(ServerGeneral::SpectatePosition(pos));
+            });
+        } else {
+            force_updates
+                .get_mut(entity)
+                .map(|force_update| force_update.update());
+        }
+    }
+
+    res
+}
+
+fn send_to_group(g: &Group, ecs: &specs::World, msg: &comp::ChatMsg) {
+    for (client, group) in (&ecs.read_storage::<Client>(), &ecs.read_storage::<Group>()).join() {
+        if g == group {
+            client.send_fallible(ServerGeneral::ChatMsg(msg.clone()));
+        }
+    }
+}
+
+/// This should only be called from `handle_exit_ingame` and
+/// `delete_entity_recorded`!!!!!!!
+pub(crate) fn delete_entity_common(
+    state: &mut State,
+    entity: EcsEntity,
+    maybe_uid: Option<Uid>,
+    sync_me: bool,
+) -> Result<(), specs::error::WrongGeneration> {
+    let maybe_pos = state.read_component_copied::<comp::Pos>(entity);
+
+    // Delete entity
+    let result = state.ecs_mut().delete_entity(entity);
+
+    if result.is_ok() {
+        let region_map = state.mut_resource::<common::region::RegionMap>();
+        let region_key = region_map.entity_deleted(entity);
+        // Note: Adding the `Uid` to the deleted list when exiting "in-game" relies on
+        // the client not being able to immediately re-enter the game in the
+        // same tick (since we could then mix up the ordering of things and
+        // tell other clients to forget the new entity).
+        //
+        // The client will ignore requests to delete its own entity that are triggered
+        // by this.
+        if let Some(uid) = maybe_uid {
+            if let Some(region_key) = region_key {
+                state
+                    .mut_resource::<DeletedEntities>()
+                    .record_deleted_entity(uid, region_key);
+            // If there is a position and sync_me is true, but the entity is not
+            // in a region, something might be wrong.
+            } else if sync_me && let Some(pos) = maybe_pos {
+                // Don't panic if the entity wasn't found in a region, maybe it was just created
+                // and then deleted before the region manager had a chance to assign it a region
+                warn!(
+                    ?uid,
+                    ?pos,
+                    "Failed to find region containing entity during entity deletion, assuming it \
+                     wasn't sent to any clients and so deletion doesn't need to be recorded for \
+                     sync purposes"
+                );
+            }
+        } else {
+            // For now we expect all entities have a Uid component. If this is changed, the
+            // RegionMap needs to account for presence of Uid when deciding what should be
+            // tracked.
+            error!("Deleting entity without Uid component");
+        }
+    }
+    result
+}

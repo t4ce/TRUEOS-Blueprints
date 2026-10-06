@@ -1,0 +1,21 @@
+[package]
+name = "hibitset"
+version = "0.6.4"
+description = "Hierarchical bit set structure"
+documentation = "https://docs.rs/hibitset"
+repository = "https://github.com/slide-rs/hibitset"
+keywords = ["bitset", "container", "data-structures", "hierarchical"]
+categories = ["data-structures"]
+license = "MIT/Apache-2.0"
+authors = ["csheratt"]
+
+[dependencies.rayon]
+version = "1.3"
+optional = true
+
+[dev-dependencies]
+rand = "0.7"
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]

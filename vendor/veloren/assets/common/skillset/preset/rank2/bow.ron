@@ -1,0 +1,6 @@
+[
+    Group(Weapon(Bow)),
+
+    Skill((Bow(HeavyNock), 1)),
+    Skill((Bow(Foothold), 1)),
+]

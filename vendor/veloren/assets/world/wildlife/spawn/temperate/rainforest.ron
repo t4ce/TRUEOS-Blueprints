@@ -1,0 +1,34 @@
+SpawnEntry (
+    name: "Temperate rainforest wildlife.",
+    note: "",
+    rules: [
+        Pack(
+            groups: [
+                // Pack animals
+                (3, (1, 7, "common.entity.wild.peaceful.boar")),
+                // Solitary
+                (3, (1, 1, "common.entity.wild.peaceful.mossy_snail")),
+                (3, (1, 1, "common.entity.wild.peaceful.treant_sapling")),
+                (2, (1, 1, "common.entity.wild.peaceful.peacock")),
+                (4, (1, 1, "common.entity.wild.peaceful.turtle")),
+                (4, (1, 1, "common.entity.wild.peaceful.truffler")),
+                (3, (1, 1, "common.entity.wild.peaceful.leaf_beetle")),
+                (2, (1, 1, "common.entity.wild.aggressive.weevil")),
+                (4, (1, 1, "common.entity.wild.aggressive.green_legoom")),
+                (4, (1, 1, "common.entity.wild.aggressive.ochre_legoom")),
+                (4, (1, 1, "common.entity.wild.aggressive.purple_legoom")),
+                (4, (1, 1, "common.entity.wild.aggressive.red_legoom")),                
+            ],
+            spawn_mode: Land,
+            day_period: [Morning, Noon, Evening],
+        ),
+        Pack(
+            groups: [
+                // Pack
+                (5, (1, 3, "common.entity.wild.peaceful.emberfly")),
+            ],
+            spawn_mode: Land,
+            day_period: [Night],
+        ),
+    ],
+)

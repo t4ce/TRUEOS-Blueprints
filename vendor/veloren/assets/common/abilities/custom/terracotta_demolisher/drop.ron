@@ -1,0 +1,31 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 1.0,
+    recover_duration: 1.5,
+    projectile: (
+        kind: Explosive(
+            radius: 5,
+            min_falloff: 0.5,
+            reagent: Some(Yellow),
+            terrain: Some((2, Black))
+        ),
+        attack: Some((
+            damage: 30,
+            buff: Some((
+                kind: Burning,
+                dur_secs: 4,
+                strength: DamageFraction(0.4),
+                chance: 0.6,
+            )),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(TerracottaDemolisherBomb),
+    projectile_light: None,
+    projectile_speed: 0.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

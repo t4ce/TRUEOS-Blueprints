@@ -1,0 +1,75 @@
+[package]
+name = "specs"
+version = "0.20.0"
+description = """
+Specs is an Entity-Component-System library written in Rust.
+"""
+documentation = "https://docs.rs/specs/"
+repository = "https://github.com/amethyst/specs"
+homepage = "https://amethyst.github.io/specs"
+readme = "README.md"
+keywords = ["gamedev", "ecs", "entity", "component"]
+categories = ["concurrency", "game-engines"]
+license = "MIT OR Apache-2.0"
+authors = ["slide-rs hackers"]
+include = ["/src", "/examples", "/benches", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
+edition = "2021"
+rust-version = "1.70.0"
+
+# the `storage_cmp` and `storage_sparse` benches are called from `benches_main`
+autobenches = false
+
+[dependencies]
+ahash = "0.8.6"
+crossbeam-queue = "0.3"
+hibitset = { version = "0.6.4", default-features = false }
+log = "0.4.8"
+shred = { version = "0.16.0", default-features = false }
+shrev = "1.1.1"
+tuple_utils = "0.4.0"
+nougat = "0.2.3"
+
+tokio-parallel = { package = "veloren-tokio-parallel", path = "../../common/tokio-parallel", optional = true }
+serde = { version = "1.0.104", optional = true, features = ["serde_derive"] }
+specs-derive = { version = "0.4.1", path = "specs-derive", optional = true }
+uuid = { version = "1.0", optional = true, features = ["v4", "serde"] }
+
+[features]
+default = ["parallel"]
+parallel = ["dep:tokio-parallel", "shred/parallel", "hibitset/parallel"]
+uuid_entity = ["dep:uuid", "serde"]
+stdweb = ["dep:uuid", "uuid?/js"]
+storage-event-control = []
+derive = ["shred-derive", "specs-derive"]
+nightly = ["shred/nightly"]
+
+shred-derive = ["shred/shred-derive"]
+
+[package.metadata.docs.rs]
+features = ["parallel", "serde", "shred-derive", "specs-derive", "uuid_entity", "storage-event-control"]
+
+[dev-dependencies]
+nalgebra = "0.32"
+criterion = "0.3.1"
+ron = "0.8.1"
+rand = "0.8"
+serde_json = "1.0.48"
+shred = { version = "0.16.0", default-features = false, features = ["shred-derive"] }
+specs-derive = { path = "specs-derive", version = "0.4.1" }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[workspace]
+members = ["specs-derive"]

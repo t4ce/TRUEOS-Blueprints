@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Rawhide Bracers",
+    legacy_description: "Hopefully these will keep your hands from shaking whilst skinning your next kill.",
+    kind: Armor((
+        kind: Hand,
+        stats: FromSet("Rawhide"),
+    )),
+    quality: Low,
+    tags: [
+        Material(Rawhide),
+        SalvageInto(Rawhide, 1),
+    ],
+)

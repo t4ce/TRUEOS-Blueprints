@@ -1,0 +1,24 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 1.6,
+    recover_duration: 0.7,
+    projectile: (
+        kind: Explosive(
+            radius: 3,
+            min_falloff: 0.5,
+            reagent: Some(Green),
+        ),
+        attack: Some((
+            damage: 26,
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(PoisonBall),
+    projectile_speed: 40.0,
+    num_projectiles: Value(3),
+    projectile_spread: Some(Increasing(0.2)),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)

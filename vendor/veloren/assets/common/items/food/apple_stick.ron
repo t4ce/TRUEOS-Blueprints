@@ -1,0 +1,20 @@
+ItemDef(
+    legacy_name: "Apple Stick",
+    legacy_description: "The stick makes it easier to carry!",
+    kind: Consumable(
+        kind: Food,
+        effects: One(
+            Buff((
+                kind: Saturation,
+                data: (
+                    strength: 5.0,
+                    duration: Some(5),
+                    ),
+                cat_ids: [],
+            )),
+        ),
+        container: Some(Simple("common.items.crafting_ing.twigs")),
+    ),
+    quality: Common,
+    tags: [Food],
+)

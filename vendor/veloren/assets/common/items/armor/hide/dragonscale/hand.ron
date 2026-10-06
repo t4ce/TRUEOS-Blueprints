@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Dragonscale Gloves",
+    legacy_description: "Sharp claws reside where were once soft hands.",
+    kind: Armor((
+        kind: Hand,
+        stats: FromSet("Dragonscale"),
+    )),
+    quality: Legendary,
+    tags: [
+        Material(Dragonscale),
+        SalvageInto(Dragonscale, 1),
+    ],
+)

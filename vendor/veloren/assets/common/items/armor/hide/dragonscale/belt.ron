@@ -1,0 +1,13 @@
+ItemDef(
+    legacy_name: "Dragonscale Sash",
+    legacy_description: "Atop the buckle rests a glimmering gem, not unlike the greedy heart of a dragon.",
+    kind: Armor((
+        kind: Belt,
+        stats: FromSet("Dragonscale"),
+    )),
+    quality: Legendary,
+    tags: [
+        Material(Dragonscale),
+        SalvageInto(Dragonscale, 1),
+    ],
+)

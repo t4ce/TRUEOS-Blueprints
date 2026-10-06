@@ -1,0 +1,14 @@
+#![enable(implicit_some)]
+(
+    name: Translate("name-custom-calendar-april_fools-aggressive-rat-tiny"),
+    body: RandomWith("rat"),
+    alignment: Alignment(Enemy),
+    loot: Nothing,
+    inventory: (
+        loadout: FromBody,
+    ),
+    scale: 0.476,
+    rider: "common.entity.calendar.april_fools.aggressive.rat_d",
+    rider_effects: [(kind: Invulnerability)],
+    meta: [],
+)

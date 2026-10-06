@@ -1,0 +1,32 @@
+BasicRanged(
+    energy_cost: 0,
+    buildup_duration: 1.0,
+    recover_duration: 1.6,
+    projectile: (
+        kind: Explosive(
+            radius: 7.2,
+            min_falloff: 0.6,
+            reagent: Some(Red),
+            terrain: Some((5, Black)),
+        ),
+        attack: Some((
+            damage: 20,
+            knockback: Some(22),
+            buff: Some((
+                kind: Burning,
+                dur_secs: 4,
+                strength: DamageFraction(0.2),
+                chance: 1.0,
+            )),
+            damage_kind: Energy,
+        )),
+    ),
+    projectile_body: Object(Pumpkin),
+    projectile_light: None,
+    projectile_speed: 30.0,
+    num_projectiles: Value(1),
+    movement_modifier: (
+        buildup: Some(0.3),
+        recover: Some(0.3),
+    ),
+)
