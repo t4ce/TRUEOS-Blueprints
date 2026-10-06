@@ -17,8 +17,8 @@ pub use crate::ui4_solara_text::{
     SHADERTOY_PALETTE_GRID, SHADERTOY_PARAMS_VERSION, SHADERTOY_PARTICLE_CRAFT,
     SHADERTOY_PROTEAN_CLOUDS, SHADERTOY_RETRO_SUN, SHADERTOY_SDF, SHADERTOY_VORONOI, SceneTextRow,
     ShadertoyParamsV1, Shell2FontScaleStep, SkyboxRenderParams, SpriteCorner, SpriteQuad,
-    UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba, shell2_font_scale_steps,
-    worker_slot,
+    UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba, set_display_gamma_ramp,
+    shell2_font_scale_steps, worker_slot,
 };
 
 /// Fade the entire primary display through its hardware gamma LUT. The kernel

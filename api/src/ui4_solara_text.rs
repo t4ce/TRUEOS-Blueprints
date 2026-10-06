@@ -1082,11 +1082,10 @@ impl Frame {
 
     /// Program the shared primary display's RGB transfer ramp using this
     /// frame's ownership capability. The input is Windows GAMMARAMP order:
-    /// red[256], green[256], blue[256].
+    /// red[256], green[256], blue[256]. Exclusive until this window closes,
+    /// then the previous display state is restored. Display fades compose over it.
     pub fn set_display_gamma_ramp(&mut self, ramp: &[u16; 3 * 256]) -> Result<(), Error> {
-        status(unsafe {
-            v::bp_abi::trueos_cabi_ui4_scene_set_display_gamma_ramp(self.window_id, ramp.as_ptr())
-        })
+        set_display_gamma_ramp(self.window_id, ramp)
     }
 
     /// Exclude this frame from UI4 cursor selection and pointer hit testing.
@@ -2151,6 +2150,17 @@ impl Drop for Frame {
             self.window_id = 0;
         }
     }
+}
+
+/// Set the primary display's RGB ramp using a live scene window capability.
+/// Entries are red[256], green[256], blue[256]. The kernel restores the prior
+/// display state when the owning window closes; active display fades compose
+/// over this ramp. Only one window may own the display transfer at a time.
+pub fn set_display_gamma_ramp(window_id: u32, ramp: &[u16; 3 * 256]) -> Result<(), Error> {
+    let rc = unsafe {
+        v::bp_abi::trueos_cabi_ui4_scene_set_display_gamma_ramp(window_id, ramp.as_ptr())
+    };
+    status(rc)
 }
 
 pub fn font_sizes() -> Result<Vec<FontSize>, Error> {
