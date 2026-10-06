@@ -953,8 +953,9 @@ impl Frame {
         }
     }
 
-    /// Whether this exact publication reached the physical display's SURFLIVE
-    /// boundary. This does not consume the first-presentation notification.
+    /// Whether this exact foreground or background publication reached the
+    /// physical display's SURFLIVE boundary. Serial histories are layer-local.
+    /// This does not consume the first-presentation notification.
     /// UI4 keeps a bounded recent history; waiting before the next publication
     /// prevents an older receipt from being displaced.
     pub fn was_presented(&self, publish_serial: u64) -> Result<bool, Error> {
@@ -1932,10 +1933,10 @@ impl Frame {
         })
     }
 
-    /// Publish a foreground frame and return the serial assigned by that exact
-    /// successful broker publication. Wait for [`Self::was_presented`] to prove
-    /// physical presentation. Background and staged layered-resize handoffs
-    /// use their ordinary publish path instead.
+    /// Publish a foreground or background frame and return the serial assigned
+    /// by that layer's exact broker publication. Wait for
+    /// [`Self::was_presented`] to prove physical presentation. A staged paired
+    /// resize uses the ordinary publish path because it commits both layers.
     pub fn publish_tracked(&mut self, damage: Damage) -> Result<u64, Error> {
         let mut serial = 0;
         status(unsafe {
@@ -2059,8 +2060,8 @@ impl SceneTarget {
     pub fn publish(&mut self, damage: Damage) -> Result<(), Error> {
         self.surface.publish(damage)
     }
-    /// Request a foreground-only presentation receipt. Background updates and
-    /// staged paired resize handoffs must use [`Self::publish`] instead.
+    /// Request this layer's exact presentation receipt. Staged paired resize
+    /// handoffs must use [`Self::publish`] instead.
     pub fn publish_tracked(&mut self, damage: Damage) -> Result<u64, Error> {
         self.surface.publish_tracked(damage)
     }
