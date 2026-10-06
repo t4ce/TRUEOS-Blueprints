@@ -681,10 +681,16 @@ impl Frame {
     pub fn set_title(&mut self, title: &str) -> Result<(), Error> {
         let rc = unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_window_title_set_v1(
-                self.window_id, title.as_ptr(), title.len(),
+                self.window_id,
+                title.as_ptr(),
+                title.len(),
             )
         };
-        if rc == 0 { Ok(()) } else { Err(error_from_status(rc)) }
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(error_from_status(rc))
+        }
     }
 
     pub const fn window_id(&self) -> u32 {
@@ -956,10 +962,7 @@ impl Frame {
             return Err(Error::Invalid);
         }
         let result = unsafe {
-            v::bp_abi::trueos_cabi_ui4_scene_frame_was_presented_v1(
-                self.window_id,
-                publish_serial,
-            )
+            v::bp_abi::trueos_cabi_ui4_scene_frame_was_presented_v1(self.window_id, publish_serial)
         };
         match result {
             0 => Ok(true),
@@ -1395,6 +1398,44 @@ impl Frame {
                 c3_v: quad.c3.v,
                 color_rgba: quad.color_rgba,
                 flags: u32::from(quad.source_over),
+            })
+            .collect::<Vec<_>>();
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_sprite_quads(self.window_id, raw.as_ptr(), raw.len())
+        })
+    }
+
+    pub fn draw_sprite_commands(&mut self, commands: &[SpriteCommand]) -> Result<(), Error> {
+        let raw = commands
+            .iter()
+            .map(|command| {
+                let quad = &command.quad;
+                v::bp_abi::TrueosUi4SpriteQuad {
+                    sprite_id: quad.sprite_id,
+                    c0_x: quad.c0.x,
+                    c0_y: quad.c0.y,
+                    c0_u: quad.c0.u,
+                    c0_v: quad.c0.v,
+                    c1_x: quad.c1.x,
+                    c1_y: quad.c1.y,
+                    c1_u: quad.c1.u,
+                    c1_v: quad.c1.v,
+                    c2_x: quad.c2.x,
+                    c2_y: quad.c2.y,
+                    c2_u: quad.c2.u,
+                    c2_v: quad.c2.v,
+                    c3_x: quad.c3.x,
+                    c3_y: quad.c3.y,
+                    c3_u: quad.c3.u,
+                    c3_v: quad.c3.v,
+                    color_rgba: quad.color_rgba,
+                    flags: u32::from(quad.source_over)
+                        | match command.backend {
+                            SpriteBackend::Compositor => 0,
+                            SpriteBackend::PremultipliedCompositor => 1 << 30,
+                            SpriteBackend::Bcs0 => 1 << 31,
+                        },
+                }
             })
             .collect::<Vec<_>>();
         status(unsafe {
@@ -1925,6 +1966,100 @@ impl Frame {
             self.window_id = 0;
         }
         result
+    }
+}
+
+/// Non-owning rendering access to a window created by another frontend (for
+/// example Winit). Dropping this target never closes the window. The kernel
+/// validates ownership and window existence on each operation; after the
+/// frontend closes the window, operations fail with `NotFound`.
+///
+/// Use the frontend's current physical dimensions. Complete a sprite draw
+/// before replacing its retained source; draw calls wait for copy retirement.
+/// Destination-buffer admission and publication remain protected by kernel
+/// backpressure. Presentation receipts observe physical display progress;
+/// they must not gate frontend input processing.
+/// How a retained sprite command writes the producer's frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpriteBackend {
+    /// GPU sprite sampling and source-over composition.
+    Compositor,
+    /// Source-over for assets already premultiplied by their producer.
+    PremultipliedCompositor,
+    /// Exact integer copies/fills on BCS0. Sprite sources must already be
+    /// premultiplied; alpha-zero holes preserve existing foreground pixels.
+    /// Partial alpha is preserved for the display engine's layer blend.
+    Bcs0,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpriteCommand {
+    pub quad: SpriteQuad,
+    pub backend: SpriteBackend,
+}
+
+pub struct SceneTarget {
+    surface: core::mem::ManuallyDrop<Frame>,
+}
+
+impl SceneTarget {
+    pub fn for_window(window_id: u32, width: u32, height: u32) -> Result<Self, Error> {
+        if window_id == 0 || width == 0 || height == 0 {
+            return Err(Error::Invalid);
+        }
+        Ok(Self {
+            surface: core::mem::ManuallyDrop::new(Frame {
+                window_id,
+                width,
+                height,
+            }),
+        })
+    }
+
+    /// Render-target capability for a GPU scene producer. Background targets
+    /// are not input window IDs and must not be passed to input APIs.
+    pub fn render_target(&self) -> u32 {
+        self.surface.window_id
+    }
+
+    /// Update the local extent after the owning window delivers a resize.
+    /// This does not resize or acquire the kernel surface.
+    pub fn set_extent(&mut self, width: u32, height: u32) -> Result<(), Error> {
+        if width == 0 || height == 0 {
+            return Err(Error::Invalid);
+        }
+        self.surface.width = width;
+        self.surface.height = height;
+        Ok(())
+    }
+    /// Borrow the paired scene producer. This never creates an input route.
+    pub fn background(&self) -> Result<Self, Error> {
+        let target =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_layer_v1(self.surface.window_id, 1) };
+        Self::for_window(target, self.surface.width, self.surface.height)
+    }
+    pub fn draw_sprite_commands(&mut self, commands: &[SpriteCommand]) -> Result<(), Error> {
+        self.surface.draw_sprite_commands(commands)
+    }
+    pub fn upload_sprite_rgba8(
+        &mut self,
+        id: u32,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> Result<(), Error> {
+        self.surface.upload_sprite_rgba8(id, width, height, pixels)
+    }
+    pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
+        self.surface.begin_gpu_frame()
+    }
+    pub fn draw_sprite_quads(&mut self, quads: &[SpriteQuad]) -> Result<(), Error> {
+        self.surface.draw_sprite_quads(quads)
+    }
+    pub fn publish_tracked(&mut self, damage: Damage) -> Result<u64, Error> {
+        self.surface.publish_tracked(damage)
+    }
+    pub fn was_presented(&self, serial: u64) -> Result<bool, Error> {
+        self.surface.was_presented(serial)
     }
 }
 

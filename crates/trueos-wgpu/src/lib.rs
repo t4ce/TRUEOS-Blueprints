@@ -6,13 +6,13 @@
 //! sampling and revision uploads to retained GPU storage. Native vertex and
 //! identity index buffers also persist; source revisions and draw layout changes
 //! upload only affected geometry segments, independently of the camera uniform.
-//! Device/queue bootstrap uses wgpu's public custom dispatch; adapter enumeration
-//! and general surface creation are not provided.
+//! Device/queue bootstrap exposes a wgpu adapter over public custom dispatch.
+//! Adapter enumeration and general surface creation are not provided.
 //! Unsupported operations fail explicitly. Native shader admission remains in
 //! the kernel, behind opaque handles. More shader and resource contracts can be
 //! added here without exposing MMIO or native command packets to applications.
 
 mod backend;
 
-pub use backend::{Context, Error, ShaderPackage};
+pub use backend::{Context, Error, ShaderPackage, adapter_with_package};
 pub use wgpu;

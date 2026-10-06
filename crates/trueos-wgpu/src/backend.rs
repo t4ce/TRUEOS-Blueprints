@@ -32,6 +32,23 @@ impl ShaderPackage {
     fn textured(self) -> bool {
         self.digest == vgpu::SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64
     }
+    fn validate(self) -> Result<(), Error> {
+        let source = if self.digest == vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64 {
+            Some(VOXY_WGSL)
+        } else if self.textured() {
+            Some(VOXY_TEXTURED_WGSL)
+        } else {
+            None
+        };
+        if source == Some(self.wgsl) && fnv(self.wgsl.as_bytes()) == self.digest {
+            Ok(())
+        } else {
+            Err(Error {
+                code: vgpu::ERR_UNSUPPORTED,
+                operation: "shader package",
+            })
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -92,20 +109,32 @@ pub struct Context {
     queue: wgpu::Queue,
 }
 impl Context {
+    /// Requests the admitted device through wgpu's adapter interface.
+    pub async fn request_with_package(
+        package: ShaderPackage,
+    ) -> Result<Self, wgpu::RequestDeviceError> {
+        let adapter = adapter_with_package(package)
+            .map_err(|error| wgpu::RequestDeviceError::from_message(error.to_string()))?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("TRUEOS admitted render device"),
+                required_limits: adapter.limits(),
+                ..Default::default()
+            })
+            .await?;
+        let native = device
+            .as_custom::<Device>()
+            .expect("TRUEOS adapter device")
+            .0
+            .clone();
+        Ok(Self {
+            native,
+            device,
+            queue,
+        })
+    }
     pub fn open_with_package(package: ShaderPackage) -> Result<Self, Error> {
-        let source = if package.digest == vgpu::SHADER_PACKAGE_VOXY_HEADLESS_FNV1A64 {
-            Some(VOXY_WGSL)
-        } else if package.textured() {
-            Some(VOXY_TEXTURED_WGSL)
-        } else {
-            None
-        };
-        if source != Some(package.wgsl) || fnv(package.wgsl.as_bytes()) != package.digest {
-            return Err(Error {
-                code: vgpu::ERR_UNSUPPORTED,
-                operation: "shader package",
-            });
-        }
+        package.validate()?;
         #[cfg(not(target_os = "trueos"))]
         return Err(Error {
             code: vgpu::ERR_NO_DEVICE,
@@ -199,6 +228,90 @@ impl Context {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Creates a wgpu adapter for an admitted TRUEOS shader package.
+/// Device requests keep the existing native upload and retirement machinery.
+pub fn adapter_with_package(package: ShaderPackage) -> Result<wgpu::Adapter, Error> {
+    package.validate()?;
+    Ok(wgpu::Adapter::from_custom(Adapter { package }))
+}
+
+#[derive(Debug)]
+struct Adapter {
+    package: ShaderPackage,
+}
+impl AdapterInterface for Adapter {
+    fn request_device(
+        &self,
+        desc: &wgpu::DeviceDescriptor<'_>,
+    ) -> Pin<Box<dyn RequestDeviceFuture>> {
+        let result = (|| {
+            if !desc.required_features.is_empty() {
+                return Err(wgpu::RequestDeviceError::from_message(format!(
+                    "TRUEOS GPU does not support requested features: {:?}",
+                    desc.required_features
+                )));
+            }
+            if !desc.required_limits.check_limits(&limits()) {
+                return Err(wgpu::RequestDeviceError::from_message(
+                    "Requested device limits exceed the TRUEOS admitted render contract".into(),
+                ));
+            }
+            if !matches!(desc.trace, wgpu::Trace::Off) {
+                return Err(wgpu::RequestDeviceError::from_message(
+                    "TRUEOS GPU tracing is not supported".into(),
+                ));
+            }
+            let context = Context::open_with_package(self.package)
+                .map_err(|error| wgpu::RequestDeviceError::from_message(error.to_string()))?;
+            Ok((
+                DispatchDevice::custom(Device(context.native.clone())),
+                DispatchQueue::custom(Queue(context.native)),
+            ))
+        })();
+        Box::pin(std::future::ready(result))
+    }
+    fn is_surface_supported(&self, _surface: &DispatchSurface) -> bool {
+        false
+    }
+    fn features(&self) -> wgpu::Features {
+        wgpu::Features::empty()
+    }
+    fn limits(&self) -> wgpu::Limits {
+        limits()
+    }
+    fn downlevel_capabilities(&self) -> wgpu::DownlevelCapabilities {
+        wgpu::DownlevelCapabilities {
+            flags: wgpu::DownlevelFlags::empty(),
+            ..Default::default()
+        }
+    }
+    fn get_info(&self) -> wgpu::AdapterInfo {
+        info()
+    }
+    fn get_texture_format_features(
+        &self,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::TextureFormatFeatures {
+        let allowed_usages = match format {
+            wgpu::TextureFormat::Rgba8Unorm if self.package.textured() => {
+                wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING
+            }
+            wgpu::TextureFormat::Depth32Float => wgpu::TextureUsages::RENDER_ATTACHMENT,
+            _ => wgpu::TextureUsages::empty(),
+        };
+        wgpu::TextureFormatFeatures {
+            allowed_usages,
+            flags: wgpu::TextureFormatFeatureFlags::empty(),
+        }
+    }
+    fn get_presentation_timestamp(&self) -> wgpu::PresentationTimestamp {
+        wgpu::PresentationTimestamp::INVALID_TIMESTAMP
+    }
+    fn cooperative_matrix_properties(&self) -> Vec<wgpu::CooperativeMatrixProperties> {
+        Vec::new()
     }
 }
 
@@ -2240,6 +2353,62 @@ impl RenderPipelineInterface for Pipeline {
 
 #[cfg(test)]
 mod tests {
+    fn ready<T>(future: impl std::future::Future<Output = T>) -> T {
+        let mut future = std::pin::pin!(future);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(value) => value,
+            std::task::Poll::Pending => panic!("adapter bootstrap unexpectedly pending"),
+        }
+    }
+
+    #[test]
+    fn adapter_rejects_unadmitted_shader_packages() {
+        assert!(adapter_with_package(ShaderPackage::new("unadmitted", 0)).is_err());
+    }
+
+    #[test]
+    fn adapter_reports_contract_and_rejects_unsupported_features_and_limits() {
+        let adapter = adapter_with_package(ShaderPackage::new(
+            VOXY_TEXTURED_WGSL,
+            vgpu::SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64,
+        ))
+        .unwrap();
+        assert_eq!(adapter.features(), wgpu::Features::empty());
+        assert_eq!(adapter.limits().max_vertex_buffer_array_stride, 32);
+        assert_eq!(
+            adapter
+                .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
+                .allowed_usages,
+            wgpu::TextureUsages::empty()
+        );
+        let desc = wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::IMMEDIATES,
+            required_limits: adapter.limits(),
+            ..Default::default()
+        };
+        let error = ready(adapter.request_device(&desc)).unwrap_err();
+        assert!(error.to_string().contains("features"));
+        let mut desc = wgpu::DeviceDescriptor {
+            required_limits: adapter.limits(),
+            ..Default::default()
+        };
+        desc.required_limits.max_texture_dimension_2d += 1;
+        let error = ready(adapter.request_device(&desc)).unwrap_err();
+        assert!(error.to_string().contains("limits"));
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn adapter_bootstrap_returns_native_open_error_on_other_platforms() {
+        let error = ready(Context::request_with_package(ShaderPackage::new(
+            VOXY_TEXTURED_WGSL,
+            vgpu::SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64,
+        )))
+        .unwrap_err();
+        assert!(error.to_string().contains("requires TRUEOS"));
+    }
+
     use super::*;
     use std::cell::{Cell, RefCell};
 
