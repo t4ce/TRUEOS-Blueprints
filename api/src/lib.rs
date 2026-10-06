@@ -36,6 +36,8 @@ pub use v::vsystem_services as system_services;
 pub use v::vthermal as thermal;
 pub use v::vusb as usb;
 
+pub mod clipboard;
+
 /// Keyboard events translated by the kernel's shared HID input broker.
 ///
 /// `hid` exposes device-oriented input state. This facade retains the global

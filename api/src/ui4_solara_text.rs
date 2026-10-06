@@ -677,6 +677,16 @@ impl Frame {
         }
     }
 
+    /// Set the OS-owned window title, for short application status notices.
+    pub fn set_title(&mut self, title: &str) -> Result<(), Error> {
+        let rc = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_window_title_set_v1(
+                self.window_id, title.as_ptr(), title.len(),
+            )
+        };
+        if rc == 0 { Ok(()) } else { Err(error_from_status(rc)) }
+    }
+
     pub const fn window_id(&self) -> u32 {
         self.window_id
     }
