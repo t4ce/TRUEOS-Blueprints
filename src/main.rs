@@ -105,6 +105,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("crc32fast", "crc32fast-1.5.0"),
     ("crossbeam-utils", "crossbeam-utils-0.8.21"),
     ("crossterm", "crossterm-0.29.0-trueos"),
+    ("directories-next", "directories-next-2.0.0"),
     ("futures-core", "futures-core-0.3.32"),
     ("futures-task", "futures-task-0.3.32"),
     ("futures-util", "futures-util-0.3.32"),
