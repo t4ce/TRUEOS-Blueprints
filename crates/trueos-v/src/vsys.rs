@@ -4,6 +4,9 @@ use core::fmt::Write as _;
 
 use crate::vcabi;
 
+/// Existing semantic log level accepted by TRUEOS diagnostic profiles.
+pub const LOG_LEVEL_IMPORTANT: u32 = 6;
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConsoleStream {

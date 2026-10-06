@@ -1,12 +1,13 @@
 #![allow(unused_variables)]
 #![cfg_attr(not(target_os = "trueos"), allow(dead_code))]
-#[cfg(any(target_os = "trueos", test))]
-use std::sync::atomic::Ordering;
 use std::{
     fmt,
     ops::Range,
     pin::Pin,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 use v::vgpu;
 use wgpu::custom::*;
@@ -16,6 +17,8 @@ const VOXY_WGSL: &str = include_str!("voxy_headless.wgsl");
 const VOXY_TEXTURED_WGSL: &str = include_str!("voxy_headless_textured.wgsl");
 const MAX_BUFFER_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_FRAME_VERTICES: usize = 780_000;
+const CAMERA_BYTES: usize = 80;
+const VERTEX_STRIDE: usize = 32;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShaderPackage {
@@ -60,11 +63,20 @@ struct Native {
     serial: Mutex<u64>,
     buffer_bytes: Mutex<u64>,
     submit_lock: Mutex<()>,
+    pass_upload: Mutex<Option<PassUpload<vgpu::Buffer>>>,
 }
 impl Drop for Native {
     fn drop(&mut self) {
         #[cfg(target_os = "trueos")]
         if let Some(device) = self.device {
+            if let Some(upload) = self
+                .pass_upload
+                .get_mut()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+            {
+                release_pass_upload(&device, upload, self.error.get_mut().unwrap().is_some());
+            }
             if let Some(queue) = self.queue {
                 let _ = device.destroy_queue(queue);
             }
@@ -140,6 +152,7 @@ impl Context {
                 serial: Mutex::new(0),
                 buffer_bytes: Mutex::new(0),
                 submit_lock: Mutex::new(()),
+                pass_upload: Mutex::new(None),
             });
             Ok(Self {
                 device: wgpu::Device::from_custom(Device(native.clone())),
@@ -218,6 +231,7 @@ struct BufferData {
     usage: wgpu::BufferUsages,
     size: u64,
     destroyed: Mutex<bool>,
+    revision: AtomicU64,
 }
 #[derive(Clone, Debug)]
 struct Pipeline(Arc<PipelineData>);
@@ -495,7 +509,10 @@ fn clear_word(color: wgpu::Color) -> u32 {
 trait UploadDevice {
     type Buffer: Copy;
     fn create(&self, bytes: usize, usage: u32) -> Result<Self::Buffer, i32>;
-    fn write(&self, buffer: Self::Buffer, bytes: &[u8]) -> Result<usize, i32>;
+    fn write_at(&self, buffer: Self::Buffer, offset: usize, bytes: &[u8]) -> Result<usize, i32>;
+    fn write(&self, buffer: Self::Buffer, bytes: &[u8]) -> Result<usize, i32> {
+        self.write_at(buffer, 0, bytes)
+    }
     fn destroy(&self, buffer: Self::Buffer);
 }
 
@@ -650,66 +667,443 @@ impl UploadDevice for vgpu::Device {
     fn create(&self, bytes: usize, usage: u32) -> Result<Self::Buffer, i32> {
         self.create_buffer(bytes, usage)
     }
-    fn write(&self, buffer: Self::Buffer, bytes: &[u8]) -> Result<usize, i32> {
-        self.write_buffer(buffer, 0, bytes)
+    fn write_at(&self, buffer: Self::Buffer, offset: usize, bytes: &[u8]) -> Result<usize, i32> {
+        self.write_buffer(buffer, offset, bytes)
     }
     fn destroy(&self, buffer: Self::Buffer) {
         let _ = self.destroy_buffer(buffer);
     }
 }
 
-#[derive(Clone, Copy)]
-enum UploadKind {
-    Vertex,
-    Index,
+#[derive(Clone, Debug)]
+struct CameraStamp {
+    source: Weak<BufferData>,
+    revision: u64,
+    range: Range<usize>,
+}
+impl CameraStamp {
+    fn matches(&self, other: &Self) -> bool {
+        self.source.ptr_eq(&other.source)
+            && self.revision == other.revision
+            && self.range == other.range
+    }
+}
+#[derive(Clone, Debug)]
+struct IndexStamp {
+    source: Weak<BufferData>,
+    revision: u64,
+    range: Range<usize>,
+    format: wgpu::IndexFormat,
+    base: i32,
+}
+impl IndexStamp {
+    fn matches(&self, other: &Self) -> bool {
+        self.source.ptr_eq(&other.source)
+            && self.revision == other.revision
+            && self.range == other.range
+            && self.format == other.format
+            && self.base == other.base
+    }
+}
+#[derive(Clone, Debug)]
+struct DrawStamp {
+    source: Weak<BufferData>,
+    revision: u64,
+    slice: Range<usize>,
+    vertices: Range<u32>,
+    index: Option<IndexStamp>,
+    destination: usize,
+}
+impl DrawStamp {
+    fn matches(&self, other: &Self) -> bool {
+        self.source.ptr_eq(&other.source)
+            && self.revision == other.revision
+            && self.slice == other.slice
+            && self.vertices == other.vertices
+            && self.destination == other.destination
+            && match (&self.index, &other.index) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.matches(b),
+                _ => false,
+            }
+    }
+}
+struct DrawSegment<'a> {
+    draw: &'a Draw,
+    stamp: DrawStamp,
+}
+struct PassSources<'a> {
+    camera: Option<CameraStamp>,
+    camera_bytes: [u8; CAMERA_BYTES],
+    segments: Vec<DrawSegment<'a>>,
+    vertex_count: usize,
+    pipeline: Option<Arc<PipelineData>>,
+    atlas: Option<Arc<SampledTextureData>>,
 }
 
-fn upload_buffer<D: UploadDevice>(
+// Weak source identities retain allocation identities without keeping logical
+// buffers (which own Native) alive through Native's own upload cache.
+#[derive(Debug)]
+struct PassUpload<B> {
+    vertex: B,
+    index: B,
+    capacity: usize,
+    camera: Option<CameraStamp>,
+    segments: Vec<DrawStamp>,
+    unknown_completion: bool,
+    retirements: u64,
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct GeometryWrites {
+    camera_bytes: usize,
+    first_draw_bytes: usize,
+    other_draw_bytes: usize,
+}
+
+fn release_pass_upload<D: UploadDevice>(
     device: &D,
-    bytes: &[u8],
-    kind: UploadKind,
-) -> Result<D::Buffer, Error> {
-    let (role, allocation, upload) = match kind {
-        UploadKind::Vertex => (
-            vgpu::BUFFER_USAGE_VERTEX,
-            "vertex allocation",
-            "vertex upload",
-        ),
-        UploadKind::Index => (vgpu::BUFFER_USAGE_INDEX, "index allocation", "index upload"),
-    };
-    // Broker CPU uploads require MAP_WRITE independently of wgpu COPY_DST.
-    let usage = role | vgpu::BUFFER_USAGE_COPY_DST | vgpu::BUFFER_USAGE_MAP_WRITE;
-    let buffer = native(allocation, device.create(bytes.len(), usage))?;
-    let result = native(upload, device.write(buffer, bytes)).and_then(|written| {
-        if written == bytes.len() {
-            Ok(buffer)
-        } else {
-            Err(Error {
-                code: vgpu::ERR_IO,
-                operation: upload,
-            })
-        }
-    });
-    if result.is_err() {
-        device.destroy(buffer);
+    upload: PassUpload<D::Buffer>,
+    failed: bool,
+) -> bool {
+    if failed || upload.unknown_completion {
+        return false;
     }
-    result
+    device.destroy(upload.vertex);
+    device.destroy(upload.index);
+    true
 }
 
-struct Scratch {
-    native: Arc<Native>,
-    vertex: vgpu::Buffer,
-    index: vgpu::Buffer,
+fn write_native_range<D: UploadDevice>(
+    device: &D,
+    buffer: D::Buffer,
+    offset: usize,
+    bytes: &[u8],
+    operation: &'static str,
+) -> Result<(), Error> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let written = native(operation, device.write_at(buffer, offset, bytes))?;
+    if written != bytes.len() {
+        return Err(Error {
+            code: vgpu::ERR_IO,
+            operation,
+        });
+    }
+    Ok(())
 }
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        #[cfg(target_os = "trueos")]
+
+fn create_pass_upload<D: UploadDevice>(
+    device: &D,
+    capacity: usize,
+) -> Result<PassUpload<D::Buffer>, Error> {
+    assert!(
+        capacity > 0 && capacity <= MAX_FRAME_VERTICES,
+        "TRUEOS wgpu: invalid geometry capacity"
+    );
+    let vertex_bytes = CAMERA_BYTES + capacity * VERTEX_STRIDE;
+    let usage = vgpu::BUFFER_USAGE_MAP_WRITE | vgpu::BUFFER_USAGE_COPY_DST;
+    let vertex = native(
+        "vertex allocation",
+        device.create(vertex_bytes, usage | vgpu::BUFFER_USAGE_VERTEX),
+    )?;
+    let index = match native(
+        "index allocation",
+        device.create(capacity * 4, usage | vgpu::BUFFER_USAGE_INDEX),
+    ) {
+        Ok(index) => index,
+        Err(error) => {
+            device.destroy(vertex);
+            return Err(error);
+        }
+    };
+    let initialized = (|| {
+        let mut indices = Vec::new();
+        indices.try_reserve_exact(capacity * 4).map_err(|_| Error {
+            code: vgpu::ERR_OUT_OF_MEMORY,
+            operation: "identity indices",
+        })?;
+        for index in 0..capacity as u32 {
+            indices.extend_from_slice(&index.to_le_bytes());
+        }
+        write_native_range(device, index, 0, &indices, "index upload")
+    })();
+    if let Err(error) = initialized {
+        device.destroy(vertex);
+        device.destroy(index);
+        return Err(error);
+    }
+    Ok(PassUpload {
+        vertex,
+        index,
+        capacity,
+        camera: None,
+        segments: Vec::new(),
+        unknown_completion: false,
+        retirements: 0,
+    })
+}
+
+fn pass_sources<'a>(native_gpu: &Arc<Native>, draws: &'a [Draw]) -> PassSources<'a> {
+    let mut sources = PassSources {
+        camera: None,
+        camera_bytes: [0; CAMERA_BYTES],
+        segments: Vec::new(),
+        vertex_count: 0,
+        pipeline: None,
+        atlas: None,
+    };
+    for draw in draws {
+        assert!(
+            frame_vertices_fit(sources.vertex_count, draw.vertices.len()),
+            "TRUEOS wgpu: frame exceeds admitted geometry limit"
+        );
+        owned(native_gpu, &draw.pipeline.native);
+        owned(native_gpu, &draw.bind.native);
+        owned(native_gpu, &draw.buffer.native);
+        owned(native_gpu, &draw.bind.camera.native);
+        assert!(
+            !*draw.buffer.destroyed.lock().unwrap() && !*draw.bind.camera.destroyed.lock().unwrap(),
+            "TRUEOS wgpu: destroyed draw resource"
+        );
+        assert!(
+            draw.vertices.start <= draw.vertices.end && draw.vertices.len() % 3 == 0,
+            "TRUEOS wgpu: incomplete triangle list"
+        );
+        let camera = CameraStamp {
+            source: Arc::downgrade(&draw.bind.camera),
+            revision: draw.bind.camera.revision.load(Ordering::Acquire),
+            range: draw.bind.range.clone(),
+        };
+        if !sources
+            .camera
+            .as_ref()
+            .is_some_and(|prior| prior.matches(&camera))
         {
-            let _ = self.native.device.unwrap().destroy_buffer(self.vertex);
-            let _ = self.native.device.unwrap().destroy_buffer(self.index);
+            let bytes: [u8; CAMERA_BYTES] = draw.bind.camera.bytes.lock().unwrap()
+                [draw.bind.range.clone()]
+            .try_into()
+            .expect("TRUEOS wgpu: camera must contain 80 bytes");
+            if sources.camera.is_some() {
+                assert_eq!(
+                    sources.camera_bytes, bytes,
+                    "TRUEOS wgpu: one pass requires one camera"
+                );
+            } else {
+                sources.camera_bytes = bytes;
+                sources.camera = Some(camera);
+            }
+        }
+        if let Some(pipeline) = &sources.pipeline {
+            assert!(
+                Arc::ptr_eq(pipeline, &draw.pipeline),
+                "TRUEOS wgpu: one pass requires one pipeline"
+            );
+        } else {
+            sources.pipeline = Some(draw.pipeline.clone());
+        }
+        if native_gpu.package.textured() {
+            let atlas = draw
+                .bind
+                .atlas
+                .as_ref()
+                .expect("TRUEOS wgpu: missing atlas binding");
+            owned(native_gpu, &atlas.native);
+            assert!(
+                !*atlas.destroyed.lock().unwrap(),
+                "TRUEOS wgpu: destroyed atlas"
+            );
+            assert!(
+                atlas.pixels.lock().unwrap().revision != 0,
+                "TRUEOS wgpu: atlas requires a complete opaque upload before drawing"
+            );
+            if let Some(prior) = &sources.atlas {
+                assert!(
+                    Arc::ptr_eq(prior, atlas),
+                    "TRUEOS wgpu: one pass requires one atlas"
+                );
+            } else {
+                sources.atlas = Some(atlas.clone());
+            }
+        } else {
+            assert!(
+                draw.bind.atlas.is_none(),
+                "TRUEOS wgpu: color package does not sample textures"
+            );
+        }
+        let index = if let Some((buffer, range, format, base)) = &draw.indices {
+            owned(native_gpu, &buffer.native);
+            assert!(
+                !*buffer.destroyed.lock().unwrap(),
+                "TRUEOS wgpu: destroyed index buffer"
+            );
+            let stride = if *format == wgpu::IndexFormat::Uint16 {
+                2
+            } else {
+                4
+            };
+            assert!(
+                (draw.vertices.end as usize)
+                    .checked_mul(stride)
+                    .is_some_and(|end| end <= range.len()),
+                "TRUEOS wgpu: index range exceeds buffer"
+            );
+            Some(IndexStamp {
+                source: Arc::downgrade(buffer),
+                revision: buffer.revision.load(Ordering::Acquire),
+                range: range.clone(),
+                format: *format,
+                base: *base,
+            })
+        } else {
+            assert!(
+                (draw.vertices.end as usize)
+                    .checked_mul(VERTEX_STRIDE)
+                    .is_some_and(|end| end <= draw.slice.len()),
+                "TRUEOS wgpu: vertex range exceeds buffer"
+            );
+            None
+        };
+        sources.segments.push(DrawSegment {
+            draw,
+            stamp: DrawStamp {
+                source: Arc::downgrade(&draw.buffer),
+                revision: draw.buffer.revision.load(Ordering::Acquire),
+                slice: draw.slice.clone(),
+                vertices: draw.vertices.clone(),
+                index,
+                destination: CAMERA_BYTES + sources.vertex_count * VERTEX_STRIDE,
+            },
+        });
+        sources.vertex_count += draw.vertices.len();
+    }
+    sources
+}
+
+fn materialize_segment(draw: &Draw) -> Vec<u8> {
+    // Snapshot index bytes before locking the vertex data: WebGPU permits a
+    // single logical buffer with both INDEX and VERTEX usages.
+    let indexed = draw.indices.as_ref().map(|(buffer, range, format, base)| {
+        let stride = if *format == wgpu::IndexFormat::Uint16 {
+            2
+        } else {
+            4
+        };
+        let begin = range.start + draw.vertices.start as usize * stride;
+        let end = range.start + draw.vertices.end as usize * stride;
+        (
+            buffer.bytes.lock().unwrap()[begin..end].to_vec(),
+            stride,
+            *base,
+        )
+    });
+    let buffer = draw.buffer.bytes.lock().unwrap();
+    let vertices = &buffer[draw.slice.clone()];
+    let bytes = if let Some((indices, stride, base)) = indexed {
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(draw.vertices.len() * VERTEX_STRIDE)
+            .expect("TRUEOS wgpu: vertex allocation failed");
+        for word in indices.chunks_exact(stride) {
+            let index = if stride == 2 {
+                u16::from_le_bytes(word.try_into().unwrap()) as u32
+            } else {
+                u32::from_le_bytes(word.try_into().unwrap())
+            };
+            let index = i64::from(index) + i64::from(base);
+            assert!(
+                index >= 0
+                    && usize::try_from(index)
+                        .unwrap()
+                        .checked_mul(VERTEX_STRIDE)
+                        .and_then(|at| at.checked_add(VERTEX_STRIDE))
+                        .is_some_and(|end| end <= vertices.len()),
+                "TRUEOS wgpu: indexed vertex exceeds buffer"
+            );
+            let at = index as usize * VERTEX_STRIDE;
+            bytes.extend_from_slice(&vertices[at..at + VERTEX_STRIDE]);
+        }
+        bytes
+    } else {
+        vertices[draw.vertices.start as usize * VERTEX_STRIDE
+            ..draw.vertices.end as usize * VERTEX_STRIDE]
+            .to_vec()
+    };
+    for vertex in bytes.chunks_exact(VERTEX_STRIDE) {
+        assert!(
+            vertex
+                .chunks_exact(4)
+                .all(|word| f32::from_le_bytes(word.try_into().unwrap()).is_finite()),
+            "TRUEOS wgpu: non-finite vertex"
+        );
+        assert_eq!(
+            f32::from_le_bytes(vertex[28..32].try_into().unwrap()),
+            1.,
+            "TRUEOS wgpu: only opaque vertex colors are supported"
+        );
+    }
+    bytes
+}
+
+fn update_pass_upload<D: UploadDevice>(
+    device: &D,
+    upload: &mut PassUpload<D::Buffer>,
+    sources: &PassSources<'_>,
+) -> Result<GeometryWrites, Error> {
+    assert!(
+        sources.vertex_count <= upload.capacity,
+        "TRUEOS wgpu: frame exceeds native buffer capacity"
+    );
+    let mut writes = GeometryWrites::default();
+    if let Some(camera) = &sources.camera {
+        if !upload
+            .camera
+            .as_ref()
+            .is_some_and(|prior| prior.matches(camera))
+        {
+            write_native_range(
+                device,
+                upload.vertex,
+                0,
+                &sources.camera_bytes,
+                "camera upload",
+            )?;
+            writes.camera_bytes = CAMERA_BYTES;
         }
     }
+    for (index, segment) in sources.segments.iter().enumerate() {
+        if !upload
+            .segments
+            .get(index)
+            .is_some_and(|prior| prior.matches(&segment.stamp))
+        {
+            let bytes = materialize_segment(segment.draw);
+            write_native_range(
+                device,
+                upload.vertex,
+                segment.stamp.destination,
+                &bytes,
+                "vertex upload",
+            )?;
+            if index == 0 {
+                writes.first_draw_bytes += bytes.len();
+            } else {
+                writes.other_draw_bytes += bytes.len();
+            }
+        }
+    }
+    // Commit metadata only after every range write succeeds. A partial write
+    // must never make a future pass skip the corresponding source data.
+    upload.camera = sources.camera.clone();
+    upload.segments = sources
+        .segments
+        .iter()
+        .map(|segment| segment.stamp.clone())
+        .collect();
+    Ok(writes)
 }
+
 #[cfg(target_os = "trueos")]
 fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
     owned(native_gpu, &pass.target.native);
@@ -725,248 +1119,101 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
         .unwrap()
         .take()
         .expect("TRUEOS wgpu: frame already submitted or discarded");
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-    let mut camera: Option<Vec<u8>> = None;
-    let mut pipeline: Option<Arc<PipelineData>> = None;
-    let mut atlas: Option<Arc<SampledTextureData>> = None;
-    for draw in pass.draws {
-        assert!(
-            frame_vertices_fit(indices.len(), draw.vertices.len()),
-            "TRUEOS wgpu: frame exceeds admitted geometry limit"
-        );
-        owned(native_gpu, &draw.pipeline.native);
-        assert!(
-            !*draw.buffer.destroyed.lock().unwrap() && !*draw.bind.camera.destroyed.lock().unwrap(),
-            "TRUEOS wgpu: destroyed draw resource"
-        );
-        let current_camera =
-            draw.bind.camera.bytes.lock().unwrap()[draw.bind.range.clone()].to_vec();
-        if let Some(camera) = &camera {
-            assert_eq!(
-                camera, &current_camera,
-                "TRUEOS wgpu: one pass requires one camera"
-            );
-        } else {
-            camera = Some(current_camera);
-        }
-        if let Some(pipeline) = &pipeline {
-            assert!(
-                Arc::ptr_eq(pipeline, &draw.pipeline),
-                "TRUEOS wgpu: one pass requires one pipeline"
-            );
-        } else {
-            pipeline = Some(draw.pipeline.clone());
-        }
-        if native_gpu.package.textured() {
-            let current = draw
-                .bind
-                .atlas
-                .as_ref()
-                .expect("TRUEOS wgpu: missing atlas binding");
-            assert!(
-                !*current.destroyed.lock().unwrap(),
-                "TRUEOS wgpu: destroyed atlas"
-            );
-            assert!(
-                current.pixels.lock().unwrap().revision != 0,
-                "TRUEOS wgpu: atlas requires a complete opaque upload before drawing"
-            );
-            if let Some(atlas) = &atlas {
-                assert!(
-                    Arc::ptr_eq(atlas, current),
-                    "TRUEOS wgpu: one pass requires one atlas"
-                );
-            } else {
-                atlas = Some(current.clone());
-            }
-        } else {
-            assert!(
-                draw.bind.atlas.is_none(),
-                "TRUEOS wgpu: color package does not sample textures"
-            );
-        }
-        let buffer = draw.buffer.bytes.lock().unwrap();
-        let vertex_bytes = &buffer[draw.slice.clone()];
-        let first = vertices.len() / 32;
-        if let Some((index, range, format, base)) = draw.indices {
-            let stride = if format == wgpu::IndexFormat::Uint16 {
-                2
-            } else {
-                4
-            };
-            assert!(
-                (draw.vertices.end as usize)
-                    .checked_mul(stride)
-                    .is_some_and(|end| end <= range.len()),
-                "TRUEOS wgpu: index range exceeds buffer"
-            );
-            assert!(
-                !*index.destroyed.lock().unwrap(),
-                "TRUEOS wgpu: destroyed index buffer"
-            );
-            let bytes = index.bytes.lock().unwrap();
-            let bytes = &bytes[range];
-            let stride = if format == wgpu::IndexFormat::Uint16 {
-                2
-            } else {
-                4
-            };
-            for index in draw.vertices {
-                let at = usize::try_from(index)
-                    .unwrap()
-                    .checked_mul(stride)
-                    .expect("TRUEOS wgpu: index overflow");
-                assert!(
-                    at.checked_add(stride).is_some_and(|end| end <= bytes.len()),
-                    "TRUEOS wgpu: index range exceeds buffer"
-                );
-                let value = if stride == 2 {
-                    u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()) as u32
-                } else {
-                    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
-                };
-                let value = i64::from(value) + i64::from(base);
-                assert!(
-                    value >= 0
-                        && usize::try_from(value)
-                            .unwrap()
-                            .checked_mul(32)
-                            .and_then(|at| at.checked_add(32))
-                            .is_some_and(|end| end <= vertex_bytes.len()),
-                    "TRUEOS wgpu: indexed vertex exceeds buffer"
-                );
-                let at = usize::try_from(value).unwrap() * 32;
-                vertices.extend_from_slice(&vertex_bytes[at..at + 32]);
-                indices.push(u32::try_from(indices.len()).unwrap());
-            }
-        } else {
-            let start = draw.vertices.start as usize * 32;
-            let end = draw.vertices.end as usize * 32;
-            vertices.extend_from_slice(&vertex_bytes[start..end]);
-            for index in 0..(end - start) / 32 {
-                indices.push(u32::try_from(first + index).unwrap());
+    let sources = pass_sources(native_gpu, &pass.draws);
+    let device = native_gpu.device.unwrap();
+    let queue = native_gpu.queue.unwrap();
+    let clear = clear_word(pass.clear);
+    if sources.vertex_count == 0 {
+        let point = native(
+            "clear submit",
+            device.submit_ui4_clear(queue, surface, clear),
+        )?;
+        return native("completion", device.wait(queue, point.value));
+    }
+    let sampled_texture = if let Some(atlas) = &sources.atlas {
+        let pixels = atlas.pixels.lock().unwrap();
+        match upload_pixels(
+            &device,
+            &mut atlas.upload.lock().unwrap(),
+            pixels.revision,
+            &pixels.bytes,
+        ) {
+            Ok(buffer) => buffer.raw(),
+            Err(error) => {
+                atlas.unknown_completion.store(true, Ordering::Release);
+                return Err(error);
             }
         }
-        assert!(
-            indices.len() <= MAX_FRAME_VERTICES,
-            "TRUEOS wgpu: frame exceeds admitted geometry limit"
+    } else {
+        0
+    };
+    let mut retained = native_gpu.pass_upload.lock().unwrap();
+    let created = retained.is_none();
+    if retained.is_none() {
+        *retained = Some(create_pass_upload(&device, MAX_FRAME_VERTICES)?);
+    }
+    let upload = retained.as_mut().unwrap();
+    let writes = update_pass_upload(&device, upload, &sources)?;
+    let draw = vgpu::IndexedDraw {
+        vertex_offset: CAMERA_BYTES as u64,
+        index_count: sources.vertex_count as u32,
+        clear_rgba8_srgb: clear,
+        topology: 0,
+        sampled_texture,
+        texture_width: sources.atlas.as_ref().map_or(0, |atlas| atlas.size.width),
+        texture_height: sources.atlas.as_ref().map_or(0, |atlas| atlas.size.height),
+        texture_pitch: sources
+            .atlas
+            .as_ref()
+            .map_or(0, |atlas| atlas.size.width * 4),
+        sampler_flags: 0,
+        texture_reserved: vgpu::INDEXED_DRAW_DRAWABLE_DEPTH
+            | vgpu::INDEXED_DRAW_DEPTH_TEST
+            | vgpu::INDEXED_DRAW_DEPTH_WRITE
+            | vgpu::INDEXED_DRAW_CLEAR_DEPTH
+            | (3 << vgpu::INDEXED_DRAW_DEPTH_COMPARE_SHIFT),
+        ..Default::default()
+    };
+    // Keep both native handles until the exact synchronous completion. Mark
+    // ambiguity before entering CABI, so unwinding cannot release live storage.
+    upload.unknown_completion = true;
+    if let Some(atlas) = &sources.atlas {
+        atlas.unknown_completion.store(true, Ordering::Release);
+    }
+    let point = native(
+        "indexed submit",
+        device.submit_ui4_indexed(
+            queue,
+            surface,
+            sources.pipeline.as_ref().unwrap().pipeline.unwrap(),
+            upload.vertex,
+            upload.index,
+            draw,
+        ),
+    )?;
+    native("completion", device.wait(queue, point.value))?;
+    upload.unknown_completion = false;
+    if let Some(atlas) = &sources.atlas {
+        atlas.unknown_completion.store(false, Ordering::Release);
+    }
+    upload.retirements += 1;
+    if upload.retirements <= 3 || upload.retirements % 128 == 0 {
+        let _ = v::vsys::log_record(
+            v::vsys::LOG_LEVEL_IMPORTANT,
+            "apps::voxygen",
+            &format!(
+                "voxy-wgpu: phase=adapter-retired frame={} native_vb={} native_ib={} vertices={} camera_upload_bytes={} draw0_upload_bytes={} other_draw_upload_bytes={} index_upload_bytes={} storage=persistent-composite\n",
+                upload.retirements,
+                upload.vertex.raw(),
+                upload.index.raw(),
+                sources.vertex_count,
+                writes.camera_bytes,
+                writes.first_draw_bytes,
+                writes.other_draw_bytes,
+                if created { MAX_FRAME_VERTICES * 4 } else { 0 },
+            ),
         );
     }
-    let clear = clear_word(pass.clear);
-    let point = if vertices.is_empty() {
-        native(
-            "clear submit",
-            native_gpu
-                .device
-                .unwrap()
-                .submit_ui4_clear(native_gpu.queue.unwrap(), surface, clear),
-        )?
-    } else {
-        let mut upload = camera.expect("TRUEOS wgpu: missing camera");
-        assert_eq!(upload.len(), 80);
-        upload.extend_from_slice(&vertices);
-        let device = native_gpu.device.unwrap();
-        let sampled_texture = if let Some(atlas) = &atlas {
-            let pixels = atlas.pixels.lock().unwrap();
-            let result = upload_pixels(
-                &device,
-                &mut atlas.upload.lock().unwrap(),
-                pixels.revision,
-                &pixels.bytes,
-            );
-            match result {
-                Ok(buffer) => buffer.raw(),
-                Err(error) => {
-                    atlas.unknown_completion.store(true, Ordering::Release);
-                    return Err(error);
-                }
-            }
-        } else {
-            0
-        };
-        let vb = upload_buffer(&device, &upload, UploadKind::Vertex)?;
-        let index_bytes: Vec<u8> = indices
-            .iter()
-            .flat_map(|index| index.to_le_bytes())
-            .collect();
-        let ib = match upload_buffer(&device, &index_bytes, UploadKind::Index) {
-            Ok(ib) => ib,
-            Err(error) => {
-                let _ = native_gpu.device.unwrap().destroy_buffer(vb);
-                return Err(error);
-            }
-        };
-        let scratch = Scratch {
-            native: native_gpu.clone(),
-            vertex: vb,
-            index: ib,
-        };
-        let draw = vgpu::IndexedDraw {
-            vertex_offset: 80,
-            index_count: indices.len() as u32,
-            clear_rgba8_srgb: clear,
-            topology: 0,
-            sampled_texture,
-            texture_width: atlas.as_ref().map_or(0, |atlas| atlas.size.width),
-            texture_height: atlas.as_ref().map_or(0, |atlas| atlas.size.height),
-            texture_pitch: atlas.as_ref().map_or(0, |atlas| atlas.size.width * 4),
-            sampler_flags: 0,
-            texture_reserved: vgpu::INDEXED_DRAW_DRAWABLE_DEPTH
-                | vgpu::INDEXED_DRAW_DEPTH_TEST
-                | vgpu::INDEXED_DRAW_DEPTH_WRITE
-                | vgpu::INDEXED_DRAW_CLEAR_DEPTH
-                | (3 << vgpu::INDEXED_DRAW_DEPTH_COMPARE_SHIFT),
-            ..Default::default()
-        };
-        for vertex in vertices.chunks_exact(32) {
-            assert_eq!(
-                f32::from_le_bytes(vertex[28..32].try_into().unwrap()),
-                1.,
-                "TRUEOS wgpu: only opaque vertex colors are supported"
-            );
-        }
-        let point = match native(
-            "indexed submit",
-            native_gpu.device.unwrap().submit_ui4_indexed(
-                native_gpu.queue.unwrap(),
-                surface,
-                pipeline.unwrap().pipeline.unwrap(),
-                vb,
-                ib,
-                draw,
-            ),
-        ) {
-            Ok(point) => point,
-            Err(error) => {
-                if let Some(atlas) = &atlas {
-                    atlas.unknown_completion.store(true, Ordering::Release);
-                }
-                return Err(error);
-            }
-        };
-        if let Err(error) = native(
-            "completion",
-            native_gpu
-                .device
-                .unwrap()
-                .wait(native_gpu.queue.unwrap(), point.value),
-        ) {
-            if let Some(atlas) = &atlas {
-                atlas.unknown_completion.store(true, Ordering::Release);
-            }
-            std::mem::forget(scratch);
-            return Err(error);
-        }
-        return Ok(());
-    };
-    native(
-        "completion",
-        native_gpu
-            .device
-            .unwrap()
-            .wait(native_gpu.queue.unwrap(), point.value),
-    )?;
     Ok(())
 }
 
@@ -1232,6 +1479,7 @@ impl DeviceInterface for Device {
             usage: desc.usage,
             size: desc.size,
             destroyed: Mutex::new(false),
+            revision: AtomicU64::new(0),
         })))
     }
     fn create_texture(&self, desc: &wgpu::TextureDescriptor<'_>) -> DispatchTexture {
@@ -1393,7 +1641,17 @@ impl QueueInterface for Queue {
             "TRUEOS wgpu: invalid buffer upload"
         );
         let range = checked_slice(&buffer.0, offset, Some(data.len() as u64));
-        buffer.0.bytes.lock().unwrap()[range].copy_from_slice(data);
+        let mut bytes = buffer.0.bytes.lock().unwrap();
+        if bytes[range.clone()] != *data {
+            let revision = buffer
+                .0
+                .revision
+                .load(Ordering::Relaxed)
+                .checked_add(1)
+                .expect("TRUEOS wgpu: buffer revision overflow");
+            bytes[range].copy_from_slice(data);
+            buffer.0.revision.store(revision, Ordering::Release);
+        }
     }
     fn create_staging_buffer(&self, size: wgpu::BufferSize) -> Option<DispatchQueueWriteBuffer> {
         panic!("TRUEOS wgpu: create_staging_buffer is unsupported")
@@ -1990,6 +2248,7 @@ mod tests {
         buffers: RefCell<Vec<Option<(u32, Vec<u8>)>>>,
         short_write: Cell<bool>,
         writes: Cell<usize>,
+        ranges: RefCell<Vec<(usize, usize, usize)>>,
     }
 
     impl UploadDevice for UploadBroker {
@@ -2000,17 +2259,22 @@ mod tests {
             buffers.push(Some((usage, vec![0; bytes])));
             Ok(handle)
         }
-        fn write(&self, buffer: usize, bytes: &[u8]) -> Result<usize, i32> {
+        fn write_at(&self, buffer: usize, offset: usize, bytes: &[u8]) -> Result<usize, i32> {
             let mut buffers = self.buffers.borrow_mut();
             let (usage, storage) = buffers[buffer].as_mut().unwrap();
             if *usage & vgpu::BUFFER_USAGE_MAP_WRITE == 0 {
                 return Err(vgpu::ERR_PERMISSION);
             }
             self.writes.set(self.writes.get() + 1);
+            self.ranges.borrow_mut().push((buffer, offset, bytes.len()));
             if self.short_write.get() {
                 return Ok(bytes.len().saturating_sub(4));
             }
-            storage.copy_from_slice(bytes);
+            let end = offset
+                .checked_add(bytes.len())
+                .filter(|end| *end <= storage.len())
+                .ok_or(vgpu::ERR_UNSUPPORTED)?;
+            storage[offset..end].copy_from_slice(bytes);
             Ok(bytes.len())
         }
         fn destroy(&self, buffer: usize) {
@@ -2031,8 +2295,10 @@ mod tests {
             .into_iter()
             .flat_map(u32::to_le_bytes)
             .collect();
-        let vertex = upload_buffer(&broker, &camera_and_vertices, UploadKind::Vertex).unwrap();
-        let index = upload_buffer(&broker, &indices, UploadKind::Index).unwrap();
+        let retained = create_pass_upload(&broker, 3).unwrap();
+        let vertex = retained.vertex;
+        let index = retained.index;
+        write_native_range(&broker, vertex, 0, &camera_and_vertices, "vertex upload").unwrap();
         let buffers = broker.buffers.borrow();
         for (handle, role, expected) in [
             (vertex, vgpu::BUFFER_USAGE_VERTEX, &camera_and_vertices),
@@ -2048,7 +2314,7 @@ mod tests {
     fn incomplete_native_upload_is_rejected_and_released() {
         let broker = UploadBroker::default();
         broker.short_write.set(true);
-        let error = upload_buffer(&broker, &[0; 12], UploadKind::Index).unwrap_err();
+        let error = create_pass_upload(&broker, 3).unwrap_err();
         assert_eq!(error.code, vgpu::ERR_IO);
         assert_eq!(error.operation, "index upload");
         assert!(broker.buffers.borrow().iter().all(Option::is_none));
@@ -2307,6 +2573,7 @@ mod tests {
             serial: Mutex::new(0),
             buffer_bytes: Mutex::new(0),
             submit_lock: Mutex::new(()),
+            pass_upload: Mutex::new(None),
         });
         Context {
             device: wgpu::Device::from_custom(Device(native.clone())),
@@ -2342,6 +2609,411 @@ mod tests {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn geometry(context: &Context, count: usize, marker: f32) -> wgpu::Buffer {
+        let buffer = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (count * VERTEX_STRIDE) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bytes: Vec<u8> = (0..count)
+            .flat_map(|index| [marker + index as f32, 0., 0., 1., 1., 1., 1., 1.])
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        context.queue().write_buffer(&buffer, 0, &bytes);
+        buffer
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn cpu_pipeline(context: &Context) -> Arc<PipelineData> {
+        Arc::new(PipelineData {
+            native: context.native.clone(),
+            shader: None,
+            pipeline: None,
+        })
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    fn geometry_draw(
+        context: &Context,
+        camera: &wgpu::Buffer,
+        pipeline: &Arc<PipelineData>,
+        buffer: &wgpu::Buffer,
+        vertices: Range<u32>,
+    ) -> Draw {
+        let buffer = buffer.as_custom::<Buffer>().unwrap().0.clone();
+        Draw {
+            pipeline: pipeline.clone(),
+            bind: Bind {
+                native: context.native.clone(),
+                camera: camera.as_custom::<Buffer>().unwrap().0.clone(),
+                range: 0..80,
+                atlas: None,
+            },
+            slice: 0..buffer.size as usize,
+            buffer,
+            vertices,
+            indices: None,
+        }
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn persistent_geometry_sends_only_camera_or_changed_overlay_between_frames() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let terrain = geometry(&context, 6, 10.);
+        let overlay = geometry(&context, 3, 20.);
+        let pipeline = cpu_pipeline(&context);
+        let draws = [
+            geometry_draw(&context, &camera, &pipeline, &terrain, 0..6),
+            geometry_draw(&context, &camera, &pipeline, &overlay, 0..3),
+        ];
+        let broker = UploadBroker::default();
+        let mut upload = create_pass_upload(&broker, 12).unwrap();
+        assert_eq!(
+            broker.buffers.borrow()[upload.index].as_ref().unwrap().1,
+            (0..12u32).flat_map(u32::to_le_bytes).collect::<Vec<_>>()
+        );
+        broker.ranges.borrow_mut().clear();
+        let writes =
+            update_pass_upload(&broker, &mut upload, &pass_sources(&context.native, &draws))
+                .unwrap();
+        assert_eq!(
+            writes,
+            GeometryWrites {
+                camera_bytes: 80,
+                first_draw_bytes: 192,
+                other_draw_bytes: 96
+            }
+        );
+        assert_eq!(
+            *broker.ranges.borrow(),
+            [
+                (upload.vertex, 0, 80),
+                (upload.vertex, 80, 192),
+                (upload.vertex, 272, 96)
+            ]
+        );
+        broker.ranges.borrow_mut().clear();
+        assert_eq!(
+            update_pass_upload(&broker, &mut upload, &pass_sources(&context.native, &draws))
+                .unwrap(),
+            GeometryWrites::default()
+        );
+        assert!(broker.ranges.borrow().is_empty());
+
+        context.queue().write_buffer(&camera, 0, &[1; 80]);
+        let writes =
+            update_pass_upload(&broker, &mut upload, &pass_sources(&context.native, &draws))
+                .unwrap();
+        assert_eq!(
+            writes,
+            GeometryWrites {
+                camera_bytes: 80,
+                ..Default::default()
+            }
+        );
+        assert_eq!(*broker.ranges.borrow(), [(upload.vertex, 0, 80)]);
+        broker.ranges.borrow_mut().clear();
+        context
+            .queue()
+            .write_buffer(&overlay, 0, &99f32.to_le_bytes());
+        let writes =
+            update_pass_upload(&broker, &mut upload, &pass_sources(&context.native, &draws))
+                .unwrap();
+        assert_eq!(
+            writes,
+            GeometryWrites {
+                other_draw_bytes: 96,
+                ..Default::default()
+            }
+        );
+        assert_eq!(*broker.ranges.borrow(), [(upload.vertex, 272, 96)]);
+        let buffers = broker.buffers.borrow();
+        assert_eq!(
+            &buffers[upload.vertex].as_ref().unwrap().1[80..272],
+            &terrain
+                .as_custom::<Buffer>()
+                .unwrap()
+                .0
+                .bytes
+                .lock()
+                .unwrap()[..]
+        );
+        assert_eq!(
+            buffers.len(),
+            2,
+            "native geometry handles must stay unchanged"
+        );
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn changing_layout_moves_only_affected_segments_and_reuses_identity_indices() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let terrain = geometry(&context, 6, 10.);
+        let overlay = geometry(&context, 3, 20.);
+        let pipeline = cpu_pipeline(&context);
+        let mut draws = vec![
+            geometry_draw(&context, &camera, &pipeline, &terrain, 0..3),
+            geometry_draw(&context, &camera, &pipeline, &overlay, 0..3),
+        ];
+        let broker = UploadBroker::default();
+        let mut upload = create_pass_upload(&broker, 12).unwrap();
+        update_pass_upload(&broker, &mut upload, &pass_sources(&context.native, &draws)).unwrap();
+        broker.ranges.borrow_mut().clear();
+        draws[0].vertices = 0..6;
+        let sources = pass_sources(&context.native, &draws);
+        assert_eq!(sources.vertex_count, 9);
+        let writes = update_pass_upload(&broker, &mut upload, &sources).unwrap();
+        assert_eq!(
+            writes,
+            GeometryWrites {
+                first_draw_bytes: 192,
+                other_draw_bytes: 96,
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            *broker.ranges.borrow(),
+            [(upload.vertex, 80, 192), (upload.vertex, 272, 96)]
+        );
+        broker.ranges.borrow_mut().clear();
+        draws.truncate(1);
+        let sources = pass_sources(&context.native, &draws);
+        assert_eq!(sources.vertex_count, 6);
+        assert_eq!(
+            update_pass_upload(&broker, &mut upload, &sources).unwrap(),
+            GeometryWrites::default()
+        );
+        assert!(broker.ranges.borrow().is_empty());
+        assert_eq!(upload.segments.len(), 1);
+        assert_eq!(broker.buffers.borrow().len(), 2);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn indexed_sources_preserve_base_vertex_and_refresh_on_index_revision() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let geometry = geometry(&context, 4, 10.);
+        let pipeline = cpu_pipeline(&context);
+        let indices = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 8,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bytes: Vec<u8> = [0u16, 1, 2, 0]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        context.queue().write_buffer(&indices, 0, &bytes);
+        let mut draw = geometry_draw(&context, &camera, &pipeline, &geometry, 0..3);
+        draw.indices = Some((
+            indices.as_custom::<Buffer>().unwrap().0.clone(),
+            0..8,
+            wgpu::IndexFormat::Uint16,
+            1,
+        ));
+        let broker = UploadBroker::default();
+        let mut upload = create_pass_upload(&broker, 6).unwrap();
+        update_pass_upload(
+            &broker,
+            &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw)),
+        )
+        .unwrap();
+        assert_eq!(
+            &broker.buffers.borrow()[upload.vertex].as_ref().unwrap().1[80..176],
+            &geometry
+                .as_custom::<Buffer>()
+                .unwrap()
+                .0
+                .bytes
+                .lock()
+                .unwrap()[32..128]
+        );
+        broker.ranges.borrow_mut().clear();
+        let bytes: Vec<u8> = [2u16, 1, 0, 0]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        context.queue().write_buffer(&indices, 0, &bytes);
+        let writes = update_pass_upload(
+            &broker,
+            &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw)),
+        )
+        .unwrap();
+        assert_eq!(
+            writes,
+            GeometryWrites {
+                first_draw_bytes: 96,
+                ..Default::default()
+            }
+        );
+        assert_eq!(*broker.ranges.borrow(), [(upload.vertex, 80, 96)]);
+        let expected: Vec<u8> = [3usize, 2, 1]
+            .into_iter()
+            .flat_map(|index| {
+                geometry
+                    .as_custom::<Buffer>()
+                    .unwrap()
+                    .0
+                    .bytes
+                    .lock()
+                    .unwrap()[index * 32..index * 32 + 32]
+                    .to_vec()
+            })
+            .collect();
+        assert_eq!(
+            &broker.buffers.borrow()[upload.vertex].as_ref().unwrap().1[80..176],
+            &expected
+        );
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn same_logical_buffer_can_supply_vertices_and_indices() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let vertices = geometry(&context, 3, 10.);
+        let combined = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 104,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::INDEX
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        context.queue().write_buffer(
+            &combined,
+            0,
+            &vertices
+                .as_custom::<Buffer>()
+                .unwrap()
+                .0
+                .bytes
+                .lock()
+                .unwrap(),
+        );
+        let indices: Vec<u8> = [0u16, 1, 2, 0]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        context.queue().write_buffer(&combined, 96, &indices);
+        let pipeline = cpu_pipeline(&context);
+        let mut draw = geometry_draw(&context, &camera, &pipeline, &combined, 0..3);
+        draw.slice = 0..96;
+        draw.indices = Some((
+            combined.as_custom::<Buffer>().unwrap().0.clone(),
+            96..104,
+            wgpu::IndexFormat::Uint16,
+            0,
+        ));
+        assert_eq!(
+            materialize_segment(&draw),
+            *vertices
+                .as_custom::<Buffer>()
+                .unwrap()
+                .0
+                .bytes
+                .lock()
+                .unwrap()
+        );
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn cached_sources_do_not_keep_logical_buffers_alive() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let geometry = geometry(&context, 3, 10.);
+        let weak = Arc::downgrade(&geometry.as_custom::<Buffer>().unwrap().0);
+        let pipeline = cpu_pipeline(&context);
+        let draw = geometry_draw(&context, &camera, &pipeline, &geometry, 0..3);
+        let broker = UploadBroker::default();
+        let mut upload = create_pass_upload(&broker, 6).unwrap();
+        update_pass_upload(
+            &broker,
+            &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw)),
+        )
+        .unwrap();
+        drop(draw);
+        drop(geometry);
+        assert!(weak.upgrade().is_none());
+        assert!(upload.segments[0].source.upgrade().is_none());
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn partial_geometry_upload_never_commits_the_new_source_revision() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let geometry = geometry(&context, 3, 10.);
+        let pipeline = cpu_pipeline(&context);
+        let draw = geometry_draw(&context, &camera, &pipeline, &geometry, 0..3);
+        let broker = UploadBroker::default();
+        let mut upload = create_pass_upload(&broker, 6).unwrap();
+        update_pass_upload(
+            &broker,
+            &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw)),
+        )
+        .unwrap();
+        let prior_revision = upload.segments[0].revision;
+        context
+            .queue()
+            .write_buffer(&geometry, 0, &99f32.to_le_bytes());
+        broker.short_write.set(true);
+        assert_eq!(
+            update_pass_upload(
+                &broker,
+                &mut upload,
+                &pass_sources(&context.native, std::slice::from_ref(&draw))
+            )
+            .unwrap_err()
+            .code,
+            vgpu::ERR_IO
+        );
+        assert_eq!(upload.segments[0].revision, prior_revision);
+        assert!(!release_pass_upload(&broker, upload, true));
+        assert!(broker.buffers.borrow().iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn native_geometry_is_released_only_after_known_idle_completion() {
+        let broker = UploadBroker::default();
+        let mut unknown = create_pass_upload(&broker, 6).unwrap();
+        unknown.unknown_completion = true;
+        let handles = [unknown.vertex, unknown.index];
+        assert!(!release_pass_upload(&broker, unknown, false));
+        assert!(
+            handles
+                .into_iter()
+                .all(|handle| broker.buffers.borrow()[handle].is_some())
+        );
+        let idle = create_pass_upload(&broker, 6).unwrap();
+        let handles = [idle.vertex, idle.index];
+        assert!(release_pass_upload(&broker, idle, false));
+        assert!(
+            handles
+                .into_iter()
+                .all(|handle| broker.buffers.borrow()[handle].is_none())
+        );
+    }
+
+    #[test]
+    fn full_native_geometry_capacity_stays_inside_buffer_limit() {
+        assert!(CAMERA_BYTES + MAX_FRAME_VERTICES * VERTEX_STRIDE <= MAX_BUFFER_BYTES as usize);
+        assert!(MAX_FRAME_VERTICES * 4 <= MAX_BUFFER_BYTES as usize);
     }
 
     #[test]
