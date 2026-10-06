@@ -336,7 +336,13 @@ pub mod thread {
     }
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[cfg(target_os = "trueos")]
+pub mod time {
+    // Tokio uses these standard types, backed by TRUEOS's platform clocks.
+    pub use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+}
+
+#[cfg(target_os = "zkvm")]
 pub mod time {
     pub use core::time::Duration;
 

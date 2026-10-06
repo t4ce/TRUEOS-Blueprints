@@ -101,7 +101,7 @@
     "velosrv",
     {
       "name": "voxy",
-      "path": "../veloren-voxygen/blueprint",
+      "path": "../voxy",
       "optional": true
     },
     "superseedr",
