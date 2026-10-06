@@ -284,6 +284,7 @@ pub(crate) fn package_blueprint_profile(
         return match toml_string_value(value.trim()).as_deref() {
             Some("dev") | Some("debug") => Ok(Some(CargoProfile::Dev)),
             Some("release") => Ok(Some(CargoProfile::Release)),
+            Some("bringup") => Ok(Some(CargoProfile::Bringup)),
             Some(other) => Err(format!(
                 "unsupported trueos-blueprint profile `{other}` in {}",
                 manifest_path.display()

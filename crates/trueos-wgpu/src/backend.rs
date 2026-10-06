@@ -390,6 +390,7 @@ enum TextureKind {
 struct AtlasPixels {
     bytes: Vec<u8>,
     revision: u64,
+    dirty: Option<Range<usize>>,
 }
 #[derive(Debug)]
 struct SampledTextureData {
@@ -635,11 +636,22 @@ struct PixelUpload<B> {
     revision: u64,
 }
 
+#[cfg(test)]
 fn upload_pixels<D: UploadDevice>(
     device: &D,
     upload: &mut Option<PixelUpload<D::Buffer>>,
     revision: u64,
     pixels: &[u8],
+) -> Result<D::Buffer, Error> {
+    upload_dirty_pixels(device, upload, revision, pixels, None)
+}
+
+fn upload_dirty_pixels<D: UploadDevice>(
+    device: &D,
+    upload: &mut Option<PixelUpload<D::Buffer>>,
+    revision: u64,
+    pixels: &[u8],
+    dirty: Option<Range<usize>>,
 ) -> Result<D::Buffer, Error> {
     if let Some(upload) = upload.as_ref().filter(|upload| upload.revision == revision) {
         return Ok(upload.buffer);
@@ -654,8 +666,9 @@ fn upload_pixels<D: UploadDevice>(
             device.create(pixels.len(), vgpu::BUFFER_USAGE_MAP_WRITE),
         )?,
     };
-    let result = native("atlas upload", device.write(buffer, pixels)).and_then(|written| {
-        if written == pixels.len() {
+    let range = if fresh { 0..pixels.len() } else { dirty.unwrap_or(0..pixels.len()) };
+    let result = native("atlas upload", device.write_at(buffer, range.start, &pixels[range.clone()])).and_then(|written| {
+        if written == range.len() {
             Ok(())
         } else {
             Err(Error {
@@ -715,9 +728,16 @@ fn binding_layout(native: &Arc<Native>) -> Layout {
     }
 }
 
-fn write_atlas(atlas: &SampledTextureData, data: &[u8], layout: wgpu::TexelCopyBufferLayout) {
-    let row = atlas.size.width as usize * 4;
-    let height = atlas.size.height as usize;
+fn write_atlas(atlas: &SampledTextureData, data: &[u8], layout: wgpu::TexelCopyBufferLayout, origin: wgpu::Origin3d, size: wgpu::Extent3d) {
+    assert!(size.width > 0 && size.height > 0 && size.depth_or_array_layers == 1
+        && origin.z == 0
+        && origin.x.checked_add(size.width).is_some_and(|end| end <= atlas.size.width)
+        && origin.y.checked_add(size.height).is_some_and(|end| end <= atlas.size.height),
+        "TRUEOS wgpu: atlas region exceeds texture");
+    let row = size.width as usize * 4;
+    let height = size.height as usize;
+    let target_pitch = atlas.size.width as usize * 4;
+    let target_offset = origin.y as usize * target_pitch + origin.x as usize * 4;
     let pitch = layout.bytes_per_row.map_or_else(
         || {
             assert_eq!(
@@ -733,7 +753,7 @@ fn write_atlas(atlas: &SampledTextureData, data: &[u8], layout: wgpu::TexelCopyB
             && pitch % 4 == 0
             && layout
                 .rows_per_image
-                .is_none_or(|rows| rows >= atlas.size.height),
+                .is_none_or(|rows| rows >= size.height),
         "TRUEOS wgpu: invalid atlas row layout"
     );
     let offset = usize::try_from(layout.offset).expect("TRUEOS wgpu: atlas offset overflow");
@@ -755,22 +775,30 @@ fn write_atlas(atlas: &SampledTextureData, data: &[u8], layout: wgpu::TexelCopyB
         );
     }
     let mut pixels = atlas.pixels.lock().unwrap();
-    if pixels.revision != 0
-        && (0..height).all(|y| {
-            pixels.bytes[y * row..(y + 1) * row]
-                == data[offset + y * pitch..offset + y * pitch + row]
-        })
-    {
-        return;
-    }
-    let next = pixels
-        .revision
-        .checked_add(1)
-        .expect("TRUEOS wgpu: atlas revision overflow");
+    // Preserve the admitted opaque atlas contract before allowing region patches.
+    assert!(pixels.revision != 0 || (origin == wgpu::Origin3d::ZERO && size == atlas.size),
+        "TRUEOS wgpu: initialize opaque atlas with a complete upload before region updates");
+    let mut changed: Option<Range<usize>> = None;
     for y in 0..height {
-        pixels.bytes[y * row..(y + 1) * row]
-            .copy_from_slice(&data[offset + y * pitch..offset + y * pitch + row]);
+        let dst = target_offset + y * target_pitch;
+        let source = &data[offset + y * pitch..offset + y * pitch + row];
+        if pixels.revision == 0 || pixels.bytes[dst..dst + row] != *source {
+            changed = Some(match changed {
+                Some(prior) => prior.start..dst + row,
+                None => dst..dst + row,
+            });
+        }
     }
+    let Some(changed) = changed else { return; };
+    let next = pixels.revision.checked_add(1).expect("TRUEOS wgpu: atlas revision overflow");
+    for y in 0..height {
+        let dst = target_offset + y * target_pitch;
+        pixels.bytes[dst..dst + row].copy_from_slice(&data[offset + y * pitch..offset + y * pitch + row]);
+    }
+    pixels.dirty = Some(match pixels.dirty.take() {
+        Some(prior) => prior.start.min(changed.start)..prior.end.max(changed.end),
+        None => changed,
+    });
     pixels.revision = next;
 }
 
@@ -1143,6 +1171,11 @@ fn materialize_segment(draw: &Draw) -> Vec<u8> {
             ..draw.vertices.end as usize * VERTEX_STRIDE]
             .to_vec()
     };
+    validate_vertices(&bytes);
+    bytes
+}
+
+fn validate_vertices(bytes: &[u8]) {
     for vertex in bytes.chunks_exact(VERTEX_STRIDE) {
         assert!(
             vertex
@@ -1156,7 +1189,22 @@ fn materialize_segment(draw: &Draw) -> Vec<u8> {
             "TRUEOS wgpu: only opaque vertex colors are supported"
         );
     }
-    bytes
+}
+
+fn upload_segment<D: UploadDevice>(device: &D, buffer: D::Buffer, destination: usize, draw: &Draw) -> Result<usize, Error> {
+    if draw.indices.is_some() {
+        let bytes = materialize_segment(draw);
+        write_native_range(device, buffer, destination, &bytes, "vertex upload")?;
+        return Ok(bytes.len());
+    }
+    let source = draw.buffer.bytes.lock().unwrap();
+    let begin = draw.slice.start + draw.vertices.start as usize * VERTEX_STRIDE;
+    let end = draw.slice.start + draw.vertices.end as usize * VERTEX_STRIDE;
+    assert!(end <= draw.slice.end, "TRUEOS wgpu: vertex range exceeds bound slice");
+    let bytes = &source[begin..end];
+    validate_vertices(bytes);
+    write_native_range(device, buffer, destination, bytes, "vertex upload")?;
+    Ok(bytes.len())
 }
 
 fn update_pass_upload<D: UploadDevice>(
@@ -1191,18 +1239,11 @@ fn update_pass_upload<D: UploadDevice>(
             .get(index)
             .is_some_and(|prior| prior.matches(&segment.stamp))
         {
-            let bytes = materialize_segment(segment.draw);
-            write_native_range(
-                device,
-                upload.vertex,
-                segment.stamp.destination,
-                &bytes,
-                "vertex upload",
-            )?;
+            let bytes = upload_segment(device, upload.vertex, segment.stamp.destination, segment.draw)?;
             if index == 0 {
-                writes.first_draw_bytes += bytes.len();
+                writes.first_draw_bytes += bytes;
             } else {
-                writes.other_draw_bytes += bytes.len();
+                writes.other_draw_bytes += bytes;
             }
         }
     }
@@ -1244,14 +1285,15 @@ fn submit_pass(native_gpu: &Arc<Native>, pass: PassData) -> Result<(), Error> {
         return native("completion", device.wait(queue, point.value));
     }
     let sampled_texture = if let Some(atlas) = &sources.atlas {
-        let pixels = atlas.pixels.lock().unwrap();
-        match upload_pixels(
+        let mut pixels = atlas.pixels.lock().unwrap();
+        match upload_dirty_pixels(
             &device,
             &mut atlas.upload.lock().unwrap(),
             pixels.revision,
             &pixels.bytes,
+            pixels.dirty.clone(),
         ) {
-            Ok(buffer) => buffer.raw(),
+            Ok(buffer) => { pixels.dirty = None; buffer.raw() },
             Err(error) => {
                 atlas.unknown_completion.store(true, Ordering::Release);
                 return Err(error);
@@ -1633,7 +1675,7 @@ impl DeviceInterface for Device {
             *live_bytes = next;
             TextureKind::Sampled(Arc::new(SampledTextureData {
                 native: self.0.clone(),
-                pixels: Mutex::new(AtlasPixels { bytes, revision: 0 }),
+                pixels: Mutex::new(AtlasPixels { bytes, revision: 0, dirty: None }),
                 upload: Mutex::new(None),
                 unknown_completion: AtomicBool::new(false),
                 size: desc.size,
@@ -1807,12 +1849,10 @@ impl QueueInterface for Queue {
         };
         assert!(
             texture.mip_level == 0
-                && texture.origin == wgpu::Origin3d::ZERO
-                && texture.aspect == wgpu::TextureAspect::All
-                && size == target.size,
-            "TRUEOS wgpu: only a complete atlas upload is supported"
+                && texture.aspect == wgpu::TextureAspect::All,
+            "TRUEOS wgpu: unsupported atlas mip or aspect"
         );
-        write_atlas(atlas, data, data_layout);
+        write_atlas(atlas, data, data_layout, texture.origin, size);
     }
     fn submit(&self, command_buffers: &mut dyn Iterator<Item = DispatchCommandBuffer>) -> u64 {
         let buffers: Vec<_> = command_buffers.collect();
@@ -2599,6 +2639,72 @@ mod tests {
         assert_eq!(sampled.pixels.lock().unwrap().revision, 1);
         assert_eq!(*context.native.buffer_bytes.lock().unwrap(), 16);
         assert!(!sampled.unknown_completion.load(Ordering::Acquire));
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn atlas_region_updates_coalesce_and_skip_identical_pixels() {
+        let context = cpu_context();
+        let texture = atlas(&context);
+        let initial = [1, 2, 3, 255].repeat(4);
+        write_pixels(&context, &texture, &initial, 8);
+        let TextureKind::Sampled(sampled) = &texture.as_custom::<Texture>().unwrap().kind else {
+            unreachable!()
+        };
+        sampled.pixels.lock().unwrap().dirty = None;
+        let write = |x, y, bytes: &[u8]| context.queue().write_texture(
+            wgpu::TexelCopyTextureInfo { origin: wgpu::Origin3d { x, y, z: 0 }, ..texture.as_image_copy() },
+            bytes,
+            wgpu::TexelCopyBufferLayout { offset: 4, bytes_per_row: Some(8), rows_per_image: Some(1) },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        write(1, 0, &[99, 99, 99, 99, 7, 8, 9, 255]);
+        write(0, 1, &[99, 99, 99, 99, 10, 11, 12, 255]);
+        write(0, 1, &[99, 99, 99, 99, 10, 11, 12, 255]);
+        let pixels = sampled.pixels.lock().unwrap();
+        assert_eq!(pixels.revision, 3);
+        assert_eq!(pixels.dirty, Some(4..12));
+        assert_eq!(pixels.bytes, [1, 2, 3, 255, 7, 8, 9, 255, 10, 11, 12, 255, 1, 2, 3, 255]);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn invalid_atlas_region_does_not_mutate_shadow_pixels() {
+        let context = cpu_context();
+        let texture = atlas(&context);
+        let initial = [1, 2, 3, 255].repeat(4);
+        write_pixels(&context, &texture, &initial, 8);
+        let TextureKind::Sampled(sampled) = &texture.as_custom::<Texture>().unwrap().kind else {
+            unreachable!()
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            write_atlas(sampled, &[9, 9, 9, 0], wgpu::TexelCopyBufferLayout {
+                offset: 0, bytes_per_row: None, rows_per_image: None,
+            }, wgpu::Origin3d { x: 1, y: 1, z: 0 }, wgpu::Extent3d {
+                width: 1, height: 1, depth_or_array_layers: 1,
+            });
+        }));
+        assert!(result.is_err());
+        assert_eq!(sampled.pixels.lock().unwrap().bytes, initial);
+        assert_eq!(sampled.pixels.lock().unwrap().revision, 1);
+    }
+
+    #[test]
+    fn dirty_atlas_upload_reuses_storage_and_retries_failed_ranges() {
+        let broker = UploadBroker::default();
+        let mut upload = None;
+        let mut bytes = [1, 2, 3, 255].repeat(4);
+        let buffer = upload_dirty_pixels(&broker, &mut upload, 1, &bytes, Some(4..8)).unwrap();
+        assert_eq!(broker.ranges.borrow().last(), Some(&(buffer, 0, 16)));
+        bytes[4..8].copy_from_slice(&[7, 8, 9, 255]);
+        broker.short_write.set(true);
+        assert!(upload_dirty_pixels(&broker, &mut upload, 2, &bytes, Some(4..8)).is_err());
+        assert_eq!(upload.as_ref().unwrap().revision, 1);
+        broker.short_write.set(false);
+        assert_eq!(upload_dirty_pixels(&broker, &mut upload, 2, &bytes, Some(4..8)).unwrap(), buffer);
+        assert_eq!(broker.ranges.borrow().last(), Some(&(buffer, 4, 4)));
+        assert_eq!(broker.buffers.borrow().len(), 1);
+        assert_eq!(broker.buffers.borrow()[buffer].as_ref().unwrap().1, bytes);
     }
 
     #[cfg(not(target_os = "trueos"))]

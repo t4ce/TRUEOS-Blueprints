@@ -33,6 +33,7 @@ impl PackageCatalog {
 pub(crate) enum CargoProfile {
     Dev,
     Release,
+    Bringup,
 }
 
 impl CargoProfile {
@@ -40,6 +41,7 @@ impl CargoProfile {
         match self {
             CargoProfile::Dev => "debug",
             CargoProfile::Release => "release",
+            CargoProfile::Bringup => "bringup",
         }
     }
 
@@ -47,6 +49,7 @@ impl CargoProfile {
         match self {
             CargoProfile::Dev => "dev",
             CargoProfile::Release => "release",
+            CargoProfile::Bringup => "bringup",
         }
     }
 }

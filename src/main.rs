@@ -724,8 +724,10 @@ fn build_one_target_to_in_lane(
     if !extra_features.is_empty() {
         cargo.arg("--features").arg(extra_features.join(","));
     }
-    if matches!(cargo_profile, CargoProfile::Release) {
-        cargo.arg("--release");
+    match cargo_profile {
+        CargoProfile::Dev => {},
+        CargoProfile::Release => { cargo.arg("--release"); },
+        CargoProfile::Bringup => { cargo.arg("--profile").arg("bringup"); },
     }
 
     match &build_target {
@@ -4096,8 +4098,10 @@ fn build_isolated_rustc_payload(
     cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
     cargo.env("CARGO_TARGET_DIR", &payload_target_dir);
     toolchain::configure_rustc_bootstrap_env(&mut cargo, target_name)?;
-    if matches!(cargo_profile, CargoProfile::Release) {
-        cargo.arg("--release");
+    match cargo_profile {
+        CargoProfile::Dev => {},
+        CargoProfile::Release => { cargo.arg("--release"); },
+        CargoProfile::Bringup => { cargo.arg("--profile").arg("bringup"); },
     }
     cargo.arg("--").arg("-Zno-link").arg("--emit=metadata");
 
