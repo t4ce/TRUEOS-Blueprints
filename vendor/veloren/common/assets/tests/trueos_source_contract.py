@@ -10,8 +10,8 @@ import subprocess
 import tempfile
 
 VELOREN = Path(__file__).resolve().parents[3]
-BLUEPRINTS = VELOREN.parent / "TRUEOS-Blueprints"
-KERNEL = VELOREN.parent / "TRUEOS"
+BLUEPRINTS = VELOREN.parent.parent
+KERNEL = Path(os.environ.get("TRUEOS_REPO", BLUEPRINTS.parent / "TRUEOS"))
 
 MOCK = r'''
 use std::{collections::BTreeMap, sync::{Mutex, atomic::{AtomicU32, Ordering}}};

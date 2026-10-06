@@ -3,6 +3,7 @@ dist/
 !apps/ferris-says-nix/dist/
 !apps/ferris-says-nix/dist/ferris-says-nix.bp
 Cargo.lock
+!vendor/veloren/Cargo.lock
 !apps/wc3/tools/
 apps/wc3/tools/Warcraft III/
 package.json

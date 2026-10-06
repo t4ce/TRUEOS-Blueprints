@@ -22,6 +22,7 @@ members = [
     "server",
     "server/agent",
     "server-cli",
+    "voxygen/i18n-helpers",
     "world",
 ]
 
