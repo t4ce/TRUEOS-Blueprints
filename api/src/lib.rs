@@ -157,6 +157,7 @@ pub mod spirit;
 pub mod lumen;
 
 #[cfg(feature = "tracing")]
+#[cfg_attr(target_os = "trueos", path = "trace_resident.rs")]
 pub mod trace;
 
 pub mod platform {

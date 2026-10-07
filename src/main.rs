@@ -159,6 +159,17 @@ const TRUEOS_IMAGE_CODEC_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("zune-jpeg", "zune-jpeg-0.5.15"),
 ];
 
+// Resident logging is selected for every materialized Blueprint, including
+// packages whose own manifests provide tracing source patches.
+const TRACING_VENDOR_PATCHES: &[(&str, &str)] = &[
+    ("tracing", "tracing-0.1.44"),
+    ("tracing-core", "tracing-core-0.1.36"),
+    ("tracing-attributes", "tracing-attributes-0.1.31"),
+    ("tracing-subscriber", "tracing-subscriber-0.3.23"),
+    ("tracing-appender", "tracing-appender-0.2.5"),
+    ("tracing-log", "tracing-log-0.2.0"),
+];
+
 #[derive(Deserialize)]
 struct BuildinsManifest {
     buildins: Vec<String>,
@@ -1954,6 +1965,7 @@ fn source_overlay_patches(
     let mut out = Vec::new();
 
     if is_helix_app_dir(app_dir) {
+        add_tracing_vendor_patches(app_dir, &mut out)?;
         return Ok(out);
     }
 
@@ -2073,6 +2085,7 @@ fn source_overlay_patches(
     }
 
     add_manifest_source_patches(manifest_path, &mut out)?;
+    add_tracing_vendor_patches(app_dir, &mut out)?;
 
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
@@ -2148,6 +2161,21 @@ fn add_manifest_source_patches(
 #[cfg(test)]
 mod manifest_patch_alias_tests {
     use super::*;
+
+    #[test]
+    fn resident_tracing_pins_replace_application_aliases() {
+        let app = PathBuf::from("/tmp/nonexistent-tracing-app");
+        let mut patches = vec![CratePatch::alias("app_core", "tracing-core", app.clone())];
+        add_tracing_vendor_patches(&app, &mut patches).unwrap();
+        add_tracing_vendor_patches(&app, &mut patches).unwrap();
+        assert_eq!(patches.len(), TRACING_VENDOR_PATCHES.len());
+        for (name, directory) in TRACING_VENDOR_PATCHES {
+            let patch = patches.iter().find(|patch| patch.name == *name).unwrap();
+            assert_eq!(patch.key, *name);
+            assert!(patch.path.ends_with(directory));
+            assert!(patch.path.join("Cargo.toml").is_file());
+        }
+    }
 
     #[test]
     fn different_versions_of_one_package_keep_both_patch_aliases() {
@@ -2232,6 +2260,21 @@ fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
         patches.retain(|patch| patch.name != *name && patch.key != *name);
         patches.push(CratePatch::new(*name, path));
     }
+}
+
+fn add_tracing_vendor_patches(_app_dir: &Path, patches: &mut Vec<CratePatch>) -> Result<(), String> {
+    for (name, vendor_dir) in TRACING_VENDOR_PATCHES {
+        let path = current_blueprint_root()
+            .or_else(|| blueprint_root_from_ancestors(Path::new(env!("CARGO_MANIFEST_DIR"))))
+            .map(|root| root.join("vendor").join(vendor_dir))
+            .filter(|path| path.is_dir())
+            .ok_or_else(|| {
+            format!("missing resident logging crate vendor/{vendor_dir}; restore TRUEOS-Blueprints")
+        })?;
+        patches.retain(|patch| patch.name != *name && patch.key != *name);
+        patches.push(CratePatch::new(*name, path));
+    }
+    Ok(())
 }
 
 fn add_trueos_image_codec_vendor_patches(

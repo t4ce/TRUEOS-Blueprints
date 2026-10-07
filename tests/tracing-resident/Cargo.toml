@@ -1,0 +1,20 @@
+[package]
+name = "trueos-tracing-resident-test"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+tracing = { version = "0.1.44", features = ["log-always", "release_max_level_off"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-appender = "0.2.5"
+log = "0.4"
+
+[patch.crates-io]
+tracing = { path = "../../vendor/tracing-0.1.44" }
+tracing-core = { path = "../../vendor/tracing-core-0.1.36" }
+tracing-attributes = { path = "../../vendor/tracing-attributes-0.1.31" }
+tracing-subscriber = { path = "../../vendor/tracing-subscriber-0.3.23" }
+tracing-appender = { path = "../../vendor/tracing-appender-0.2.5" }
+tracing-log = { path = "../../vendor/tracing-log-0.2.0" }
