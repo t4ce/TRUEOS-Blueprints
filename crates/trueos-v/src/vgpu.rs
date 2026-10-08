@@ -63,6 +63,8 @@ pub const SHADER_PACKAGE_VOXY_HEADLESS_TEXTURE_FNV1A64: u64 = 0xF84DE655632EF102
 /// Intel 8086:4680 rev0C and 8086:9A49 rev01. Module admission is separate from draw submission.
 pub const SHADER_PACKAGE_VOXY_FIGURE_FNV1A64: u64 = 0x7FC293E6AD8FF894;
 /// Prefix in figure vertex uploads: Globals(512), Locals(144 + 16 padding), Bones(2048).
+/// Flat cloud plane, exact packed frame/weather data, ADL-S 8086:4680 rev0C.
+pub const SHADER_PACKAGE_VOXY_FLAT_CLOUD_FNV1A64: u64 = 0x07442C9AD2E3AAF8;
 pub const VOXY_FIGURE_STATE_BYTES: usize = 2720;
 pub const VOXY_HEADLESS_CAMERA_BYTES: usize = 80;
 pub const VOXY_HEADLESS_VERTEX_STRIDE: usize = 32;
