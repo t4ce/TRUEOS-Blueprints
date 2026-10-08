@@ -1,0 +1,10 @@
+[package]
+name = "tokio_quit"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+tokio_stop = { path = "../tokio_stop" }

@@ -2145,5 +2145,7 @@ pub struct TrueosUi4WindowStateV1 {
     pub hit_testable: u32,
     pub opacity: u32,
     pub focused: u32,
+    /// [0]: observed maximize state; [1]: 0=keep, 1=maximize, 2=restore;
+    /// [2]: reserved zero. UI4 maximize is borderless fullscreen.
     pub reserved: [u32; 3],
 }
