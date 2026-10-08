@@ -867,7 +867,10 @@ fn build_one_target_to_in_lane(
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
     ld.arg("-r").arg("--gc-sections");
+    // Voxy's full-client link otherwise retains thousands of individual
+    // code/data sections and their ELF directory entries and names.
     if rustc_tier.is_some()
+        || output_name == "voxy"
         || (output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev))
     {
         let linker_script = work_dir.join("rel-coalesce.ld");
