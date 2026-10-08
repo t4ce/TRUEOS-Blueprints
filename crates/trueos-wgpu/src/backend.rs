@@ -891,6 +891,8 @@ struct PassUpload<B> {
     capacity: usize,
     camera: Option<CameraStamp>,
     segments: Vec<DrawStamp>,
+    // Exact last successfully uploaded bytes; shadows own no logical GPU resources.
+    segment_bytes: Vec<Arc<[u8]>>,
     unknown_completion: bool,
     retirements: u64,
 }
@@ -981,6 +983,7 @@ fn create_pass_upload<D: UploadDevice>(
         capacity,
         camera: None,
         segments: Vec::new(),
+        segment_bytes: Vec::new(),
         unknown_completion: false,
         retirements: 0,
     })
@@ -1191,20 +1194,17 @@ fn validate_vertices(bytes: &[u8]) {
     }
 }
 
-fn upload_segment<D: UploadDevice>(device: &D, buffer: D::Buffer, destination: usize, draw: &Draw) -> Result<usize, Error> {
-    if draw.indices.is_some() {
-        let bytes = materialize_segment(draw);
-        write_native_range(device, buffer, destination, &bytes, "vertex upload")?;
-        return Ok(bytes.len());
-    }
-    let source = draw.buffer.bytes.lock().unwrap();
-    let begin = draw.slice.start + draw.vertices.start as usize * VERTEX_STRIDE;
-    let end = draw.slice.start + draw.vertices.end as usize * VERTEX_STRIDE;
-    assert!(end <= draw.slice.end, "TRUEOS wgpu: vertex range exceeds bound slice");
-    let bytes = &source[begin..end];
-    validate_vertices(bytes);
-    write_native_range(device, buffer, destination, bytes, "vertex upload")?;
-    Ok(bytes.len())
+// Keep one bounded write spanning changed vertices. Equal leading/trailing
+// vertices stay resident; a shorter draw needs no clearing of its unused tail.
+fn changed_vertex_range(old: &[u8], new: &[u8]) -> Option<Range<usize>> {
+    assert!(old.len() % VERTEX_STRIDE == 0 && new.len() % VERTEX_STRIDE == 0);
+    let first = new.chunks_exact(VERTEX_STRIDE).enumerate().position(|(i, vertex)| {
+        old.get(i * VERTEX_STRIDE..(i + 1) * VERTEX_STRIDE) != Some(vertex)
+    })?;
+    let last = new.chunks_exact(VERTEX_STRIDE).enumerate().rposition(|(i, vertex)| {
+        old.get(i * VERTEX_STRIDE..(i + 1) * VERTEX_STRIDE) != Some(vertex)
+    }).unwrap();
+    Some(first * VERTEX_STRIDE..(last + 1) * VERTEX_STRIDE)
 }
 
 fn update_pass_upload<D: UploadDevice>(
@@ -1233,22 +1233,30 @@ fn update_pass_upload<D: UploadDevice>(
             writes.camera_bytes = CAMERA_BYTES;
         }
     }
+    let mut next_bytes = Vec::with_capacity(sources.segments.len());
     for (index, segment) in sources.segments.iter().enumerate() {
-        if !upload
-            .segments
-            .get(index)
-            .is_some_and(|prior| prior.matches(&segment.stamp))
-        {
-            let bytes = upload_segment(device, upload.vertex, segment.stamp.destination, segment.draw)?;
-            if index == 0 {
-                writes.first_draw_bytes += bytes;
-            } else {
-                writes.other_draw_bytes += bytes;
-            }
+        let prior = upload.segments.get(index);
+        if prior.is_some_and(|prior| prior.matches(&segment.stamp)) {
+            next_bytes.push(upload.segment_bytes[index].clone());
+            continue;
         }
+        let bytes: Arc<[u8]> = materialize_segment(segment.draw).into();
+        // A moved destination has no matching shadow. Source or draw-length
+        // changes at the same destination may still retain equal vertices.
+        let previous = prior.filter(|prior| prior.destination == segment.stamp.destination)
+            .and_then(|_| upload.segment_bytes.get(index))
+            .map_or(&[][..], |bytes| bytes.as_ref());
+        if let Some(range) = changed_vertex_range(previous, &bytes) {
+            write_native_range(device, upload.vertex,
+                segment.stamp.destination + range.start, &bytes[range.clone()], "vertex upload")?;
+            if index == 0 { writes.first_draw_bytes += range.len(); }
+            else { writes.other_draw_bytes += range.len(); }
+        }
+        next_bytes.push(bytes);
     }
     // Commit metadata only after every range write succeeds. A partial write
     // must never make a future pass skip the corresponding source data.
+    upload.segment_bytes = next_bytes;
     upload.camera = sources.camera.clone();
     upload.segments = sources
         .segments
@@ -3003,11 +3011,11 @@ mod tests {
         assert_eq!(
             writes,
             GeometryWrites {
-                other_draw_bytes: 96,
+                other_draw_bytes: 32,
                 ..Default::default()
             }
         );
-        assert_eq!(*broker.ranges.borrow(), [(upload.vertex, 272, 96)]);
+        assert_eq!(*broker.ranges.borrow(), [(upload.vertex, 272, 32)]);
         let buffers = broker.buffers.borrow();
         assert_eq!(
             &buffers[upload.vertex].as_ref().unwrap().1[80..272],
@@ -3049,14 +3057,14 @@ mod tests {
         assert_eq!(
             writes,
             GeometryWrites {
-                first_draw_bytes: 192,
+                first_draw_bytes: 96,
                 other_draw_bytes: 96,
                 ..Default::default()
             }
         );
         assert_eq!(
             *broker.ranges.borrow(),
-            [(upload.vertex, 80, 192), (upload.vertex, 272, 96)]
+            [(upload.vertex, 176, 96), (upload.vertex, 272, 96)]
         );
         broker.ranges.borrow_mut().clear();
         draws.truncate(1);
@@ -3261,6 +3269,21 @@ mod tests {
         assert_eq!(upload.segments[0].revision, prior_revision);
         assert!(!release_pass_upload(&broker, upload, true));
         assert!(broker.buffers.borrow().iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn retained_vertex_diff_handles_growth_shrink_and_separated_edits() {
+        let old = vec![1u8; 6 * VERTEX_STRIDE];
+        assert_eq!(changed_vertex_range(&old, &old), None);
+        assert_eq!(changed_vertex_range(&old, &old[..3 * VERTEX_STRIDE]), None);
+        let mut grown = old.clone();
+        grown.extend_from_slice(&[2; 3 * VERTEX_STRIDE]);
+        assert_eq!(changed_vertex_range(&old, &grown), Some(192..288));
+        let mut edited = old.clone();
+        edited[33] = 9;
+        edited[130] = 9;
+        assert_eq!(changed_vertex_range(&old, &edited), Some(32..160));
+        assert_eq!(changed_vertex_range(&old, &[]), None);
     }
 
     #[test]

@@ -104,6 +104,7 @@
       "path": "../voxy",
       "optional": true
     },
+    { "name": "voxy-terrain", "path": "apps/voxy-terrain", "optional": true },
     "superseedr",
     "webmail",
     "xpapp",
