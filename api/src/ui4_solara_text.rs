@@ -1364,6 +1364,24 @@ impl Frame {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_sprite_frame_begin(self.window_id, 0) })
     }
 
+    /// Acquire a dirty, double-buffered foreground lease and clear `damage`
+    /// to transparent, preserving pixels outside it. Repaint all UI intersecting
+    /// the region before publishing. Because the acquired buffer contains the
+    /// previous contents of that buffer, include both the current change and
+    /// the previous published change in `damage` to keep both buffers coherent.
+    /// This operation is available only for dirty, double-buffered foregrounds.
+    pub fn begin_gpu_frame_region(&mut self, damage: Damage) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_sprite_frame_begin_region_v1(
+                self.window_id,
+                damage.x,
+                damage.y,
+                damage.width,
+                damage.height,
+            )
+        })
+    }
+
     /// Wait for the kernel's visual cadence deadline and acquire the next
     /// GPU-only back buffer. The VMCALL remains pending while it waits, so one
     /// call consumes one admission ticket without guest-side polling.
@@ -2050,6 +2068,11 @@ impl SceneTarget {
     }
     pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
         self.surface.begin_gpu_frame()
+    }
+    /// Acquire and clear a partial foreground region. See
+    /// [`Frame::begin_gpu_frame_region`] for the two-buffer repaint contract.
+    pub fn begin_gpu_frame_region(&mut self, damage: Damage) -> Result<(), Error> {
+        self.surface.begin_gpu_frame_region(damage)
     }
     pub fn draw_sprite_quads(&mut self, quads: &[SpriteQuad]) -> Result<(), Error> {
         self.surface.draw_sprite_quads(quads)
