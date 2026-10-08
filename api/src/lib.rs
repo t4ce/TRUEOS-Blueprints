@@ -137,6 +137,9 @@ pub mod input {
 
 pub mod ui4_solara_text;
 
+/// Non-owning rendering access for frontend-owned UI4 windows.
+pub mod ui4_winit;
+
 pub mod ui4_scene;
 
 pub mod image_source;

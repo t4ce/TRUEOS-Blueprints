@@ -5,6 +5,8 @@ use v::bp_abi::TrueosUi4SpriteQuad;
 
 const WINDOW_ID: u32 = 0x51A4;
 
+static CLOSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 static DRAWN_QUADS: Mutex<Vec<TrueosUi4SpriteQuad>> = Mutex::new(Vec::new());
 static UPLOADED_SPRITE: Mutex<Option<(u32, u32, u32, Vec<u8>)>> = Mutex::new(None);
 
@@ -57,6 +59,7 @@ pub unsafe extern "C" fn trueos_cabi_ui4_scene_sprite_quads(
 #[unsafe(no_mangle)]
 pub extern "C" fn trueos_cabi_ui4_solara_frame_close(window_id: u32) -> i32 {
     assert_eq!(window_id, WINDOW_ID);
+    CLOSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     0
 }
 
@@ -128,4 +131,30 @@ fn public_bridge_preserves_straight_alpha_and_dom_paint_order() {
     assert_eq!((raw[2].c2_x, raw[2].c2_y), (320.0, 200.0));
     assert_eq!((raw[2].c0_u, raw[2].c0_v), (0.05, 0.12));
     assert_eq!((raw[2].c2_u, raw[2].c2_v), (0.55, 0.62));
+    drop(raw);
+    drop(frame);
+
+    use trueos::ui4_winit::{SceneTarget, SpriteBackend, SpriteCommand};
+    let closes = CLOSES.load(std::sync::atomic::Ordering::Relaxed);
+    let mut target = SceneTarget::for_window(WINDOW_ID, 320, 200).unwrap();
+    assert_eq!(target.render_target(), WINDOW_ID);
+    assert!(SceneTarget::for_window(0, 320, 200).is_err());
+    assert!(target.set_extent(0, 200).is_err());
+    target.set_extent(640, 400).unwrap();
+    target
+        .draw_sprite_commands(&[SpriteCommand {
+            quad: background,
+            backend: SpriteBackend::Bcs0,
+        }])
+        .unwrap();
+    assert_eq!(
+        DRAWN_QUADS.lock().unwrap().last().unwrap().flags,
+        1 | (1 << 31)
+    );
+    drop(target);
+    assert_eq!(
+        CLOSES.load(std::sync::atomic::Ordering::Relaxed),
+        closes,
+        "a frontend-owned target must not close its owning window"
+    );
 }
