@@ -19,3 +19,6 @@
 [submodule "apps/RbGB"]
 	path = apps/RbGB
 	url = https://github.com/t4ce/RbGB.git
+[submodule "vendor/winit"]
+	path = vendor/winit
+	url = https://github.com/t4ce/winit
