@@ -3271,6 +3271,36 @@ mod tests {
         assert!(broker.buffers.borrow().iter().all(Option::is_some));
     }
 
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn middle_vertex_retry_preserves_the_native_prefix_and_suffix() {
+        let context = cpu_context();
+        let camera = camera(&context, 80);
+        let geometry = geometry(&context, 3, 10.);
+        let pipeline = cpu_pipeline(&context);
+        let draw = geometry_draw(&context, &camera, &pipeline, &geometry, 0..3);
+        let broker = UploadBroker::default();
+        let mut upload = create_pass_upload(&broker, 6).unwrap();
+        update_pass_upload(&broker, &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw))).unwrap();
+        let old_shadow = upload.segment_bytes[0].clone();
+        context.queue().write_buffer(&geometry, 32, &99f32.to_le_bytes());
+        broker.short_write.set(true);
+        assert!(update_pass_upload(&broker, &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw))).is_err());
+        assert!(Arc::ptr_eq(&old_shadow, &upload.segment_bytes[0]));
+        broker.short_write.set(false);
+        broker.ranges.borrow_mut().clear();
+        let writes = update_pass_upload(&broker, &mut upload,
+            &pass_sources(&context.native, std::slice::from_ref(&draw))).unwrap();
+        assert_eq!(writes.first_draw_bytes, VERTEX_STRIDE);
+        assert_eq!(*broker.ranges.borrow(), [(upload.vertex, CAMERA_BYTES + VERTEX_STRIDE, VERTEX_STRIDE)]);
+        let buffers = broker.buffers.borrow();
+        let native = &buffers[upload.vertex].as_ref().unwrap().1;
+        assert_eq!(&native[CAMERA_BYTES..CAMERA_BYTES + 96],
+            &geometry.as_custom::<Buffer>().unwrap().0.bytes.lock().unwrap()[..]);
+    }
+
     #[test]
     fn retained_vertex_diff_handles_growth_shrink_and_separated_edits() {
         let old = vec![1u8; 6 * VERTEX_STRIDE];

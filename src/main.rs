@@ -5010,10 +5010,64 @@ fn materialize_staged_workspace_patches(
     if !staged.ends_with('\n') {
         staged.push('\n');
     }
-    staged.push_str("\n[patch.crates-io]\n");
-    staged.push_str(&patches.join("\n"));
-    staged.push('\n');
+    merge_staged_patches(&mut staged, &patches);
     fs::write(manifest_path, staged).map_err(io_string)
+}
+
+// A standalone app can already contain audited patches. Only entries in the
+// patch table count: a normal dependency with the same name is independent.
+fn merge_staged_patches(staged: &mut String, patches: &[String]) {
+    let mut in_patch = false;
+    let mut existing = Vec::new();
+    for line in staged.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_patch = trimmed == "[patch.crates-io]";
+        } else if in_patch {
+            if let Some((name, _)) = trimmed.split_once('=') {
+                existing.push(name.trim().to_owned());
+            }
+        }
+    }
+    let missing: Vec<_> = patches.iter().filter(|patch| {
+        let name = patch.split('=').next().unwrap().trim();
+        !existing.iter().any(|entry| entry == name)
+    }).cloned().collect();
+    if missing.is_empty() {
+        return;
+    }
+    let payload = format!("{}\n", missing.join("\n"));
+    if let Some(header) = staged.find("[patch.crates-io]\n") {
+        let start = header + "[patch.crates-io]\n".len();
+        let end = staged[start..].find("\n[").map_or(staged.len(), |offset| start + offset + 1);
+        staged.insert_str(end, &payload);
+    } else {
+        staged.push_str("\n[patch.crates-io]\n");
+        staged.push_str(&payload);
+    }
+}
+
+#[cfg(test)]
+mod staged_patch_tests {
+    use super::merge_staged_patches;
+
+    #[test]
+    fn standalone_workspace_keeps_one_patch_table() {
+        let mut manifest = "[patch.crates-io]\nraw-window-handle = { path = \"original\" }\n[profile.release]\nopt-level = 1\n".to_owned();
+        let original = manifest.clone();
+        merge_staged_patches(&mut manifest, &["raw-window-handle = { path = \"duplicate\" }".to_owned()]);
+        assert_eq!(manifest, original);
+        merge_staged_patches(&mut manifest, &["glutin = { path = \"native\" }".to_owned()]);
+        assert_eq!(manifest.matches("[patch.crates-io]").count(), 1);
+        assert!(manifest.contains("glutin = { path = \"native\" }\n[profile.release]"));
+    }
+
+    #[test]
+    fn dependency_is_not_an_existing_patch() {
+        let mut manifest = "[dependencies]\nraw-window-handle = \"0.6\"\n".to_owned();
+        merge_staged_patches(&mut manifest, &["raw-window-handle = { path = \"native\" }".to_owned()]);
+        assert!(manifest.contains("[patch.crates-io]\nraw-window-handle = { path = \"native\" }"));
+    }
 }
 
 fn materialize_staged_workspace_dependencies(

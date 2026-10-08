@@ -9,6 +9,9 @@ license = "GPL-3.0-or-later"
 [package.metadata.trueos-blueprint]
 profile = "bringup"
 replicatable = false
+# This isolated client reuses the existing /apps/voxy/voxy.pw credential file.
+# Without this capability absolute paths are rebased into its own app root.
+fs-scope = "trueosfs"
 
 [package.metadata.trueos-blueprint.build-env-paths]
 CARGO_WORKSPACE_DIR = "../../../voxy"

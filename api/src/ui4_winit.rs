@@ -60,6 +60,12 @@ impl SceneTarget {
         self.surface.window_id
     }
 
+    /// Set the shared display background beneath transparent scene pixels.
+    /// Uses the same helper as the UI4 color picker; no frame lease is needed.
+    pub fn set_display_bottom_color(&mut self, rgb: [u8; 3]) -> Result<(), Error> {
+        self.surface.set_display_bottom_color(rgb)
+    }
+
     /// Update the local extent after the owning window delivers a resize.
     /// This does not resize or acquire the kernel surface.
     pub fn set_extent(&mut self, width: u32, height: u32) -> Result<(), Error> {
