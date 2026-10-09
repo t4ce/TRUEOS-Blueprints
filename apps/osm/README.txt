@@ -66,3 +66,17 @@ On-OS validation: pan/zoom while tiles arrive, maximize/restore and pan farther
 than one screen; movement should precede tile fills and white borders stay opaque.
 
 Execution evidence at Important: "osm: execution=tokio-local runtime=current-thread loader=cooperative".
+
+App-owned compact window:
+The frame registers its dynamic context menu before the first publication,
+so right-click offers only "collapse" instead of the generic desktop menu.
+Collapse saves the expanded extent and position, shrinks the frame to 128x128,
+displays an embedded 4,419-byte JPEG converted from logo.svg on white, and
+animates toward the saved window's bottom-left over 180 ms, following Solara.
+The compact tile enables UI4 primary-click activation. Left-click/release
+inside it restores the saved extent and position; dragging does not restore.
+The menu retains its single disabled collapse row while already compact.
+The expanded map center/zoom/pixels are preserved. Queued tile loading pauses
+until restore; an already-running request may complete normally.
+Important markers: "osm: collapsed" and "osm: restored".
+This uses the existing APIs without kernel changes or native worker threads.

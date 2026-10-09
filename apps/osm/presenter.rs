@@ -32,7 +32,7 @@ fn viewport_quad(width: u32, height: u32) -> SpriteQuad {
         source_over: false,
     }
 }
-async fn retry(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Error> {
+pub(crate) async fn retry(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Error> {
     loop {
         match operation() {
             Err(Error::Busy) => {

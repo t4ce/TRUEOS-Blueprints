@@ -1,3 +1,7 @@
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod compact;
+#[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
+mod logo;
 // trueos-blueprint: features=["tokio-net-probe", "ui4-scene"]
 #[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
 mod loader;
@@ -177,6 +181,8 @@ async fn run_ui() -> Result<()> {
     let mut map = Map::new(51.471336, 13.827807, 17);
     let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + FOOTER)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
+    let mut compact = compact::Compact::new(&mut frame)
+        .map_err(|e| anyhow::anyhow!("map compact/menu setup: {e:?}"))?;
     let mut view = viewport::Viewport::new(map, frame.width(), frame.height());
     println!("OSM: pan gesture to move, wheel to zoom; https://www.openstreetmap.org/copyright");
     let mut dirty = true;
@@ -185,6 +191,27 @@ async fn run_ui() -> Result<()> {
     let mut presentations = 0u64;
     let mut discarded = 0u64;
     loop {
+        let was_collapsed = compact.collapsed();
+        if compact
+            .tick(&mut frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("map collapse/restore: {e:?}"))?
+        {
+            if !was_collapsed {
+                loader.request(Vec::new())?;
+                pending_resize = None;
+            }
+            // Keep the expanded view intact; an already-running fetch can
+            // still finish, but the compact frame displays only its logo.
+            dirty |= apply_completions(&mut loader, &mut view, &mut discarded)?;
+            trueos::vsys::poll_once();
+            tokio::time::sleep(Duration::from_millis(16)).await;
+            continue;
+        }
+        if was_collapsed {
+            dirty = true;
+            request = true;
+        }
         let mut navigated = false;
         while let Some(event) = frame
             .take_resize_event()
@@ -235,27 +262,7 @@ async fn run_ui() -> Result<()> {
             dirty = true;
             request = true;
         }
-        loop {
-            match loader.completions.try_recv() {
-                Ok(completion) => match completion.image {
-                    Ok(tile) => {
-                        if view.complete(completion.key, tile) {
-                            dirty = true;
-                        } else {
-                            discarded += 1;
-                        }
-                    }
-                    Err(error) => eprintln!(
-                        "tile {}/{}/{}: {error:#}",
-                        completion.key.z, completion.key.x, completion.key.y
-                    ),
-                },
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                    return Err(anyhow::anyhow!("tile loader stopped"));
-                }
-            }
-        }
+        dirty |= apply_completions(&mut loader, &mut view, &mut discarded)?;
         if dirty {
             if let Err(error) = presenter::present(&mut frame, view.pixels()).await {
                 trueos::logl::log(
@@ -294,6 +301,36 @@ async fn run_ui() -> Result<()> {
         }
         trueos::vsys::poll_once();
         tokio::time::sleep(Duration::from_millis(16)).await;
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn apply_completions(
+    loader: &mut loader::Loader,
+    view: &mut viewport::Viewport,
+    discarded: &mut u64,
+) -> Result<bool> {
+    let mut dirty = false;
+    loop {
+        match loader.completions.try_recv() {
+            Ok(completion) => match completion.image {
+                Ok(tile) => {
+                    if view.complete(completion.key, tile) {
+                        dirty = true;
+                    } else {
+                        *discarded += 1;
+                    }
+                }
+                Err(error) => eprintln!(
+                    "tile {}/{}/{}: {error:#}",
+                    completion.key.z, completion.key.x, completion.key.y
+                ),
+            },
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => return Ok(dirty),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                return Err(anyhow::anyhow!("tile loader stopped"));
+            }
+        }
     }
 }
 
