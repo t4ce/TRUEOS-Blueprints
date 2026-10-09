@@ -21,6 +21,8 @@ pub use v::vaudio as audio;
 pub use v::vclock as clock;
 pub use v::vfs_async as async_fs;
 pub use v::vgpu;
+/// Cursor-scoped UI4 drag payloads and floating previews.
+pub use v::vdrag as ui4_drag;
 pub use v::vinput as hid;
 pub use v::vmail;
 pub use v::vmedia;

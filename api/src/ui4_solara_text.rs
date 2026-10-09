@@ -1161,6 +1161,21 @@ impl Frame {
         })
     }
 
+    /// Publish a cursor-plane label and opaque payload for the current drag.
+    pub fn begin_drag(
+        &self,
+        kind: u32,
+        label: &str,
+        payload: &[u8],
+    ) -> Result<v::vdrag::DragBuffer, v::vdrag::DragError> {
+        v::vdrag::DragBuffer::begin(self.window_id, kind, label, payload)
+    }
+
+    /// Receive one cross-frame drop in this frame's local pixel coordinates.
+    pub fn take_drop(&self) -> Result<Option<v::vdrag::DropPayload>, v::vdrag::DragError> {
+        v::vdrag::take_drop(self.window_id)
+    }
+
     /// Compatibility shorthand for a frame-wide [`CursorIcon::AppOwned`].
     pub fn set_custom_cursor(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {
