@@ -71,7 +71,7 @@ App-owned compact window:
 The frame registers its dynamic context menu before the first publication,
 so right-click offers only "collapse" instead of the generic desktop menu.
 Collapse saves the expanded extent and position, shrinks the frame to 128x128,
-displays an embedded 4,419-byte JPEG converted from logo.svg on white, and
+displays an embedded 24,033-byte transparent PNG converted from logo.svg, and
 animates toward the saved window's bottom-left over 180 ms, following Solara.
 The compact tile enables UI4 primary-click activation. Left-click/release
 inside it restores the saved extent and position; dragging does not restore.
@@ -80,3 +80,6 @@ The expanded map center/zoom/pixels are preserved. Queued tile loading pauses
 until restore; an already-running request may complete normally.
 Important markers: "osm: collapsed" and "osm: restored".
 This uses the existing APIs without kernel changes or native worker threads.
+
+Compact logo pixels use source-over on a transparent frame; PNG alpha is
+preserved through UI4. The expanded map retains its opaque BCS0 copy path.

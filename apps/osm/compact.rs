@@ -162,7 +162,7 @@ impl Compact {
             return Ok(false);
         }
         if self.dirty {
-            presenter::present(frame, &self.logo).await?;
+            presenter::present_logo(frame, &self.logo).await?;
             self.dirty = false;
         }
         Ok(true)
