@@ -20,14 +20,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
-    #[cfg(target_os = "trueos")]
-    {
-        // Only borrow the HAL instance to report its completed native probe.
-        let hal = unsafe { instance.as_hal::<wgpu::hal::api::TrueOs>() }
-            .ok_or("TRUEOS HAL initialization failed: native vGPU probe unavailable")?;
-        println!("TRUEOS vGPU probe: {:?}", hal.probe_info());
-    }
-
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .map_err(|error| format!("No usable compute adapter: {error}. The TRUEOS HAL currently probes vGPU, but its shader/dispatch/readback path is not implemented."))?;

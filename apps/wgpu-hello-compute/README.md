@@ -12,16 +12,10 @@ incorrect results fail the run.
 
 ## Current status
 
-The Blueprint enables the local fork's experimental `trueos` HAL feature.
-Startup now reaches the native mediated vGPU probe (open, device info, close)
-and prints its reported facts through the HAL instance. The HAL now enumerates
-one TRUEOS adapter, but advertises no compute capability or usable resources;
-Adapter::open still rejects requests. This app cannot run compute on TRUEOS yet.
-
-This is a backend bring-up app, not yet a working TRUEOS GPU compute demo.
-It does not use a CPU substitute or the wgpu noop backend. The implementation
-and next integration boundary are documented in
-`../../../wgpu/wgpu-hal/src/trueos/README.md`.
+The sibling `wgpu` checkout currently has no TRUEOS backend. The example is
+packaged so its host compute path can be validated, and it reports that the
+backend is unavailable when run on TRUEOS. It does not use a CPU substitute or
+the wgpu noop backend.
 
 Linux host builds enable Vulkan to validate the example independently.
 

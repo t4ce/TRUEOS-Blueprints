@@ -7,7 +7,6 @@
     "websys",
     "gridpaper",
     "pi_snake",
-    "gboi",
     "games",
     { "name": "rbgb", "path": "apps/RbGB" },
     "tredb",
