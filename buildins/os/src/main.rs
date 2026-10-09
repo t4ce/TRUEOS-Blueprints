@@ -12,6 +12,8 @@ use crossterm::{
 };
 use trueos::{env, platform, runtime, task, vshell};
 
+mod pxeproc;
+
 const PINK: Color = Color::Rgb {
     r: 255,
     g: 55,
@@ -38,12 +40,15 @@ struct NonReplicatableVm {
 enum InstallSource {
     Local,
     Online,
+    PxeprocLocal,
+    PxeprocOnline,
 }
 
 #[derive(Clone, Copy)]
 enum Action {
     Install { disk: usize, source: InstallSource },
     LiveUpdate,
+    LiveUpdateLan,
     Shutdown,
     Reboot,
 }
@@ -52,6 +57,7 @@ enum Screen {
     Home,
     Disks,
     Source { disk: usize },
+    PxeprocSource { disk: usize },
     Confirm(Action),
 }
 
@@ -74,9 +80,10 @@ impl App {
 
     fn item_count(&self) -> usize {
         match self.screen {
-            Screen::Home => 5,
+            Screen::Home => 6,
             Screen::Disks => self.disks.len().max(1),
-            Screen::Source { .. } => 2,
+            Screen::Source { .. } => 3,
+            Screen::PxeprocSource { .. } => 2,
             Screen::Confirm(_) => 2,
         }
     }
@@ -107,12 +114,24 @@ impl App {
                 self.selected = 0;
                 false
             }
-            Screen::Confirm(Action::Install { disk, .. }) => {
+            Screen::PxeprocSource { disk } => {
                 self.screen = Screen::Source { disk };
                 self.selected = 0;
                 false
             }
-            Screen::Confirm(Action::LiveUpdate) => {
+            Screen::Confirm(Action::Install { disk, source }) => {
+                self.screen = if matches!(
+                    source,
+                    InstallSource::PxeprocLocal | InstallSource::PxeprocOnline
+                ) {
+                    Screen::PxeprocSource { disk }
+                } else {
+                    Screen::Source { disk }
+                };
+                self.selected = 0;
+                false
+            }
+            Screen::Confirm(Action::LiveUpdate | Action::LiveUpdateLan) => {
                 self.screen = Screen::Home;
                 self.selected = 0;
                 false
@@ -139,11 +158,16 @@ impl App {
                     None
                 }
                 2 => {
-                    self.screen = Screen::Confirm(Action::Shutdown);
+                    self.screen = Screen::Confirm(Action::LiveUpdateLan);
                     self.selected = 0;
                     None
                 }
                 3 => {
+                    self.screen = Screen::Confirm(Action::Shutdown);
+                    self.selected = 0;
+                    None
+                }
+                4 => {
                     self.screen = Screen::Confirm(Action::Reboot);
                     self.selected = 0;
                     None
@@ -160,6 +184,11 @@ impl App {
                 None
             }
             Screen::Source { disk } => {
+                if self.selected == 2 {
+                    self.screen = Screen::PxeprocSource { disk };
+                    self.selected = 0;
+                    return None;
+                }
                 let source = if self.selected == 0 {
                     InstallSource::Local
                 } else {
@@ -169,19 +198,40 @@ impl App {
                 self.selected = 0;
                 None
             }
+            Screen::PxeprocSource { disk } => {
+                let source = if self.selected == 0 {
+                    InstallSource::PxeprocLocal
+                } else {
+                    InstallSource::PxeprocOnline
+                };
+                self.screen = Screen::Confirm(Action::Install { disk, source });
+                self.selected = 0;
+                None
+            }
             Screen::Confirm(action) => {
                 if self.selected == 0 {
                     match action {
-                        Action::Install { disk, .. } => self.screen = Screen::Source { disk },
-                        Action::LiveUpdate | Action::Shutdown | Action::Reboot => {
-                            self.screen = Screen::Home
+                        Action::Install { disk, source } => {
+                            self.screen = if matches!(
+                                source,
+                                InstallSource::PxeprocLocal | InstallSource::PxeprocOnline
+                            ) {
+                                Screen::PxeprocSource { disk }
+                            } else {
+                                Screen::Source { disk }
+                            }
                         }
+                        Action::LiveUpdate
+                        | Action::LiveUpdateLan
+                        | Action::Shutdown
+                        | Action::Reboot => self.screen = Screen::Home,
                     }
                     self.selected = 0;
                     return None;
                 }
                 Some(match action {
                     Action::LiveUpdate => String::from("os:update:live"),
+                    Action::LiveUpdateLan => String::from("os:update:lan"),
                     Action::Shutdown => String::from("os:shutdown"),
                     Action::Reboot => String::from("os:reboot"),
                     Action::Install { disk, source } => {
@@ -191,6 +241,8 @@ impl App {
                         let source = match source {
                             InstallSource::Local => "local",
                             InstallSource::Online => "online",
+                            InstallSource::PxeprocLocal => "pxeproc-local",
+                            InstallSource::PxeprocOnline => "pxeproc-online",
                         };
                         format!("os:install:{source}:{}", disk.id)
                     }
@@ -285,6 +337,15 @@ async fn run(
     lease
         .acknowledge_ready()
         .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string()))?;
+
+    // Drive the same visible UI and confirmation state machine as keyboard input.
+    for code in pxeproc::launch_keys().await.map_err(io::Error::other)? {
+        trueos::time::sleep(Duration::from_millis(150)).await;
+        if let Some(reason) = handle_key(&mut app, KeyEvent::new(code, event::KeyModifiers::NONE)) {
+            return Ok(reason);
+        }
+        draw(&app)?;
+    }
 
     loop {
         if event::poll(Duration::ZERO)? {
@@ -385,6 +446,7 @@ fn draw(app: &App) -> io::Result<()> {
         Screen::Home => draw_home(&mut out, app.selected)?,
         Screen::Disks => draw_disks(&mut out, app)?,
         Screen::Source { disk } => draw_sources(&mut out, app, disk)?,
+        Screen::PxeprocSource { disk } => draw_pxeproc_sources(&mut out, app, disk)?,
         Screen::Confirm(action) => draw_confirm(&mut out, app, action)?,
     }
 
@@ -430,9 +492,10 @@ fn draw_home(out: &mut io::Stdout, selected: usize) -> io::Result<()> {
     heading(out, "OS")?;
     row(out, selected == 0, "Install TRUEOS to disk")?;
     row(out, selected == 1, "Live update running TRUEOS")?;
-    row(out, selected == 2, "Shutdown TRUEOS")?;
-    row(out, selected == 3, "Reboot TRUEOS")?;
-    row(out, selected == 4, "Return")?;
+    row(out, selected == 2, "Live update from LAN · 192.168.178.111")?;
+    row(out, selected == 3, "Shutdown TRUEOS")?;
+    row(out, selected == 4, "Reboot TRUEOS")?;
+    row(out, selected == 5, "Return")?;
     queue!(out, Print("\r\n    Choose one operation.\r\n"))
 }
 
@@ -463,6 +526,7 @@ fn draw_sources(out: &mut io::Stdout, app: &App, disk: usize) -> io::Result<()> 
         app.selected == 1,
         "Online · fetch the current release, then install",
     )?;
+    row(out, app.selected == 2, "Install pxeproc")?;
     if let Some(disk) = app.disks.get(disk) {
         queue!(
             out,
@@ -476,13 +540,40 @@ fn draw_sources(out: &mut io::Stdout, app: &App, disk: usize) -> io::Result<()> 
     Ok(())
 }
 
+fn draw_pxeproc_sources(out: &mut io::Stdout, app: &App, disk: usize) -> io::Result<()> {
+    heading(out, "INSTALL PXEPROC · SOURCE")?;
+    row(out, app.selected == 0, "Local · install this booted TRUEOS")?;
+    row(
+        out,
+        app.selected == 1,
+        "Online · fetch the current release, then install",
+    )?;
+    if let Some(disk) = app.disks.get(disk) {
+        queue!(
+            out,
+            Print(format!(
+                "\r\n    Target: {} · {} · {}\r\n",
+                disk.name, disk.size, disk.label
+            ))
+        )?;
+    }
+    queue!(
+        out,
+        Print("    Each disk boot opens OS and live-updates from 192.168.178.111.\r\n")
+    )
+}
+
 fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<()> {
     heading(out, "CONFIRM")?;
     match action {
-        Action::LiveUpdate => {
+        Action::LiveUpdate | Action::LiveUpdateLan => {
             queue!(
                 out,
-                Print("    Fetch the current release and replace the running kernel.\r\n"),
+                Print(if matches!(action, Action::LiveUpdateLan) {
+                    "    Fetch the LAN image from 192.168.178.111 and replace the running kernel.\r\n"
+                } else {
+                    "    Fetch the current release and replace the running kernel.\r\n"
+                }),
                 Print("    No disk installation will be performed.\r\n")
             )?;
             if app.non_replicatable_vms.is_empty() {
@@ -505,6 +596,8 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
             let source = match source {
                 InstallSource::Local => "local boot payload",
                 InstallSource::Online => "online current release",
+                InstallSource::PxeprocLocal => "pxeproc using the local boot payload",
+                InstallSource::PxeprocOnline => "pxeproc using the online current release",
             };
             queue!(
                 out,
@@ -541,7 +634,9 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
     row(
         out,
         app.selected == 1,
-        if matches!(action, Action::LiveUpdate) && !app.non_replicatable_vms.is_empty() {
+        if matches!(action, Action::LiveUpdate | Action::LiveUpdateLan)
+            && !app.non_replicatable_vms.is_empty()
+        {
             "Discard apps and proceed"
         } else {
             "Proceed"
