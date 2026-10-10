@@ -17,24 +17,18 @@ fn main() -> Result<()> {
     }
 
     runtime.shutdown_background();
-    shutdown_blueprint(if result.is_ok() {
-        "Frog printed live weather report"
-    } else {
-        "Frog weather request failed"
-    });
+    keep_report_open();
 
     result
 }
 
-fn shutdown_blueprint(reason: &str) {
+fn keep_report_open() {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    {
-        trueos::vshell::leave_terminal_handoff();
-        let _ = trueos::vshell::shutdown_current_blueprint(reason);
+    loop {
+        // Completion retires the Matrix slot. Keep the report available until
+        // the user closes that slot; sleeping parks the guest without spinning.
+        trueos::platform::sleep_ms(1000);
     }
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    let _ = reason;
 }
 
 fn print_snapshot(snapshot: &weather::WeatherSnapshot) {

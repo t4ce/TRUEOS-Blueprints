@@ -3,7 +3,7 @@ mod pullbot;
 mod mouse;
 use std::io::{self, Write};
 use std::time::{Duration};
-use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseButton, MouseEventKind}};
+use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, DisableLineWrap, EnableLineWrap}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseButton, MouseEventKind}};
 use trueos::{runtime, task::LocalSet};
 const CATALOG: &str = "https://trueos.eu/apps";
 const MAX_APP: usize = 512 * 1024 * 1024;
@@ -12,13 +12,13 @@ impl Terminal {
     fn enter() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
         let terminal = Self;
-        execute!(io::stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
+        execute!(io::stdout(), EnterAlternateScreen, DisableLineWrap, Hide, EnableMouseCapture)?;
         Ok(terminal)
     }
 }
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableMouseCapture, ResetColor, Show, LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, ResetColor, Show, EnableLineWrap, LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -83,9 +83,18 @@ async fn run() -> Result<Option<String>, String> {
         }
     }
     let mut message = String::from("Click an app to download and launch; Space adds it to AppDB without starting.");
+    let mut dirty = true;
     loop {
-        draw(&apps, &query, selected, &message).map_err(|e|e.to_string())?;
-        if event::poll(Duration::from_millis(0)).map_err(|e|e.to_string())? {
+        if dirty {
+            draw(&apps, &query, selected, &message).map_err(|e|e.to_string())?;
+            dirty = false;
+        }
+        // Batch input before rendering, but yield regularly under mouse traffic.
+        let mut events = 0;
+        while events < 64 && event::poll(Duration::from_millis(0)).map_err(|e|e.to_string())? {
+            events += 1;
+            let previous_selected = selected;
+            let previous_query = query.clone();
             let ids = visible(&apps, &query);
             let mut launch = false;
             let mut save = false;
@@ -119,13 +128,15 @@ async fn run() -> Result<Option<String>, String> {
                     }
                     _ => {}
                 },
-                Event::Resize(_, _) => {},
+                Event::Resize(_, _) => dirty = true,
                 _ => {}
             }
+            dirty |= selected != previous_selected || query != previous_query;
             if launch || save {
                 if let Some(id) = ids.get(selected) {
                     let app = &apps[*id];
                     draw(&apps,&query,selected,&format!("Downloading {}…",app.name)).map_err(|e|e.to_string())?;
+                    dirty = true;
                     match download(&client, app).await {
                         Ok(path) if save => {
                             message = match trueos::async_fs::write_file(b"vFile:appdb-install", path.as_bytes()).await {
