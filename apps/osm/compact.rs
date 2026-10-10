@@ -9,6 +9,12 @@ struct Expanded {
     width: u32,
     height: u32,
 }
+struct MenuInvocation {
+    serial: u64,
+    collapsed: bool,
+    point: Option<(f64, f64)>,
+    label: String,
+}
 struct Swoop {
     started: u64,
     from: (i32, i32),
@@ -19,28 +25,44 @@ pub struct Compact {
     swoop: Option<Swoop>,
     press: Option<(CursorSource, u32, u32)>,
     collapse_requested: bool,
-    menu_serial: Option<u64>,
+    invocation: Option<MenuInvocation>,
     logo: image::RgbaImage,
     dirty: bool,
 }
-fn menu(collapsed: bool) -> [MenuEntry<'static, bool>; 1] {
-    [if collapsed {
-        MenuEntry::disabled("collapse")
-    } else {
-        MenuEntry::new("collapse", |requested| *requested = true)
-    }]
+#[derive(Default)]
+struct MenuActions {
+    collapse: bool,
+    frog: bool,
+}
+fn menu<'a>(
+    collapsed: bool,
+    point: Option<(f64, f64)>,
+    label: &'a str,
+) -> [MenuEntry<'a, MenuActions>; 2] {
+    [
+        if collapsed {
+            MenuEntry::disabled("collapse")
+        } else {
+            MenuEntry::new("collapse", |actions| actions.collapse = true)
+        },
+        if point.is_some() {
+            MenuEntry::new(label, |actions| actions.frog = true)
+        } else {
+            MenuEntry::disabled("Frog")
+        },
+    ]
 }
 impl Compact {
     pub fn new(frame: &mut Frame) -> Result<Self, Error> {
         // Register before the first publication: unregistered windows get the
-        // desktop/monitor menu instead of this app-owned single-row menu.
+        // desktop/monitor menu instead of this app-owned menu.
         frame.register_dynamic_context_menu()?;
         Ok(Self {
             saved: None,
             swoop: None,
             press: None,
             collapse_requested: false,
-            menu_serial: None,
+            invocation: None,
             logo: logo::decode().map_err(|_| Error::Invalid)?,
             dirty: false,
         })
@@ -107,15 +129,55 @@ impl Compact {
         Ok(())
     }
     /// Returns true while compact. Expanded input remains for the map loop.
-    pub async fn tick(&mut self, frame: &mut Frame) -> Result<bool, Error> {
+    pub async fn tick(
+        &mut self,
+        frame: &mut Frame,
+        view: &crate::viewport::Viewport,
+    ) -> Result<bool, Error> {
         while let Some(event) = frame.take_dynamic_context_menu_event()? {
             if event.closed.is_none() {
-                if frame.resolve_context_menu(event.serial, &menu(self.collapsed()))? {
-                    self.menu_serial = Some(event.serial);
+                let collapsed = self.collapsed();
+                let point = if collapsed {
+                    None
+                } else {
+                    view.coordinates_at(event.local_x, event.local_y)
+                };
+                let label = point
+                    .map(|(lon, lat)| format!("Frog {lon:.4},{lat:.4}"))
+                    .unwrap_or_else(|| "Frog".into());
+                self.invocation = None;
+                if frame.resolve_context_menu(event.serial, &menu(collapsed, point, &label))? {
+                    self.invocation = Some(MenuInvocation {
+                        serial: event.serial,
+                        collapsed,
+                        point,
+                        label,
+                    });
                 }
-            } else if self.menu_serial == Some(event.serial) {
-                self.menu_serial = None;
-                event.dispatch(&menu(self.collapsed()), &mut self.collapse_requested);
+            } else if self
+                .invocation
+                .as_ref()
+                .is_some_and(|inv| inv.serial == event.serial)
+            {
+                let MenuInvocation {
+                    collapsed,
+                    point,
+                    label,
+                    ..
+                } = self.invocation.take().unwrap();
+                let mut actions = MenuActions::default();
+                event.dispatch(&menu(collapsed, point, &label), &mut actions);
+                self.collapse_requested |= actions.collapse;
+                if actions.frog
+                    && let Some((lon, lat)) = point
+                {
+                    if let Err(error) = trueos::vshell::launch_with_script(
+                        "Frog",
+                        &format!("weather {lon} {lat}\n"),
+                    ) {
+                        eprintln!("OSM: Frog launch failed: {error}");
+                    }
+                }
             }
         }
         if self.collapse_requested && !self.collapsed() {

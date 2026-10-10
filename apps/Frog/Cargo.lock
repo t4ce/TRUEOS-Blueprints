@@ -720,6 +720,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "infer"
+version = "0.22.0-trueos.1"
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1330,6 +1334,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1407,9 +1422,9 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "spin"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 dependencies = [
  "lock_api",
 ]
@@ -1590,6 +1605,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "trueos-crypto"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha1",
+]
+
+[[package]]
+name = "trueos-fs"
+version = "0.0.1"
+dependencies = [
+ "infer",
+ "trueos-crypto",
+]
+
+[[package]]
 name = "trueos-math"
 version = "0.1.0"
 dependencies = [
@@ -1662,10 +1693,12 @@ name = "v"
 version = "0.1.0"
 dependencies = [
  "hashbrown",
+ "infer",
  "serde",
  "serde_json",
  "skrifa",
- "spin 0.10.0",
+ "spin 0.10.1",
+ "trueos-fs",
  "trueos-math",
 ]
 

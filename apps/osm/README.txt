@@ -69,13 +69,17 @@ Execution evidence at Important: "osm: execution=tokio-local runtime=current-thr
 
 App-owned compact window:
 The frame registers its dynamic context menu before the first publication,
-so right-click offers only "collapse" instead of the generic desktop menu.
+so right-click offers "collapse" and "Frog lon,lat" instead of the generic desktop menu.
+Frog uses the frozen right-click map point, displays four decimal places, and
+launches Frog with a one-shot vFile:launch script: weather <longitude> <latitude>.
+The launch retains full coordinate precision. Frog is disabled over the footer,
+outside the projected world, and while compact.
 Collapse saves the expanded extent and position, shrinks the frame to 128x128,
 displays an embedded 24,033-byte transparent PNG converted from logo.svg, and
 animates toward the saved window's bottom-left over 180 ms, following Solara.
 The compact tile enables UI4 primary-click activation. Left-click/release
 inside it restores the saved extent and position; dragging does not restore.
-The menu retains its single disabled collapse row while already compact.
+The menu disables both collapse and Frog while already compact.
 The expanded map center/zoom/pixels are preserved. Queued tile loading pauses
 until restore; an already-running request may complete normally.
 Important markers: "osm: collapsed" and "osm: restored".

@@ -3,10 +3,6 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 
 const WEATHER_API_KEY: &str = "9715912a7d8748d65bc3985b4a4274a0";
-const FROG_LATITUDE: f64 = 51.832427;
-const FROG_LONGITUDE: f64 = 9.456766;
-const FALLBACK_CITY: &str = "Holzminden";
-const FALLBACK_COUNTRY: &str = "DE";
 const FETCH_TIMEOUT_MS: u64 = 45_000;
 const DAILY_ROW_COUNT: usize = 8;
 
@@ -52,7 +48,7 @@ pub struct ForecastDay {
     pub uvi: i32,
 }
 
-pub async fn load_weather_snapshot() -> Result<WeatherSnapshot> {
+pub async fn load_weather_snapshot(coordinates: (f64, f64)) -> Result<WeatherSnapshot> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(FETCH_TIMEOUT_MS))
         .tls_danger_accept_invalid_certs(true)
@@ -60,11 +56,11 @@ pub async fn load_weather_snapshot() -> Result<WeatherSnapshot> {
         .context("build weather http client")?;
 
     let mut note = String::new();
-    let location = match load_location(&client).await {
+    let location = match load_location(&client, coordinates).await {
         Ok(location) => location,
         Err(err) => {
-            note = format!("reverse geo failed: {err}; using saved location");
-            fallback_location()
+            note = format!("reverse geo failed: {err}; using selected coordinates");
+            fallback_location(coordinates)
         }
     };
 
@@ -83,23 +79,23 @@ pub async fn load_weather_snapshot() -> Result<WeatherSnapshot> {
     ))
 }
 
-fn fallback_location() -> Location {
+fn fallback_location(coordinates: (f64, f64)) -> Location {
     Location {
-        name: String::from(FALLBACK_CITY),
-        country: String::from(FALLBACK_COUNTRY),
-        lat: FROG_LATITUDE,
-        lon: FROG_LONGITUDE,
+        name: String::from("Selected location"),
+        country: String::new(),
+        lat: coordinates.1,
+        lon: coordinates.0,
     }
 }
 
-async fn load_location(client: &reqwest::Client) -> Result<Location> {
+async fn load_location(client: &reqwest::Client, coordinates: (f64, f64)) -> Result<Location> {
     let raw = fetch_text(
         client,
-        trueos_weather::oc3::openweather_geo_url(FROG_LATITUDE, FROG_LONGITUDE, WEATHER_API_KEY)
+        trueos_weather::oc3::openweather_geo_url(coordinates.1, coordinates.0, WEATHER_API_KEY)
             .as_str(),
     )
     .await?;
-    parse_reverse_geo(raw.as_str()).context("empty reverse geo response")
+    parse_reverse_geo(raw.as_str(), coordinates).context("empty reverse geo response")
 }
 
 fn forecast_url(location: &Location) -> String {
@@ -126,20 +122,14 @@ async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String> {
     String::from_utf8(body.to_vec()).context("response was not utf8")
 }
 
-fn parse_reverse_geo(raw: &str) -> Option<Location> {
+fn parse_reverse_geo(raw: &str, coordinates: (f64, f64)) -> Option<Location> {
     let root: serde_json::Value = serde_json::from_str(raw).ok()?;
     let first = root.as_array()?.first()?;
     Some(Location {
         name: first.get("name")?.as_str()?.to_string(),
         country: first.get("country")?.as_str()?.to_string(),
-        lat: first
-            .get("lat")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(FROG_LATITUDE),
-        lon: first
-            .get("lon")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(FROG_LONGITUDE),
+        lat: coordinates.1,
+        lon: coordinates.0,
     })
 }
 
@@ -233,4 +223,19 @@ fn rounded(value: f64) -> i32 {
 
 fn ms_to_kmh(value: f64) -> i32 {
     rounded(value * 3.6)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn forecast_keeps_clicked_point_instead_of_nearest_city_coordinates() {
+        let point = (13.8278, 51.4713);
+        let raw = r#"[{"name":"Nearby city","country":"DE","lat":52,"lon":14}]"#;
+        let location = parse_reverse_geo(raw, point).unwrap();
+        assert_eq!((location.lon, location.lat), point);
+        assert_eq!(location.name, "Nearby city");
+        let fallback = fallback_location(point);
+        assert_eq!((fallback.lon, fallback.lat), point);
+    }
 }

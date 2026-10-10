@@ -193,7 +193,7 @@ async fn run_ui() -> Result<()> {
     loop {
         let was_collapsed = compact.collapsed();
         if compact
-            .tick(&mut frame)
+            .tick(&mut frame, &view)
             .await
             .map_err(|e| anyhow::anyhow!("map collapse/restore: {e:?}"))?
         {

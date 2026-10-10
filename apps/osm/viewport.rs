@@ -41,6 +41,25 @@ impl Viewport {
             ready: HashMap::new(),
         }
     }
+    pub fn coordinates_at(&self, x: i32, y: i32) -> Option<(f64, f64)> {
+        let height = self.pixels.height().saturating_sub(FOOTER);
+        if !(0..self.pixels.width() as i32).contains(&x) || !(0..height as i32).contains(&y) {
+            return None;
+        }
+        let (left, top) = origin(self.map, self.pixels.width(), height);
+        let world = (1u32 << self.map.zoom) as f64 * 256.0;
+        let px = (left as f64 + x as f64).rem_euclid(world);
+        let py = top as f64 + y as f64;
+        if !(0.0..=world).contains(&py) {
+            return None;
+        }
+        let lon = px / world * 360.0 - 180.0;
+        let lat = (std::f64::consts::PI * (1.0 - 2.0 * py / world))
+            .sinh()
+            .atan()
+            .to_degrees();
+        Some((lon, lat))
+    }
     pub fn pixels(&self) -> &RgbaImage {
         &self.pixels
     }
@@ -206,6 +225,18 @@ mod tests {
         let mut view = Viewport::new(map(), 256, 256 + FOOTER);
         assert!(view.complete(TileKey { z: 2, x: 1, y: 1 }, tile([40, 80, 120, 255])));
         view
+    }
+    #[test]
+    fn clicked_coordinates_use_view_origin_footer_and_world_wrap() {
+        let view = Viewport::new(Map::new(0.0, 0.0, 2), 256, 256 + FOOTER);
+        let (lon, lat) = view.coordinates_at(128, 128).unwrap();
+        assert!(lon.abs() < 1e-8 && lat.abs() < 1e-8);
+        assert!(view.coordinates_at(128, 256).is_none());
+        assert!(view.coordinates_at(-1, 128).is_none());
+        let view = Viewport::new(Map::new(0.0, 180.0, 2), 256, 256 + FOOTER);
+        assert_eq!(view.coordinates_at(128, 128).unwrap().0, -180.0);
+        let (_, north) = view.coordinates_at(128, 0).unwrap();
+        assert!(north > 0.0);
     }
     #[test]
     fn pan_repositions_ready_pixels_and_exposes_white_before_any_completion() {
