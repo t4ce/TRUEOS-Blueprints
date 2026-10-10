@@ -1,5 +1,6 @@
 {
   "apps": [
+    { "name": "rebsky", "path": "../rebels-in-the-sky" },
     "badc",
     "calculator",
     "bios",
