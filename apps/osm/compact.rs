@@ -172,8 +172,8 @@ impl Compact {
                     && let Some((lon, lat)) = point
                 {
                     if let Err(error) = trueos::vshell::launch_with_script(
-                        "Frog",
-                        &format!("weather {lon} {lat}\n"),
+                        "appstore",
+                        &format!("launch Frog -- weather {lon} {lat}\n"),
                     ) {
                         eprintln!("OSM: Frog launch failed: {error}");
                     }
