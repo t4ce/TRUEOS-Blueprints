@@ -752,12 +752,31 @@ pub fn konsole_end_frame() -> i32 {
 
 /// Launch an app with a one-shot UTF-8 start script on its own terminal target.
 pub fn launch_with_script(app: &str, script: &str) -> Result<(), i32> {
+    launch_with_destination(app, script, LaunchDestination::CurrentShell)
+}
+
+/// Presentation belongs to the launch request, independent of the child's script.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchDestination {
+    CurrentShell,
+    NewShell3,
+    Headless,
+}
+
+/// NewShell3 creates one kernel-owned UI4 shell and enters the child's Matrix slot.
+/// Headless needs no inherited terminal; useful for App Store's pullbot.
+pub fn launch_with_destination(app: &str, script: &str, destination: LaunchDestination) -> Result<(), i32> {
     if app.is_empty() || app.as_bytes().contains(&0) || script.as_bytes().contains(&0) {
         return Err(-1);
     }
     let mut payload = Vec::from(app.as_bytes());
     payload.push(0);
     payload.extend_from_slice(script.as_bytes());
+    match destination {
+        LaunchDestination::CurrentShell => {},
+        LaunchDestination::NewShell3 => payload.extend_from_slice(b"\0sh3"),
+        LaunchDestination::Headless => payload.extend_from_slice(b"\0headless"),
+    }
     let rc =
         unsafe { vcabi::trueos_cabi_blueprint_launch_script_v1(payload.as_ptr(), payload.len()) };
     if rc == 0 { Ok(()) } else { Err(rc) }

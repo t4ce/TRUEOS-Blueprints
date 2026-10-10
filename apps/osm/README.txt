@@ -71,10 +71,11 @@ App-owned compact window:
 The frame registers its dynamic context menu before the first publication,
 so right-click offers "collapse" and "Frog lon,lat" instead of the generic desktop menu.
 Frog uses the frozen right-click map point, displays four decimal places, and
-launches App Store with a one-shot vFile:launch script:
-launch Frog -- weather <longitude> <latitude>
+launches App Store headlessly with a one-shot vFile:launch script:
+launch --sh3 Frog -- weather <longitude> <latitude>
 App Store downloads/verifies Frog and forwards weather <longitude> <latitude>
-as Frog's own start script. Frog does not need to be installed in AppDB.
+as Frog's own start script. The kernel creates one Shell3 window and enters
+Frog's Matrix slot there. Frog does not need to be installed in AppDB.
 The launch retains full coordinate precision. Frog is disabled over the footer,
 outside the projected world, and while compact.
 Collapse saves the expanded extent and position, shrinks the frame to 128x128,

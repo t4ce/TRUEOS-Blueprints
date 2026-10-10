@@ -1,11 +1,13 @@
-//! One-shot launch stream: `pull NAME_OR_ID` (one request per line).
+//! One-shot launch stream: `pull [--sh3] NAME_OR_ID` (one request per line).
 //! Empty lines and # comments are ignored; duplicates intentionally launch twice.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Request {
     pub selector: String,
     pub start_script: String,
+    pub new_shell3: bool,
 }
 /// `launch NAME -- COMMAND` forwards COMMAND as the downloaded app's start script.
+/// `launch --sh3 NAME -- COMMAND` also creates a kernel-owned Shell3 window.
 /// Plain `pull NAME` and `launch NAME` retain their existing behavior.
 pub fn requests(script: &str) -> Vec<Result<Request, String>> {
     script
@@ -17,6 +19,11 @@ pub fn requests(script: &str) -> Vec<Result<Request, String>> {
             }
             Some(match line.split_once(char::is_whitespace) {
                 Some(("pull" | "launch", value)) if !value.trim().is_empty() => {
+                    let value = value.trim();
+                    let (new_shell3, value) = match value.strip_prefix("--sh3") {
+                        Some(rest) if rest.is_empty() || rest.starts_with(char::is_whitespace) => (true, rest.trim()),
+                        _ => (false, value),
+                    };
                     let (selector, command) = value
                         .trim()
                         .split_once(" -- ")
@@ -28,6 +35,7 @@ pub fn requests(script: &str) -> Vec<Result<Request, String>> {
                     } else {
                         Ok(Request {
                             selector: selector.to_string(),
+                            new_shell3,
                             start_script: if command.is_empty() {
                                 String::new()
                             } else {
@@ -48,6 +56,7 @@ mod tests {
         Ok(Request {
             selector: selector.into(),
             start_script: String::new(),
+            new_shell3: false,
         })
     }
     #[test]
@@ -57,6 +66,7 @@ mod tests {
             vec![Ok(Request {
                 selector: "Frog".into(),
                 start_script: "weather -74.123456 40.987654\n".into(),
+                new_shell3: false,
             })]
         );
     }
@@ -71,6 +81,15 @@ mod tests {
             "open https://example.com/a?q=x -- y\n"
         );
         assert_eq!(batch[2], plain("Frog"));
+    }
+
+    #[test]
+    fn shell_destination_does_not_change_the_child_script() {
+        let batch = requests("launch --sh3 Frog -- weather 13 51\npull --sh3 12\nlaunch --sh3\n");
+        assert_eq!(batch[0], Ok(Request { selector: "Frog".into(), start_script: "weather 13 51\n".into(), new_shell3: true }));
+        assert_eq!(batch[1], Ok(Request { selector: "12".into(), start_script: String::new(), new_shell3: true }));
+        assert!(batch[2].is_err());
+        assert!(!requests("launch Frog -- weather --sh3 51\n")[0].as_ref().unwrap().new_shell3);
     }
 
     #[test]
@@ -142,13 +161,19 @@ pub async fn drain(bytes: &[u8]) {
             let Request {
                 selector,
                 start_script,
+                new_shell3,
             } = request?;
             let app = super::catalog::resolve(&catalog, &selector)
                 .ok_or_else(|| format!("not in catalog: {selector}"))?;
             let path = super::download(&client, app).await?;
             // Backpressure preserves requests when the host launch worker pool is full.
             for _ in 0..1800 {
-                match trueos::vshell::launch_with_script(&path, &start_script) {
+                let destination = if new_shell3 {
+                    trueos::vshell::LaunchDestination::NewShell3
+                } else {
+                    trueos::vshell::LaunchDestination::CurrentShell
+                };
+                match trueos::vshell::launch_with_destination(&path, &start_script, destination) {
                     Ok(()) => {
                         report(&format!("queued {}", app.archive_name));
                         return Ok::<(), String>(());

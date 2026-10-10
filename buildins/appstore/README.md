@@ -9,10 +9,15 @@ To supply the downloaded app with its own one-shot start script, add ` -- ` and
 one command. For example, OSM submits:
 
 ```text
-launch Frog -- weather 13.8278 51.4713
+launch --sh3 Frog -- weather 13.8278 51.4713
 ```
 
 App Store forwards `weather 13.8278 51.4713\n` to Frog's `vFile:launch`.
+`--sh3` creates one kernel-owned Shell3 window and enters the downloaded app's
+Matrix slot through the normal `§slotid` path. The flag belongs before the app
+selector; it is not part of the child's script. Without it the launch inherits
+the caller's Shell3 frontend, including SSH. UI4 callers can start the pullbot
+with `launch_with_destination("appstore", script, LaunchDestination::Headless)`.
 Existing requests without a forwarded command still launch with an empty script.
 Multiple request lines retain their order and duplicates; a bad request does not
 prevent later requests from being processed.

@@ -171,9 +171,10 @@ impl Compact {
                 if actions.frog
                     && let Some((lon, lat)) = point
                 {
-                    if let Err(error) = trueos::vshell::launch_with_script(
+                    if let Err(error) = trueos::vshell::launch_with_destination(
                         "appstore",
-                        &format!("launch Frog -- weather {lon} {lat}\n"),
+                        &format!("launch --sh3 Frog -- weather {lon} {lat}\n"),
+                        trueos::vshell::LaunchDestination::Headless,
                     ) {
                         eprintln!("OSM: Frog launch failed: {error}");
                     }
