@@ -313,3 +313,5 @@ mod tests {
         assert!(!online_app_sha256_matches(&probes[0], b"changed"));
     }
 }
+
+pub fn resolve<'a>(apps: &'a [OnlineApp], selector: &str) -> Option<&'a OnlineApp> { resolve_online_app(apps, selector) }

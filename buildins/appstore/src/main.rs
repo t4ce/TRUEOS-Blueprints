@@ -1,4 +1,5 @@
 mod catalog;
+mod pullbot;
 use std::{io::{self, Write}, time::Duration};
 use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers}};
 use trueos::{runtime, task::LocalSet};
@@ -95,15 +96,7 @@ async fn run() -> Result<Option<String>, String> {
                     KeyCode::Enter => if let Some(id) = ids.get(selected) {
                         let app = &apps[*id];
                         draw(&apps,&query,selected,&format!("Downloading {}…",app.name)).map_err(|e|e.to_string())?;
-                        let install = async {
-                            let bytes = fetch(&client, catalog::url(app), MAX_APP).await?;
-                            if !catalog::verify(app, &bytes) { return Err("Blueprint SHA-256 mismatch".into()); }
-                            let dir = "common/dl/appstore";
-                            trueos::async_fs::create_dir_all(dir.as_bytes()).await.map_err(|e|format!("Create download directory: {e}"))?;
-                            let path = format!("{dir}/{}",app.archive_name);
-                            trueos::async_fs::write_file(path.as_bytes(), &bytes).await.map_err(|e|format!("Save download: {e}"))?;
-                            Ok::<_,String>(path)
-                        }.await;
+                        let install = install(&client, app).await;
                         match install { Ok(path) => return Ok(Some(path)), Err(error) => message = error }
                     },
                     _ => {}
@@ -113,7 +106,28 @@ async fn run() -> Result<Option<String>, String> {
         trueos::time::sleep(Duration::from_millis(25)).await;
     }
 }
+async fn install(client: &reqwest::Client, app: &catalog::OnlineApp) -> Result<String, String> {
+    let bytes = fetch(client, catalog::url(app), MAX_APP).await?;
+    if !catalog::verify(app, &bytes) { return Err("Blueprint SHA-256 mismatch".into()); }
+    let dir = "common/dl/appstore";
+    trueos::async_fs::create_dir_all(dir.as_bytes()).await.map_err(|e|format!("Create download directory: {e}"))?;
+    let path = format!("{dir}/{}", app.archive_name);
+    trueos::async_fs::write_file(path.as_bytes(), &bytes).await.map_err(|e|format!("Save download: {e}"))?;
+    Ok(path)
+}
 fn main() {
+    // Consume the one-shot launch stream before any terminal/UI initialization.
+    if let Ok(script) = trueos::async_fs::block_on(trueos::async_fs::read_file(b"vFile:launch")) {
+        match runtime::current_thread_net().build() {
+            Ok(runtime) => {
+                LocalSet::new().block_on(&runtime, pullbot::drain(&script));
+                runtime.shutdown_background();
+            }
+            Err(error) => pullbot::report(&format!("runtime failed: {error}")),
+        }
+        let _ = trueos::vshell::shutdown_current_blueprint("appstore pullbot drained");
+        return;
+    }
     let terminal = match Terminal::enter() { Ok(t) => t, Err(e) => { eprintln!("appstore: {e}"); return; } };
     let lease = trueos::vshell::terminal_initial_lease().ok();
     let runtime = match runtime::current_thread_net().build() { Ok(rt) => rt, Err(e) => { drop(terminal); eprintln!("appstore: {e}"); return; } };
