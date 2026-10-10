@@ -1,7 +1,8 @@
 mod catalog;
 mod pullbot;
 mod mouse;
-use std::{io::{self, Write}, time::{Duration, Instant}};
+use std::io::{self, Write};
+use std::time::{Duration, Instant};
 use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseButton, MouseEventKind}};
 use trueos::{runtime, task::LocalSet};
 const CATALOG: &str = "https://trueos.eu/apps";
@@ -10,8 +11,9 @@ struct Terminal;
 impl Terminal {
     fn enter() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
+        let terminal = Self;
         execute!(io::stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
-        Ok(Self)
+        Ok(terminal)
     }
 }
 impl Drop for Terminal {
