@@ -12,10 +12,6 @@
     { "name": "rbgb", "path": "apps/RbGB" },
     "tredb",
     "hello_world",
-    {
-      "name": "alacritty",
-      "path": "../alacritty/alacritty"
-    },
     "wgpu-hello-compute",
     "hello_world_replicatable",
     {
@@ -71,10 +67,6 @@
     "prismq",
     "PlotTwist",
     "shadertoy",
-    {
-      "name": "shell",
-      "path": "buildins/shell"
-    },
     "qjs",
     "monaco",
     "Frog",
@@ -104,7 +96,6 @@
       "path": "../voxy",
       "optional": true
     },
-    { "name": "voxy-terrain", "path": "apps/voxy-terrain", "optional": true },
     "superseedr",
     "webmail",
     "xpapp",
