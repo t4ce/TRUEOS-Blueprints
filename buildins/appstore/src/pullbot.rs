@@ -44,7 +44,7 @@ pub async fn drain(bytes: &[u8]) {
         let result = async {
             let selector = request?;
             let app = super::catalog::resolve(&catalog, &selector).ok_or_else(||format!("not in catalog: {selector}"))?;
-            let path = super::install(&client, app).await?;
+            let path = super::download(&client, app).await?;
             // Backpressure preserves requests when the host launch worker pool is full.
             for _ in 0..1800 {
                 match trueos::vshell::launch_with_script(&path, "") {

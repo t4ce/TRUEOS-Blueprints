@@ -1,58 +1,36 @@
-use std::time::{Duration, Instant};
-
-pub fn list_rows(height: u16) -> usize {
-    (height as usize).saturating_sub(7).max(1)
+pub const COLUMNS: usize = 3;
+pub fn list_rows(height: u16) -> usize { (height as usize).saturating_sub(7).max(1) }
+pub fn page_size(height: u16) -> usize { list_rows(height) * COLUMNS }
+pub fn cell(width: u16, position: usize) -> (u16, u16, usize) {
+    let column = position % COLUMNS;
+    let start = column * width as usize / COLUMNS;
+    let end = (column + 1) * width as usize / COLUMNS;
+    (start as u16, (position / COLUMNS + 5) as u16, end - start)
 }
-
 pub fn hit_test(width: u16, height: u16, selected: usize, count: usize, column: u16, row: u16) -> Option<usize> {
-    let rows = list_rows(height);
     let offset = row.checked_sub(5)? as usize;
-    if column >= width || row >= height.saturating_sub(2) || offset >= rows {
-        return None;
-    }
-    let position = selected / rows * rows + offset;
+    if column >= width || row >= height.saturating_sub(2) || offset >= list_rows(height) { return None; }
+    let column = (0..COLUMNS).find(|&c| (column as usize) < (c + 1) * width as usize / COLUMNS)?;
+    let page = page_size(height);
+    let position = selected / page * page + offset * COLUMNS + column;
     (position < count).then_some(position)
 }
-
-#[derive(Default)]
-pub struct Clicks(Option<(usize, Instant)>);
-
-impl Clicks {
-    pub fn reset(&mut self) { self.0 = None; }
-
-    pub fn click(&mut self, position: usize, now: Instant) -> bool {
-        let launch = self.0.is_some_and(|(previous, time)| previous == position && now.duration_since(time) <= Duration::from_millis(500));
-        self.0 = if launch { None } else { Some((position, now)) };
-        launch
-    }
-}
-
-#[cfg(test)]
-mod tests {
+#[cfg(test)] mod tests {
     use super::*;
-
-    #[test]
-    fn clicks_map_to_the_drawn_page_and_ignore_chrome_and_empty_rows() {
-        assert_eq!(hit_test(80, 24, 19, 40, 4, 5), Some(17));
-        assert_eq!(hit_test(80, 24, 19, 40, 4, 21), Some(33));
-        for (column, row) in [(4, 4), (4, 22), (80, 5)] {
-            assert_eq!(hit_test(80, 24, 19, 40, column, row), None);
+    #[test] fn hover_and_click_match_all_three_drawn_columns() {
+        for width in [80,81,82,180] {
+            for position in 0..51 {
+                let (x,y,w) = cell(width,position);
+                assert!(w > 0);
+                assert_eq!(hit_test(width,24,0,51,x,y),Some(position));
+                assert_eq!(hit_test(width,24,0,51,x+w as u16-1,y),Some(position));
+            }
         }
-        assert_eq!(hit_test(80, 24, 0, 2, 4, 7), None);
-        assert_eq!(hit_test(80, 6, 0, 2, 4, 5), None);
-        assert_eq!(hit_test(80, 14, 19, 40, 4, 5), Some(14));
     }
-
-    #[test]
-    fn launch_requires_two_recent_clicks_on_the_same_item() {
-        let mut clicks = Clicks::default();
-        let now = Instant::now();
-        assert!(!clicks.click(1, now));
-        assert!(!clicks.click(2, now + Duration::from_millis(100)));
-        assert!(clicks.click(2, now + Duration::from_millis(200)));
-        assert!(!clicks.click(2, now + Duration::from_millis(300)));
-        assert!(!clicks.click(2, now + Duration::from_millis(900)));
-        clicks.reset();
-        assert!(!clicks.click(2, now + Duration::from_millis(950)));
+    #[test] fn pages_chrome_and_empty_cells_are_bounded() {
+        assert_eq!(hit_test(80,24,55,60,0,5),Some(51));
+        assert_eq!(hit_test(80,24,55,60,79,8),None);
+        for (x,y) in [(0,4),(0,22),(80,5)] { assert_eq!(hit_test(80,24,0,60,x,y),None); }
+        assert_eq!(hit_test(80,6,0,60,0,5),None);
     }
 }

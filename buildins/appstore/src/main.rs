@@ -2,7 +2,7 @@ mod catalog;
 mod pullbot;
 mod mouse;
 use std::io::{self, Write};
-use std::time::{Duration, Instant};
+use std::time::{Duration};
 use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseButton, MouseEventKind}};
 use trueos::{runtime, task::LocalSet};
 const CATALOG: &str = "https://trueos.eu/apps";
@@ -30,20 +30,22 @@ fn visible(apps: &[catalog::OnlineApp], query: &str) -> Vec<usize> {
 fn draw(apps: &[catalog::OnlineApp], query: &str, selected: usize, message: &str) -> io::Result<()> {
     let (width, height) = terminal::size()?;
     let width = width as usize;
-    let rows = mouse::list_rows(height);
+    let rows = mouse::page_size(height);
     let ids = visible(apps, query);
     let start = selected / rows * rows;
     let mut out = io::stdout().lock();
     queue!(out, ResetColor, Clear(ClearType::All), MoveTo(0,0), SetForegroundColor(Color::Cyan), Print("TRUEOS APPSTORE"), ResetColor,
         MoveTo(0,1), Print(format!("{} apps · {} matches", apps.len(), ids.len())),
-        MoveTo(0,3), Print(format!("Search / ID: {query}")))?;
-    for (row, (position, id)) in ids.iter().enumerate().skip(start).take(rows).enumerate() {
-        queue!(out, MoveTo(0, (row + 5) as u16))?;
+        MoveTo(0,3), Print(format!("Search / ID: {query}").chars().take(width).collect::<String>()))?;
+    for (offset, (position, id)) in ids.iter().enumerate().skip(start).take(rows).enumerate() {
+        let (x, y, cell_width) = mouse::cell(width as u16, offset);
+        queue!(out, MoveTo(x, y))?;
         if position == selected { queue!(out, SetBackgroundColor(Color::DarkCyan), SetForegroundColor(Color::White))?; }
         let text = format!(" {:>2}  {}", id, apps[*id].name);
-        queue!(out, Print(text.chars().take(width).collect::<String>()), ResetColor)?;
+        let text = text.chars().take(cell_width).collect::<String>();
+        queue!(out, Print(format!("{text}{}", " ".repeat(cell_width.saturating_sub(text.chars().count())))), ResetColor)?;
     }
-    queue!(out, MoveTo(0,height.saturating_sub(2)), SetForegroundColor(Color::DarkGrey), Print("↑↓ / wheel select · click select · double-click / Enter launch · Esc quit"), ResetColor,
+    queue!(out, MoveTo(0,height.saturating_sub(2)), SetForegroundColor(Color::DarkGrey), Print("Hover select · Click/Enter launch online · Space → AppDB only · Esc quit".chars().take(width).collect::<String>()), ResetColor,
         MoveTo(0,height.saturating_sub(1)), Print(message.chars().take(width).collect::<String>()))?;
     out.flush()
 }
@@ -62,7 +64,6 @@ async fn run() -> Result<Option<String>, String> {
     let mut apps = Vec::new();
     let mut query = String::new();
     let mut selected = 0;
-    let mut clicks = mouse::Clicks::default();
     draw(&apps, &query, selected, "Loading catalog…").map_err(|e|e.to_string())?;
     loop {
         match fetch(&client, CATALOG, 1024 * 1024).await {
@@ -81,22 +82,25 @@ async fn run() -> Result<Option<String>, String> {
             }
         }
     }
-    let mut message = String::from("Choose an app to install and launch.");
+    let mut message = String::from("Click an app to download and launch; Space adds it to AppDB without starting.");
     loop {
         draw(&apps, &query, selected, &message).map_err(|e|e.to_string())?;
         if event::poll(Duration::from_millis(0)).map_err(|e|e.to_string())? {
             let ids = visible(&apps, &query);
             let mut launch = false;
+            let mut save = false;
             match event::read().map_err(|e|e.to_string())? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    clicks.reset();
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') { return Ok(None); }
                     match key.code {
                         KeyCode::Esc => return Ok(None),
-                        KeyCode::Up => selected = selected.saturating_sub(1),
-                        KeyCode::Down => selected = (selected + 1).min(ids.len().saturating_sub(1)),
-                        KeyCode::PageUp => selected = selected.saturating_sub(10),
-                        KeyCode::PageDown => selected = (selected + 10).min(ids.len().saturating_sub(1)),
+                        KeyCode::Up => selected = selected.saturating_sub(mouse::COLUMNS),
+                        KeyCode::Down => selected = (selected + mouse::COLUMNS).min(ids.len().saturating_sub(1)),
+                        KeyCode::Left => selected = selected.saturating_sub(1),
+                        KeyCode::Right => selected = (selected + 1).min(ids.len().saturating_sub(1)),
+                        KeyCode::Char(' ') => save = true,
+                        KeyCode::PageUp => selected = selected.saturating_sub(mouse::page_size(terminal::size().map_err(|e|e.to_string())?.1)),
+                        KeyCode::PageDown => selected = (selected + mouse::page_size(terminal::size().map_err(|e|e.to_string())?.1)).min(ids.len().saturating_sub(1)),
                         KeyCode::Backspace => { query.pop(); selected = 0; }
                         KeyCode::Char(ch) => { if query.len() < 128 { query.push(ch); selected = 0; } }
                         KeyCode::Enter => launch = true,
@@ -104,25 +108,31 @@ async fn run() -> Result<Option<String>, String> {
                     }
                 }
                 Event::Mouse(mouse_event) => match mouse_event.kind {
-                    MouseEventKind::ScrollUp => { clicks.reset(); selected = selected.saturating_sub(1); }
-                    MouseEventKind::ScrollDown => { clicks.reset(); selected = (selected + 1).min(ids.len().saturating_sub(1)); }
-                    MouseEventKind::Down(MouseButton::Left) => {
+                    MouseEventKind::ScrollUp => { selected = selected.saturating_sub(1); }
+                    MouseEventKind::ScrollDown => { selected = (selected + 1).min(ids.len().saturating_sub(1)); }
+                    MouseEventKind::Moved | MouseEventKind::Down(MouseButton::Left) => {
                         let (width, height) = terminal::size().map_err(|e|e.to_string())?;
                         if let Some(position) = mouse::hit_test(width, height, selected, ids.len(), mouse_event.column, mouse_event.row) {
                             selected = position;
-                            launch = clicks.click(position, Instant::now());
-                        } else { clicks.reset(); }
+                            launch = matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left));
+                        }
                     }
                     _ => {}
                 },
-                Event::Resize(_, _) => clicks.reset(),
+                Event::Resize(_, _) => {},
                 _ => {}
             }
-            if launch {
+            if launch || save {
                 if let Some(id) = ids.get(selected) {
                     let app = &apps[*id];
                     draw(&apps,&query,selected,&format!("Downloading {}…",app.name)).map_err(|e|e.to_string())?;
-                    match install(&client, app).await {
+                    match download(&client, app).await {
+                        Ok(path) if save => {
+                            message = match trueos::async_fs::write_file(b"vFile:appdb-install", path.as_bytes()).await {
+                                Ok(()) => format!("Added {} to AppDB; not started.", app.name),
+                                Err(error) => format!("AppDB import failed: {error}"),
+                            };
+                        }
                         Ok(path) => return Ok(Some(path)),
                         Err(error) => message = error,
                     }
@@ -132,7 +142,7 @@ async fn run() -> Result<Option<String>, String> {
         trueos::time::sleep(Duration::from_millis(25)).await;
     }
 }
-async fn install(client: &reqwest::Client, app: &catalog::OnlineApp) -> Result<String, String> {
+async fn download(client: &reqwest::Client, app: &catalog::OnlineApp) -> Result<String, String> {
     let bytes = fetch(client, catalog::url(app), MAX_APP).await?;
     if !catalog::verify(app, &bytes) { return Err("Blueprint SHA-256 mismatch".into()); }
     let dir = "common/dl/appstore";
