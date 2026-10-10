@@ -1,7 +1,8 @@
 mod catalog;
 mod pullbot;
-use std::{io::{self, Write}, time::Duration};
-use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers}};
+mod mouse;
+use std::{io::{self, Write}, time::{Duration, Instant}};
+use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseButton, MouseEventKind}};
 use trueos::{runtime, task::LocalSet};
 const CATALOG: &str = "https://trueos.eu/apps";
 const MAX_APP: usize = 512 * 1024 * 1024;
@@ -9,13 +10,13 @@ struct Terminal;
 impl Terminal {
     fn enter() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, Hide)?;
+        execute!(io::stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
         Ok(Self)
     }
 }
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), ResetColor, Show, LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, ResetColor, Show, LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -27,7 +28,7 @@ fn visible(apps: &[catalog::OnlineApp], query: &str) -> Vec<usize> {
 fn draw(apps: &[catalog::OnlineApp], query: &str, selected: usize, message: &str) -> io::Result<()> {
     let (width, height) = terminal::size()?;
     let width = width as usize;
-    let rows = (height as usize).saturating_sub(7).max(1);
+    let rows = mouse::list_rows(height);
     let ids = visible(apps, query);
     let start = selected / rows * rows;
     let mut out = io::stdout().lock();
@@ -40,7 +41,7 @@ fn draw(apps: &[catalog::OnlineApp], query: &str, selected: usize, message: &str
         let text = format!(" {:>2}  {}", id, apps[*id].name);
         queue!(out, Print(text.chars().take(width).collect::<String>()), ResetColor)?;
     }
-    queue!(out, MoveTo(0,height.saturating_sub(2)), SetForegroundColor(Color::DarkGrey), Print("↑↓ select · type to search · Enter launch · Esc quit"), ResetColor,
+    queue!(out, MoveTo(0,height.saturating_sub(2)), SetForegroundColor(Color::DarkGrey), Print("↑↓ / wheel select · click select · double-click / Enter launch · Esc quit"), ResetColor,
         MoveTo(0,height.saturating_sub(1)), Print(message.chars().take(width).collect::<String>()))?;
     out.flush()
 }
@@ -59,6 +60,7 @@ async fn run() -> Result<Option<String>, String> {
     let mut apps = Vec::new();
     let mut query = String::new();
     let mut selected = 0;
+    let mut clicks = mouse::Clicks::default();
     draw(&apps, &query, selected, "Loading catalog…").map_err(|e|e.to_string())?;
     loop {
         match fetch(&client, CATALOG, 1024 * 1024).await {
@@ -81,25 +83,47 @@ async fn run() -> Result<Option<String>, String> {
     loop {
         draw(&apps, &query, selected, &message).map_err(|e|e.to_string())?;
         if event::poll(Duration::from_millis(0)).map_err(|e|e.to_string())? {
-            if let Event::Key(key) = event::read().map_err(|e|e.to_string())? {
-                if key.kind == KeyEventKind::Release { continue; }
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') { return Ok(None); }
-                let ids = visible(&apps, &query);
-                match key.code {
-                    KeyCode::Esc => return Ok(None),
-                    KeyCode::Up => selected = selected.saturating_sub(1),
-                    KeyCode::Down => selected = (selected + 1).min(ids.len().saturating_sub(1)),
-                    KeyCode::PageUp => selected = selected.saturating_sub(10),
-                    KeyCode::PageDown => selected = (selected + 10).min(ids.len().saturating_sub(1)),
-                    KeyCode::Backspace => { query.pop(); selected = 0; }
-                    KeyCode::Char(ch) => { if query.len() < 128 { query.push(ch); selected = 0; } }
-                    KeyCode::Enter => if let Some(id) = ids.get(selected) {
-                        let app = &apps[*id];
-                        draw(&apps,&query,selected,&format!("Downloading {}…",app.name)).map_err(|e|e.to_string())?;
-                        let install = install(&client, app).await;
-                        match install { Ok(path) => return Ok(Some(path)), Err(error) => message = error }
-                    },
+            let ids = visible(&apps, &query);
+            let mut launch = false;
+            match event::read().map_err(|e|e.to_string())? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    clicks.reset();
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') { return Ok(None); }
+                    match key.code {
+                        KeyCode::Esc => return Ok(None),
+                        KeyCode::Up => selected = selected.saturating_sub(1),
+                        KeyCode::Down => selected = (selected + 1).min(ids.len().saturating_sub(1)),
+                        KeyCode::PageUp => selected = selected.saturating_sub(10),
+                        KeyCode::PageDown => selected = (selected + 10).min(ids.len().saturating_sub(1)),
+                        KeyCode::Backspace => { query.pop(); selected = 0; }
+                        KeyCode::Char(ch) => { if query.len() < 128 { query.push(ch); selected = 0; } }
+                        KeyCode::Enter => launch = true,
+                        _ => {}
+                    }
+                }
+                Event::Mouse(mouse_event) => match mouse_event.kind {
+                    MouseEventKind::ScrollUp => { clicks.reset(); selected = selected.saturating_sub(1); }
+                    MouseEventKind::ScrollDown => { clicks.reset(); selected = (selected + 1).min(ids.len().saturating_sub(1)); }
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        let (width, height) = terminal::size().map_err(|e|e.to_string())?;
+                        if let Some(position) = mouse::hit_test(width, height, selected, ids.len(), mouse_event.column, mouse_event.row) {
+                            selected = position;
+                            launch = clicks.click(position, Instant::now());
+                        } else { clicks.reset(); }
+                    }
                     _ => {}
+                },
+                Event::Resize(_, _) => clicks.reset(),
+                _ => {}
+            }
+            if launch {
+                if let Some(id) = ids.get(selected) {
+                    let app = &apps[*id];
+                    draw(&apps,&query,selected,&format!("Downloading {}…",app.name)).map_err(|e|e.to_string())?;
+                    match install(&client, app).await {
+                        Ok(path) => return Ok(Some(path)),
+                        Err(error) => message = error,
+                    }
                 }
             }
         }
