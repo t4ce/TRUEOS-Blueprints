@@ -1,0 +1,16 @@
+[package]
+name = "appstore"
+version = "0.1.0"
+edition = "2024"
+[package.metadata.trueos-blueprint]
+fs-scope = "trueosfs"
+entry-abi = "argv-v1"
+[[bin]]
+name = "appstore"
+path = "src/main.rs"
+[workspace]
+[dependencies]
+trueos = { path = "../../api", features = ["tokio-net-probe"] }
+crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
+reqwest = { version = "=0.13.3", default-features = false, features = ["rustls"] }
+sha2 = { version = "=0.10.9", default-features = false }
