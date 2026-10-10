@@ -12,7 +12,7 @@ use view::{Alignment, View, contained_extent};
 use alloc::{format, string::String, vec, vec::Vec};
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    Damage, Error as Ui4Error, Frame, SpriteCorner, SpriteQuad, output_dimensions, rgba,
+    Damage, Error as Ui4Error, Frame, output_dimensions, rgba,
 };
 use trueos::{async_fs, image_source, input, replication, vmedia, vsys};
 
@@ -22,7 +22,6 @@ const CHECKPOINT_VERSION: u64 = 1;
 const RESUME_FRAME_CADENCE_MS: u64 = 150;
 
 struct Image {
-    uploaded_window: core::cell::Cell<u32>,
     format: Option<convert::Format>,
     width: u32,
     height: u32,
@@ -348,7 +347,6 @@ fn open_default_frame(frames: &mut Vec<OpenFrame>) {
     const WIDTH: u32 = 640;
     const HEIGHT: u32 = 480;
     let image = Image {
-        uploaded_window: core::cell::Cell::new(0),
         format: None,
         width: WIDTH,
         height: HEIGHT,
@@ -469,7 +467,6 @@ fn open_decoded_image(
             ));
         }
     };
-    image.uploaded_window.set(0);
     if let Err(error) = frame.set_hit_testable(hit_testable) {
         return Err(suspended(view, image, format!("hit-test error={error:?}")));
     }
@@ -600,69 +597,6 @@ fn aligned_position(
 }
 
 fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error> {
-    if let Some((source_x, source_y)) = view.native_full_crop() {
-        if image.uploaded_window.get() != frame.window_id() {
-            // Keep the decoder's straight-alpha pixels for conversion/export.
-            // The retained copy is flattened onto black once, just as the old
-            // viewport painter did on every pan.
-            let mut opaque = image.rgba.clone();
-            for pixel in opaque.chunks_exact_mut(4) {
-                let alpha = pixel[3] as u16;
-                for channel in &mut pixel[..3] {
-                    *channel = ((*channel as u16 * alpha + 127) / 255) as u8;
-                }
-                pixel[3] = 255;
-            }
-            if frame
-                .upload_sprite_rgba8(1, image.width, image.height, &opaque)
-                .is_err()
-            {
-                return present_cpu(frame, view, image);
-            }
-            image.uploaded_window.set(frame.window_id());
-        }
-        let w = view.viewport_width as f32;
-        let h = view.viewport_height as f32;
-        let u0 = source_x as f32 / image.width as f32;
-        let v0 = source_y as f32 / image.height as f32;
-        let u1 = (source_x + view.viewport_width) as f32 / image.width as f32;
-        let v1 = (source_y + view.viewport_height) as f32 / image.height as f32;
-        frame.begin_gpu_frame()?;
-        frame.draw_sprite_quads(&[SpriteQuad {
-            sprite_id: 1,
-            c0: SpriteCorner {
-                x: 0.0,
-                y: 0.0,
-                u: u0,
-                v: v0,
-            },
-            c1: SpriteCorner {
-                x: w,
-                y: 0.0,
-                u: u1,
-                v: v0,
-            },
-            c2: SpriteCorner {
-                x: w,
-                y: h,
-                u: u1,
-                v: v1,
-            },
-            c3: SpriteCorner {
-                x: 0.0,
-                y: h,
-                u: u0,
-                v: v1,
-            },
-            color_rgba: rgba(255, 255, 255, 255),
-            source_over: false,
-        }])?;
-        return frame.publish(Damage::full(frame.width(), frame.height()));
-    }
-    present_cpu(frame, view, image)
-}
-
-fn present_cpu(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error> {
     if view.viewport_width == image.width
         && view.viewport_height == image.height
         && view.scale == 1.0
@@ -951,7 +885,6 @@ fn decode_media(format: vmedia::ImageFormat, bytes: &[u8]) -> Result<Image, Stri
         ),
     );
     Ok(Image {
-        uploaded_window: core::cell::Cell::new(0),
         format: match format {
             vmedia::ImageFormat::Png => Some(convert::Format::Png),
             vmedia::ImageFormat::Jpeg => Some(convert::Format::Jpeg),
@@ -973,7 +906,6 @@ fn image_from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Result<Image, 
         *alpha = u8::MAX;
     }
     Ok(Image {
-        uploaded_window: core::cell::Cell::new(0),
         format: None,
         width,
         height,
