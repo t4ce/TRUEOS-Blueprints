@@ -1,10 +1,11 @@
-//! One-shot launch stream: `pull [--sh3] NAME_OR_ID` (one request per line).
+//! One-shot launch stream: `pull [--sh3 | --headless] NAME_OR_ID` (one request per line).
 //! Empty lines and # comments are ignored; duplicates intentionally launch twice.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Request {
     pub selector: String,
     pub start_script: String,
     pub new_shell3: bool,
+    pub headless: bool,
 }
 /// `launch NAME -- COMMAND` forwards COMMAND as the downloaded app's start script.
 /// `launch --sh3 NAME -- COMMAND` also creates a kernel-owned Shell3 window.
@@ -24,18 +25,23 @@ pub fn requests(script: &str) -> Vec<Result<Request, String>> {
                         Some(rest) if rest.is_empty() || rest.starts_with(char::is_whitespace) => (true, rest.trim()),
                         _ => (false, value),
                     };
+                    let (headless, value) = match value.strip_prefix("--headless") {
+                        Some(rest) if rest.is_empty() || rest.starts_with(char::is_whitespace) => (true, rest.trim()),
+                        _ => (false, value),
+                    };
                     let (selector, command) = value
                         .trim()
                         .split_once(" -- ")
                         .map_or((value.trim(), ""), |(selector, command)| {
                             (selector.trim(), command.trim())
                         });
-                    if selector.is_empty() || (value.contains(" -- ") && command.is_empty()) {
+                    if (new_shell3 && headless) || selector.is_empty() || (value.contains(" -- ") && command.is_empty()) {
                         Err(format!("invalid request: {line}"))
                     } else {
                         Ok(Request {
                             selector: selector.to_string(),
                             new_shell3,
+                            headless,
                             start_script: if command.is_empty() {
                                 String::new()
                             } else {
@@ -56,7 +62,7 @@ mod tests {
         Ok(Request {
             selector: selector.into(),
             start_script: String::new(),
-            new_shell3: false,
+            new_shell3: false, headless: false,
         })
     }
     #[test]
@@ -66,7 +72,7 @@ mod tests {
             vec![Ok(Request {
                 selector: "Frog".into(),
                 start_script: "weather -74.123456 40.987654\n".into(),
-                new_shell3: false,
+                new_shell3: false, headless: false,
             })]
         );
     }
@@ -86,8 +92,8 @@ mod tests {
     #[test]
     fn shell_destination_does_not_change_the_child_script() {
         let batch = requests("launch --sh3 Frog -- weather 13 51\npull --sh3 12\nlaunch --sh3\n");
-        assert_eq!(batch[0], Ok(Request { selector: "Frog".into(), start_script: "weather 13 51\n".into(), new_shell3: true }));
-        assert_eq!(batch[1], Ok(Request { selector: "12".into(), start_script: String::new(), new_shell3: true }));
+        assert_eq!(batch[0], Ok(Request { selector: "Frog".into(), start_script: "weather 13 51\n".into(), new_shell3: true, headless: false }));
+        assert_eq!(batch[1], Ok(Request { selector: "12".into(), start_script: String::new(), new_shell3: true, headless: false }));
         assert!(batch[2].is_err());
         assert!(!requests("launch Frog -- weather --sh3 51\n")[0].as_ref().unwrap().new_shell3);
     }
@@ -105,6 +111,16 @@ mod tests {
         assert!(requests[0].is_err());
         assert!(requests[1].is_err());
         assert_eq!(requests[2], plain("12"));
+    }
+    #[test]
+    fn headless_autostart_forwards_the_child_script() {
+        assert_eq!(requests("pull --headless voxy\n"), vec![Ok(Request {
+            selector: "voxy".into(), start_script: String::new(), new_shell3: false, headless: true,
+        })]);
+        let batch = requests("pull --headless Frog -- weather 13 51\n");
+        assert_eq!(batch[0].as_ref().unwrap().start_script, "weather 13 51\n");
+        assert!(batch[0].as_ref().unwrap().headless);
+        assert!(requests("pull --sh3 --headless voxy\n")[0].is_err());
     }
     #[test]
     fn blank_script_is_an_empty_headless_batch() {
@@ -162,13 +178,16 @@ pub async fn drain(bytes: &[u8]) {
                 selector,
                 start_script,
                 new_shell3,
+                headless,
             } = request?;
             let app = super::catalog::resolve(&catalog, &selector)
                 .ok_or_else(|| format!("not in catalog: {selector}"))?;
             let path = super::download(&client, app).await?;
             // Backpressure preserves requests when the host launch worker pool is full.
             for _ in 0..1800 {
-                let destination = if new_shell3 {
+                let destination = if headless {
+                    trueos::vshell::LaunchDestination::Headless
+                } else if new_shell3 {
                     trueos::vshell::LaunchDestination::NewShell3
                 } else {
                     trueos::vshell::LaunchDestination::CurrentShell
