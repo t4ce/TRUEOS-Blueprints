@@ -16,7 +16,11 @@ policy allows it. The public tile.openstreetmap.org service retains disk caching
 
 UI4 presentation uploads one opaque sprite using the same ID, then submits a
 full-frame 1:1 copy quad with source_over=false. This meets the existing kernel
-BCS0 XY_FAST_COPY_BLT fast path. Busy responses yield through Tokio timers before retrying.
+BCS0 XY_FAST_COPY_BLT fast path. Busy responses yield through Tokio timers.
+Upload/begin/publish retry their stage; draw Busy cancels the kernel write lease,
+so the presenter begins a fresh frame before resubmitting the retained sprite.
+This also applies to the compact logo. Admission retries emit "sprite admission
+busy action=restart-frame"; failures identify upload/begin/draw/publish.
 CPU still assembles and uploads each viewport. BCS0 replaces final framebuffer
 painting. Immediate pan/resize uses clipped CPU row copies; zoom reprojects the
 already displayed pixels with nearest-neighbor sampling. Kernel log evidence:
