@@ -29,7 +29,9 @@ const HISTORY_CAP: usize = 64;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 const CHILD_WORKER_ARGUMENT: &str = trueos_qjs::child_worker::ARGUMENT;
 
-const BACKGROUND: Color = Color::Rgb { r: 8, g: 11, b: 18 };
+// Match Shell3’s control rows and matrix background (src/shell3/update.rs).
+const HEADER_BACKGROUND: Color = Color::Rgb { r: 16, g: 16, b: 16 };
+const BACKGROUND: Color = Color::Rgb { r: 24, g: 24, b: 24 };
 const ACCENT: Color = Color::Rgb {
     r: 255,
     g: 55,
@@ -744,7 +746,7 @@ fn draw_header(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
         .last_actual_mode
         .map(|mode| mode.label().to_ascii_lowercase())
         .unwrap_or_else(|| "waiting".to_string());
-    fill_rect(out, area, BACKGROUND)?;
+    fill_rect(out, area, HEADER_BACKGROUND)?;
     write_at(
         out,
         area.x,
@@ -765,7 +767,7 @@ fn draw_header(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
             app.eval_mode.label().to_ascii_lowercase()
         ),
         GREEN,
-        BACKGROUND,
+        HEADER_BACKGROUND,
         true,
     )?;
     write_at(
@@ -775,7 +777,7 @@ fn draw_header(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
         area.width,
         " Runtime  shell profile · timers · workers · fetch    Modules  native import/export · TRUEOS/Node loader",
         MUTED,
-        BACKGROUND,
+        HEADER_BACKGROUND,
         false,
     )?;
     write_at(
@@ -785,7 +787,7 @@ fn draw_header(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
         area.width,
         " F1 help · F2 mode · F5/Ctrl-Enter run · Ctrl-R reset · ESC/Ctrl-Q/F10 close TUI",
         MUTED,
-        BACKGROUND,
+        HEADER_BACKGROUND,
         false,
     )
 }
