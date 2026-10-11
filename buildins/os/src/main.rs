@@ -7,7 +7,7 @@ use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute, queue,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use trueos::{env, platform, runtime, task, vshell};
@@ -19,6 +19,10 @@ const PINK: Color = Color::Rgb {
     g: 55,
     b: 255,
 };
+
+// Match Shell3’s control rows and matrix area.
+const CONTROL_BACKGROUND: Color = Color::Rgb { r: 16, g: 16, b: 16 };
+const MATRIX_BACKGROUND: Color = Color::Reset;
 
 #[derive(Clone)]
 struct Disk {
@@ -428,18 +432,28 @@ fn draw(app: &App) -> io::Result<()> {
     let mut out = io::stdout();
     queue!(
         &mut out,
+        SetBackgroundColor(MATRIX_BACKGROUND),
         Clear(ClearType::All),
+        SetBackgroundColor(CONTROL_BACKGROUND),
+        MoveTo(0, 0),
+        Clear(ClearType::CurrentLine),
+        MoveTo(0, 1),
+        Clear(ClearType::CurrentLine),
+        MoveTo(0, 2),
+        Clear(ClearType::CurrentLine),
         MoveTo(0, 0),
         SetForegroundColor(PINK),
         SetAttribute(Attribute::Bold),
         Print("TRUE OS"),
         SetAttribute(Attribute::Reset),
-        ResetColor,
+        SetBackgroundColor(CONTROL_BACKGROUND),
+        SetForegroundColor(Color::Reset),
         Print("  administration\r\n"),
         SetForegroundColor(Color::DarkGrey),
         Print("Install writes a disk. Live update replaces only the running kernel.\r\n"),
-        ResetColor,
-        Print("\r\n")
+        SetForegroundColor(Color::Reset),
+        Print("\r\n"),
+        SetBackgroundColor(MATRIX_BACKGROUND)
     )?;
 
     match app.screen {
@@ -455,7 +469,7 @@ fn draw(app: &App) -> io::Result<()> {
         Print("\r\n"),
         SetForegroundColor(Color::DarkGrey),
         Print("↑/↓ or j/k select   Enter choose   ←/h back   Esc/q quit"),
-        ResetColor
+        SetForegroundColor(Color::Reset)
     )?;
     out.flush()
 }
@@ -469,7 +483,8 @@ fn row(out: &mut io::Stdout, selected: bool, label: impl std::fmt::Display) -> i
             Print("  › "),
             Print(label),
             SetAttribute(Attribute::Reset),
-            ResetColor,
+            SetBackgroundColor(MATRIX_BACKGROUND),
+            SetForegroundColor(Color::Reset),
             Print("\r\n")
         )
     } else {
@@ -484,7 +499,7 @@ fn heading(out: &mut io::Stdout, text: &str) -> io::Result<()> {
         Print("┌─ "),
         Print(text),
         Print(" ─────────────────────────────────────────────┐\r\n"),
-        ResetColor
+        SetForegroundColor(Color::Reset)
     )
 }
 
@@ -533,7 +548,7 @@ fn draw_sources(out: &mut io::Stdout, app: &App, disk: usize) -> io::Result<()> 
             Print("\r\n    Target: "),
             SetForegroundColor(PINK),
             Print(format!("{} · {} · {}", disk.name, disk.size, disk.label)),
-            ResetColor,
+            SetForegroundColor(Color::Reset),
             Print("\r\n")
         )?;
     }
@@ -588,7 +603,7 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
                 for vm in &app.non_replicatable_vms {
                     queue!(out, Print(format!("      vm{} · {}\r\n", vm.id, vm.label)))?;
                 }
-                queue!(out, ResetColor, Print("\r\n"))?;
+                queue!(out, SetForegroundColor(Color::Reset), Print("\r\n"))?;
             }
         }
         Action::Install { disk, source } => {
@@ -608,7 +623,7 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
                 )),
                 SetForegroundColor(Color::Yellow),
                 Print("    The selected disk will be repartitioned.\r\n\r\n"),
-                ResetColor
+                SetForegroundColor(Color::Reset)
             )?;
         }
         Action::Shutdown => {
@@ -617,7 +632,7 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
                 Print("    Shut down TRUEOS now.\r\n"),
                 SetForegroundColor(Color::Yellow),
                 Print("    Running work will stop.\r\n\r\n"),
-                ResetColor
+                SetForegroundColor(Color::Reset)
             )?;
         }
         Action::Reboot => {
@@ -626,7 +641,7 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
                 Print("    Reboot TRUEOS now.\r\n"),
                 SetForegroundColor(Color::Yellow),
                 Print("    Running work will stop.\r\n\r\n"),
-                ResetColor
+                SetForegroundColor(Color::Reset)
             )?;
         }
     }
