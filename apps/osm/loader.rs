@@ -142,12 +142,15 @@ mod tests {
                 x: 384.0,
                 y: 384.0,
                 zoom: 2,
+                local_steps: 0,
             };
             let mut view = crate::viewport::Viewport::new(map, 256, 280);
             map.x += 128.0;
             view.navigate(map, 256, 280);
             loader.request(view.missing()).unwrap();
-            map.zoom(-1);
+            for _ in 0..4 {
+                map.zoom(-1);
+            }
             view.navigate(map, 256, 280);
             loader.request(vec![latest]).unwrap();
             assert_eq!(*view.pixels().get_pixel(0, 0), image::Rgba([255; 4]));

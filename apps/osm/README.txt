@@ -2,6 +2,11 @@ TRUEOS OSM demo
 
 Starts at 51.471336, 13.827807, zoom 17.
 TRUEOS: UI4 pan gestures move the map; wheel changes zoom (0..19).
+Each tick changes displayed zoom by 0.25 (about 19% scale). Three intermediate
+ticks reuse the current integer tile level; the fourth selects the next level.
+Reversing direction unwinds local steps. New tiles exposed by panning or local
+zoom-out still load at the current level. Tile arrivals are sampled at the latest
+display scale from decoded originals; the map center and footer stay fixed.
 Host preview: run cargo run from apps/osm; output is osm-demo.png.
 OSM_CACHE_DIR selects a persistent writable directory (default osm-tile-cache).
 OSM_TILE_URL selects an HTTPS raster tile server base URL, using /z/x/y.png.

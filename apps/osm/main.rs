@@ -27,6 +27,7 @@ struct Map {
     x: f64,
     y: f64,
     zoom: u8,
+    local_steps: i8,
 }
 impl Map {
     fn new(lat: f64, lon: f64, zoom: u8) -> Self {
@@ -36,14 +37,38 @@ impl Map {
             x: (lon + 180.0) / 360.0 * n * 256.0,
             y: (1.0 - (lat.tan() + 1.0 / lat.cos()).ln() / std::f64::consts::PI) / 2.0 * n * 256.0,
             zoom,
+            local_steps: 0,
         }
     }
+    fn display_zoom(self) -> f64 {
+        self.zoom as f64 + self.local_steps as f64 / 4.0
+    }
+    fn tile_scale(self) -> f64 {
+        2f64.powf(self.local_steps as f64 / 4.0)
+    }
+    fn world_size(self) -> f64 {
+        256.0 * 2f64.powf(self.display_zoom())
+    }
     fn zoom(&mut self, delta: i32) {
-        let next = (self.zoom as i32 + delta.signum()).clamp(0, 19) as u8;
-        let scale = 2f64.powi(next as i32 - self.zoom as i32);
+        let before = self.display_zoom();
+        let next = (before + delta.signum() as f64 / 4.0).clamp(0.0, 19.0);
+        let steps = ((next - self.zoom as f64) * 4.0).round() as i8;
+        if steps.abs() == 4 {
+            self.zoom = next as u8;
+            self.local_steps = 0;
+        } else {
+            self.local_steps = steps;
+        }
+        let scale = 2f64.powf(next - before);
         self.x *= scale;
         self.y *= scale;
-        self.zoom = next;
+        // A round trip through fractional scales must not move an exact pixel
+        // just below its integer boundary through floating-point roundoff.
+        for value in [&mut self.x, &mut self.y] {
+            if (*value - value.round()).abs() <= value.abs().max(1.0) * f64::EPSILON * 16.0 {
+                *value = value.round();
+            }
+        }
     }
 }
 
@@ -244,7 +269,7 @@ async fn run_ui() -> Result<()> {
         {
             if matches!(event.phase, PanPhase::Begin | PanPhase::Update) {
                 map.x -= event.dx as f64;
-                map.y = (map.y - event.dy as f64).clamp(0.0, (1u32 << map.zoom) as f64 * 256.0);
+                map.y = (map.y - event.dy as f64).clamp(0.0, map.world_size());
                 navigated = true;
             }
         }
@@ -268,9 +293,10 @@ async fn run_ui() -> Result<()> {
                 trueos::logl::log(
                     trueos::logl::level::ERROR,
                     format_args!(
-                        "osm: presentation failed error={error:?} center=({:.0},{:.0}) zoom={} extent={}x{}",
+                        "osm: presentation failed error={error:?} center=({:.0},{:.0}) zoom={:.2} tiles={} extent={}x{}",
                         map.x,
                         map.y,
+                        map.display_zoom(),
                         map.zoom,
                         frame.width(),
                         frame.height()
@@ -284,8 +310,9 @@ async fn run_ui() -> Result<()> {
                 trueos::logl::log(
                     trueos::logl::level::IMPORTANT,
                     format_args!(
-                        "osm: immediate viewport frame={} zoom={} extent={}x{} missing={} stale-skipped={}",
+                        "osm: immediate viewport frame={} zoom={:.2} tiles={} extent={}x{} missing={} stale-skipped={}",
                         presentations,
+                        map.display_zoom(),
                         map.zoom,
                         frame.width(),
                         frame.height(),

@@ -14,7 +14,7 @@ use trueos::ui4_scene::output_dimensions;
 use trueos::vshell;
 use trueos::vsys;
 
-const WINDOW_COUNT: usize = 5;
+const WINDOW_COUNT: usize = 4;
 const WINDOW_WIDTH: u32 = 480;
 const WINDOW_HEIGHT: u32 = 320;
 const ORBIT_RADIUS: i32 = 300;
@@ -27,7 +27,6 @@ const CURSOR_LABELS: [&str; WINDOW_COUNT] = [
     "hello-orbit-b",
     "hello-orbit-c",
     "hello-orbit-d",
-    "hello-orbit-e",
 ];
 
 // Sixteen points keep each program comfortably below the mediated cursor's
@@ -51,8 +50,8 @@ const ORBIT_POINTS: [(i32, i32); 16] = [
     orbit_point(92, -38),
 ];
 
-const START_POINT: [usize; WINDOW_COUNT] = [0, 3, 6, 9, 15];
-const CLOCKWISE: [bool; WINDOW_COUNT] = [true, false, true, false, true];
+const START_POINT: [usize; WINDOW_COUNT] = [0, 3, 6, 9];
+const CLOCKWISE: [bool; WINDOW_COUNT] = [true, false, true, false];
 
 const fn orbit_point(x_percent: i32, y_percent: i32) -> (i32, i32) {
     (
@@ -76,7 +75,7 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "hello_world: five-window orbit demo output={}x{} center={},{} radius={ORBIT_RADIUS}",
+            "hello_world: four-window orbit demo output={}x{} center={},{} radius={ORBIT_RADIUS}",
             output_width, output_height, center.0, center.1,
         ),
     );
@@ -180,7 +179,7 @@ fn main() {
 
     logl::log(
         level::INFO,
-        "hello_world: five concurrent window orbits complete; shell windows and cursors retained",
+        "hello_world: four concurrent window orbits complete; shell windows and cursors retained",
     );
     loop {
         vsys::poll_once();

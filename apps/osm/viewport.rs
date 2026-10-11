@@ -19,8 +19,9 @@ impl TileKey {
 #[derive(Clone, Copy)]
 struct Placement {
     key: TileKey,
-    x: i64,
-    y: i64,
+    x: f64,
+    y: f64,
+    scale: f64,
 }
 
 pub struct Viewport {
@@ -47,7 +48,7 @@ impl Viewport {
             return None;
         }
         let (left, top) = origin(self.map, self.pixels.width(), height);
-        let world = (1u32 << self.map.zoom) as f64 * 256.0;
+        let world = self.map.world_size();
         let px = (left as f64 + x as f64).rem_euclid(world);
         let py = top as f64 + y as f64;
         if !(0.0..=world).contains(&py) {
@@ -77,7 +78,7 @@ impl Viewport {
         let map_height = height.saturating_sub(FOOTER);
         let (old_left, old_top) = origin(self.map, self.pixels.width(), old_height);
         let (left, top) = origin(map, width, map_height);
-        let scale = 2f64.powi(self.map.zoom as i32 - map.zoom as i32);
+        let scale = 2f64.powf(self.map.display_zoom() - map.display_zoom());
         let mut pixels = RgbaImage::from_pixel(width, height, Rgba([255; 4]));
         // Reproject displayed map pixels now. Uncovered areas stay opaque white;
         // neither disk/cache lookup, PNG decode nor a network await runs here.
@@ -133,7 +134,7 @@ impl Viewport {
         self.ready.retain(|key, _| needed.contains(key));
         for placement in &self.placements {
             if let Some(tile) = self.ready.get(&placement.key) {
-                image::imageops::overlay(&mut pixels, tile, placement.x, placement.y);
+                paint_tile(&mut pixels, tile, *placement);
             }
         }
         footer(&mut pixels);
@@ -146,7 +147,7 @@ impl Viewport {
             return false;
         }
         for p in self.placements.iter().filter(|p| p.key == key) {
-            image::imageops::overlay(&mut self.pixels, &tile, p.x, p.y);
+            paint_tile(&mut self.pixels, &tile, *p);
         }
         footer(&mut self.pixels);
         self.ready.insert(key, tile);
@@ -168,24 +169,54 @@ fn placements(map: Map, width: u32, height: u32) -> Vec<Placement> {
     }
     let (left, top) = origin(map, width, map_height);
     let n = 1i64 << map.zoom;
-    for ty in top.div_euclid(256)..=(top + map_height as i64 - 1).div_euclid(256) {
+    let scale = map.tile_scale();
+    let tile_left = (left as f64 / scale / 256.0).floor() as i64;
+    let tile_right = ((left as f64 + width as f64) / scale / 256.0).ceil() as i64;
+    let tile_top = (top as f64 / scale / 256.0).floor() as i64;
+    let tile_bottom = ((top as f64 + map_height as f64) / scale / 256.0).ceil() as i64;
+    for ty in tile_top..tile_bottom {
         if !(0..n).contains(&ty) {
             continue;
         }
-        for tx in left.div_euclid(256)..=(left + width as i64 - 1).div_euclid(256) {
+        for tx in tile_left..tile_right {
             out.push(Placement {
                 key: TileKey {
                     z: map.zoom,
                     x: tx.rem_euclid(n),
                     y: ty,
                 },
-                x: tx * 256 - left,
-                y: ty * 256 - top,
+                x: tx as f64 * 256.0 * scale - left as f64,
+                y: ty as f64 * 256.0 * scale - top as f64,
+                scale,
             });
         }
     }
     out
 }
+// Sample original decoded tiles at the display scale, avoiding cumulative
+// resampling blur and ensuring late arrivals use the latest local zoom.
+fn paint_tile(pixels: &mut RgbaImage, tile: &RgbaImage, p: Placement) {
+    if p.scale == 1.0 {
+        image::imageops::overlay(pixels, tile, p.x as i64, p.y as i64);
+        return;
+    }
+    let x0 = (p.x - 0.5).ceil().max(0.0) as u32;
+    let y0 = (p.y - 0.5).ceil().max(0.0) as u32;
+    let x1 = (p.x + 256.0 * p.scale - 0.5)
+        .ceil()
+        .clamp(0.0, pixels.width() as f64) as u32;
+    let y1 = (p.y + 256.0 * p.scale - 0.5)
+        .ceil()
+        .clamp(0.0, pixels.height().saturating_sub(FOOTER) as f64) as u32;
+    for y in y0..y1 {
+        let sy = ((y as f64 + 0.5 - p.y) / p.scale).floor().clamp(0.0, 255.0) as u32;
+        for x in x0..x1 {
+            let sx = ((x as f64 + 0.5 - p.x) / p.scale).floor().clamp(0.0, 255.0) as u32;
+            pixels.put_pixel(x, y, *tile.get_pixel(sx, sy));
+        }
+    }
+}
+
 fn footer(pixels: &mut RgbaImage) {
     let footer_top = pixels.height().saturating_sub(FOOTER);
     for y in footer_top..pixels.height() {
@@ -216,6 +247,7 @@ mod tests {
             x: 384.0,
             y: 384.0,
             zoom: 2,
+            local_steps: 0,
         }
     }
     fn tile(color: [u8; 4]) -> RgbaImage {
@@ -225,6 +257,73 @@ mod tests {
         let mut view = Viewport::new(map(), 256, 256 + FOOTER);
         assert!(view.complete(TileKey { z: 2, x: 1, y: 1 }, tile([40, 80, 120, 255])));
         view
+    }
+    #[test]
+    fn three_local_ticks_reuse_tiles_then_fourth_changes_remote_level() {
+        for direction in [-1, 1] {
+            let mut next = map();
+            let mut view = loaded();
+            for tick in 1..=3 {
+                next.zoom(direction);
+                view.navigate(next, 256, 256 + FOOTER);
+                assert_eq!(next.zoom, 2);
+                assert_eq!(next.local_steps, tick * direction as i8);
+                assert!(view.missing().iter().all(|key| key.z == 2));
+                assert_eq!(*view.pixels().get_pixel(128, 128), Rgba([40, 80, 120, 255]));
+                if direction == 1 {
+                    assert!(view.missing().is_empty());
+                }
+            }
+            next.zoom(direction);
+            view.navigate(next, 256, 256 + FOOTER);
+            assert_eq!(next.zoom as i32, 2 + direction);
+            assert_eq!(next.local_steps, 0);
+            assert!(view.missing().iter().all(|key| key.z == next.zoom));
+        }
+    }
+    #[test]
+    fn local_zoom_preserves_coordinates_reverses_and_scales_late_tiles() {
+        let mut next = map();
+        let mut view = Viewport::new(next, 256, 256 + FOOTER);
+        let center = view.coordinates_at(128, 128).unwrap();
+        let key = TileKey { z: 2, x: 1, y: 1 };
+        for _ in 0..3 {
+            next.zoom(1);
+        }
+        view.navigate(next, 256, 256 + FOOTER);
+        let after = view.coordinates_at(128, 128).unwrap();
+        // Integer viewport origins introduce less than one displayed pixel.
+        assert!((center.0 - after.0).abs() < 360.0 / next.world_size());
+        assert!((center.1 - after.1).abs() < 360.0 / next.world_size());
+        let gradient = RgbaImage::from_fn(256, 256, |x, y| Rgba([x as u8, y as u8, 0, 255]));
+        assert!(view.complete(key, gradient));
+        let pixel = view.pixels().get_pixel(0, 0);
+        assert!(pixel[0] > 40 && pixel[0] < 60);
+        for _ in 0..3 {
+            next.zoom(-1);
+        }
+        assert_eq!(next.zoom, 2);
+        assert_eq!(next.local_steps, 0);
+        assert!((next.x - map().x).abs() < 1e-8);
+        assert!((next.y - map().y).abs() < 1e-8);
+        view.navigate(next, 256, 256 + FOOTER);
+        assert_eq!(*view.pixels().get_pixel(0, 0), Rgba([0, 0, 0, 255]));
+        assert!(view.missing().is_empty());
+    }
+    #[test]
+    fn local_zoom_clamps_at_provider_limits() {
+        let mut next = Map::new(0.0, 0.0, 0);
+        next.zoom(-1);
+        assert_eq!(next.display_zoom(), 0.0);
+        for _ in 0..100 {
+            next.zoom(1);
+        }
+        assert_eq!(next.display_zoom(), 19.0);
+        assert_eq!(next.local_steps, 0);
+        for _ in 0..100 {
+            next.zoom(-1);
+        }
+        assert_eq!(next.display_zoom(), 0.0);
     }
     #[test]
     fn clicked_coordinates_use_view_origin_footer_and_world_wrap() {
@@ -270,7 +369,9 @@ mod tests {
     fn zoom_out_scales_existing_view_and_discards_old_zoom_completion() {
         let mut view = loaded();
         let mut next = map();
-        next.zoom(-1);
+        for _ in 0..4 {
+            next.zoom(-1);
+        }
         view.navigate(next, 256, 256 + FOOTER);
         assert_eq!(*view.pixels().get_pixel(64, 64), Rgba([40, 80, 120, 255]));
         assert_eq!(*view.pixels().get_pixel(191, 191), Rgba([40, 80, 120, 255]));
@@ -289,7 +390,9 @@ mod tests {
         let gradient = RgbaImage::from_fn(256, 256, |x, y| Rgba([x as u8, y as u8, 0, 255]));
         view.complete(TileKey { z: 2, x: 1, y: 1 }, gradient);
         let mut next = map();
-        next.zoom(1);
+        for _ in 0..4 {
+            next.zoom(1);
+        }
         view.navigate(next, 256, 256 + FOOTER);
         assert_eq!(*view.pixels().get_pixel(0, 0), Rgba([64, 64, 0, 255]));
         assert_eq!(*view.pixels().get_pixel(255, 255), Rgba([191, 191, 0, 255]));
