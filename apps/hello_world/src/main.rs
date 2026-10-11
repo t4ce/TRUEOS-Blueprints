@@ -10,12 +10,13 @@ use trueos::hid::{
     MOUSE_MOTION_PATH_LINE, MouseMotionCommand, VCursor,
 };
 use trueos::logl::{self, level};
-use trueos::ui4_scene::{Damage, Frame, output_dimensions, rgba};
+use trueos::ui4_scene::output_dimensions;
+use trueos::vshell;
 use trueos::vsys;
 
 const WINDOW_COUNT: usize = 5;
-const FRAME_WIDTH: u32 = 480;
-const FRAME_HEIGHT: u32 = 320;
+const WINDOW_WIDTH: u32 = 480;
+const WINDOW_HEIGHT: u32 = 320;
 const ORBIT_RADIUS: i32 = 300;
 const PRIMARY_BUTTON: u32 = 1 << 0;
 const SECONDARY_BUTTON: u32 = 1 << 1;
@@ -27,14 +28,6 @@ const CURSOR_LABELS: [&str; WINDOW_COUNT] = [
     "hello-orbit-c",
     "hello-orbit-d",
     "hello-orbit-e",
-];
-
-const FRAME_COLORS: [u32; WINDOW_COUNT] = [
-    rgba(8, 52, 28, 255),
-    rgba(8, 44, 52, 255),
-    rgba(20, 34, 68, 255),
-    rgba(52, 28, 64, 255),
-    rgba(72, 46, 12, 255),
 ];
 
 // Sixteen points keep each program comfortably below the mediated cursor's
@@ -88,21 +81,20 @@ fn main() {
         ),
     );
 
-    let mut frames = Vec::with_capacity(WINDOW_COUNT);
+    let mut windows = Vec::with_capacity(WINDOW_COUNT);
     for index in 0..WINDOW_COUNT {
-        let frame_center = orbit_position(center, START_POINT[index], index as i32);
-        let frame_origin = (
-            frame_center.0 - FRAME_WIDTH as i32 / 2,
-            frame_center.1 - FRAME_HEIGHT as i32 / 2,
-        );
-        let frame = match open_frame(index, frame_origin) {
-            Ok(frame) => frame,
-            Err(()) => return,
-        };
-        frames.push(frame);
-    }
-    if wait_for_first_presentations(frames.as_mut_slice()).is_err() {
-        return;
+        let position = orbit_position(center, START_POINT[index], index as i32);
+        match vshell::spawn_window(
+            position.0 - WINDOW_WIDTH as i32 / 2,
+            position.1 - WINDOW_HEIGHT as i32 / 2,
+            WINDOW_WIDTH, WINDOW_HEIGHT,
+        ) {
+            Ok(window) => windows.push(window),
+            Err(error) => {
+                logl::log(level::ERROR, format_args!("hello_world: shell spawn failed index={index} error={error}"));
+                return;
+            }
+        }
     }
 
     let mut cursors = Vec::with_capacity(WINDOW_COUNT);
@@ -123,14 +115,14 @@ fn main() {
         cursors.push(cursor);
     }
 
-    // Start every cursor's move from the shared spawn point to its own frame
+    // Start every cursor's move from the shared spawn point to its own shell window
     // center first. The selection/orbit programs are fully armed before those
     // synchronized lead-ins end.
     for (index, cursor) in cursors.iter().enumerate() {
-        let frame_center = orbit_position(center, START_POINT[index], index as i32);
+        let window_center = orbit_position(center, START_POINT[index], index as i32);
         if let Err(error) = cursor.submit(stroke(
-            frame_center.0,
-            frame_center.1,
+            window_center.0,
+            window_center.1,
             240,
             MOUSE_MOTION_EASING_FAST_LINEAR,
             MOUSE_MOTION_FLAG_CLEAR_QUEUE,
@@ -145,16 +137,16 @@ fn main() {
 
     for (index, cursor) in cursors.iter().enumerate() {
         let radius_multiple = index as i32;
-        let frame_center = orbit_position(center, START_POINT[index], radius_multiple);
+        let window_center = orbit_position(center, START_POINT[index], radius_multiple);
         logl::log(
             level::INFO,
             format_args!(
-                "hello_world: pair ready index={index} window={} cursor_handle={} cursor_slot={} frame_center={},{} radius={} direction={}",
-                frames[index].window_id(),
+                "hello_world: pair ready index={index} window={} cursor_handle={} cursor_slot={} window_center={},{} radius={} direction={}",
+                windows[index],
                 cursor.handle(),
                 cursor.slot_id(),
-                frame_center.0,
-                frame_center.1,
+                window_center.0,
+                window_center.1,
                 ORBIT_RADIUS * radius_multiple,
                 if CLOCKWISE[index] {
                     "clockwise"
@@ -178,7 +170,7 @@ fn main() {
             return;
         }
     }
-    if let Err((index, error)) = wait_for_cursors(cursors.as_slice(), frames.as_mut_slice()) {
+    if let Err((index, error)) = wait_for_cursors(cursors.as_slice()) {
         logl::log(
             level::ERROR,
             format_args!("hello_world: orbit wait failed index={index} error={error}"),
@@ -188,66 +180,12 @@ fn main() {
 
     logl::log(
         level::INFO,
-        "hello_world: five concurrent window orbits complete; all frames and cursors retained",
+        "hello_world: five concurrent window orbits complete; shell windows and cursors retained",
     );
     loop {
-        drain_pointer_events(frames.as_mut_slice());
         vsys::poll_once();
         vsys::sleep_ms(16);
     }
-}
-
-fn open_frame(index: usize, origin: (i32, i32)) -> Result<Frame, ()> {
-    let mut frame =
-        Frame::open_immutable(origin.0, origin.1, FRAME_WIDTH, FRAME_HEIGHT).map_err(|error| {
-            logl::log(
-                level::ERROR,
-                format_args!("hello_world: frame open failed index={index} error={error:?}"),
-            );
-        })?;
-    frame
-        .begin(FRAME_COLORS[index])
-        .and_then(|()| frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT)))
-        .map_err(|error| {
-            logl::log(
-                level::ERROR,
-                format_args!("hello_world: frame publish failed index={index} error={error:?}"),
-            );
-        })?;
-    Ok(frame)
-}
-
-fn wait_for_first_presentations(frames: &mut [Frame]) -> Result<(), ()> {
-    let mut presented = [false; WINDOW_COUNT];
-    let mut presented_count = 0;
-    while presented_count < frames.len() {
-        for (index, frame) in frames.iter_mut().enumerate() {
-            if presented[index] {
-                continue;
-            }
-            match frame.take_first_presentation() {
-                Ok(true) => {
-                    presented[index] = true;
-                    presented_count += 1;
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    logl::log(
-                        level::ERROR,
-                        format_args!(
-                            "hello_world: first presentation failed index={index} error={error:?}"
-                        ),
-                    );
-                    return Err(());
-                }
-            }
-        }
-        if presented_count < frames.len() {
-            vsys::poll_once();
-            vsys::sleep_ms(1);
-        }
-    }
-    Ok(())
 }
 
 fn queue_orbit(
@@ -257,22 +195,22 @@ fn queue_orbit(
     radius_multiple: i32,
     clockwise: bool,
 ) -> Result<(), i32> {
-    let frame_center = orbit_position(center, start, radius_multiple);
+    let window_center = orbit_position(center, start, radius_multiple);
 
     // Selection is deliberately a complete primary gesture. UI4 absorbs it,
-    // then the separately clocked secondary gesture owns the frame drag.
+    // then the separately clocked secondary gesture owns the window drag.
     cursor.submit(buttons(PRIMARY_BUTTON, 0))?;
     cursor.submit(stroke(
-        frame_center.0,
-        frame_center.1,
+        window_center.0,
+        window_center.1,
         72,
         MOUSE_MOTION_EASING_NATURAL,
         0,
     ))?;
     cursor.submit(buttons(0, PRIMARY_BUTTON))?;
     cursor.submit(stroke(
-        frame_center.0,
-        frame_center.1,
+        window_center.0,
+        window_center.1,
         96,
         MOUSE_MOTION_EASING_NATURAL,
         0,
@@ -287,8 +225,8 @@ fn queue_orbit(
     cursor.submit(buttons(SECONDARY_BUTTON, 0))?;
     let radial = scaled_orbit_point(start, radius_multiple);
     cursor.submit(stroke(
-        frame_center.0,
-        frame_center.1,
+        window_center.0,
+        window_center.1,
         240,
         MOUSE_MOTION_EASING_NATURAL,
         0,
@@ -316,9 +254,8 @@ fn orbit_position(center: (i32, i32), point_index: usize, radius_multiple: i32) 
     (center.0 + radial.0, center.1 + radial.1)
 }
 
-fn wait_for_cursors(cursors: &[VCursor], frames: &mut [Frame]) -> Result<(), (usize, i32)> {
+fn wait_for_cursors(cursors: &[VCursor]) -> Result<(), (usize, i32)> {
     loop {
-        drain_pointer_events(frames);
         let mut all_idle = true;
         for (index, cursor) in cursors.iter().enumerate() {
             match cursor.idle() {
@@ -332,12 +269,6 @@ fn wait_for_cursors(cursors: &[VCursor], frames: &mut [Frame]) -> Result<(), (us
         }
         vsys::poll_once();
         vsys::sleep_ms(8);
-    }
-}
-
-fn drain_pointer_events(frames: &mut [Frame]) {
-    for frame in frames {
-        while matches!(frame.take_pointer_event(), Ok(Some(_))) {}
     }
 }
 
