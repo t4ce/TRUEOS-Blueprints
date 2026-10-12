@@ -1,6 +1,7 @@
+use std::collections::VecDeque;
 use trueos::ui4_scene::{output_dimensions, rgba};
 use trueos::ui4_winit::{Damage, Error, SceneTarget};
-use trueos::{logl, netfs};
+use trueos::{logl, netfs, vshell};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::WindowEvent;
@@ -10,6 +11,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 mod css;
 mod scripts;
+mod shellio;
 mod snapshot;
 
 const PAGE_URL: &str = "https://example.com/";
@@ -25,6 +27,9 @@ struct Hull {
     css: css::Css,
     scripts: scripts::Scripts,
     save_attempted: bool,
+    page_url: String,
+    shell_input: shellio::ShellInput,
+    queued_urls: VecDeque<String>,
 }
 
 impl Hull {
@@ -47,14 +52,57 @@ impl Hull {
         );
         window.request_redraw();
         self.window = Some(window);
-        match netfs::fetch_bytes(PAGE_URL.as_bytes()) {
-            Ok(operation) => self.download = Some(operation),
-            Err(code) => logl::log(
-                logl::level::ERROR,
-                format_args!("hull: download start failed: {code}"),
-            ),
-        }
+        vshell::line("hull: enter an HTTPS URL to download, parse and save it");
+        self.start_page(PAGE_URL.into());
         Ok(())
+    }
+
+    fn start_page(&mut self, url: String) {
+        match netfs::fetch_bytes(url.as_bytes()) {
+            Ok(operation) => {
+                self.html = None;
+                self.document = None;
+                self.css = css::Css::default();
+                self.scripts = scripts::Scripts::default();
+                self.save_attempted = false;
+                self.page_url = url;
+                self.download = Some(operation);
+                vshell::linef(format_args!("hull: downloading {}", self.page_url));
+            }
+            Err(code) => {
+                vshell::linef(format_args!("hull: download start failed: {code}"));
+            }
+        }
+    }
+
+    fn poll_shell_input(&mut self) {
+        // The VM minishell owns echo, line editing and its prompt.
+        for _ in 0..512 {
+            let Some(byte) = vshell::attached_read_byte() else {
+                break;
+            };
+            let Some(line) = self.shell_input.push(byte) else {
+                continue;
+            };
+            match line.and_then(|line| shellio::page_url(&line)) {
+                Ok(url) if self.queued_urls.len() < 16 => self.queued_urls.push_back(url),
+                Ok(_) => {
+                    vshell::line(
+                        "hull: URL queue is full; try again after the current pages finish",
+                    );
+                }
+                Err(error) => {
+                    vshell::linef(format_args!("hull: {error}"));
+                }
+            }
+        }
+    }
+
+    fn page_pending(&self) -> bool {
+        self.download.is_some()
+            || self.css.is_pending()
+            || self.scripts.is_pending()
+            || (self.document.is_some() && !self.save_attempted)
     }
 
     fn poll_download(&mut self) {
@@ -71,10 +119,7 @@ impl Hull {
                 Ok(bytes) => {
                     logl::log(
                         logl::level::INFO,
-                        format_args!(
-                            "hull: downloaded https://example.com/ bytes={}",
-                            bytes.len()
-                        ),
+                        format_args!("hull: downloaded {} bytes={}", self.page_url, bytes.len()),
                     );
                     let document = rp5::parse(&String::from_utf8_lossy(&bytes));
                     logl::log(
@@ -85,8 +130,8 @@ impl Hull {
                             document.errors.len(),
                         ),
                     );
-                    self.css.parse_document(&document, PAGE_URL);
-                    self.scripts.extract(&document, PAGE_URL);
+                    self.css.parse_document(&document, &self.page_url);
+                    self.scripts.extract(&document, &self.page_url);
                     self.document = Some(document);
                     self.html = Some(bytes);
                 }
@@ -111,6 +156,7 @@ impl Drop for Hull {
 
 impl ApplicationHandler for Hull {
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.poll_shell_input();
         self.poll_download();
         self.css.poll_downloads();
         self.scripts.poll_downloads();
@@ -124,7 +170,7 @@ impl ApplicationHandler for Hull {
                 self.document.as_ref().unwrap(),
                 &self.css,
                 &self.scripts,
-                PAGE_URL,
+                &self.page_url,
             ) {
                 logl::log(
                     logl::level::ERROR,
@@ -132,12 +178,15 @@ impl ApplicationHandler for Hull {
                 );
             }
         }
-        if self.download.is_some() || self.css.is_pending() || self.scripts.is_pending() {
-            trueos::vsys::sleep_ms(50);
-            event_loop.set_control_flow(ControlFlow::Poll);
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+        if !self.page_pending() {
+            if let Some(url) = self.queued_urls.pop_front() {
+                self.start_page(url);
+            }
         }
+        // ShellIO input does not wake Winit's window-event wait. Keep polling
+        // cooperatively even after the current page has finished.
+        trueos::vsys::sleep_ms(20);
+        event_loop.set_control_flow(ControlFlow::Poll);
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {

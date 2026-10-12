@@ -7,6 +7,8 @@ use trueos::{async_fs, env, logl};
 use super::css::Css;
 use super::scripts::Scripts;
 
+const DEBUG_BORDERS_CSS: &str = ":where(*) { border: 1px solid magenta; }\n";
+
 #[allow(non_snake_case)]
 pub(super) fn uneccecaryStoreToFilesystemForDebug(
     document: &Document,
@@ -21,6 +23,11 @@ pub(super) fn uneccecaryStoreToFilesystemForDebug(
     let html = html_without_css_and_scripts(document, css, scripts);
     async_fs::block_on(async {
         async_fs::create_dir_all(root.as_bytes()).await?;
+        async_fs::write_file(
+            format!("{root}/debug-borders.css").as_bytes(),
+            DEBUG_BORDERS_CSS.as_bytes(),
+        )
+        .await?;
         for (index, source) in css.sources.iter().enumerate() {
             let filename = format!("style-{index:04}.css");
             async_fs::write_file(
@@ -132,7 +139,10 @@ pub(super) fn html_without_css_and_scripts(
                     .enumerate()
                     .find(|(_, source)| source.node == Some(id) && !source.inline)
                 {
-                    let _ = write!(output, "<!-- hull: stylesheet style-{index:04}.css -->");
+                    let _ = write!(
+                        output,
+                        "<link rel=\"stylesheet\" href=\"style-{index:04}.css\">"
+                    );
                     continue;
                 }
                 let stylesheet_link = name == "link"
@@ -189,6 +199,10 @@ pub(super) fn html_without_css_and_scripts(
                     let _ = write!(output, " data-hull-inline-css=\"style-{index:04}.css\"");
                 }
                 output.push('>');
+                if *namespace == Namespace::Html && name == "head" {
+                    // Load the zero-specificity fallback before authored styles.
+                    output.push_str("<link rel=\"stylesheet\" href=\"debug-borders.css\">");
+                }
                 if *namespace == Namespace::Html
                     && matches!(
                         name.as_str(),
