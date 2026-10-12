@@ -9,7 +9,10 @@ use winit::platform::trueos::WindowExtTrueOS;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 mod css;
+mod scripts;
 mod snapshot;
+
+const PAGE_URL: &str = "https://example.com/";
 
 #[derive(Default)]
 struct Hull {
@@ -20,6 +23,7 @@ struct Hull {
     html: Option<Vec<u8>>,
     document: Option<rp5::Document>,
     css: css::Css,
+    scripts: scripts::Scripts,
     save_attempted: bool,
 }
 
@@ -43,7 +47,7 @@ impl Hull {
         );
         window.request_redraw();
         self.window = Some(window);
-        match netfs::fetch_bytes(b"https://example.com/") {
+        match netfs::fetch_bytes(PAGE_URL.as_bytes()) {
             Ok(operation) => self.download = Some(operation),
             Err(code) => logl::log(
                 logl::level::ERROR,
@@ -81,7 +85,8 @@ impl Hull {
                             document.errors.len(),
                         ),
                     );
-                    self.css.parse_document(&document, "https://example.com/");
+                    self.css.parse_document(&document, PAGE_URL);
+                    self.scripts.extract(&document, PAGE_URL);
                     self.document = Some(document);
                     self.html = Some(bytes);
                 }
@@ -108,11 +113,18 @@ impl ApplicationHandler for Hull {
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.poll_download();
         self.css.poll_downloads();
-        if !self.save_attempted && self.document.is_some() && !self.css.is_pending() {
+        self.scripts.poll_downloads();
+        if !self.save_attempted
+            && self.document.is_some()
+            && !self.css.is_pending()
+            && !self.scripts.is_pending()
+        {
             self.save_attempted = true;
             if let Err(error) = snapshot::uneccecaryStoreToFilesystemForDebug(
                 self.document.as_ref().unwrap(),
                 &self.css,
+                &self.scripts,
+                PAGE_URL,
             ) {
                 logl::log(
                     logl::level::ERROR,
@@ -120,7 +132,7 @@ impl ApplicationHandler for Hull {
                 );
             }
         }
-        if self.download.is_some() || self.css.is_pending() {
+        if self.download.is_some() || self.css.is_pending() || self.scripts.is_pending() {
             trueos::vsys::sleep_ms(50);
             event_loop.set_control_flow(ControlFlow::Poll);
         } else {

@@ -25,3 +25,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/hyperium/mime"
 
 [dependencies]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("trueos", "zkvm"))']

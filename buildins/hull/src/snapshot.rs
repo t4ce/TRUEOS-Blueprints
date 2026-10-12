@@ -1,59 +1,59 @@
-//! Save one inspection snapshot with CSS outside the HTML, without applying styles.
+//! Save one flat inspection snapshot with CSS and scripts outside the HTML.
 use std::fmt::Write;
 
 use rp5::{Document, Namespace, NodeId, NodeKind};
 use trueos::{async_fs, env, logl};
 
 use super::css::Css;
+use super::scripts::Scripts;
 
 #[allow(non_snake_case)]
 pub(super) fn uneccecaryStoreToFilesystemForDebug(
     document: &Document,
     css: &Css,
+    scripts: &Scripts,
+    page_url: &str,
 ) -> Result<(), i32> {
-    let root = env::var("TRUEOS_APP_FS_ROOT").unwrap_or_else(|_| "apps/hull".into());
-    let html = html_without_css(document, css);
+    let app_root = env::var("TRUEOS_APP_FS_ROOT").unwrap_or_else(|_| "apps/hull".into());
+    let url = url::Url::parse(page_url).map_err(|_| -1)?;
+    let host = url.host_str().ok_or(-1)?;
+    let root = format!("{app_root}/{host}");
+    let html = html_without_css_and_scripts(document, css, scripts);
     async_fs::block_on(async {
-        async_fs::create_dir_all(format!("{root}/css").as_bytes()).await?;
-        let mut manifest = String::from("file\tkind\tnode\torigin\n");
+        async_fs::create_dir_all(root.as_bytes()).await?;
         for (index, source) in css.sources.iter().enumerate() {
-            let filename = format!("css/{index:04}.css");
+            let filename = format!("style-{index:04}.css");
             async_fs::write_file(
                 format!("{root}/{filename}").as_bytes(),
                 source.code.as_bytes(),
             )
             .await?;
-            let node = source.node.map(|id| id.to_string()).unwrap_or_default();
-            let _ = writeln!(
-                manifest,
-                "{filename}\t{}\t{node}\t{}",
-                if source.inline {
-                    "declarations"
-                } else {
-                    "stylesheet"
-                },
-                source.origin
-            );
         }
-        async_fs::write_file(
-            format!("{root}/css/sources.tsv").as_bytes(),
-            manifest.as_bytes(),
-        )
-        .await?;
+        for (index, source) in scripts.sources.iter().enumerate() {
+            if let Some(bytes) = &source.bytes {
+                let filename = format!("script-{index:04}.js");
+                async_fs::write_file(format!("{root}/{filename}").as_bytes(), bytes).await?;
+            }
+        }
         // Publish the HTML last, after all its associated CSS files exist.
         async_fs::write_file(format!("{root}/index.html").as_bytes(), html.as_bytes()).await
     })?;
     logl::log(
         logl::level::INFO,
         format_args!(
-            "hull: saved HTML and {} CSS sources under {root}",
-            css.sources.len()
+            "hull: saved HTML, {} CSS sources and {} script sources under {root}",
+            css.sources.len(),
+            scripts.sources.len()
         ),
     );
     Ok(())
 }
 
-pub(super) fn html_without_css(document: &Document, css: &Css) -> String {
+pub(super) fn html_without_css_and_scripts(
+    document: &Document,
+    css: &Css,
+    scripts: &Scripts,
+) -> String {
     enum Step {
         Node(NodeId),
         End(String),
@@ -132,7 +132,7 @@ pub(super) fn html_without_css(document: &Document, css: &Css) -> String {
                     .enumerate()
                     .find(|(_, source)| source.node == Some(id) && !source.inline)
                 {
-                    let _ = write!(output, "<!-- hull: stylesheet css/{index:04}.css -->");
+                    let _ = write!(output, "<!-- hull: stylesheet style-{index:04}.css -->");
                     continue;
                 }
                 let stylesheet_link = name == "link"
@@ -145,7 +145,24 @@ pub(super) fn html_without_css(document: &Document, css: &Css) -> String {
                                 .any(|value| value.eq_ignore_ascii_case("stylesheet"))
                     });
                 if stylesheet_link {
-                    output.push_str("<!-- hull: external stylesheet; see css/sources.tsv -->");
+                    output.push_str("<!-- hull: external stylesheet extracted -->");
+                    continue;
+                }
+                if let Some((index, source)) = scripts
+                    .sources
+                    .iter()
+                    .enumerate()
+                    .find(|(_, source)| source.nodes.contains(&id))
+                {
+                    let _ = write!(
+                        output,
+                        "<!-- hull: script script-{index:04}.js{} -->",
+                        if source.bytes.is_some() {
+                            ""
+                        } else {
+                            " unavailable"
+                        }
+                    );
                     continue;
                 }
                 let _ = write!(output, "<{name}");
@@ -169,7 +186,7 @@ pub(super) fn html_without_css(document: &Document, css: &Css) -> String {
                     .enumerate()
                     .find(|(_, source)| source.node == Some(id) && source.inline)
                 {
-                    let _ = write!(output, " data-hull-inline-css=\"css/{index:04}.css\"");
+                    let _ = write!(output, " data-hull-inline-css=\"style-{index:04}.css\"");
                 }
                 output.push('>');
                 if *namespace == Namespace::Html

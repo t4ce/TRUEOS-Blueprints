@@ -570,6 +570,17 @@ impl OpenOptions {
     }
 }
 
+#[cfg(target_os = "trueos")]
+impl OpenOptions {
+    /// Accepts Unix creation permissions as a compatibility hint.
+    ///
+    /// TRUEOSFS controls access through access keys when opening and writing.
+    /// Mode bits do not change that authority or the requested I/O options.
+    pub fn mode(&mut self, _mode: u32) -> &mut OpenOptions {
+        self
+    }
+}
+
 feature! {
     #![all(unix, not(any(target_os = "trueos", target_os = "zkvm")))]
 

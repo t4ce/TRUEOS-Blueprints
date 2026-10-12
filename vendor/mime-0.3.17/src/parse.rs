@@ -1,16 +1,16 @@
 #[allow(unused, deprecated)]
 use std::ascii::AsciiExt;
-use core::error::Error;
-use ::core::fmt;
-use core::iter::Enumerate;
-use core::str::Bytes;
+use core1::error::Error;
+use ::core1::fmt;
+use core1::iter::Enumerate;
+use core1::str::Bytes;
 
 use super::{Mime, MimeIter, Source, ParamSource, Indexed, CHARSET, UTF_8};
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 use alloc::{borrow::ToOwned, string::String, vec};
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use core::{
+use core1::{
     iter::Iterator,
     option::Option,
     option::Option::{None, Some},

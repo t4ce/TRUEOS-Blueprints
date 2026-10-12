@@ -30,6 +30,7 @@
 #![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
 
 #![allow(missing_docs)]
+extern crate core as core1;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 extern crate alloc;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -52,7 +53,7 @@ mod error {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod fmt {
-    pub use ::core::fmt::*;
+    pub use ::core1::fmt::*;
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -65,7 +66,7 @@ mod iter {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod slice {
-    pub use core::slice::*;
+    pub use core1::slice::*;
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -75,7 +76,7 @@ mod str {
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 use alloc::{string::String, vec::Vec};
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use core::{
+use core1::{
     clone::Clone,
     cmp::{Eq, Ord, PartialEq, PartialOrd},
     convert::{AsRef, From},
@@ -87,16 +88,16 @@ use core::{
     result::Result,
 };
 
-use core::cmp::Ordering;
-use core::error::Error;
+use core1::cmp::Ordering;
+use core1::error::Error;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use ::core::fmt;
-use core::hash::Hasher;
+use ::core1::fmt;
+use core1::hash::Hasher;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use core::hash::Hash;
-use core::str::FromStr;
+use core1::hash::Hash;
+use core1::str::FromStr;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use core::slice;
+use core1::slice;
 
 mod parse;
 
