@@ -9,8 +9,8 @@ use url::Url;
 
 #[derive(Default)]
 pub(super) struct Css {
-    sheets: Vec<StyleSheet<'static>>,
-    attributes: Vec<StyleAttribute<'static>>,
+    pub sheets: Vec<StyleSheet<'static>>,
+    pub attributes: Vec<(rp5::NodeId, StyleAttribute<'static>)>,
     downloads: HashMap<u32, Url>,
     requested: HashSet<String>,
     pub sources: Vec<CssSource>,
@@ -57,7 +57,7 @@ impl Css {
                     code: code.to_owned(),
                 });
                 match StyleAttribute::parse(code, ParserOptions::default()) {
-                    Ok(style) => self.attributes.push(style.into_owned()),
+                    Ok(style) => self.attributes.push((id, style.into_owned())),
                     Err(error) => report(format_args!("inline CSS node={id}: {error}")),
                 }
             }

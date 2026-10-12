@@ -15,14 +15,32 @@ pub(super) fn uneccecaryStoreToFilesystemForDebug(
     css: &Css,
     scripts: &Scripts,
     page_url: &str,
+    viewport: (u32, u32),
 ) -> Result<(), i32> {
     let app_root = env::var("TRUEOS_APP_FS_ROOT").unwrap_or_else(|_| "apps/hull".into());
     let url = url::Url::parse(page_url).map_err(|_| -1)?;
     let host = url.host_str().ok_or(-1)?;
     let root = format!("{app_root}/{host}");
     let html = html_without_css_and_scripts(document, css, scripts);
+    let layout = super::layout::compute(document, css, viewport).map_err(|error| {
+        logl::log(
+            logl::level::ERROR,
+            format_args!("hull: layout failed: {error}"),
+        );
+        -1
+    })?;
     async_fs::block_on(async {
         async_fs::create_dir_all(root.as_bytes()).await?;
+        async_fs::write_file(
+            format!("{root}/layout.json").as_bytes(),
+            layout.json.as_bytes(),
+        )
+        .await?;
+        async_fs::write_file(
+            format!("{root}/layout.svg").as_bytes(),
+            layout.svg.as_bytes(),
+        )
+        .await?;
         async_fs::write_file(
             format!("{root}/debug-borders.css").as_bytes(),
             DEBUG_BORDERS_CSS.as_bytes(),

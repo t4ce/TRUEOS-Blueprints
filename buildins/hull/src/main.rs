@@ -11,6 +11,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 mod borders;
 mod css;
+mod layout;
 mod scripts;
 mod shellio;
 mod snapshot;
@@ -173,6 +174,11 @@ impl ApplicationHandler for Hull {
                 &self.css,
                 &self.scripts,
                 &self.page_url,
+                self.window
+                    .as_ref()
+                    .map(|window| window.surface_size())
+                    .map(|size| (size.width, size.height))
+                    .unwrap_or((1280, 720)),
             ) {
                 logl::log(
                     logl::level::ERROR,

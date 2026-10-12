@@ -77,3 +77,17 @@ pub fn terminate(handle: Handle) -> Result<(), i32> {
     let rc = unsafe { bp_abi::trueos_cabi_blueprint_child_terminate_v1(handle) };
     if rc == 0 { Ok(()) } else { Err(rc) }
 }
+
+/// Submit a JSON process-shaped launch request to a fresh VMX Blueprint.
+/// Fields: program, args, env, cwd. This does not launch the parent archive.
+pub fn spawn_program(request: &[u8]) -> Result<Handle, i32> {
+    let mut handle = 0;
+    let rc = unsafe { bp_abi::trueos_cabi_blueprint_child_spawn_program_v1(request.as_ptr(), request.len(), &mut handle) };
+    if rc == 0 && handle != 0 { Ok(handle) } else { Err(if rc == 0 { ERR_UNAVAILABLE } else { rc }) }
+}
+
+/// Stream read that retains bytes beyond the output buffer.
+pub fn read(handle: Handle, out: &mut [u8]) -> Result<usize, i32> {
+    let n = unsafe { bp_abi::trueos_cabi_blueprint_child_read_v1(handle, out.as_mut_ptr(), out.len()) };
+    if n < 0 { Err(n as i32) } else { Ok(n as usize) }
+}

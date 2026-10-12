@@ -1,0 +1,13 @@
+[package]
+name = "potatomin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "One-shot native GPU dots and lines to 720p RGBA8 PNGs"
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+
+[dependencies]
+trueos.workspace = true
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
