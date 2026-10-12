@@ -75,7 +75,7 @@ mod tests {
     use super::*;
     use static_self::IntoOwned;
     fn run(html: &str, css_text: &str) -> (rp5::Document, serde_json::Value) {
-        let mut doc = rp5::parse(html);
+        let doc = rp5::parse(html);
         let mut css = css::Css::default();
         css.sheets.push(
             lightningcss::stylesheet::StyleSheet::parse(css_text, Default::default())
@@ -94,11 +94,6 @@ mod tests {
                         .unwrap()
                         .into_owned(),
                     ));
-                }
-                doc.initialize_element_property(id, "border", "1px solid magenta")
-                    .unwrap();
-                for edge in ["top", "left", "bottom", "right"] {
-                    doc.initialize_element_property(id, edge, "0").unwrap();
                 }
             }
         }
@@ -215,7 +210,7 @@ mod tests {
     #[test]
     fn typed_inline_dimensions_include_padding_and_border() {
         let (doc, json) = run(
-            "<div id='box' style='width:200px;height:50px;padding:10px'></div>",
+            "<div id='box' style='width:200px;height:50px;padding:10px;border:1px solid red'></div>",
             "",
         );
         let r = &node(&doc, &json, "box")["rect"];
@@ -241,7 +236,7 @@ mod tests {
             "<div id='box' class='box' style='width:200px'></div>",
             "div{width:30px}.box{width:50px}#box{width:100px!important}",
         );
-        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 102.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 100.0);
     }
     #[test]
     fn flex_places_children_horizontally() {
@@ -316,12 +311,12 @@ mod tests {
             "<section class='panel'><div></div><div id='box' data-x='yes'></div></section>",
             ".panel > div[data-x='yes']:not(.skip):nth-child(2){width:123px}",
         );
-        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 125.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 123.0);
         let (doc, json) = run(
             "<section><i></i><div id='box'></div></section>",
             "section i + div{width:99px}",
         );
-        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 101.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 99.0);
     }
     #[test]
     fn viewport_media_queries_and_print_filtering() {
@@ -329,12 +324,12 @@ mod tests {
             "<div id='box'></div>",
             "#box{width:20px}@media screen and (min-width:1000px) and (orientation:landscape){#box{width:100px}}@media print{#box{width:999px}}",
         );
-        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 102.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 100.0);
         let (doc, json) = run(
             "<div id='box'></div>",
             "@media (600px < width < 1400px){#box{width:88px}}",
         );
-        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 90.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 88.0);
     }
     #[test]
     fn inline_spans_and_links_share_a_line() {
@@ -357,12 +352,12 @@ mod tests {
         let text = &text_rect(&doc, &json, "box")["rect"];
         assert_eq!(
             text["left"].as_f64().unwrap(),
-            rect["left"].as_f64().unwrap() + 45.0
+            rect["left"].as_f64().unwrap() + 44.0
         );
     }
     #[test]
     fn html_source_order_wins_over_download_completion_order() {
-        let mut doc = rp5::parse(
+        let doc = rp5::parse(
             "<link rel='stylesheet' href='/a.css'><link rel='stylesheet' href='/b.css'><div id='box'></div>",
         );
         let mut css = css::Css::default();
@@ -371,21 +366,9 @@ mod tests {
         css.poll_downloads();
         netfs::complete("https://order.example/a.css", "#box{width:100px}");
         css.poll_downloads();
-        let id = doc
-            .nodes
-            .iter()
-            .enumerate()
-            .find(|(id, _)| {
-                doc.element(*id)
-                    .is_some_and(|(_, _, attrs)| attrs.iter().any(|attr| attr.name == "id"))
-            })
-            .unwrap()
-            .0;
-        doc.initialize_element_property(id, "border", "1px solid magenta")
-            .unwrap();
         let export = layout::compute(&doc, &css, (1280, 720)).unwrap();
         let json: serde_json::Value = serde_json::from_str(&export.json).unwrap();
-        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 202.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 200.0);
     }
     #[test]
     fn imports_precede_the_importing_sheets_declarations() {
@@ -407,7 +390,7 @@ mod tests {
         );
         let body = &node(&doc, &json, "box")["rect"];
         let paragraph = &node(&doc, &json, "text")["rect"];
-        assert_eq!(body["width"], 482.0);
+        assert_eq!(body["width"], 480.0);
         assert!(paragraph["top"].as_f64().unwrap() >= 180.0);
     }
     #[test]

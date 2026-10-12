@@ -9,7 +9,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::trueos::WindowExtTrueOS;
 use winit::window::{Window, WindowAttributes, WindowId};
 
-mod borders;
 mod css;
 mod layout;
 mod scripts;
@@ -123,7 +122,7 @@ impl Hull {
                         logl::level::INFO,
                         format_args!("hull: downloaded {} bytes={}", self.page_url, bytes.len()),
                     );
-                    let mut document = rp5::parse(&String::from_utf8_lossy(&bytes));
+                    let document = rp5::parse(&String::from_utf8_lossy(&bytes));
                     logl::log(
                         logl::level::INFO,
                         format_args!(
@@ -134,7 +133,6 @@ impl Hull {
                     );
                     self.css.parse_document(&document, &self.page_url);
                     self.scripts.extract(&document, &self.page_url);
-                    borders::apply(&mut document);
                     self.document = Some(document);
                     self.html = Some(bytes);
                 }
@@ -169,10 +167,9 @@ impl ApplicationHandler for Hull {
             && !self.scripts.is_pending()
         {
             self.save_attempted = true;
-            if let Err(error) = snapshot::uneccecaryStoreToFilesystemForDebug(
+            if let Err(error) = snapshot::save_svg(
                 self.document.as_ref().unwrap(),
                 &self.css,
-                &self.scripts,
                 &self.page_url,
                 self.window
                     .as_ref()

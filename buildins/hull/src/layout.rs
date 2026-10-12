@@ -59,20 +59,6 @@ pub(super) fn compute(
         };
         match &node.kind {
             NodeKind::Element { name, attrs, .. } => {
-                if document.element_property(id, "border").is_some() {
-                    style.border = Rect {
-                        top: LengthPercentage::from_length(1.0),
-                        left: LengthPercentage::from_length(1.0),
-                        bottom: LengthPercentage::from_length(1.0),
-                        right: LengthPercentage::from_length(1.0),
-                    };
-                }
-                style.inset = Rect {
-                    top: LengthPercentageAuto::from_length(0.0),
-                    left: LengthPercentageAuto::from_length(0.0),
-                    bottom: LengthPercentageAuto::from_length(0.0),
-                    right: LengthPercentageAuto::from_length(0.0),
-                };
                 let context = ResolveContext {
                     viewport,
                     font_size: inherited.font_size,
@@ -128,7 +114,7 @@ pub(super) fn compute(
         }
         let node = &document.nodes[id];
         match &node.kind {
-            NodeKind::Text(text) => {
+            NodeKind::Text(text) if !hidden[id] => {
                 for text in text_chunks(text, text_metrics[id].whitespace) {
                     let style = Style {
                         display: Display::Block,
@@ -338,8 +324,25 @@ pub(super) fn compute(
             )
         })
         .count();
+    let mut unused = std::collections::BTreeSet::new();
+    for sheet in &css.sheets {
+        unused_properties(&sheet.rules.0, &mut unused);
+    }
+    for (_, attribute) in &css.attributes {
+        for property in attribute
+            .declarations
+            .declarations
+            .iter()
+            .chain(&attribute.declarations.important_declarations)
+        {
+            let name = property.property_id().name().to_owned();
+            if !used_for_layout(&name) {
+                unused.insert(name);
+            }
+        }
+    }
     let json = serde_json::to_string_pretty(
-        &serde_json::json!({"engine":"taffy","engine_version":"0.7.7","viewport":{"width":viewport.0,"height":viewport.1},"units":"layout units; CSS lengths currently map 1:1 for compatibility; SVG uses the same numeric coordinates","coordinates":"absolute layout units; right/bottom are rectangle edges, not CSS insets","text_metrics":"synthetic monospace cell metrics: 6 layout units advance by 11 layout units line height at 11-unit default font-size, scaled by inherited CSS font-size and line-height; no font shaping","limitations":["text widths and wrapping use synthetic monospace metrics; no font shaping","dynamic pseudo-classes, pseudo-elements, :has and namespace selectors are not implemented","media conditions cover viewport sizes and orientation; device preference queries, variables, calc, grid tracks, cascade layers and supports conditions are not implemented","inline flow uses approximate flex line boxes; nested inline boxes may wrap as a single item; no complete browser default stylesheet"],"unsupported_rule_count":unsupported_rules,"nodes":rows}),
+        &serde_json::json!({"engine":"taffy","engine_version":"0.7.7","viewport":{"width":viewport.0,"height":viewport.1},"units":"layout units; CSS lengths currently map 1:1 for compatibility; SVG uses the same numeric coordinates","coordinates":"absolute layout units; right/bottom are rectangle edges, not CSS insets","text_metrics":"synthetic monospace cell metrics: 6 layout units advance by 11 layout units line height at 11-unit default font-size, scaled by inherited CSS font-size and line-height; no font shaping","limitations":["text widths and wrapping use synthetic monospace metrics; no font shaping","dynamic pseudo-classes, pseudo-elements, :has and namespace selectors are not implemented","media conditions cover viewport sizes and orientation; device preference queries, variables, calc, grid tracks, cascade layers and supports conditions are not implemented","inline flow uses approximate flex line boxes; nested inline boxes may wrap as a single item; no complete browser default stylesheet"],"unsupported_rule_count":unsupported_rules,"properties_not_used_for_layout":unused,"nodes":rows}),
     )?;
     let extent = tree.layout(root)?.size.height.max(viewport.1 as f32);
     let mut svg = format!(
@@ -510,7 +513,7 @@ fn estimated_line_count(text: &str, width: f32, font_size: f32) -> f32 {
     let columns = (width / advance).floor().max(1.0) as usize;
     let mut lines = 0usize;
     let mut used = 0usize;
-    for word in text.split_whitespace() {
+    for word in text.split(is_css_space).filter(|word| !word.is_empty()) {
         let count = word.chars().count();
         if used > 0 && used + 1 + count > columns {
             lines += 1;
@@ -1266,7 +1269,10 @@ fn text_chunks(text: &str, whitespace: WhiteSpaceMetric) -> Vec<String> {
             vec![text.into()]
         };
     }
-    let words: Vec<_> = text.split_whitespace().collect();
+    let words: Vec<_> = text
+        .split(is_css_space)
+        .filter(|word| !word.is_empty())
+        .collect();
     if matches!(whitespace, WhiteSpaceMetric::NoWrap) {
         return if words.is_empty() {
             vec![]
@@ -1282,12 +1288,12 @@ fn text_chunks(text: &str, whitespace: WhiteSpaceMetric) -> Vec<String> {
         };
     }
     let mut result = Vec::new();
-    if text.starts_with(char::is_whitespace) {
+    if text.starts_with(is_css_space) {
         result.push(" ".into());
     }
     for (index, word) in words.iter().enumerate() {
         let mut word = word.to_string();
-        if index + 1 < words.len() || text.ends_with(char::is_whitespace) {
+        if index + 1 < words.len() || text.ends_with(is_css_space) {
             word.push(' ');
         }
         result.push(word);
@@ -1385,4 +1391,86 @@ fn visual_lines(context: &TextMeasureContext, width: f32) -> Vec<String> {
         }
     }
     lines
+}
+
+fn used_for_layout(name: &str) -> bool {
+    matches!(
+        name,
+        "width"
+            | "height"
+            | "min-width"
+            | "min-height"
+            | "max-width"
+            | "max-height"
+            | "box-sizing"
+            | "margin"
+            | "margin-top"
+            | "margin-right"
+            | "margin-bottom"
+            | "margin-left"
+            | "padding"
+            | "padding-top"
+            | "padding-right"
+            | "padding-bottom"
+            | "padding-left"
+            | "border"
+            | "border-top"
+            | "border-right"
+            | "border-bottom"
+            | "border-left"
+            | "border-width"
+            | "border-style"
+            | "border-top-width"
+            | "border-right-width"
+            | "border-bottom-width"
+            | "border-left-width"
+            | "border-top-style"
+            | "border-right-style"
+            | "border-bottom-style"
+            | "border-left-style"
+            | "position"
+            | "top"
+            | "right"
+            | "bottom"
+            | "left"
+            | "display"
+            | "font"
+            | "font-size"
+            | "line-height"
+            | "text-align"
+            | "white-space"
+            | "flex-grow"
+            | "flex-shrink"
+            | "flex-direction"
+    )
+}
+fn unused_properties(
+    rules: &[lightningcss::rules::CssRule<'static>],
+    unused: &mut std::collections::BTreeSet<String>,
+) {
+    use lightningcss::rules::CssRule;
+    for rule in rules {
+        match rule {
+            CssRule::Style(rule) => {
+                for property in rule
+                    .declarations
+                    .declarations
+                    .iter()
+                    .chain(&rule.declarations.important_declarations)
+                {
+                    let name = property.property_id().name().to_owned();
+                    if !used_for_layout(&name) {
+                        unused.insert(name);
+                    }
+                }
+                unused_properties(&rule.rules.0, unused);
+            }
+            CssRule::Media(rule) => unused_properties(&rule.rules.0, unused),
+            _ => {}
+        }
+    }
+}
+
+fn is_css_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
 }
