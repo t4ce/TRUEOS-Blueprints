@@ -661,6 +661,12 @@ fn build_one_target_to_in_lane(
     }
     push_bindgen_clang_args(&mut cargo);
     push_trueos_cc_flags(&mut cargo);
+    // SQLite's optional sort workers create POSIX pthreads directly, which
+    // Blueprint loaders reject. Keep SQLite mutex/thread safety enabled and
+    // execute SQL on the caller's TRUEOS carrier instead.
+    let mut sqlite_flags = env::var("LIBSQLITE3_FLAGS").unwrap_or_default();
+    sqlite_flags.push_str(" -USQLITE_MAX_WORKER_THREADS -DSQLITE_MAX_WORKER_THREADS=0");
+    cargo.env("LIBSQLITE3_FLAGS", sqlite_flags);
     cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     if let Some(root) = blueprint_root(app_dir) {

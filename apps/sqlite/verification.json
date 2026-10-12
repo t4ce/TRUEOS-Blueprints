@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-12",
+  "report": {
+    "concurrent_writers": 8,
+    "instances": 2,
+    "isolated": true,
+    "localhost": true,
+    "result": "PASS",
+    "rollback": true
+  },
+  "advertisements": [
+    {
+      "protocol": "trueos-sqlite/v1",
+      "instance": "default",
+      "endpoint": "http://localhost:40894",
+      "ipv4_endpoint": "http://127.0.0.1:40894",
+      "sqlite_version": "3.53.2",
+      "storage": "sqlite-memory-image"
+    },
+    {
+      "protocol": "trueos-sqlite/v1",
+      "instance": "client-probe-second",
+      "endpoint": "http://localhost:21260",
+      "ipv4_endpoint": "http://127.0.0.1:21260",
+      "sqlite_version": "3.53.2",
+      "storage": "sqlite-memory-image"
+    }
+  ],
+  "images": [
+    {
+      "instance": "default",
+      "bytes": 8192,
+      "integrity": "ok",
+      "rows": [
+        [
+          1,
+          8
+        ]
+      ]
+    },
+    {
+      "instance": "client-probe-second",
+      "bytes": 8192,
+      "integrity": "ok",
+      "rows": [
+        [
+          999
+        ]
+      ]
+    }
+  ],
+  "service": {
+    "name": "sqlite.bp\u00a7\u00a7fd962e2b2bb358ad409051a0023e3337ec241a4d37802670bf25a7ae77215b99",
+    "sha256": "fd962e2b2bb358ad409051a0023e3337ec241a4d37802670bf25a7ae77215b99"
+  },
+  "client": {
+    "name": "sqlite_client.bp\u00a7\u00a70eabb5b02729de457a12d3b36798cc0a88d02b5f48c9167355cde9bc43389fef",
+    "sha256": "0eabb5b02729de457a12d3b36798cc0a88d02b5f48c9167355cde9bc43389fef"
+  }
+}

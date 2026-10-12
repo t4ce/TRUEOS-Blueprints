@@ -19,6 +19,11 @@ database per lane, verifies 512 rows across two lanes, checks distinct stable WL
 slots and reopened images, and verifies every value in the persisted summary.
 It does not test concurrent writers to the same file.
 
+`rusqlite_probe` has separately been restored to investigate Codex's SQLite
+integration. It uses the original SQLite memory/serialization route and the
+current async TRUEOSFS API; see `probes/rusqlite_probe/README.md` for its scope and
+devrig evidence. PrismQ continues to use redb.
+
 Rebuild and publish the current probe catalog before running the new selectors;
 previously packed or installed Blueprints retain their previous implementation.
 Upstream C compiler fixtures in `badc` are unrelated to application storage.
