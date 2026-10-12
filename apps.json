@@ -1,5 +1,6 @@
 {
   "apps": [
+    { "name": "hull", "path": "buildins/hull" },
     { "name": "rebsky", "path": "../rebels-in-the-sky" },
     "badc",
     "calculator",

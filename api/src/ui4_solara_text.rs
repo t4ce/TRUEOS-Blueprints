@@ -1248,6 +1248,40 @@ impl Frame {
         })
     }
 
+    /// Publish a blank frame and wait cooperatively until UI4 closes it.
+    ///
+    /// Resizes automatically replace and publish the backing frame using the
+    /// same clear color (zero gives the default transparent background).
+    /// Applications with content or layout should instead consume
+    /// [`Self::take_resize_event`] and render their replacement themselves.
+    pub fn wait_blank_until_closed(&mut self, clear_rgba: u32) -> Result<(), Error> {
+        let result = (|| {
+            self.begin(clear_rgba)?;
+            self.publish_blank()?;
+            loop {
+                if let Some(event) = self.take_resize_event()? {
+                    self.resize(event.width, event.height)?;
+                    self.begin(clear_rgba)?;
+                    self.publish_blank()?;
+                }
+                crate::vsys::sleep_ms(16);
+            }
+        })();
+        match result {
+            Err(Error::NotFound) => Ok(()),
+            result => result,
+        }
+    }
+
+    fn publish_blank(&mut self) -> Result<(), Error> {
+        loop {
+            match self.publish(Damage::full(self.width, self.height)) {
+                Err(Error::Busy) => crate::vsys::sleep_ms(16),
+                result => return result,
+            }
+        }
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), Error> {
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_frame_resize(self.window_id, width, height)

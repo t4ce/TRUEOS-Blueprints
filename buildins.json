@@ -1,6 +1,7 @@
 {
   "buildins": [
     "commander",
+    "hull",
     "hyper",
     "ssh",
     "img",
