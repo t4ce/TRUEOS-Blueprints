@@ -528,6 +528,9 @@ pub enum Error {
     Font,
     Ui4,
     Busy,
+    /// The shader executable differs from the kernel's SHA-256/ABI contract,
+    /// or its package framing is invalid. Source/provenance is build-only.
+    ShaderPackageMismatch,
     Unknown(i32),
 }
 
@@ -1582,8 +1585,8 @@ impl Frame {
     }
 
     /// Register a Blueprint-owned shader package before its first render.
-    /// The kernel authenticates the complete package, executable, SPIR-V and ABI
-    /// against its own trust catalog. Source files travel with the package.
+    /// The kernel authenticates executable and SPIR-V against its own ABI/device
+    /// contract. Complete source/provenance is checked by the offline build.
     pub fn register_shadertoy(&mut self, shader_id: u32, package: &[u8]) -> Result<(), Error> {
         if package.is_empty() || package.len() > u32::MAX as usize {
             return Err(Error::Invalid);
@@ -2183,6 +2186,12 @@ fn error_from_status(code: i32) -> Error {
         -5 => Error::Font,
         -6 => Error::Ui4,
         -7 => Error::Busy,
+        -8 => {
+            crate::logl::log(crate::logl::level::ERROR, format_args!(
+                "Safety-Guard with SHA256: Shader Package mismatch"
+            ));
+            Error::ShaderPackageMismatch
+        }
         other => Error::Unknown(other),
     }
 }
