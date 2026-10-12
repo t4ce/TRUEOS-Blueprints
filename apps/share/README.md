@@ -17,7 +17,9 @@ TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp share
 ```
 
 This produces `dist/share.bp` without publishing or launching it. The app is
-registered in `apps.json` and the workspace for the usual Blueprint workflow.
+registered as a built-in in `buildins.json`, with its sources in `apps/share`.
+The default TRUEOS startup manifest launches it headlessly from the embedded
+AppDB on cold boot, without fetching it from the online app catalog.
 It uses the normal VMX Blueprint execution path, without a guest Linux system.
 The root is created when the server starts. Files live in TRUEOSFS independently
 of the server process.
@@ -64,8 +66,10 @@ overrides the default `0.0.0.0:4918` listener.
 - HTTP directory listings are enabled. Symlinks are hidden and rejected by the
   backend; the share root itself cannot be deleted or moved through WebDAV.
 - Successful PUT waits for file flush and storage synchronization.
-- Files are limited to **64 MiB** for this initial test, because TRUEOS's current
-  Tokio file bridge buffers whole files. Four HTTP connections can run at once.
+- Files are limited to **4 GiB** (4,294,967,296 bytes). TRUEOS's current Tokio
+  file bridge buffers whole files. Four HTTP connections can run at once.
+  The kernel must include the matching 4 GiB async-filesystem read/write caps;
+  earlier kernels restrict buffered writes to 16 MiB and reads to 1 GiB.
 - Native metadata currently exposes size and type, without timestamps or ETags.
 - TRUEOSFS moves inherit its copy/delete rename behavior. Atomic replacement,
   crash-safe saves and concurrent editing have not been established on hardware.

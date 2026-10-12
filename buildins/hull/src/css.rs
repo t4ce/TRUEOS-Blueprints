@@ -14,6 +14,17 @@ pub(super) struct Css {
     downloads: HashMap<u32, Url>,
     requested: HashSet<String>,
     pub sources: Vec<CssSource>,
+    pub roots: Vec<RootStylesheet>,
+    pub external_sheets: HashMap<String, usize>,
+}
+
+pub(super) struct RootStylesheet {
+    pub source: SheetReference,
+    pub media: Option<lightningcss::media_query::MediaList<'static>>,
+}
+pub(super) enum SheetReference {
+    Embedded(usize),
+    External(String),
 }
 
 pub(super) struct CssSource {
@@ -73,7 +84,12 @@ impl Css {
                     origin: base.to_string(),
                     code: code.clone(),
                 });
-                self.parse_sheet(&code, &base);
+                if let Some(index) = self.parse_sheet(&code, &base) {
+                    self.roots.push(RootStylesheet {
+                        source: SheetReference::Embedded(index),
+                        media: parse_media(attribute(attrs, "media")),
+                    });
+                }
             }
             if name == "link"
                 && namespace == rp5::Namespace::Html
@@ -83,14 +99,19 @@ impl Css {
                 })
             {
                 if let Some(href) = attribute(attrs, "href") {
-                    self.request(&base, href);
+                    if let Some(url) = self.request(&base, href) {
+                        self.roots.push(RootStylesheet {
+                            source: SheetReference::External(url),
+                            media: parse_media(attribute(attrs, "media")),
+                        });
+                    }
                 }
             }
         }
         self.report_counts();
     }
 
-    fn parse_sheet(&mut self, code: &str, source: &Url) {
+    fn parse_sheet(&mut self, code: &str, source: &Url) -> Option<usize> {
         let options = ParserOptions {
             filename: source.to_string(),
             ..ParserOptions::default()
@@ -103,36 +124,42 @@ impl Css {
                         self.request(source, &import.url);
                     }
                 }
+                let index = self.sheets.len();
                 self.sheets.push(sheet.into_owned());
+                Some(index)
             }
-            Err(error) => report(format_args!("CSS {source}: {error}")),
+            Err(error) => {
+                report(format_args!("CSS {source}: {error}"));
+                None
+            }
         }
     }
 
-    fn request(&mut self, base: &Url, reference: &str) {
+    fn request(&mut self, base: &Url, reference: &str) -> Option<String> {
         let mut url = match base.join(reference) {
             Ok(url) => url,
             Err(error) => {
                 report(format_args!("CSS URL {reference:?}: {error}"));
-                return;
+                return None;
             }
         };
         url.set_fragment(None);
         if !self.requested.insert(url.to_string()) {
-            return;
+            return Some(url.to_string());
         }
         if url.scheme() != "https" {
             report(format_args!(
                 "CSS URL unsupported by HTTPS downloader: {url}"
             ));
-            return;
+            return None;
         }
         match netfs::fetch_bytes(url.as_str().as_bytes()) {
             Ok(operation) => {
-                self.downloads.insert(operation, url);
+                self.downloads.insert(operation, url.clone());
             }
             Err(code) => report(format_args!("CSS download start {url}: {code}")),
         }
+        Some(url.to_string())
     }
 
     pub fn poll_downloads(&mut self) {
@@ -155,7 +182,9 @@ impl Css {
                         origin: source.to_string(),
                         code: code.clone(),
                     });
-                    self.parse_sheet(&code, &source);
+                    if let Some(index) = self.parse_sheet(&code, &source) {
+                        self.external_sheets.insert(source.to_string(), index);
+                    }
                 }
                 Err(code) => report(format_args!("CSS download {source}: {code}")),
             }
@@ -197,4 +226,23 @@ fn attribute<'a>(attrs: &'a [rp5::Attribute], name: &str) -> Option<&'a str> {
 
 fn report(message: std::fmt::Arguments<'_>) {
     logl::log(logl::level::ERROR, format_args!("hull: {message}"));
+}
+
+fn parse_media(value: Option<&str>) -> Option<lightningcss::media_query::MediaList<'static>> {
+    let value = value.filter(|value| !value.trim().is_empty())?;
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    match lightningcss::media_query::MediaList::parse(&mut parser, &ParserOptions::default()) {
+        Ok(media) => Some(media.into_owned()),
+        Err(error) => {
+            report(format_args!("stylesheet media attribute: {error:?}"));
+            Some(lightningcss::media_query::MediaList {
+                media_queries: vec![lightningcss::media_query::MediaQuery {
+                    qualifier: None,
+                    media_type: lightningcss::media_query::MediaType::Print,
+                    condition: None,
+                }],
+            })
+        }
+    }
 }

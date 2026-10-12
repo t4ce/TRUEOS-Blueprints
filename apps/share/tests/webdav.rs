@@ -205,7 +205,7 @@ async fn root_and_file_size_limits() {
             &handler,
             "PUT",
             "/too-large.bin",
-            &[("Content-Length", "67108865")],
+            &[("Content-Length", "4294967297")],
             ""
         )
         .await

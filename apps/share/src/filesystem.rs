@@ -19,9 +19,9 @@ type Metadata = fs::Metadata;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 type Metadata = std::fs::Metadata;
 
-// The current TRUEOS Tokio file bridge retains whole files in memory. Keep this
-// first test service's files bounded; HTTP reads/writes themselves use chunks.
-pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+// The current TRUEOS Tokio file bridge retains whole files in memory. This
+// per-file limit is 4 GiB; HTTP reads/writes themselves use chunks.
+pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 fn error(error: io::Error) -> FsError {
     match error.kind() {

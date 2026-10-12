@@ -66,7 +66,7 @@ pub(super) fn uneccecaryStoreToFilesystemForDebug(
     logl::log(
         logl::level::INFO,
         format_args!(
-            "hull: saved HTML, {} CSS sources and {} script sources under {root}",
+            "hull: saved index.html, layout.json, layout.svg, {} CSS sources and {} script sources under {root}",
             css.sources.len(),
             scripts.sources.len()
         ),
