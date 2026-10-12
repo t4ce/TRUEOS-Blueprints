@@ -81,6 +81,17 @@ Tokio asynchronous stdin/stdout/stderr I/O uses the std-thread blocking pool.
 Constructing those handles in `tokio_rt` is not an I/O acceptance test. The custom
 TRUEOS Tokio filesystem implementation uses asynchronous CABI operations.
 
+Vendored Reqwest 0.13.3 enables its ordinary `blocking` client on TRUEOS. It
+starts a current-thread async runtime on a std helper thread; callers wait using
+channels and park/unpark, and streamed responses retain that helper until they
+are dropped. Call this API from an ordinary thread or `spawn_blocking`, as on
+other platforms. The June 2026 compile-time rejection predates the stackful std
+thread backend and has been removed. `probes/reqwest_blocking` checks streamed
+reads after dropping the client, header/body timeouts, and shutdown/recreation.
+The probe packs for TRUEOS and passes an isolated HTTP-only Linux run using the
+actual vendored Reqwest. TRUEOS runtime acceptance and HTTPS handshake coverage
+remain separate checks; compiling the Rustls feature does not establish either.
+
 Player's TRUEOS startup probe uses native work and reports errors without
 preventing the UI from opening. Superseedr's TRUEOS shell/trackers are aligned;
 the desktop engine's blocking calls are behind a different feature path. This

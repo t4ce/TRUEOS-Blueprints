@@ -16,6 +16,7 @@
     "posix_fd_probe",
     "redb_probe",
     "redb_multirt",
+    "reqwest_blocking",
     "signal_probe",
     "test_some_crates",
     "tokio_fs",

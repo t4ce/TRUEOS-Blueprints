@@ -14,6 +14,8 @@ mod layout;
 mod scripts;
 mod shellio;
 mod snapshot;
+#[path = "../xxx/mod.rs"]
+mod xxx;
 
 const PAGE_URL: &str = "https://example.com/";
 

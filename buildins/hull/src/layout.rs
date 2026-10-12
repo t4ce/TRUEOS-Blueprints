@@ -21,6 +21,8 @@ use taffy::prelude::*;
 pub(super) struct Export {
     pub json: String,
     pub svg: String,
+    pub line_rects: Vec<[f32; 4]>,
+    pub png_size: (u32, u32),
 }
 
 pub(super) fn compute(
@@ -349,6 +351,10 @@ pub(super) fn compute(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\"><rect width=\"100%\" height=\"100%\" fill=\"white\"/>",
         viewport.0, extent, viewport.0, extent
     );
+    let line_rects = rectangles
+        .iter()
+        .map(|&(_, x, y, w, h)| [x, y, w, h])
+        .collect();
     for (id, left, top, width, height) in rectangles {
         let _ = write!(
             svg,
@@ -357,7 +363,12 @@ pub(super) fn compute(
     }
     svg.push_str(&text_svg);
     svg.push_str("</svg>\n");
-    Ok(Export { json, svg })
+    Ok(Export {
+        json,
+        svg,
+        line_rects,
+        png_size: (viewport.0, extent.ceil() as u32),
+    })
 }
 
 fn matches_selector(document: &Document, id: HtmlId, selector: &Selector<'_>) -> bool {

@@ -1,4 +1,4 @@
-//! Persist only the final layout SVG.
+//! Persist the final layout SVG and native GPU line demo.
 use rp5::Document;
 use trueos::{async_fs, env, logl};
 
@@ -19,13 +19,33 @@ pub(super) fn save_svg(
     let host = url.host_str().ok_or(-1)?;
     let root = format!("{app_root}/{host}");
     let layout = super::layout::compute(document, css, viewport).map_err(|error| {
-        logl::log(logl::level::ERROR, format_args!("hull: layout failed: {error}"));
+        logl::log(
+            logl::level::ERROR,
+            format_args!("hull: layout failed: {error}"),
+        );
         -1
     })?;
     async_fs::block_on(async {
         async_fs::create_dir_all(root.as_bytes()).await?;
-        async_fs::write_file(format!("{root}/layout.svg").as_bytes(), layout.svg.as_bytes()).await
+        async_fs::write_file(
+            format!("{root}/layout.svg").as_bytes(),
+            layout.svg.as_bytes(),
+        )
+        .await
     })?;
-    logl::log(logl::level::INFO, format_args!("hull: saved {root}/layout.svg"));
+    logl::log(
+        logl::level::INFO,
+        format_args!("hull: saved {root}/layout.svg"),
+    );
+    let png = super::xxx::lines_png(layout.png_size.0, layout.png_size.1, &layout.line_rects)?;
+    async_fs::block_on(async_fs::write_file_typed(
+        format!("{root}/layout.png").as_bytes(),
+        &png,
+        async_fs::ContentTypeId::PNG,
+    ))?;
+    logl::log(
+        logl::level::INFO,
+        format_args!("hull: saved {root}/layout.png"),
+    );
     Ok(())
 }

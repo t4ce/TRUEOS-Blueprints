@@ -37,6 +37,7 @@ members = [
     "probes/unix_api_probe",
     "probes/redb_probe",
     "probes/redb_multirt",
+    "probes/reqwest_blocking",
     "probes/signal_probe",
     "apps/skybox",
     "buildins/ssh",

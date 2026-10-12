@@ -366,9 +366,10 @@ if_hyper! {
 
 
     mod async_impl;
-    #[cfg(all(feature = "blocking", any(target_os = "trueos", target_os = "zkvm")))]
-    compile_error!("reqwest blocking client is not supported on TRUEOS/zkvm; use the async Client so work stays on Tokio/TRUEOS carriers");
-    #[cfg(all(feature = "blocking", not(any(target_os = "trueos", target_os = "zkvm"))))]
+    // TRUEOS std threads own suspendable stacks: the blocking client can run
+    // its async runtime on a helper thread and park callers without occupying
+    // their carriers. Keep the ordinary channel, wake and join implementation.
+    #[cfg(feature = "blocking")]
     pub mod blocking;
     mod connect;
     #[cfg(feature = "cookies")]

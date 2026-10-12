@@ -10,6 +10,12 @@
 //! synchronous, but a transitive caller is async, consider changing that caller
 //! to use [`tokio::task::spawn_blocking`] around the calls that need to block.
 //!
+//! On TRUEOS, the helper runtime uses a stackful std thread. Its callers park
+//! through the platform thread backend while asynchronous network work makes
+//! progress. The same runtime-context restriction applies: use an ordinary
+//! thread or `spawn_blocking`, and finish reading or drop responses before
+//! expecting the helper runtime to shut down.
+//!
 //! # Optional
 //!
 //! This requires the optional `blocking` feature to be enabled.
