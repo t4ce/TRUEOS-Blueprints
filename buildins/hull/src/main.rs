@@ -1,10 +1,10 @@
-use trueos::logl;
 use trueos::ui4_scene::{output_dimensions, rgba};
 use trueos::ui4_winit::{Damage, Error, SceneTarget};
+use trueos::{logl, netfs};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::trueos::WindowExtTrueOS;
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -13,6 +13,9 @@ struct Hull {
     window: Option<Box<dyn Window>>,
     target: Option<SceneTarget>,
     pending_publish: bool,
+    download: Option<u32>,
+    html: Option<Vec<u8>>,
+    document: Option<rp5::Document>,
 }
 
 impl Hull {
@@ -35,11 +38,76 @@ impl Hull {
         );
         window.request_redraw();
         self.window = Some(window);
+        match netfs::fetch_bytes(b"https://example.com/") {
+            Ok(operation) => self.download = Some(operation),
+            Err(code) => logl::log(
+                logl::level::ERROR,
+                format_args!("hull: download start failed: {code}"),
+            ),
+        }
         Ok(())
+    }
+
+    fn poll_download(&mut self) {
+        let Some(operation) = self.download else {
+            return;
+        };
+        match netfs::fetch_bytes_result_len(operation) {
+            Err(-8) => return, // Kernel operation is still pending.
+            Err(code) => logl::log(
+                logl::level::ERROR,
+                format_args!("hull: download failed: {code}"),
+            ),
+            Ok(_) => match netfs::fetch_bytes_read(operation) {
+                Ok(bytes) => {
+                    logl::log(
+                        logl::level::INFO,
+                        format_args!(
+                            "hull: downloaded https://example.com/ bytes={}",
+                            bytes.len()
+                        ),
+                    );
+                    let document = rp5::parse(&String::from_utf8_lossy(&bytes));
+                    logl::log(
+                        logl::level::INFO,
+                        format_args!(
+                            "hull: rp5 parsed nodes={} errors={} title={:?}",
+                            document.nodes.len(), document.errors.len(), document.title(),
+                        ),
+                    );
+                    self.document = Some(document);
+                    self.html = Some(bytes);
+                }
+                Err(code) => logl::log(
+                    logl::level::ERROR,
+                    format_args!("hull: download read failed: {code}"),
+                ),
+            },
+        }
+        let _ = netfs::fetch_bytes_discard(operation);
+        self.download = None;
+    }
+}
+
+impl Drop for Hull {
+    fn drop(&mut self) {
+        if let Some(operation) = self.download.take() {
+            let _ = netfs::fetch_bytes_discard(operation);
+        }
     }
 }
 
 impl ApplicationHandler for Hull {
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.poll_download();
+        if self.download.is_some() {
+            trueos::vsys::sleep_ms(50);
+            event_loop.set_control_flow(ControlFlow::Poll);
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
+
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         if self.window.is_none() {
             if let Err(error) = self.create_window(event_loop) {

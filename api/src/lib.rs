@@ -40,6 +40,7 @@ pub use v::vusb as usb;
 
 pub mod clipboard;
 pub mod terminal_style;
+pub mod command_session;
 
 /// Keyboard events translated by the kernel's shared HID input broker.
 ///
@@ -1067,6 +1068,7 @@ pub fn panic_abort(message: &str) -> ! {
     }
 }
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn abort() -> ! {
     panic_abort("blueprint abort\n")
