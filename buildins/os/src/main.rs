@@ -21,7 +21,11 @@ const PINK: Color = Color::Rgb {
 };
 
 // Match Shell3’s control rows and matrix area.
-const CONTROL_BACKGROUND: Color = Color::Rgb { r: 16, g: 16, b: 16 };
+const CONTROL_BACKGROUND: Color = Color::Rgb {
+    r: trueos::terminal_style::CONTROL_BACKGROUND_RGB[0],
+    g: trueos::terminal_style::CONTROL_BACKGROUND_RGB[1],
+    b: trueos::terminal_style::CONTROL_BACKGROUND_RGB[2],
+};
 const MATRIX_BACKGROUND: Color = Color::Reset;
 
 #[derive(Clone)]

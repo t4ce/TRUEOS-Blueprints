@@ -39,6 +39,7 @@ pub use v::vthermal as thermal;
 pub use v::vusb as usb;
 
 pub mod clipboard;
+pub mod terminal_style;
 
 /// Keyboard events translated by the kernel's shared HID input broker.
 ///
@@ -145,6 +146,8 @@ pub mod ui4_winit;
 pub mod ui4_scene;
 
 pub mod image_source;
+pub mod os_assets;
+pub use os_assets::logo_jpeg;
 
 pub mod replication;
 pub mod shutdown;
