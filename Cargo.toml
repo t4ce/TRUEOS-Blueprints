@@ -48,6 +48,7 @@ members = [
     "apps/cubesrv",
     "probes/test_some_crates",
     "probes/tokio_fs",
+    "probes/tokio_fs_bridge",
     "probes/tokio_mrt",
     "probes/tokio_net",
     "probes/tokio_rt",

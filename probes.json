@@ -23,6 +23,7 @@
     "signal_probe",
     "test_some_crates",
     "tokio_fs",
+    "tokio_fs_bridge",
     "tokio_mrt",
     "tokio_stop",
     "tokio_kill",

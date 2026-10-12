@@ -283,7 +283,18 @@ impl File {
     /// let std_file = std::fs::File::open("foo.txt").unwrap();
     /// let file = tokio::fs::File::from_std(std_file);
     /// ```
+    #[cfg(not(target_os = "trueos"))]
     pub fn from_std(std: StdFile) -> File {
+        Self::from_inner(std)
+    }
+
+    /// Retains a standard file's open handle, cursor and access flags on TRUEOS.
+    #[cfg(target_os = "trueos")]
+    pub fn from_std(std: impl Into<StdFile>) -> File {
+        Self::from_inner(std.into())
+    }
+
+    fn from_inner(std: StdFile) -> File {
         File {
             std: Arc::new(std),
             inner: Mutex::new(Inner {

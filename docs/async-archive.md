@@ -1,10 +1,10 @@
 # Async archive service
 
-Blueprints use the kernel-owned 7z implementation through the `trueos` API:
+Blueprints use the kernel-owned tar/LZ4 implementation through the `trueos` API:
 
 ```rust
-let packed = trueos::archive::pack(b"source-dir", b"source.7z").await?;
-let unpacked = trueos::archive::unpack(b"source.7z", b"restored-dir").await?;
+let packed = trueos::archive::pack(b"source-dir", b"source.tar.lz4").await?;
+let unpacked = trueos::archive::unpack(b"source.tar.lz4", b"restored-dir").await?;
 ```
 
 Both calls accept Blueprint-visible filesystem paths. The kernel resolves them

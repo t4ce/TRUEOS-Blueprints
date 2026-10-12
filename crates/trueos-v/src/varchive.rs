@@ -87,9 +87,9 @@ impl Drop for Operation {
     }
 }
 
-/// Pack a TRUEOSFS file or directory into a deterministic archive.
-/// Destinations ending in `.lz4` select POSIX tar in a standard LZ4 frame
-/// (use `.tar.lz4`); other destinations retain 7z. Kernel compute is asynchronous.
+/// Pack a TRUEOSFS file or directory into deterministic POSIX tar in a standard
+/// LZ4 frame. Use `.tar.lz4` for the destination. The kernel uses its GPU block
+/// service when available, otherwise the bounded CPU pool.
 ///
 /// The future resolves only after the archive has been written successfully.
 pub async fn pack(source: &[u8], archive: &[u8]) -> Result<Report, i32> {
@@ -148,7 +148,7 @@ pub async fn pack_many(sources: &[&[u8]], archive: &[u8]) -> Result<Report, i32>
     operation.finish().await
 }
 
-/// Unpack a 7z or tar/LZ4 archive into a TRUEOSFS destination directory.
+/// Unpack a tar/LZ4 archive into a TRUEOSFS destination directory.
 /// The kernel detects encoding from the input magic, independent of its name.
 ///
 /// The kernel validates archive and path resource caps before extracting. The

@@ -393,12 +393,12 @@ fn render_job_forms(rel: &str, links: TreeLinks) -> String {
 
   <form class="form-card form-grid" action="{jobs_base}/extract" method="post">
     <div>
-      <h3>Extract 7z</h3>
-      <p>Unpack a native 7z archive into a directory inside this capability.</p>
+      <h3>Extract tar/LZ4</h3>
+      <p>Unpack a native tar/LZ4 archive into a directory inside this capability.</p>
     </div>
     <div class="field">
       <label for="extract-archive">Archive path</label>
-      <input id="extract-archive" type="text" name="archive" placeholder="archives/project.7z" required>
+      <input id="extract-archive" type="text" name="archive" placeholder="archives/project.tar.lz4" required>
     </div>
     <div class="field">
       <label for="extract-destination">Destination directory</label>
@@ -438,14 +438,14 @@ fn render_selection_toolbar(rel: &str, links: TreeLinks) -> String {
         <label for="archive-name">Archive name</label>
         <input id="archive-name" type="text" name="name" value="archive" required>
       </div>
-      <button type="submit" disabled data-selection-submit>Create 7z</button>
+      <button type="submit" disabled data-selection-submit>Create tar/LZ4</button>
       <p class="form-note">A store directory is required; an empty path will not write into the capability root.</p>
     </form>
   </div>
   <div class="selection-action" data-selection-action="download" hidden>
     <form class="selection-form" action="{jobs_base}/download-selection" method="post" data-selection-form>
       <input type="hidden" name="sources" value="[]" data-selection-value>
-      <p>Selected files and directories are packed into one 7z download.</p>
+      <p>Selected files and directories are packed into one tar/LZ4 download.</p>
       <button type="submit" disabled data-selection-submit>Prepare download</button>
     </form>
   </div>

@@ -139,6 +139,7 @@ impl TrueosDirEntry {
     }
 
     pub(crate) fn metadata(&self) -> io::Result<Metadata> {
+
         Ok(self.metadata)
     }
 
@@ -674,6 +675,8 @@ impl TrueosOpenOptions {
 
         let pos = if self.append { data.len() as u64 } else { 0 };
         Ok(TrueosFile {
+            #[cfg(target_os = "trueos")]
+            std_file: None,
             inner: Mutex::new(TrueosFileInner {
                 path,
                 data,
@@ -688,6 +691,10 @@ impl TrueosOpenOptions {
 }
 
 pub struct TrueosFile {
+    // Files supplied by std retain their descriptor rather than reopening or
+    // copying a snapshot. The descriptor owns its cursor and append flags.
+    #[cfg(target_os = "trueos")]
+    std_file: Option<std::fs::File>,
     inner: Mutex<TrueosFileInner>,
 }
 
@@ -703,6 +710,13 @@ struct TrueosFileInner {
 
 impl TrueosFile {
     pub(crate) fn poll_read_into(&self, dst: &mut ReadBuf<'_>) -> io::Result<()> {
+        #[cfg(target_os = "trueos")]
+        if let Some(mut file) = self.std_file.as_ref() {
+            let n = file.read(dst.initialize_unfilled())?;
+            dst.advance(n);
+            return Ok(());
+        }
+
         let mut inner = self
             .inner
             .lock()
@@ -713,7 +727,7 @@ impl TrueosFile {
                 "TRUEOS fs file was not opened for reading",
             ));
         }
-        let pos = inner.pos as usize;
+        let pos = usize::try_from(inner.pos).unwrap_or(usize::MAX).min(inner.data.len());
         let n = core::cmp::min(dst.remaining(), inner.data.len().saturating_sub(pos));
         dst.put_slice(&inner.data[pos..pos + n]);
         inner.pos = inner.pos.saturating_add(n as u64);
@@ -721,6 +735,11 @@ impl TrueosFile {
     }
 
     pub(crate) fn poll_write_from(&self, src: &[u8]) -> io::Result<usize> {
+        #[cfg(target_os = "trueos")]
+        if let Some(mut file) = self.std_file.as_ref() {
+            return file.write(src);
+        }
+
         let mut inner = self
             .inner
             .lock()
@@ -753,6 +772,11 @@ impl TrueosFile {
     }
 
     pub(crate) fn seek_inner(&self, pos: SeekFrom) -> io::Result<u64> {
+        #[cfg(target_os = "trueos")]
+        if let Some(mut file) = self.std_file.as_ref() {
+            return file.seek(pos);
+        }
+
         let mut inner = self
             .inner
             .lock()
@@ -778,6 +802,11 @@ impl TrueosFile {
     }
 
     pub(crate) fn position(&self) -> io::Result<u64> {
+        #[cfg(target_os = "trueos")]
+        if let Some(mut file) = self.std_file.as_ref() {
+            return file.stream_position();
+        }
+
         self.inner
             .lock()
             .map(|inner| inner.pos)
@@ -785,6 +814,11 @@ impl TrueosFile {
     }
 
     pub(crate) fn sync_all(&self) -> io::Result<()> {
+        #[cfg(target_os = "trueos")]
+        if let Some(file) = self.std_file.as_ref() {
+            return file.sync_all();
+        }
+
         let mut inner = self
             .inner
             .lock()
@@ -797,10 +831,19 @@ impl TrueosFile {
     }
 
     pub(crate) fn sync_data(&self) -> io::Result<()> {
+        #[cfg(target_os = "trueos")]
+        if let Some(file) = self.std_file.as_ref() {
+            return file.sync_data();
+        }
         self.sync_all()
     }
 
     pub(crate) fn set_len(&self, size: u64) -> io::Result<()> {
+        #[cfg(target_os = "trueos")]
+        if let Some(file) = self.std_file.as_ref() {
+            return file.set_len(size);
+        }
+
         let size = usize::try_from(size).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "TRUEOS fs length is too large")
         })?;
@@ -823,6 +866,21 @@ impl TrueosFile {
     }
 
     pub(crate) fn metadata(&self) -> io::Result<Metadata> {
+        #[cfg(target_os = "trueos")]
+        if let Some(file) = self.std_file.as_ref() {
+            let metadata = file.metadata()?;
+            let file_type = metadata.file_type();
+            return Ok(Metadata {
+                len: metadata.len(),
+                file_type: FileType {
+                    is_file: file_type.is_file(),
+                    is_dir: file_type.is_dir(),
+                    is_symlink: file_type.is_symlink(),
+                },
+                permissions: Permissions { readonly: metadata.permissions().readonly() },
+            });
+        }
+
         let inner = self
             .inner
             .lock()
@@ -831,11 +889,18 @@ impl TrueosFile {
     }
 
     pub(crate) fn try_clone(&self) -> io::Result<TrueosFile> {
+        #[cfg(target_os = "trueos")]
+        if let Some(file) = self.std_file.as_ref() {
+            return file.try_clone().map(Self::from);
+        }
+
         let inner = self
             .inner
             .lock()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "TRUEOS fs file mutex poisoned"))?;
         Ok(TrueosFile {
+            #[cfg(target_os = "trueos")]
+            std_file: None,
             inner: Mutex::new(TrueosFileInner {
                 path: inner.path.clone(),
                 data: inner.data.clone(),
@@ -853,6 +918,35 @@ impl TrueosFile {
     }
 }
 
+#[cfg(target_os = "trueos")]
+impl From<std::fs::File> for TrueosFile {
+    fn from(file: std::fs::File) -> Self {
+        Self {
+            std_file: Some(file),
+            // This state is used only by files opened through the snapshot API.
+            inner: Mutex::new(TrueosFileInner {
+                path: PathBuf::new(), data: Vec::new(), pos: 0,
+                read: false, write: false, append: false, dirty: false,
+            }),
+        }
+    }
+}
+
+impl Read for TrueosFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&*self).read(buf)
+    }
+}
+
+impl Write for TrueosFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { (&*self).write(buf) }
+    fn flush(&mut self) -> io::Result<()> { (&*self).flush() }
+}
+
+impl Seek for TrueosFile {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> { (&*self).seek(pos) }
+}
+
 impl Drop for TrueosFile {
     fn drop(&mut self) {
         let _ = self.sync_all();
@@ -867,6 +961,11 @@ impl fmt::Debug for TrueosFile {
 
 impl Read for &TrueosFile {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        #[cfg(target_os = "trueos")]
+        if let Some(mut file) = self.std_file.as_ref() {
+            return file.read(buf);
+        }
+
         let mut inner = self
             .inner
             .lock()
@@ -877,7 +976,7 @@ impl Read for &TrueosFile {
                 "TRUEOS fs file was not opened for reading",
             ));
         }
-        let pos = inner.pos as usize;
+        let pos = usize::try_from(inner.pos).unwrap_or(usize::MAX).min(inner.data.len());
         let n = core::cmp::min(buf.len(), inner.data.len().saturating_sub(pos));
         buf[..n].copy_from_slice(&inner.data[pos..pos + n]);
         inner.pos = inner.pos.saturating_add(n as u64);

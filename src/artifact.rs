@@ -1,14 +1,14 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
 use crate::toolchain;
 
-const BLUEPRINT_PAYLOAD_7Z: u16 = 2;
+const BLUEPRINT_PAYLOAD_TAR_LZ4: u16 = 3;
 pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
 pub(crate) const BLUEPRINT_CAP_ARGV_ENTRY_V1: u16 = 1 << 9;
 pub(crate) const BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT: u16 = 1 << 10;
@@ -35,7 +35,7 @@ impl AssetBundleEntry {
 }
 
 const fn blueprint_header_flags(capability_flags: u16) -> u16 {
-    BLUEPRINT_PAYLOAD_7Z | capability_flags
+    BLUEPRINT_PAYLOAD_TAR_LZ4 | capability_flags
 }
 
 pub(crate) fn tool_command(tool_names: &[&str]) -> Result<Command, String> {
@@ -427,7 +427,7 @@ fn best_main_symbol_from_readelf(stdout: &str) -> Option<(u32, u32, String)> {
 }
 
 /// Encodes the deterministic kernel-facing asset stream stored inside the
-/// single-file 7z payload attached to a Blueprint ELF.
+/// single-file tar/LZ4 payload attached to a Blueprint ELF.
 pub(crate) fn encode_trueos_asset_bundle(entries: &[AssetBundleEntry]) -> Result<Vec<u8>, String> {
     let count = u32::try_from(entries.len())
         .map_err(|_| "TRUEOS asset bundle contains more than u32::MAX entries".to_owned())?;
@@ -519,7 +519,7 @@ pub(crate) fn attach_trueos_asset_bundle(
 
     let bundle = encode_trueos_asset_bundle(entries)?;
     let archive = asset_archive_path(output_elf)?;
-    compress_trueos_asset_bundle_7z(&bundle, &archive)?;
+    compress_trueos_asset_bundle_tar_lz4(&bundle, &archive)?;
 
     let mut objcopy = tool_command(&["llvm-objcopy", "objcopy"])?;
     objcopy
@@ -610,76 +610,65 @@ fn asset_archive_path(output_elf: &Path) -> Result<PathBuf, String> {
         .file_name()
         .ok_or_else(|| format!("missing file name for {}", output_elf.display()))?;
     let mut archive_name = file_name.to_os_string();
-    archive_name.push(".trueos-assets.7z");
+    archive_name.push(".trueos-assets.tar.lz4");
     Ok(output_elf.with_file_name(archive_name))
 }
 
-fn compress_trueos_asset_bundle_7z(bundle: &[u8], archive: &Path) -> Result<(), String> {
-    checked_u32_container_size(
-        u64::try_from(bundle.len())
-            .map_err(|_| "TRUEOS asset bundle length does not fit u64".to_owned())?,
-        "uncompressed TRUEOS asset bundle",
-    )?;
-    if archive.exists() {
-        fs::remove_file(archive).map_err(|err| {
-            format!(
-                "failed to replace TRUEOS asset archive {}: {err}",
-                archive.display()
-            )
-        })?;
+fn compress_tar_lz4(bytes: &[u8], name: &str, archive: &Path) -> Result<(), String> {
+    let tar = archive.with_extension("tar.tmp");
+    // Fixed USTAR metadata makes the bundle independent of source timestamps.
+    if name.is_empty() || name.len() > 100 || name.contains('/') {
+        return Err("invalid tar member name".to_owned());
     }
-
-    let mut seven_zip = tool_command(&["7z", "7zz"])?;
-    seven_zip
-        .arg("a")
-        .arg("-t7z")
-        .arg("-mx=9")
-        .arg("-m0=LZMA2")
-        .arg("-mmt=off")
-        .arg("-ms=off")
-        .arg("-mtc=off")
-        .arg("-mtm=off")
-        .arg("-mta=off")
-        .arg("-bd")
-        .arg("-y")
-        .arg(archive)
-        .arg(format!("-si{TRUEOS_ASSET_BUNDLE_FILE}"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = seven_zip.spawn().map_err(|err| {
-        format!(
-            "7z TRUEOS asset compression failed to start for {}: {err}",
-            archive.display()
-        )
-    })?;
-    let write_result = child
-        .stdin
-        .take()
-        .ok_or_else(|| "7z TRUEOS asset compression did not provide stdin".to_owned())
-        .and_then(|mut stdin| {
-            stdin
-                .write_all(bundle)
-                .map_err(|err| format!("failed to stream TRUEOS assets to 7z: {err}"))
-        });
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("failed to wait for 7z TRUEOS asset compression: {err}"))?;
-    write_result?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "7z TRUEOS asset compression failed with status {}: {}",
-            output.status,
-            stderr.trim()
-        ));
+    let mut header = [0u8; 512];
+    header[..name.len()].copy_from_slice(name.as_bytes());
+    for (start, end, value) in [
+        (100, 108, 0o644usize),
+        (108, 116, 0),
+        (116, 124, 0),
+        (124, 136, bytes.len()),
+        (136, 148, 0),
+    ] {
+        let field = format!("{:0width$o}", value, width = end - start - 1);
+        if field.len() != end - start - 1 {
+            return Err("tar member too large".to_owned());
+        }
+        header[start..end - 1].copy_from_slice(field.as_bytes());
     }
+    header[148..156].fill(b' ');
+    header[156] = b'0';
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let checksum: usize = header.iter().map(|&v| v as usize).sum();
+    header[148..154].copy_from_slice(format!("{checksum:06o}").as_bytes());
+    header[154] = 0;
+    let mut out = header.to_vec();
+    out.extend_from_slice(bytes);
+    out.resize(out.len().next_multiple_of(512) + 1024, 0);
+    fs::write(&tar, out).map_err(io_string)?;
+    let result = crate::run_command(
+        tool_command(&["lz4"])?
+            .arg("-12")
+            .arg("-BI")
+            .arg("--content-size")
+            .arg("-f")
+            .arg(&tar)
+            .arg(archive),
+        "lz4",
+    );
+    let cleanup = fs::remove_file(&tar).map_err(io_string);
+    result?;
+    cleanup?;
     checked_u32_container_size(
         fs::metadata(archive).map_err(io_string)?.len(),
-        "compressed TRUEOS asset archive",
+        "compressed tar/LZ4 archive",
     )?;
     Ok(())
+}
+
+fn compress_trueos_asset_bundle_tar_lz4(bundle: &[u8], archive: &Path) -> Result<(), String> {
+    checked_u32_container_size(bundle.len() as u64, "uncompressed TRUEOS asset bundle")?;
+    compress_tar_lz4(bundle, TRUEOS_ASSET_BUNDLE_FILE, archive)
 }
 
 fn verify_trueos_asset_section(elf: &Path) -> Result<(), String> {
@@ -780,29 +769,9 @@ pub(crate) fn write_blueprint(
 }
 
 fn compress_blueprint_payload(stripped: &Path) -> Result<Vec<u8>, String> {
-    let archive = stripped.with_extension("7z");
-    let parent = stripped
-        .parent()
-        .ok_or_else(|| format!("missing parent dir for {}", stripped.display()))?;
-    let file_name = stripped
-        .file_name()
-        .ok_or_else(|| format!("missing file name for {}", stripped.display()))?;
-
-    let mut seven_zip = tool_command(&["7z", "7zz"])?;
-    seven_zip
-        .current_dir(parent)
-        .arg("a")
-        .arg("-t7z")
-        .arg("-mx=9")
-        .arg("-m0=LZMA2")
-        .arg("-ms=off")
-        .arg("-mtc=off")
-        .arg("-mtm=off")
-        .arg("-mta=off")
-        .arg("-bd")
-        .arg(&archive)
-        .arg(file_name);
-    crate::run_command(&mut seven_zip, "7z")?;
+    let archive = stripped.with_extension("tar.lz4");
+    let payload = fs::read(stripped).map_err(io_string)?;
+    compress_tar_lz4(&payload, "module.elf", &archive)?;
     fs::read(&archive).map_err(io_string)
 }
 
@@ -899,15 +868,15 @@ mod tests {
 
     #[test]
     fn replicatable_capability_keeps_the_payload_encoding() {
-        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE), 0x0102);
+        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE), 0x0103);
     }
 
     #[test]
     fn argv_entry_capability_keeps_the_payload_encoding() {
-        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_ARGV_ENTRY_V1), 0x0202);
+        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_ARGV_ENTRY_V1), 0x0203);
         assert_eq!(
             blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE | BLUEPRINT_CAP_ARGV_ENTRY_V1),
-            0x0302
+            0x0303
         );
     }
 
@@ -915,13 +884,13 @@ mod tests {
     fn filesystem_independent_capability_keeps_the_payload_encoding() {
         assert_eq!(
             blueprint_header_flags(BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT),
-            0x0402
+            0x0403
         );
     }
 
     #[test]
     fn trueosfs_scope_capability_keeps_the_payload_encoding() {
-        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_TRUEOSFS_SCOPE), 0x0802);
+        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_TRUEOSFS_SCOPE), 0x0803);
     }
 
     #[test]
@@ -988,17 +957,17 @@ mod tests {
     }
 
     #[test]
-    fn asset_7z_is_deterministic_and_elf_section_is_not_allocated() {
+    fn asset_tar_lz4_is_deterministic_and_elf_section_is_not_allocated() {
         let temp = test_directory("asset-section");
         let bundle = encode_trueos_asset_bundle(&[
             AssetBundleEntry::new("bin/rustc", b"compiler".to_vec()),
             AssetBundleEntry::new("lib/sysroot.rmeta", b"metadata".to_vec()),
         ])
         .unwrap();
-        let archive_a = temp.join("a.7z");
-        let archive_b = temp.join("b.7z");
-        compress_trueos_asset_bundle_7z(&bundle, &archive_a).unwrap();
-        compress_trueos_asset_bundle_7z(&bundle, &archive_b).unwrap();
+        let archive_a = temp.join("a.tar.lz4");
+        let archive_b = temp.join("b.tar.lz4");
+        compress_trueos_asset_bundle_tar_lz4(&bundle, &archive_a).unwrap();
+        compress_trueos_asset_bundle_tar_lz4(&bundle, &archive_b).unwrap();
         assert_eq!(fs::read(&archive_a).unwrap(), fs::read(&archive_b).unwrap());
         assert_eq!(extract_asset_bundle(&archive_a), bundle);
 
@@ -1015,7 +984,7 @@ mod tests {
         );
         verify_trueos_asset_section(&output).unwrap();
 
-        let dumped_archive = temp.join("dumped.7z");
+        let dumped_archive = temp.join("dumped.tar.lz4");
         let mut objcopy = tool_command(&["llvm-objcopy", "objcopy"]).unwrap();
         objcopy
             .arg("--dump-section")
@@ -1031,13 +1000,17 @@ mod tests {
     }
 
     #[test]
-    fn blueprint_7z_is_deterministic() {
-        let temp = test_directory("blueprint-7z");
+    fn blueprint_tar_lz4_is_deterministic() {
+        let temp = test_directory("blueprint-tar_lz4");
         let stripped = temp.join("module.stripped.o");
         fs::write(&stripped, b"stable TRUEOS Blueprint payload").unwrap();
 
         let archive_a = compress_blueprint_payload(&stripped).unwrap();
-        fs::remove_file(stripped.with_extension("7z")).unwrap();
+        assert_eq!(
+            extract_tar_member(&stripped.with_extension("tar.lz4"), "module.elf"),
+            fs::read(&stripped).unwrap()
+        );
+        fs::remove_file(stripped.with_extension("tar.lz4")).unwrap();
 
         let file = fs::File::options().write(true).open(&stripped).unwrap();
         file.set_times(fs::FileTimes::new().set_modified(
@@ -1073,22 +1046,36 @@ Section {
         assert_eq!(trueos_asset_section_alloc_flag(allocated), Some(true));
     }
 
-    fn extract_asset_bundle(archive: &Path) -> Vec<u8> {
-        let mut seven_zip = tool_command(&["7z", "7zz"]).unwrap();
-        let output = seven_zip
-            .arg("e")
-            .arg("-so")
-            .arg("-bd")
+    fn extract_tar_member(archive: &Path, name: &str) -> Vec<u8> {
+        use std::io::Write;
+        use std::process::Stdio;
+        let output = tool_command(&["lz4"])
+            .unwrap()
+            .arg("-dc")
             .arg(archive)
-            .arg(TRUEOS_ASSET_BUNDLE_FILE)
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "7z extraction failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output.stdout
+        assert!(output.status.success());
+        let mut child = tool_command(&["tar"])
+            .unwrap()
+            .args(["-xOf", "-", name])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&output.stdout)
+            .unwrap();
+        let decoded = child.wait_with_output().unwrap();
+        assert!(decoded.status.success());
+        decoded.stdout
+    }
+
+    fn extract_asset_bundle(archive: &Path) -> Vec<u8> {
+        extract_tar_member(archive, TRUEOS_ASSET_BUNDLE_FILE)
     }
 
     fn u16_at(bytes: &[u8], offset: usize) -> u16 {

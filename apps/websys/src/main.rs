@@ -535,7 +535,7 @@ fn content_type_for(path: &Path) -> &'static str {
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("pdf") => "application/pdf",
-        Some("7z") => "application/x-7z-compressed",
+        Some("lz4") => "application/x-lz4",
         Some("zip") => "application/zip",
         _ => "application/octet-stream",
     }
@@ -729,7 +729,7 @@ async fn submit_selection_download_to(
         .unwrap_or_default()
         .as_nanos();
     let destination = format!(
-        "{}/selection-{stamp}.7z",
+        "{}/selection-{stamp}.tar.lz4",
         websys::jobs::DOWNLOAD_STAGING_DIR
     );
     let job = jobs
@@ -778,10 +778,10 @@ fn archive_destination(directory: &str, name: &str) -> Result<String, AppError> 
             "archive name must be one file name".to_string(),
         ));
     }
-    let name = if name.ends_with(".7z") {
+    let name = if name.ends_with(".tar.lz4") {
         name.to_string()
     } else {
-        format!("{name}.7z")
+        format!("{name}.tar.lz4")
     };
     let directory = directory.trim().trim_matches('/');
     if directory.is_empty() || directory == "." {

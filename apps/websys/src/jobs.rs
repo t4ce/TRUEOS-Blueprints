@@ -143,8 +143,8 @@ impl JobRequest {
     ) -> Result<Self, JobError> {
         let sources = normalize_sources(sources)?;
         let destination = normalize_required_path(destination.as_ref(), "archive destination")?;
-        if !destination.ends_with(".7z") {
-            return Err(JobError::new("archive destination must end in .7z"));
+        if !destination.ends_with(".tar.lz4") {
+            return Err(JobError::new("archive destination must end in .tar.lz4"));
         }
         if !download && !destination.contains('/') {
             return Err(JobError::new(
@@ -188,8 +188,8 @@ impl JobRequest {
             Self::Upload { .. } => "Upload file",
             Self::Download { .. } => "Prepare download artifact",
             Self::Archive { download: true, .. } => "Prepare selected files for download",
-            Self::Archive { .. } => "Create 7z archive",
-            Self::Extract { .. } => "Extract 7z archive",
+            Self::Archive { .. } => "Create tar/LZ4 archive",
+            Self::Extract { .. } => "Extract tar/LZ4 archive",
         }
     }
 
@@ -364,8 +364,8 @@ impl JobKind {
             Self::Delete => "Delete",
             Self::Upload => "Upload",
             Self::Download => "Download",
-            Self::Archive => "7z archive",
-            Self::Extract => "7z extract",
+            Self::Archive => "tar/LZ4 archive",
+            Self::Extract => "tar/LZ4 extract",
         }
     }
 }
@@ -554,7 +554,7 @@ async fn execute_job(
 
                 let destination_path = resolve_new_path(root, &destination)?;
                 create_parent_dirs(&destination_path).await?;
-                pack_7z(&staged_path, &destination_path).await?;
+                pack_tar_lz4(&staged_path, &destination_path).await?;
                 Ok::<_, JobError>(JobOutcome {
                     result_path: Some(serve_path_for_relative(&destination)),
                 })
@@ -577,7 +577,7 @@ async fn execute_job(
             tokio::fs::create_dir_all(&destination_path)
                 .await
                 .map_err(|error| JobError::new(format!("extract destination failed: {error}")))?;
-            unpack_7z(&archive_path, &destination_path).await?;
+            unpack_tar_lz4(&archive_path, &destination_path).await?;
             Ok(JobOutcome {
                 result_path: Some(serve_path_for_relative(&destination)),
             })
@@ -639,7 +639,7 @@ async fn copy_tree(source: &Path, destination: &Path) -> Result<(), JobError> {
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-async fn pack_7z(source: &Path, destination: &Path) -> Result<(), JobError> {
+async fn pack_tar_lz4(source: &Path, destination: &Path) -> Result<(), JobError> {
     let source = source
         .to_str()
         .ok_or_else(|| JobError::new("archive source path is not UTF-8"))?;
@@ -649,35 +649,49 @@ async fn pack_7z(source: &Path, destination: &Path) -> Result<(), JobError> {
     v::varchive::pack(source.as_bytes(), destination.as_bytes())
         .await
         .map(|_| ())
-        .map_err(|code| JobError::new(format!("native 7z pack failed: {code}")))
+        .map_err(|code| JobError::new(format!("native tar/LZ4 pack failed: {code}")))
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-async fn pack_7z(source: &Path, destination: &Path) -> Result<(), JobError> {
+async fn pack_tar_lz4(source: &Path, destination: &Path) -> Result<(), JobError> {
     let source = source.to_path_buf();
     let destination = destination.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let status = std::process::Command::new("7z")
-            .current_dir(&source)
-            .arg("a")
-            .arg("-t7z")
-            .arg("-y")
-            .arg(&destination)
+        let tar_path = destination.with_extension("tar.tmp");
+        let status = std::process::Command::new("tar")
+            .arg("--format=pax")
+            .arg("--pax-option=delete=atime,delete=ctime")
+            .arg("--transform=s,^./,,")
+            .arg("-C")
+            .arg(&source)
+            .arg("-cf")
+            .arg(&tar_path)
             .arg(".")
             .status()
-            .map_err(|error| JobError::new(format!("failed to launch 7z: {error}")))?;
+            .map_err(|error| JobError::new(format!("failed to launch tar: {error}")))?;
+        if !status.success() {
+            return Err(JobError::new(format!("tar pack exited with {status}")));
+        }
+        let result = std::process::Command::new("lz4")
+            .args(["-12", "-BI", "--content-size", "-f"])
+            .arg(&tar_path)
+            .arg(&destination)
+            .status();
+        let _ = std::fs::remove_file(&tar_path);
+        let status =
+            result.map_err(|error| JobError::new(format!("failed to launch lz4: {error}")))?;
         if status.success() {
             Ok(())
         } else {
-            Err(JobError::new(format!("7z pack exited with {status}")))
+            Err(JobError::new(format!("tar/LZ4 pack exited with {status}")))
         }
     })
     .await
-    .map_err(|error| JobError::new(format!("7z pack worker failed: {error}")))?
+    .map_err(|error| JobError::new(format!("tar/LZ4 pack worker failed: {error}")))?
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-async fn unpack_7z(archive: &Path, destination: &Path) -> Result<(), JobError> {
+async fn unpack_tar_lz4(archive: &Path, destination: &Path) -> Result<(), JobError> {
     let archive = archive
         .to_str()
         .ok_or_else(|| JobError::new("archive path is not UTF-8"))?;
@@ -687,29 +701,45 @@ async fn unpack_7z(archive: &Path, destination: &Path) -> Result<(), JobError> {
     v::varchive::unpack(archive.as_bytes(), destination.as_bytes())
         .await
         .map(|_| ())
-        .map_err(|code| JobError::new(format!("native 7z unpack failed: {code}")))
+        .map_err(|code| JobError::new(format!("native tar/LZ4 unpack failed: {code}")))
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-async fn unpack_7z(archive: &Path, destination: &Path) -> Result<(), JobError> {
+async fn unpack_tar_lz4(archive: &Path, destination: &Path) -> Result<(), JobError> {
     let archive = archive.to_path_buf();
     let destination = destination.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let status = std::process::Command::new("7z")
-            .arg("x")
-            .arg("-y")
+        let mut decoder = std::process::Command::new("lz4")
+            .arg("-dc")
             .arg(&archive)
-            .arg(format!("-o{}", destination.display()))
-            .status()
-            .map_err(|error| JobError::new(format!("failed to launch 7z: {error}")))?;
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|error| JobError::new(format!("failed to launch lz4: {error}")))?;
+        let result = std::process::Command::new("tar")
+            .arg("-xf")
+            .arg("-")
+            .arg("-C")
+            .arg(&destination)
+            .stdin(decoder.stdout.take().unwrap())
+            .status();
+        let decoded = decoder
+            .wait()
+            .map_err(|error| JobError::new(format!("lz4 wait failed: {error}")))?;
+        let status =
+            result.map_err(|error| JobError::new(format!("failed to launch tar: {error}")))?;
+        if !decoded.success() {
+            return Err(JobError::new(format!("lz4 decode exited with {decoded}")));
+        }
         if status.success() {
             Ok(())
         } else {
-            Err(JobError::new(format!("7z extract exited with {status}")))
+            Err(JobError::new(format!(
+                "tar/LZ4 extract exited with {status}"
+            )))
         }
     })
     .await
-    .map_err(|error| JobError::new(format!("7z extract worker failed: {error}")))?
+    .map_err(|error| JobError::new(format!("tar/LZ4 extract worker failed: {error}")))?
 }
 
 async fn resolve_existing_path(root: &Path, relative: &str) -> Result<PathBuf, JobError> {
