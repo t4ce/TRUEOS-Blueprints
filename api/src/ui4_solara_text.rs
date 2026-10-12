@@ -561,6 +561,17 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Open a 1280×720 (16:9) frame centered on the UI4 output.
+    /// The size stays 720p even on smaller outputs, where edges may be offscreen.
+    pub fn open_default() -> Result<Self, Error> {
+        let (output_width, output_height) = output_dimensions()?;
+        let x = i32::try_from((i64::from(output_width) - 1280) / 2)
+            .map_err(|_| Error::Invalid)?;
+        let y = i32::try_from((i64::from(output_height) - 720) / 2)
+            .map_err(|_| Error::Invalid)?;
+        Self::open(x, y, 1280, 720)
+    }
+
     pub fn open(x: i32, y: i32, width: u32, height: u32) -> Result<Self, Error> {
         let window_id =
             unsafe { v::bp_abi::trueos_cabi_ui4_solara_frame_open(x, y, width, height) };

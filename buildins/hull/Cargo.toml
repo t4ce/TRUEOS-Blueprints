@@ -10,4 +10,7 @@ test = false
 bench = false
 
 [dependencies]
-trueos = { workspace = true, features = ["ui4-scene"] }
+trueos = { path = "../../api", features = ["ui4-scene"] }
+winit = { path = "../../vendor/winit/winit", default-features = false }
+
+[workspace]

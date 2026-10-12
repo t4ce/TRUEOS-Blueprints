@@ -1,6 +1,7 @@
 use core::future::Future;
 use std::sync::Arc;
-use core::task::{Context, Poll, Wake, Waker};
+use core::task::{Context, Poll, Waker};
+use std::task::Wake;
 use std::thread::{self, Thread};
 use core::time::Duration;
 

@@ -18,7 +18,6 @@ members = [
     "apps/hello_world",
     "apps/hello_world_replicatable",
     "buildins/img",
-    "buildins/hull",
     "buildins/hyper",
     "apps/image-viewer",
     "apps/japan",
@@ -53,6 +52,7 @@ members = [
     "probes/wls",
 ]
 exclude = [
+    "buildins/hull",
     "apps/prismq/crates/prism-q",
     "crates",
     "crates/*"

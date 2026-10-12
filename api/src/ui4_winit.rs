@@ -94,6 +94,11 @@ impl SceneTarget {
     ) -> Result<(), Error> {
         self.surface.upload_sprite_rgba8(id, width, height, pixels)
     }
+    /// Acquire a writable frame and clear it to a premultiplied RGBA color.
+    /// Publish before acquiring another frame; this target never owns the window.
+    pub fn begin(&mut self, clear_rgba: u32) -> Result<(), Error> {
+        self.surface.begin(clear_rgba)
+    }
     pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
         self.surface.begin_gpu_frame()
     }

@@ -130,6 +130,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("quinn", "quinn-0.11.9"),
     ("quinn-proto", "quinn-proto-0.11.14"),
     ("quinn-udp", "quinn-udp-0.5.14"),
+    ("rama-tls-rustls", "rama-tls-rustls-0.3.0-alpha.4-rustcrypto"),
     ("rayon", "rayon"),
     ("rayon-core", "rayon/rayon-core"),
     ("rustix", "rustix-1.1.4-trueos"),
@@ -4734,6 +4735,19 @@ fn lock_packages(lock_path: &Path) -> Result<Vec<LockedPackage>, String> {
             dependencies = Vec::new();
             continue;
         }
+        if trimmed.starts_with('[') && trimmed != "]" {
+            if in_package && let (Some(name), Some(version)) = (name.take(), version.take()) {
+                out.push(LockedPackage {
+                    name,
+                    version,
+                    source: source.take(),
+                    dependencies: std::mem::take(&mut dependencies),
+                });
+            }
+            in_package = false;
+            in_dependencies = false;
+            continue;
+        }
         if !in_package {
             continue;
         }
@@ -6008,4 +6022,24 @@ fn reset_dir(path: &Path) -> Result<(), String> {
         fs::remove_dir_all(path).map_err(io_string)?;
     }
     fs::create_dir_all(path).map_err(io_string)
+}
+
+#[cfg(test)]
+#[test]
+fn lock_parser_ignores_unused_patches() {
+    let path = std::env::temp_dir().join(format!("blueprint-lock-parser-{}.lock", std::process::id()));
+    fs::write(&path, r#"version = 4
+[[package]]
+name = "actual"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+[[patch.unused]]
+name = "rustix"
+version = "0.38.44"
+"#).expect("write lock fixture");
+    let packages = lock_packages(&path).expect("parse lock fixture");
+    fs::remove_file(path).expect("remove lock fixture");
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name, "actual");
+    assert_eq!(packages[0].version, "1.0.0");
 }

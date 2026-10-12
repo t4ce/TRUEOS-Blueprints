@@ -1,5 +1,6 @@
 {
   "apps": [
+    { "name": "codex-cli", "path": "../codex/codex-rs/cli", "optional": true },
     { "name": "hull", "path": "buildins/hull" },
     { "name": "rebsky", "path": "../rebels-in-the-sky" },
     "badc",
