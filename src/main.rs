@@ -2009,6 +2009,16 @@ fn source_overlay_patches(
     out.push(CratePatch::new("libc", libc_path));
 
     if matches!(build_settings.flavor, BuildFlavor::TokioStd)
+        && manifest_or_lock_mentions_crate(app_dir, manifest_path, "rama-http")?
+    {
+        out.retain(|patch| patch.name != "rama-http");
+        out.push(CratePatch::new(
+            "rama-http",
+            stage_rama_http_trueos_overlay(work_dir)?,
+        ));
+    }
+
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd)
         && manifest_or_lock_mentions_crate(app_dir, manifest_path, "futures-timer")?
     {
         out.retain(|patch| patch.name != "futures-timer");
@@ -2341,10 +2351,15 @@ fn manifest_or_lock_mentions_crate(
         return Ok(true);
     }
 
-    let lock_path = app_dir.join("Cargo.lock");
-    if !lock_path.is_file() {
+    // Workspace members share the nearest ancestor lockfile. Looking only in
+    // the member directory misses transitive platform overlays (e.g. Codex CLI).
+    let Some(lock_path) = app_dir
+        .ancestors()
+        .map(|ancestor| ancestor.join("Cargo.lock"))
+        .find(|path| path.is_file())
+    else {
         return Ok(false);
-    }
+    };
     let lock = fs::read_to_string(lock_path).map_err(io_string)?;
     Ok(lock
         .lines()
@@ -2427,6 +2442,24 @@ fn manifest_or_lock_requires_rustix_0_38_overlay(
             .starts_with("rustix")
     });
     Ok(!direct_rustix.is_some_and(|line| line.contains("1.")))
+}
+
+fn stage_rama_http_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    let source_name = "rama-http-0.3.0-alpha.4";
+    let source = find_cargo_registry_crate(source_name).ok_or_else(|| {
+        format!("missing Cargo registry source for {source_name}; run `cargo fetch` for the app once")
+    })?;
+    let staged = work_dir.join("source-overlay-crates").join(source_name);
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    let path = staged.join("src/service/fs/serve_dir/open_file.rs");
+    replace_file_text(&path, "    fs::Metadata,\n", "")?;
+    replace_file_text(
+        &path,
+        "use tokio::io::AsyncRead;",
+        "#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nuse tokio::fs::Metadata;\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nuse std::fs::Metadata;\nuse tokio::io::AsyncRead;",
+    )?;
+    Ok(staged)
 }
 
 fn stage_ctrlc_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
@@ -2529,7 +2562,7 @@ fn stage_crossterm_trueos_overlay(work_dir: &Path, version: &str) -> Result<Path
 }
 
 fn stage_tokio_stream_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
-    const TOKIO_STREAM_VERSION: &str = "0.1.17";
+    const TOKIO_STREAM_VERSION: &str = "0.1.19";
     let source_name = format!("tokio-stream-{TOKIO_STREAM_VERSION}");
     let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
         format!(
@@ -2637,7 +2670,7 @@ fn ensure_overlay_registry_sources(
         ("hyper-timeout", "0.5.2", "hyper-timeout-0.5.2"),
         ("rustix", "0.38.44", "rustix-0.38.44"),
         ("socket2", "0.5.10", "socket2-0.5.10"),
-        ("tokio-stream", "0.1.17", "tokio-stream-0.1.17"),
+        ("tokio-stream", "0.1.19", "tokio-stream-0.1.19"),
         ("tonic", "0.14.6", "tonic-0.14.6"),
     ];
     let mut missing = Vec::new();
@@ -2711,9 +2744,9 @@ fn patch_tokio_stream_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         "use tokio::io;",
     )?;
     replace_file_text(
-        &crate_dir.join("src/wrappers.rs"),
-        "    #[cfg(unix)]\n    mod unix_listener;\n    #[cfg(unix)]\n    pub use unix_listener::UnixListenerStream;",
-        "    #[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n    mod unix_listener;\n    #[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n    pub use unix_listener::UnixListenerStream;",
+        &crate_dir.join("src/wrappers/unix_listener.rs"),
+        "use std::io;",
+        "use tokio::io;",
     )
 }
 
@@ -6024,6 +6057,25 @@ fn reset_dir(path: &Path) -> Result<(), String> {
         fs::remove_dir_all(path).map_err(io_string)?;
     }
     fs::create_dir_all(path).map_err(io_string)
+}
+
+#[cfg(test)]
+#[test]
+fn workspace_member_overlay_detection_uses_nearest_lockfile() {
+    let root = env::temp_dir().join(format!("blueprint-workspace-lock-{}", std::process::id()));
+    reset_dir(&root).expect("create workspace fixture");
+    let member = root.join("cli");
+    fs::create_dir(&member).expect("create member");
+    let manifest = member.join("Cargo.toml");
+    fs::write(&manifest, "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n")
+        .expect("write member manifest");
+    fs::write(root.join("Cargo.lock"), "[[package]]\nname = \"rama-http\"\nversion = \"0.3.0-alpha.4\"\n")
+        .expect("write workspace lock");
+    assert!(manifest_or_lock_mentions_crate(&member, &manifest, "rama-http").unwrap());
+    fs::write(member.join("Cargo.lock"), "[[package]]\nname = \"other\"\nversion = \"1.0.0\"\n")
+        .expect("write standalone lock");
+    assert!(!manifest_or_lock_mentions_crate(&member, &manifest, "rama-http").unwrap());
+    fs::remove_dir_all(root).expect("remove workspace fixture");
 }
 
 #[cfg(test)]

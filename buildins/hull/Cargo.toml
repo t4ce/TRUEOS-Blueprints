@@ -10,7 +10,6 @@ test = false
 bench = false
 
 [dependencies]
-miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 trueos = { path = "../../api", features = ["ui4-scene"] }
 rp5 = { path = "rp5" }
 lightningcss = { version = "=1.0.0-alpha.72", default-features = false, features = ["into_owned"] }

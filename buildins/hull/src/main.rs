@@ -24,6 +24,9 @@ struct Hull {
     window: Option<Box<dyn Window>>,
     target: Option<SceneTarget>,
     pending_publish: bool,
+    lines_dirty: bool,
+    frame_counter: shellio::FrameCounter,
+    lines: Option<xxx::Lines>,
     download: Option<u32>,
     html: Option<Vec<u8>>,
     document: Option<rp5::Document>,
@@ -53,9 +56,10 @@ impl Hull {
             SceneTarget::for_window(window.trueos_window_id(), size.width, size.height)
                 .map_err(|error| format!("{error:?}"))?,
         );
+        self.lines_dirty = true;
         window.request_redraw();
         self.window = Some(window);
-        vshell::line("hull: enter an HTTPS URL to download, parse and save it");
+        vshell::line("hull: enter an HTTPS URL to download, parse and display it");
         self.start_page(PAGE_URL.into());
         Ok(())
     }
@@ -169,7 +173,7 @@ impl ApplicationHandler for Hull {
             && !self.scripts.is_pending()
         {
             self.save_attempted = true;
-            if let Err(error) = snapshot::save_svg(
+            let result = snapshot::save_svg(
                 self.document.as_ref().unwrap(),
                 &self.css,
                 &self.page_url,
@@ -178,10 +182,26 @@ impl ApplicationHandler for Hull {
                     .map(|window| window.surface_size())
                     .map(|size| (size.width, size.height))
                     .unwrap_or((1280, 720)),
-            ) {
+            )
+            .and_then(|layout| {
+                if self.lines.is_none() {
+                    self.lines = Some(xxx::Lines::new()?);
+                }
+                self.lines.as_mut().unwrap().set_layout(
+                    layout.line_extent.0,
+                    layout.line_extent.1,
+                    &layout.line_rects,
+                )?;
+                self.lines_dirty = true;
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
                 logl::log(
                     logl::level::ERROR,
-                    format_args!("hull: snapshot save failed: {error}"),
+                    format_args!("hull: layout display failed: {error}"),
                 );
             }
         }
@@ -218,18 +238,37 @@ impl ApplicationHandler for Hull {
                 Ok(())
             }
             WindowEvent::SurfaceResized(size) => {
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
+                self.pending_publish = false;
+                self.lines_dirty = true;
                 window.request_redraw();
                 target.set_extent(size.width, size.height)
             }
             WindowEvent::RedrawRequested => (|| {
+                // Moving the retained UI4 frame is compositor work. A generic
+                // redraw notification does not invalidate our content.
+                if !self.lines_dirty && !self.pending_publish {
+                    return Ok(());
+                }
                 if !self.pending_publish {
-                    target.begin(rgba(35, 39, 39, 255))?;
+                    if let Some(lines) = &self.lines {
+                        lines.draw(target)?;
+                    } else {
+                        target.begin(rgba(35, 39, 39, 255))?;
+                    }
+                    self.frame_counter.produced();
+                    self.lines_dirty = false;
                     self.pending_publish = true;
                 }
                 window.pre_present_notify();
                 let size = window.surface_size();
                 target.publish(Damage::full(size.width, size.height))?;
                 self.pending_publish = false;
+                if self.lines_dirty {
+                    window.request_redraw();
+                }
                 Ok(())
             })(),
             _ => Ok(()),

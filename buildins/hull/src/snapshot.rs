@@ -1,4 +1,4 @@
-//! Persist the final layout SVG and native GPU line demo.
+//! Persist the final layout SVG and return its geometry for the live renderer.
 use rp5::Document;
 use trueos::{async_fs, env, logl};
 
@@ -13,7 +13,7 @@ pub(super) fn save_svg(
     css: &Css,
     page_url: &str,
     viewport: (u32, u32),
-) -> Result<(), i32> {
+) -> Result<super::layout::Export, i32> {
     let app_root = env::var("TRUEOS_APP_FS_ROOT").unwrap_or_else(|_| "apps/hull".into());
     let url = url::Url::parse(page_url).map_err(|_| -1)?;
     let host = url.host_str().ok_or(-1)?;
@@ -37,15 +37,5 @@ pub(super) fn save_svg(
         logl::level::INFO,
         format_args!("hull: saved {root}/layout.svg"),
     );
-    let png = super::xxx::lines_png(layout.png_size.0, layout.png_size.1, &layout.line_rects)?;
-    async_fs::block_on(async_fs::write_file_typed(
-        format!("{root}/layout.png").as_bytes(),
-        &png,
-        async_fs::ContentTypeId::PNG,
-    ))?;
-    logl::log(
-        logl::level::INFO,
-        format_args!("hull: saved {root}/layout.png"),
-    );
-    Ok(())
+    Ok(layout)
 }

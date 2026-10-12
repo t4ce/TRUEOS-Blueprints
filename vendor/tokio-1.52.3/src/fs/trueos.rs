@@ -99,6 +99,14 @@ impl Metadata {
     pub fn permissions(&self) -> Permissions {
         self.permissions
     }
+
+    /// TRUEOSFS stat currently exposes node kind and length, but no timestamps.
+    pub fn modified(&self) -> io::Result<std::time::SystemTime> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "TRUEOSFS modification time is not exposed through CABI",
+        ))
+    }
 }
 
 #[derive(Debug)]

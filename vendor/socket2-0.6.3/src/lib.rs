@@ -511,6 +511,9 @@ impl TcpKeepalive {
     ///
     /// Sets the time interval between TCP keepalive probes.
     ///
+    /// On TRUEOS this is a compatibility hint. The network stack retains its
+    /// existing keepalive policy until per-socket tuning is exposed through CABI.
+    ///
     /// Some platforms specify this value in seconds, so sub-second
     /// specifications may be omitted.
     #[cfg(any(
@@ -528,6 +531,7 @@ impl TcpKeepalive {
         target_os = "watchos",
         target_os = "windows",
         target_os = "cygwin",
+        target_os = "trueos",
         all(target_os = "wasi", not(target_env = "p1")),
     ))]
     pub const fn with_interval(self, interval: Duration) -> Self {
@@ -541,6 +545,9 @@ impl TcpKeepalive {
     ///
     /// Set the maximum number of TCP keepalive probes that will be sent before
     /// dropping a connection, if TCP keepalive is enabled on this socket.
+    ///
+    /// On TRUEOS this is a compatibility hint; the network stack retains its
+    /// existing keepalive policy.
     #[cfg(all(
         feature = "all",
         any(
@@ -558,6 +565,7 @@ impl TcpKeepalive {
             target_os = "watchos",
             target_os = "cygwin",
             target_os = "windows",
+            target_os = "trueos",
             all(target_os = "wasi", not(target_env = "p1")),
         )
     ))]

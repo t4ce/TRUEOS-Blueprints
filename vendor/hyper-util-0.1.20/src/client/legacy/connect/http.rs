@@ -586,7 +586,8 @@ impl Connection for TcpStream {
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+// TRUEOS exposes Tokio UnixStream through its Unix socket compatibility layer.
+#[cfg(all(unix, not(target_os = "zkvm")))]
 impl Connection for tokio::net::UnixStream {
     fn connected(&self) -> Connected {
         Connected::new()

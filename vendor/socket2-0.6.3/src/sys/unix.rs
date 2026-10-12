@@ -1236,6 +1236,9 @@ pub(crate) fn tcp_keepalive_time(fd: RawSocket) -> io::Result<Duration> {
 
 #[allow(unused_variables)]
 pub(crate) fn set_tcp_keepalive(fd: RawSocket, keepalive: &TcpKeepalive) -> io::Result<()> {
+    // TRUEOS accepts interval/retry settings as compatibility hints. Its TCP
+    // stack keeps the existing 30-second keepalive policy; do not issue tuning
+    // options until the CABI exposes per-socket interval/retry configuration.
     #[cfg(not(any(
         target_os = "haiku",
         target_os = "openbsd",

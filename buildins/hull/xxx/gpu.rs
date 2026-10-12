@@ -1,87 +1,141 @@
 use super::Rect;
+use trueos::ui4_winit::{Error, SceneTarget};
 use trueos::vgpu::*;
 
-pub(super) fn render(width: u32, height: u32, rectangles: &[Rect]) -> Result<Vec<u8>, i32> {
-    let rgba_bytes = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|n| n.checked_mul(4))
-        .filter(|_| width > 0 && height > 0)
-        .ok_or(ERR_IO)?;
-    if rectangles.len() > u32::MAX as usize / 8
-        || rectangles.iter().flatten().any(|v| !v.is_finite())
-    {
-        return Err(ERR_IO);
-    }
-    if rectangles.is_empty() {
-        return Ok(super::png::png_rgba8(width, height, &vec![255; rgba_bytes]));
-    }
-    let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
-    let result = render_device(device, width, height, rectangles, rgba_bytes);
-    let close = device.close();
-    result.and_then(|png| close.map(|()| png))
+/// Owns GPU resources until the renderer is dropped, not until a frame is submitted.
+pub struct Lines {
+    device: Device,
+    queue: Queue,
+    shader: ShaderModule,
+    pipeline: RenderPipeline,
+    mesh: Option<(Buffer, Buffer, u32)>,
 }
 
-fn render_device(
-    device: Device,
-    width: u32,
-    height: u32,
-    rectangles: &[Rect],
-    rgba_bytes: usize,
-) -> Result<Vec<u8>, i32> {
-    let queue = device.create_queue(QueueClass::Render)?;
-    let shader =
-        device.create_shader_module(SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64)?;
-    let pipeline = device.create_render_pipeline(shader, 12, 0)?;
-    let (vertices, indices) = super::geometry(width, height, rectangles);
-    let vertex_buffer =
-        device.create_buffer(vertices.len(), BUFFER_USAGE_MAP_WRITE | BUFFER_USAGE_VERTEX)?;
-    let index_buffer =
-        device.create_buffer(indices.len(), BUFFER_USAGE_MAP_WRITE | BUFFER_USAGE_INDEX)?;
-    let output =
-        device.create_buffer(rgba_bytes, BUFFER_USAGE_MAP_READ | BUFFER_USAGE_MAP_WRITE)?;
-    if device.write_buffer(vertex_buffer, 0, &vertices)? != vertices.len()
-        || device.write_buffer(index_buffer, 0, &indices)? != indices.len()
-    {
-        return Err(ERR_IO);
+fn ui_error(code: i32) -> Error {
+    if code == ERR_BUSY {
+        Error::Busy
+    } else {
+        Error::Unknown(code)
     }
-    let mut pixels = vec![0u8; rgba_bytes];
-    let mut batch = IndexedDrawBatchV2 {
-        clear_rgba8_srgb: u32::from_le_bytes([255, 255, 255, 255]),
-        draw_count: 1,
-        ..Default::default()
-    };
-    batch.draws[0] = IndexedBatchDrawV2 {
-        index_count: (indices.len() / 4) as u32,
-        first_index: 0,
-        base_vertex: 0,
-        rgba8_srgb: u32::from_le_bytes([255, 0, 255, 255]),
-        topology: PRIMITIVE_TOPOLOGY_LINE_LIST,
-        reserved: 0,
-    };
-    // Busy means the renderer accepted no work. Retry the same immutable
-    // batch; each image has exactly one successful native submission.
-    let point = loop {
-        match device.submit_offscreen_indexed_batch_v1(
-            queue,
-            output,
-            width,
-            height,
-            pipeline,
-            vertex_buffer,
-            index_buffer,
-            batch,
-        ) {
-            Ok(point) => break point,
-            Err(ERR_BUSY) => {
-                trueos::vsys::poll_once();
-                trueos::vsys::sleep_ms(16);
-            }
-            Err(error) => return Err(error),
+}
+
+impl Lines {
+    pub fn new() -> Result<Self, i32> {
+        let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
+        let result = (|| {
+            let queue = device.create_queue(QueueClass::Render)?;
+            let shader = device
+                .create_shader_module(SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64)?;
+            let pipeline = device.create_render_pipeline(shader, 12, 0)?;
+            Ok(Self {
+                device,
+                queue,
+                shader,
+                pipeline,
+                mesh: None,
+            })
+        })();
+        if result.is_err() {
+            let _ = device.close();
         }
-    };
-    device.wait(queue, point.value)?;
-    if device.read_buffer(output, 0, &mut pixels)? != pixels.len() {
-        return Err(ERR_IO);
+        result
     }
-    Ok(super::png::png_rgba8(width, height, &pixels))
+
+    /// Upload only when a new page layout arrives. Width/height define its original extent.
+    /// Subsequent draws preserve each vertex's relative position in any surface size.
+    pub fn set_layout(&mut self, width: u32, height: u32, rectangles: &[Rect]) -> Result<(), i32> {
+        if width == 0
+            || height == 0
+            || rectangles.len() > u32::MAX as usize / 8
+            || rectangles
+                .iter()
+                .any(|&[x, y, w, h]| ![x, y, w, h, x + w, y + h].iter().all(|v| v.is_finite()))
+        {
+            return Err(ERR_IO);
+        }
+        let replacement = if rectangles.is_empty() {
+            None
+        } else {
+            let (vertices, indices) = super::geometry(width, height, rectangles);
+            let vb = self
+                .device
+                .create_buffer(vertices.len(), BUFFER_USAGE_MAP_WRITE | BUFFER_USAGE_VERTEX)?;
+            let uploaded = (|| {
+                let ib = self
+                    .device
+                    .create_buffer(indices.len(), BUFFER_USAGE_MAP_WRITE | BUFFER_USAGE_INDEX)?;
+                let result = (|| {
+                    if self.device.write_buffer(vb, 0, &vertices)? != vertices.len()
+                        || self.device.write_buffer(ib, 0, &indices)? != indices.len()
+                    {
+                        return Err(ERR_IO);
+                    }
+                    Ok((vb, ib, (indices.len() / 4) as u32))
+                })();
+                if result.is_err() {
+                    let _ = self.device.destroy_buffer(ib);
+                }
+                result
+            })();
+            if uploaded.is_err() {
+                let _ = self.device.destroy_buffer(vb);
+            }
+            Some(uploaded?)
+        };
+        if let Some((vertices, indices, _)) = self.mesh.take() {
+            let _ = self.device.destroy_buffer(indices);
+            let _ = self.device.destroy_buffer(vertices);
+        }
+        self.mesh = replacement;
+        Ok(())
+    }
+
+    /// Draw into the existing UI4 frame. No geometry creation or uploads occur here.
+    /// The acquired surface carries the current viewport dimensions to the GPU.
+    pub fn draw(&self, target: &mut SceneTarget) -> Result<(), Error> {
+        let Some((vertices, indices, count)) = self.mesh else {
+            return target.begin(u32::from_le_bytes([255; 4]));
+        };
+        target.begin_gpu_frame()?;
+        let surface = self
+            .device
+            .acquire_ui4_surface(target.render_target())
+            .map_err(ui_error)?;
+        let mut batch = IndexedDrawBatchV2 {
+            clear_rgba8_srgb: u32::from_le_bytes([255; 4]),
+            draw_count: 1,
+            ..Default::default()
+        };
+        batch.draws[0] = IndexedBatchDrawV2 {
+            index_count: count,
+            rgba8_srgb: u32::from_le_bytes([255, 0, 255, 255]),
+            topology: PRIMITIVE_TOPOLOGY_LINE_LIST,
+            ..Default::default()
+        };
+        let point = self
+            .device
+            .submit_ui4_indexed_batch_v2(
+                self.queue,
+                surface,
+                self.pipeline,
+                vertices,
+                indices,
+                batch,
+            )
+            .map_err(ui_error)?;
+        self.device.wait(self.queue, point.value).map_err(ui_error)
+    }
+}
+
+impl Drop for Lines {
+    fn drop(&mut self) {
+        // Draws retire before returning; resources are safe to release at teardown.
+        if let Some((vertices, indices, _)) = self.mesh.take() {
+            let _ = self.device.destroy_buffer(indices);
+            let _ = self.device.destroy_buffer(vertices);
+        }
+        let _ = self.device.destroy_render_pipeline(self.pipeline);
+        let _ = self.device.destroy_shader_module(self.shader);
+        let _ = self.device.close();
+    }
 }

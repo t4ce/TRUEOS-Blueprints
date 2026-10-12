@@ -22,7 +22,7 @@ pub(super) struct Export {
     pub json: String,
     pub svg: String,
     pub line_rects: Vec<[f32; 4]>,
-    pub png_size: (u32, u32),
+    pub line_extent: (u32, u32),
 }
 
 pub(super) fn compute(
@@ -367,7 +367,7 @@ pub(super) fn compute(
         json,
         svg,
         line_rects,
-        png_size: (viewport.0, extent.ceil() as u32),
+        line_extent: (viewport.0, extent.ceil() as u32),
     })
 }
 

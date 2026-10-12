@@ -1,4 +1,19 @@
-//! Line input from the attached VM minishell; the shell owns echo and editing.
+//! Input and frame diagnostics for the attached VM minishell.
+
+/// Counts produced Hull frames across navigation for this browser instance.
+#[derive(Default)]
+pub(super) struct FrameCounter {
+    f: u64,
+}
+
+impl FrameCounter {
+    /// Called once after a successful draw, before publication retries.
+    pub fn produced(&mut self) {
+        self.f += 1;
+        trueos::vshell::linef(format_args!("hull: f={}", self.f));
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ShellInput {
     bytes: Vec<u8>,
