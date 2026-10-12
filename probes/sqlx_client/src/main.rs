@@ -130,11 +130,36 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("sqlx-client: migrations={directory} PASS");
         pool.close().await;
     }
-    assert!(<sqlx::Sqlite as sqlx::migrate::MigrateDatabase>::database_exists("sqlite:///common/codex/sqlx-probe.sqlite").await?);
-    assert!(!<sqlx::Sqlite as sqlx::migrate::MigrateDatabase>::database_exists("sqlite:///common/codex/not-created.sqlite").await?);
-    let mut read_only = options.clone().read_only(true).create_if_missing(false).connect().await?;
-    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT number FROM probe").fetch_one(&mut read_only).await?, 26);
-    assert!(sqlx::query("UPDATE probe SET number = 0").execute(&mut read_only).await.is_err());
+    assert!(
+        <sqlx::Sqlite as sqlx::migrate::MigrateDatabase>::database_exists(
+            "sqlite:///common/codex/sqlx-probe.sqlite"
+        )
+        .await?
+    );
+    assert!(
+        !<sqlx::Sqlite as sqlx::migrate::MigrateDatabase>::database_exists(
+            "sqlite:///common/codex/not-created.sqlite"
+        )
+        .await?
+    );
+    let mut read_only = options
+        .clone()
+        .read_only(true)
+        .create_if_missing(false)
+        .connect()
+        .await?;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT number FROM probe")
+            .fetch_one(&mut read_only)
+            .await?,
+        26
+    );
+    assert!(
+        sqlx::query("UPDATE probe SET number = 0")
+            .execute(&mut read_only)
+            .await
+            .is_err()
+    );
     read_only.close().await?;
     pool.close().await;
     let mut connection = options.connect().await?;
@@ -158,9 +183,17 @@ fn main() {
     if let Err(e) = tokio::task::LocalSet::new().block_on(&rt, run()) {
         #[cfg(target_os = "trueos")]
         {
-            let report = serde_json::to_vec(&serde_json::json!({"result":"FAIL", "error":e.to_string()})).unwrap();
-            let _ = trueos::async_fs::block_on(trueos::async_fs::write_file(b"/common/sqlx-client-report.json", &report));
-            trueos::logl::log(trueos::logl::level::ERROR, &format!("sqlx-client: FAIL {e}"));
+            let report =
+                serde_json::to_vec(&serde_json::json!({"result":"FAIL", "error":e.to_string()}))
+                    .unwrap();
+            let _ = trueos::async_fs::block_on(trueos::async_fs::write_file(
+                b"/common/sqlx-client-report.json",
+                &report,
+            ));
+            trueos::logl::log(
+                trueos::logl::level::ERROR,
+                format!("sqlx-client: FAIL {e}").as_str(),
+            );
         }
         eprintln!("sqlx-client: FAIL {e}");
         std::process::exit(1);

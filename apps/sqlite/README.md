@@ -135,3 +135,12 @@ dropped transactions, socket-disconnect rollback, concurrent pooled updates,
 SQLite error codes and interruption, all migrations twice, failed commit image
 publication, server restart, and integrity of the persisted images. Pack the
 same client with `cargo bpp sqlx_client` for devrig verification.
+
+On 2026-10-13 the SQLx client Blueprint automatically launched the `codex` SQLite
+instance at `http://localhost:42116` and passed all six Codex migration sets,
+typed values, 16 concurrent updates, nested/dropped transactions, disconnect
+rollback and query interruption. The downloaded database passed integrity_check
+and contained the expected integer, Unicode text, blob and NULL values.
+`sqlx-verification.json` records the loaded Blueprint hashes and persisted image.
+Codex packing then compiled `codex-state` and reached four unrelated Tokio
+filesystem adapter errors in `codex-rollout`.
