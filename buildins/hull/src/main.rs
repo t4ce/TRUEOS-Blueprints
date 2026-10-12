@@ -9,6 +9,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::trueos::WindowExtTrueOS;
 use winit::window::{Window, WindowAttributes, WindowId};
 
+mod borders;
 mod css;
 mod scripts;
 mod shellio;
@@ -121,7 +122,7 @@ impl Hull {
                         logl::level::INFO,
                         format_args!("hull: downloaded {} bytes={}", self.page_url, bytes.len()),
                     );
-                    let document = rp5::parse(&String::from_utf8_lossy(&bytes));
+                    let mut document = rp5::parse(&String::from_utf8_lossy(&bytes));
                     logl::log(
                         logl::level::INFO,
                         format_args!(
@@ -132,6 +133,7 @@ impl Hull {
                     );
                     self.css.parse_document(&document, &self.page_url);
                     self.scripts.extract(&document, &self.page_url);
+                    borders::apply(&mut document);
                     self.document = Some(document);
                     self.html = Some(bytes);
                 }

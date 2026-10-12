@@ -130,6 +130,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("quinn", "quinn-0.11.9"),
     ("quinn-proto", "quinn-proto-0.11.14"),
     ("quinn-udp", "quinn-udp-0.5.14"),
+    ("rama-dns", "rama-dns-0.3.0-alpha.4-trueos"),
     ("rama-tls-rustls", "rama-tls-rustls-0.3.0-alpha.4-rustcrypto"),
     ("rayon", "rayon"),
     ("rayon-core", "rayon/rayon-core"),

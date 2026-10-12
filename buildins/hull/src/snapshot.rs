@@ -7,7 +7,7 @@ use trueos::{async_fs, env, logl};
 use super::css::Css;
 use super::scripts::Scripts;
 
-const DEBUG_BORDERS_CSS: &str = ":where(*) { border: 1px solid magenta; }\n";
+use super::borders::CSS as DEBUG_BORDERS_CSS;
 
 #[allow(non_snake_case)]
 pub(super) fn uneccecaryStoreToFilesystemForDebug(

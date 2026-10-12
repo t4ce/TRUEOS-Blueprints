@@ -1,4 +1,22 @@
 use crate::{Attribute, ParseError};
+use alloc::collections::BTreeMap;
+
+/// A committed element-property mutation. Reading a property emits no event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ElementPropertyChange {
+    pub node: NodeId,
+    pub property: String,
+    pub previous: Option<String>,
+    pub value: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElementPropertyError {
+    NotElement,
+    EmptyName,
+}
+
+pub type ElementPropertyObserver = fn(&Document, &ElementPropertyChange);
 
 pub type NodeId = usize;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,6 +65,7 @@ pub struct Node {
     pub kind: NodeKind,
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
+    element_properties: BTreeMap<String, String>,
 }
 /// An arena keeps node handles stable through adoption and foster parenting,
 /// and avoids recursive drops for deeply nested input.
@@ -56,6 +75,8 @@ pub struct Document {
     pub root: NodeId,
     pub mode: DocumentMode,
     pub errors: Vec<ParseError>,
+    property_observers: Vec<ElementPropertyObserver>,
+    property_change_count: u64,
 }
 impl Document {
     pub fn new(fragment: bool) -> Self {
@@ -68,10 +89,13 @@ impl Document {
                 },
                 parent: None,
                 children: vec![],
+                element_properties: BTreeMap::new(),
             }],
             root: 0,
             mode: DocumentMode::NoQuirks,
             errors: vec![],
+            property_observers: vec![],
+            property_change_count: 0,
         }
     }
     pub fn add(&mut self, kind: NodeKind) -> NodeId {
@@ -80,8 +104,87 @@ impl Document {
             kind,
             parent: None,
             children: vec![],
+            element_properties: BTreeMap::new(),
         });
         id
+    }
+
+    /// Subscribe before applying element properties. Observers see committed values.
+    pub fn observe_element_properties(&mut self, observer: ElementPropertyObserver) {
+        self.property_observers.push(observer);
+    }
+
+    pub fn element_property(&self, id: NodeId, name: &str) -> Option<&str> {
+        self.nodes
+            .get(id)?
+            .element_properties
+            .get(name)
+            .map(String::as_str)
+    }
+
+    /// Establish a property's initial value without emitting a change event.
+    /// An existing value is left intact; later updates use `set_element_property`.
+    pub fn initialize_element_property(
+        &mut self,
+        id: NodeId,
+        name: &str,
+        value: &str,
+    ) -> Result<bool, ElementPropertyError> {
+        if name.is_empty() {
+            return Err(ElementPropertyError::EmptyName);
+        }
+        let node = self
+            .nodes
+            .get_mut(id)
+            .filter(|node| matches!(node.kind, NodeKind::Element { .. }))
+            .ok_or(ElementPropertyError::NotElement)?;
+        match node.element_properties.entry(name.into()) {
+            alloc::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(value.into());
+                Ok(true)
+            }
+            alloc::collections::btree_map::Entry::Occupied(_) => Ok(false),
+        }
+    }
+
+    /// Set or remove any element property; emit one event only if its value changes.
+    /// This stores assigned properties, not browser-computed CSS styles.
+    pub fn set_element_property(
+        &mut self,
+        id: NodeId,
+        name: &str,
+        value: Option<&str>,
+    ) -> Result<bool, ElementPropertyError> {
+        if name.is_empty() {
+            return Err(ElementPropertyError::EmptyName);
+        }
+        let node = self
+            .nodes
+            .get_mut(id)
+            .filter(|node| matches!(node.kind, NodeKind::Element { .. }))
+            .ok_or(ElementPropertyError::NotElement)?;
+        if node.element_properties.get(name).map(String::as_str) == value {
+            return Ok(false);
+        }
+        let previous = match value {
+            Some(value) => node.element_properties.insert(name.into(), value.into()),
+            None => node.element_properties.remove(name),
+        };
+        let event = ElementPropertyChange {
+            node: id,
+            property: name.into(),
+            previous,
+            value: value.map(String::from),
+        };
+        self.property_change_count += 1;
+        for observer in &self.property_observers {
+            observer(self, &event);
+        }
+        Ok(true)
+    }
+
+    pub fn element_property_change_count(&self) -> u64 {
+        self.property_change_count
     }
     pub fn detach(&mut self, child: NodeId) {
         if let Some(parent) = self.nodes[child].parent.take() {

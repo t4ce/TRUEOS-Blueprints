@@ -11,6 +11,7 @@ pub mod token;
 mod tokenizer;
 
 pub use dom::{Document, DocumentMode, Namespace, Node, NodeId, NodeKind};
+pub use dom::{ElementPropertyChange, ElementPropertyError, ElementPropertyObserver};
 pub use parser::{parse, parse_fragment};
 pub use token::Attribute;
 
