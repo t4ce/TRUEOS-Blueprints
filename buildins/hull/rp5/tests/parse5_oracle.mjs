@@ -3,6 +3,7 @@
 // No npm install is needed: the checked-in ../p5/parse5.js is the oracle.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,7 @@ let nativeExecutable;
 let filter = '';
 let check = false;
 let writePath;
+let reportPath;
 for (let index = 2; index < process.argv.length; index++) {
   const arg = process.argv[index];
   if (arg === '--check') check = true;
@@ -28,8 +30,9 @@ for (let index = 2; index < process.argv.length; index++) {
   else if (arg === '--native') nativeExecutable = path.resolve(process.argv[++index]);
   else if (arg === '--filter') filter = process.argv[++index];
   else if (arg === '--write') writePath = path.resolve(process.argv[++index]);
+  else if (arg === '--report') { reportPath = path.resolve(process.argv[++index]); check = true; }
   else if (arg === '--help') {
-    console.log('Usage: node tests/parse5_oracle.mjs [--check] [--native EXE] [--fixtures JSON] [--filter NAME] [--write JSON]');
+    console.log('Usage: node tests/parse5_oracle.mjs [--check] [--native EXE] [--fixtures JSON] [--filter NAME] [--write JSON] [--report JSON]');
     console.log('Default: print canonical parse5 trees. --check: compare with cargo run --example oracle -- fixtures.json.');
     process.exit(0);
   } else throw new Error(`Unknown option: ${arg}`);
@@ -117,7 +120,9 @@ const command = nativeExecutable ?? 'cargo';
 const args = nativeExecutable
   ? [fixturesPath]
   : ['run', '--quiet', '--manifest-path', path.join(crateDirectory, 'Cargo.toml'), '--example', 'oracle', '--', fixturesPath];
-const run = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+// Running Cargo outside the Blueprint workspace avoids its build-std settings:
+// the oracle is an ordinary host executable, while rp5 itself stays no_std.
+const run = spawnSync(command, args, { cwd: os.tmpdir(), encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
 if (run.error) throw run.error;
 if (run.status !== 0) {
   process.stderr.write(run.stderr ?? '');
@@ -127,7 +132,6 @@ const actual = JSON.parse(run.stdout);
 assert(Array.isArray(actual), 'Native oracle output must be an array of {name,tree}');
 const byName = new Map(actual.map((result) => [result.name, result]));
 assert.equal(byName.size, actual.length, 'Native oracle result names must be unique');
-if (!filter) assert.equal(actual.length, fixtures.length, 'Native oracle must return every fixture exactly once');
 
 function firstDifference(left, right, at = 'tree') {
   if (Object.is(left, right)) return null;
@@ -145,19 +149,51 @@ function firstDifference(left, right, at = 'tree') {
   return null;
 }
 
-let failures = 0;
+function fixtureGroup(name) {
+  return name.match(/^(html5lib_tree_.+)_L\d+$/)?.[1]
+    ?? name.match(/^(html5lib_token_.+)_\d+_(?:data|rcdata|rawtext|script_data|plaintext)$/)?.[1]
+    ?? name.split('_')[0];
+}
+
+function brief(value) {
+  const serialized = JSON.stringify(value) ?? 'undefined';
+  return serialized.length > 400 ? `${serialized.slice(0, 400)}…` : serialized;
+}
+
+const failures = [];
+const groups = new Map();
+const fixtureByName = new Map(fixtures.map((fixture) => [fixture.name, fixture]));
 for (const result of expected) {
+  const groupName = fixtureGroup(result.name);
+  const group = groups.get(groupName) ?? { name: groupName, total: 0, failed: 0 };
+  groups.set(groupName, group);
+  group.total++;
   const observed = byName.get(result.name);
   const difference = firstDifference(result.tree, observed?.tree);
   if (difference) {
-    failures++;
-    console.error(`FAIL ${result.name}: ${difference.at}`);
-    console.error(`  parse5: ${JSON.stringify(difference.expected)}`);
-    console.error(`  rp5:    ${JSON.stringify(difference.actual)}`);
+    group.failed++;
+    failures.push({ name: result.name, fixture: fixtureByName.get(result.name), ...difference });
+    if (failures.length <= 20) {
+      console.error(`FAIL ${result.name}: ${difference.at}`);
+      console.error(`  parse5: ${brief(difference.expected)}`);
+      console.error(`  rp5:    ${brief(difference.actual)}`);
+    }
   }
 }
-if (failures) {
-  console.error(`${failures}/${fixtures.length} parse5 parity fixtures failed`);
+const expectedNames = new Set(expected.map((result) => result.name));
+const unexpectedNames = filter ? [] : actual.map((result) => result.name).filter((name) => !expectedNames.has(name));
+const groupResults = [...groups.values()].sort((a, b) => b.failed - a.failed || a.name.localeCompare(b.name));
+if (reportPath) {
+  fs.writeFileSync(reportPath, `${JSON.stringify({ total: fixtures.length, passed: fixtures.length - failures.length,
+    failed: failures.length, unexpected_names: unexpectedNames, groups: groupResults, failures }, null, 2)}\n`);
+}
+if (failures.length || unexpectedNames.length) {
+  if (failures.length > 20) console.error(`${failures.length - 20} additional failures; use --report JSON for all differences`);
+  for (const group of groupResults.filter((group) => group.failed)) {
+    console.error(`  ${group.name}: ${group.failed}/${group.total} failed`);
+  }
+  if (unexpectedNames.length) console.error(`Unexpected native results: ${unexpectedNames.join(', ')}`);
+  console.error(`${failures.length}/${fixtures.length} parse5 parity fixtures failed`);
   process.exitCode = 1;
 } else {
   console.log(`rp5 matches parse5 on ${fixtures.length} document and fragment fixtures`);

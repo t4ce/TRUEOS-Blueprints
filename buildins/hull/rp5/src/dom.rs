@@ -36,7 +36,11 @@ pub enum NodeKind {
     },
     Text(String),
     Comment(String),
-    Doctype { name: String, public_id: String, system_id: String },
+    Doctype {
+        name: String,
+        public_id: String,
+        system_id: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
@@ -56,7 +60,15 @@ pub struct Document {
 impl Document {
     pub fn new(fragment: bool) -> Self {
         Self {
-            nodes: vec![Node { kind: if fragment {NodeKind::Fragment} else {NodeKind::Document}, parent: None, children: vec![] }],
+            nodes: vec![Node {
+                kind: if fragment {
+                    NodeKind::Fragment
+                } else {
+                    NodeKind::Document
+                },
+                parent: None,
+                children: vec![],
+            }],
             root: 0,
             mode: DocumentMode::NoQuirks,
             errors: vec![],
@@ -64,7 +76,11 @@ impl Document {
     }
     pub fn add(&mut self, kind: NodeKind) -> NodeId {
         let id = self.nodes.len();
-        self.nodes.push(Node { kind, parent: None, children: vec![] });
+        self.nodes.push(Node {
+            kind,
+            parent: None,
+            children: vec![],
+        });
         id
     }
     pub fn detach(&mut self, child: NodeId) {
@@ -79,26 +95,50 @@ impl Document {
     }
     pub fn insert_before(&mut self, parent: NodeId, child: NodeId, before: NodeId) {
         self.detach(child);
-        let index = self.nodes[parent].children.iter().position(|id| *id == before).unwrap_or(self.nodes[parent].children.len());
+        let index = self.nodes[parent]
+            .children
+            .iter()
+            .position(|id| *id == before)
+            .unwrap_or(self.nodes[parent].children.len());
         self.nodes[parent].children.insert(index, child);
         self.nodes[child].parent = Some(parent);
     }
     pub fn append_text(&mut self, parent: NodeId, text: &str, before: Option<NodeId>) {
-        if text.is_empty() { return; }
-        let index = before.and_then(|before| self.nodes[parent].children.iter().position(|id| *id == before)).unwrap_or(self.nodes[parent].children.len());
-        if let Some(previous) = index.checked_sub(1).map(|index| self.nodes[parent].children[index]) {
+        if text.is_empty() {
+            return;
+        }
+        let index = before
+            .and_then(|before| {
+                self.nodes[parent]
+                    .children
+                    .iter()
+                    .position(|id| *id == before)
+            })
+            .unwrap_or(self.nodes[parent].children.len());
+        if let Some(previous) = index
+            .checked_sub(1)
+            .map(|index| self.nodes[parent].children[index])
+        {
             if let NodeKind::Text(value) = &mut self.nodes[previous].kind {
                 value.push_str(text);
                 return;
             }
         }
         let node = self.add(NodeKind::Text(text.into()));
-        if let Some(before) = before { self.insert_before(parent, node, before); }
-        else { self.append(parent, node); }
+        if let Some(before) = before {
+            self.insert_before(parent, node, before);
+        } else {
+            self.append(parent, node);
+        }
     }
     pub fn element(&self, id: NodeId) -> Option<(&str, Namespace, &[Attribute])> {
         match &self.nodes[id].kind {
-            NodeKind::Element {name, namespace, attrs, ..} => Some((name, *namespace, attrs)),
+            NodeKind::Element {
+                name,
+                namespace,
+                attrs,
+                ..
+            } => Some((name, *namespace, attrs)),
             _ => None,
         }
     }
@@ -106,20 +146,24 @@ impl Document {
         self.element(id).map_or("", |(name, _, _)| name)
     }
     pub fn namespace(&self, id: NodeId) -> Namespace {
-        self.element(id).map_or(Namespace::Html, |(_, namespace, _)| namespace)
+        self.element(id)
+            .map_or(Namespace::Html, |(_, namespace, _)| namespace)
     }
     pub fn text_content(&self, id: NodeId) -> String {
         let mut result = String::new();
         let mut pending = vec![id];
         while let Some(id) = pending.pop() {
-            if let NodeKind::Text(text) = &self.nodes[id].kind { result.push_str(text); }
+            if let NodeKind::Text(text) = &self.nodes[id].kind {
+                result.push_str(text);
+            }
             pending.extend(self.nodes[id].children.iter().rev().copied());
         }
         result
     }
     pub fn title(&self) -> Option<String> {
         self.nodes.iter().enumerate().find_map(|(id, _)| {
-            (self.name(id) == "title" && self.namespace(id) == Namespace::Html).then(|| self.text_content(id))
+            (self.name(id) == "title" && self.namespace(id) == Namespace::Html)
+                .then(|| self.text_content(id))
         })
     }
 }

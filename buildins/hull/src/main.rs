@@ -71,8 +71,9 @@ impl Hull {
                     logl::log(
                         logl::level::INFO,
                         format_args!(
-                            "hull: rp5 parsed nodes={} errors={} title={:?}",
-                            document.nodes.len(), document.errors.len(), document.title(),
+                            "hull: rp5 parsed nodes={} errors={}",
+                            document.nodes.len(),
+                            document.errors.len(),
                         ),
                     );
                     self.document = Some(document);

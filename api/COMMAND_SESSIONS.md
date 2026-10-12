@@ -18,12 +18,22 @@ and drain output before reporting exit. A prompt is not an exit event, and a los
 transport is not success. If Shell3 provides one combined output stream, it uses
 `Stdout`; `Stderr` is available only when the backend can distinguish it.
 
-Codex's TRUEOS PTY layer adapts this contract to its existing command-session
-handles via `install_shell3_backend` and `spawn_shell3_script`. The platform must
-supply the backend implementation. The current Blueprint API does not yet expose
-a kernel Shell3 command-session transport. This change does not invent syscalls or
-revive the retired Shell2 frontend. Missing registration fails explicitly, and
-Unix program/argv launch requests are rejected on TRUEOS.
+Codex's TRUEOS PTY layer adapts this contract through `spawn_shell3_script`.
+The live `KernelBackend` is installed automatically on TRUEOS; integrations may
+install an alternative before the first launch. Local `exec_command` passes its
+`cmd` text directly to this backend. Remote executors retain their shell behavior.
+
+The versioned API queues a dedicated Shell3 terminal on the resident AP pool.
+It uses the same keyboard decoder and VM console routing as SSH, without an SSH
+connection. Initial script text receives a final Enter if it has no line ending;
+subsequent input remains raw. Sessions persist across commands. Entering `exit`
+at Shell3 ends a session; stdin closure alone does not cancel it.
+
+Four additive ABI operations provide open, read, write, and control over the
+existing VM call channel. Session operations check the authenticated VM and its
+Matrix lifetime. Closing a session disposes of its own initial slot, never an
+unrelated slot selected later with `§`. This requires a kernel containing the new
+session API; rebuilding a Blueprint alone does not upgrade the running kernel.
 
 The Codex Crossterm interface still uses the app's own terminal lease. Command
 sessions do not borrow that lease or type commands into the visible Codex console.

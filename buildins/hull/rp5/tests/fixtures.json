@@ -77,6 +77,8 @@
   {"name":"fragment_select_context","mode":"fragment","context":{"tag":"select","namespace":"html"},"html":"<option>one<option>two<div>ignored</div>"},
   {"name":"fragment_textarea_context","mode":"fragment","context":{"tag":"textarea","namespace":"html"},"html":"A &amp; B <b>x</b>"},
   {"name":"fragment_script_context","mode":"fragment","context":{"tag":"script","namespace":"html"},"html":"if (a < b) x='&amp;';"},
+  {"name":"fragment_script_context_closing_tag_literal","mode":"fragment","context":{"tag":"script","namespace":"html"},"html":"<!-- inside </script> -->"},
+  {"name":"fragment_xmp_context_closing_tag_literal","mode":"fragment","context":{"tag":"xmp","namespace":"html"},"html":"foo</xmp><b>&amp;</b>"},
   {"name":"fragment_svg_context","mode":"fragment","context":{"tag":"svg","namespace":"svg"},"html":"<circle/><foreignObject><p>html</p></foreignObject>"},
   {"name":"fragment_mathml_context","mode":"fragment","context":{"tag":"math","namespace":"mathml"},"html":"<mi>x</mi><mo>+</mo><mn>1</mn>"},
   {"name":"fragment_template_context","mode":"fragment","context":{"tag":"template","namespace":"html"},"html":"<tr><td>cell</td></tr><p>after"}

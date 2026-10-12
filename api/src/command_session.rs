@@ -111,3 +111,144 @@ impl Drop for Session {
         self.transport.close();
     }
 }
+
+/// Live backend for the versioned Blueprint-owned Shell3 session ABI.
+/// Other platforms can type-check the contract but cannot open kernel sessions.
+pub struct KernelBackend;
+
+#[cfg(not(target_os = "trueos"))]
+impl Backend for KernelBackend {
+    fn open(&self, _launch: Launch) -> Result<Box<dyn Transport>, Error> {
+        Err(Error::Unsupported)
+    }
+}
+
+#[cfg(target_os = "trueos")]
+mod kernel {
+    use super::*;
+    use v::vcabi;
+
+    struct KernelTransport {
+        id: u64,
+        closed: bool,
+    }
+    fn error(code: i64) -> Error {
+        match code {
+            -1 => Error::InvalidRequest,
+            -3 => Error::Closed,
+            -4 => Error::Busy,
+            code => Error::Backend(code as i32),
+        }
+    }
+    impl Backend for KernelBackend {
+        fn open(&self, launch: Launch) -> Result<Box<dyn Transport>, Error> {
+            let size = launch.terminal.unwrap_or(Geometry { rows: 24, cols: 80 });
+            let id = unsafe {
+                vcabi::trueos_cabi_shell3_session_open_v1(
+                    launch.script.as_ptr(),
+                    launch.script.len(),
+                    size.cols.into(),
+                    size.rows.into(),
+                    u32::from(launch.stdin_open),
+                )
+            };
+            if id <= 0 {
+                return Err(error(id));
+            }
+            Ok(Box::new(KernelTransport {
+                id: id as u64,
+                closed: false,
+            }))
+        }
+    }
+    impl KernelTransport {
+        fn control(&mut self, op: u32, size: Geometry) -> Result<(), Error> {
+            if self.closed {
+                return Err(Error::Closed);
+            }
+            let rc = unsafe {
+                vcabi::trueos_cabi_shell3_session_control_v1(
+                    self.id,
+                    op,
+                    size.cols.into(),
+                    size.rows.into(),
+                )
+            };
+            if rc < 0 {
+                Err(error(rc.into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    impl Transport for KernelTransport {
+        fn read(&mut self, out: &mut [u8]) -> Result<Read, Error> {
+            if self.closed {
+                return Err(Error::Closed);
+            }
+            let mut payload = [0u8; 4096];
+            let cap = payload.len().min(out.len().saturating_add(8));
+            let rc = unsafe {
+                vcabi::trueos_cabi_shell3_session_read_v1(self.id, payload.as_mut_ptr(), cap)
+            };
+            if rc < 0 {
+                return Err(error(rc as i64));
+            }
+            let len = rc as usize;
+            if len < 8 || len > cap {
+                return Err(Error::Backend(-1));
+            }
+            let flag = u32::from_le_bytes(payload[..4].try_into().unwrap());
+            let code = i32::from_le_bytes(payload[4..8].try_into().unwrap());
+            if flag > 1 {
+                return Err(Error::Backend(-1));
+            }
+            out[..len - 8].copy_from_slice(&payload[8..len]);
+            Ok(Read {
+                len: len - 8,
+                stream: Stream::Stdout,
+                state: if flag == 1 {
+                    State::Exited(code)
+                } else {
+                    State::Running
+                },
+            })
+        }
+        fn write(&mut self, bytes: &[u8]) -> Result<usize, Error> {
+            if self.closed {
+                return Err(Error::Closed);
+            }
+            let rc = unsafe {
+                vcabi::trueos_cabi_shell3_session_write_v1(self.id, bytes.as_ptr(), bytes.len())
+            };
+            if rc < 0 {
+                return Err(error(rc as i64));
+            }
+            if rc as usize > bytes.len() {
+                return Err(Error::Backend(-1));
+            }
+            Ok(rc as usize)
+        }
+        fn close_stdin(&mut self) -> Result<(), Error> {
+            self.control(2, Geometry { rows: 0, cols: 0 })
+        }
+        fn resize(&mut self, size: Geometry) -> Result<(), Error> {
+            self.control(1, size)
+        }
+        fn signal(&mut self, signal: Signal) -> Result<(), Error> {
+            self.control(
+                match signal {
+                    Signal::Interrupt => 3,
+                    Signal::Terminate => 4,
+                },
+                Geometry { rows: 0, cols: 0 },
+            )
+        }
+        fn close(&mut self) {
+            if !self.closed {
+                let _ = self.control(5, Geometry { rows: 0, cols: 0 });
+                self.closed = true;
+            }
+        }
+    }
+}

@@ -14,7 +14,10 @@ pub struct TagToken {
 }
 impl TagToken {
     pub fn attr(&self, name: &str) -> Option<&str> {
-        self.attrs.iter().find(|attr| attr.name == name).map(|attr| attr.value.as_str())
+        self.attrs
+            .iter()
+            .find(|attr| attr.name == name)
+            .map(|attr| attr.value.as_str())
     }
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
