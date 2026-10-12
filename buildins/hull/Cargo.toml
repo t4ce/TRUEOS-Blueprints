@@ -12,6 +12,9 @@ bench = false
 [dependencies]
 trueos = { path = "../../api", features = ["ui4-scene"] }
 rp5 = { path = "rp5" }
+lightningcss = { version = "=1.0.0-alpha.72", default-features = false, features = ["into_owned"] }
+static-self = "0.1.2"
+url = "2.5"
 winit = { path = "../../vendor/winit/winit", default-features = false }
 
 [workspace]

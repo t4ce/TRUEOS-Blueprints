@@ -140,6 +140,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("rustls-rustcrypto", "rustls-rustcrypto-0.0.2-alpha"),
     ("signal-hook-mio", "signal-hook-mio-0.2.5-trueos"),
     ("socket2", "socket2-0.6.3"),
+    ("starlark", "starlark-0.14.2-trueos"),
     ("tokio", "tokio-1.52.3"),
     ("tokio-macros", "tokio-macros-2.7.0"),
     ("tokio-rustls", "tokio-rustls-0.26.4"),

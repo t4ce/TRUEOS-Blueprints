@@ -8,6 +8,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::trueos::WindowExtTrueOS;
 use winit::window::{Window, WindowAttributes, WindowId};
 
+mod css;
+mod snapshot;
+
 #[derive(Default)]
 struct Hull {
     window: Option<Box<dyn Window>>,
@@ -16,6 +19,8 @@ struct Hull {
     download: Option<u32>,
     html: Option<Vec<u8>>,
     document: Option<rp5::Document>,
+    css: css::Css,
+    save_attempted: bool,
 }
 
 impl Hull {
@@ -76,6 +81,7 @@ impl Hull {
                             document.errors.len(),
                         ),
                     );
+                    self.css.parse_document(&document, "https://example.com/");
                     self.document = Some(document);
                     self.html = Some(bytes);
                 }
@@ -101,7 +107,20 @@ impl Drop for Hull {
 impl ApplicationHandler for Hull {
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.poll_download();
-        if self.download.is_some() {
+        self.css.poll_downloads();
+        if !self.save_attempted && self.document.is_some() && !self.css.is_pending() {
+            self.save_attempted = true;
+            if let Err(error) = snapshot::uneccecaryStoreToFilesystemForDebug(
+                self.document.as_ref().unwrap(),
+                &self.css,
+            ) {
+                logl::log(
+                    logl::level::ERROR,
+                    format_args!("hull: snapshot save failed: {error}"),
+                );
+            }
+        }
+        if self.download.is_some() || self.css.is_pending() {
             trueos::vsys::sleep_ms(50);
             event_loop.set_control_flow(ControlFlow::Poll);
         } else {
