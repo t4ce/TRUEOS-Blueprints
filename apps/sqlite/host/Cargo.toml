@@ -14,7 +14,19 @@ axum = { version = "=0.8.9", default-features = false, features = ["json", "http
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "=1.52.3", features = ["rt", "net", "time", "sync", "fs", "io-util", "macros"] }
-rusqlite = { git = "https://github.com/t4ce/rusqlite", rev = "c5a9ada73515cd860f490f8bdd59f83acf5d8e3f", default-features = false, features = ["bundled", "serialize", "hooks", "extra_check"] }
+rusqlite = { git = "https://github.com/t4ce/rusqlite", rev = "c5a9ada73515cd860f490f8bdd59f83acf5d8e3f", default-features = false, features = ["bundled", "serialize", "hooks", "extra_check", "column_decltype"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
+
+[dependencies.hyper]
+version = "=1.10.0"
+features = ["http1", "server"]
+
+[dependencies.hyper-util]
+version = "0.1.20"
+features = ["tokio"]
+
+[dependencies.fallible-iterator]
+version = "0.3"
+

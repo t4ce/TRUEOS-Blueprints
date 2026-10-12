@@ -58,6 +58,7 @@ members = [
     "probes/wls",
 ]
 exclude = [
+    "probes/sqlx_client",
     "buildins/hull",
     "apps/prismq/crates/prism-q",
     "crates",
@@ -74,7 +75,8 @@ keywords = ["dashboard", "terminal", "tui"]
 categories = ["command-line-interface"]
 readme = "vendor/ratatui/README.md"
 license = "MIT"
-exclude = ["*.log", ".github", "CONTRIBUTING.md", "Makefile.toml", "assets/*", "tags"]
+exclude = [
+    "probes/sqlx_client","*.log", ".github", "CONTRIBUTING.md", "Makefile.toml", "assets/*", "tags"]
 edition = "2024"
 rust-version = "1.88.0"
 
@@ -200,6 +202,7 @@ serde_json = "=1.0.150"
 sha2 = "=0.10.9"
 
 [patch.crates-io]
+sqlx-sqlite = { path = "vendor/sqlx-sqlite-0.9.0" }
 crc32fast = { path = "../TRUEOS/vendor/crc32fast-1.5.0" }
 fdeflate = { path = "../TRUEOS/vendor/fdeflate-0.3.7" }
 png = { path = "../TRUEOS/vendor/png-0.18.1" }

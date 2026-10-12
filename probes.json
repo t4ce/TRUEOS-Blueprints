@@ -17,6 +17,7 @@
     "redb_probe",
     "rusqlite_probe",
     "sqlite_client",
+    "sqlx_client",
     "redb_multirt",
     "reqwest_blocking",
     "signal_probe",

@@ -10,11 +10,14 @@ The original pinned `t4ce/rusqlite` engine is reused. Each database is an
 in-memory SQLite database, deserialized on first use and serialized into TRUEOSFS
 before an HTTP transaction is acknowledged. Failed SQL batches roll back. A
 failed image write also restores the service's previous in-memory image. An
-admitted transaction continues if its HTTP client disconnects. There is no
+admitted batch continues if its HTTP client disconnects. Persistent sessions
+roll back an uncommitted transaction when their socket closes or is idle for
+60 seconds. There is no
 client-side WAL or filesystem maintenance lock.
 
-This service is not yet connected to Codex's SQLx client. Its HTTP batch API is
-the tested transport boundary for that integration.
+Codex's SQLx SQLite driver connects to this service on TRUEOS. It retains the
+existing SQLx query, row decoding, pool, and migration interfaces. The native
+host driver still uses the original SQLx implementation.
 
 ## Instances and advertisement
 
@@ -66,6 +69,38 @@ TRUEOSFS persistence uses the same completed whole-file write as the restored
 probe. Host persistence uses sync plus rename. Power-loss durability of the
 TRUEOSFS image publication is not established by these tests.
 
+## Codex / SQLx connections
+
+The platform vendor `vendor/sqlx-sqlite-0.9.0` uses `GET /v1/connect` with an
+HTTP/1.1 upgrade to `trueos-sqlite-v1`. Each connection then carries sequential
+JSON frames with a four-byte big-endian length. Operations are `open`, `execute`,
+`prepare`, `begin`, `commit`, `rollback`, `ping`, and `close`. Replies include
+result sets, transaction depth, and SQLite extended error codes. Scripts use
+SQLite's own statement iterator, including migration DDL and numbered parameters.
+An explicit transaction retains the database guard across requests; nested
+transactions use savepoints. Only the outer commit publishes a new image.
+A failed publication restores the previous committed image before releasing the
+guard. The service reclaims free pages in bounded batches with Codex's reserve
+policy; no client file lock is needed.
+
+Codex defaults to instance `codex` and automatically asks the installed App Store
+to start `sqlite` when its loopback endpoint is unavailable. Set
+`TRUEOS_SQLITE_INSTANCE` to choose another named instance, or
+`TRUEOS_SQLITE_ENDPOINT=http://localhost:PORT` to connect to an already running
+one. An explicitly configured endpoint is never launched automatically. Clients
+use IPv4 loopback directly and bypass HTTP proxies. Each client database path
+maps to `db-FNV64.sqlite` within the service instance's directory; database files
+are owned by the server rather than created in Codex's filesystem scope.
+
+The adapter queues commands on the caller's existing Tokio runtime, including
+rollback when a SQLx transaction is dropped. It creates no runtime or SQLite
+worker thread. `libsqlite3-sys` is absent from its TRUEOS dependencies. Client C
+handles, collations using Rust closures, database deletion, and filesystem-based
+corruption recovery are unavailable through this service. A lost commit response
+can have an unknown outcome; the adapter does not retry SQL automatically.
+Result limits remain 10,000 rows / 8 MiB, and transaction lock waits and SQL work
+are bounded at five seconds. Query budgets are enforced inside the SQLite server.
+
 ## Verification
 
 The isolated `host/Cargo.toml` builds the exact service source without the
@@ -85,3 +120,18 @@ two isolated named instances. `default` advertised port 40894; the second
 instance's endpoint was separately announced. Downloaded images passed host
 `PRAGMA integrity_check` and contained counters 8 and 999 respectively. Evidence
 is recorded in `verification.json`.
+
+The SQLx integration probe embeds all six actual Codex migration sets with SQLx's
+migration resolver. Its isolated workspace keeps the host SQLx C dependency
+separate from the service's pinned rusqlite engine during Cargo resolution.
+Build `probes/sqlx_client/host/Cargo.toml`, then run:
+
+```sh
+python3 apps/sqlite/tests/test_sqlx.py --service apps/sqlite/host/target/debug/sqlite --client probes/sqlx_client/host/target/debug/sqlx_client
+```
+
+This covers typed values, affected rows with RETURNING, nested savepoints,
+dropped transactions, socket-disconnect rollback, concurrent pooled updates,
+SQLite error codes and interruption, all migrations twice, failed commit image
+publication, server restart, and integrity of the persisted images. Pack the
+same client with `cargo bpp sqlx_client` for devrig verification.

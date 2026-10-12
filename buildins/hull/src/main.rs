@@ -24,9 +24,9 @@ struct Hull {
     window: Option<Box<dyn Window>>,
     target: Option<SceneTarget>,
     pending_publish: bool,
-    lines_dirty: bool,
+    quads_dirty: bool,
     frame_counter: shellio::FrameCounter,
-    lines: Option<xxx::Lines>,
+    quads: Option<xxx::Quads>,
     download: Option<u32>,
     html: Option<Vec<u8>>,
     document: Option<rp5::Document>,
@@ -56,7 +56,7 @@ impl Hull {
             SceneTarget::for_window(window.trueos_window_id(), size.width, size.height)
                 .map_err(|error| format!("{error:?}"))?,
         );
-        self.lines_dirty = true;
+        self.quads_dirty = true;
         window.request_redraw();
         self.window = Some(window);
         vshell::line("hull: enter an HTTPS URL to download, parse and display it");
@@ -184,15 +184,15 @@ impl ApplicationHandler for Hull {
                     .unwrap_or((1280, 720)),
             )
             .and_then(|layout| {
-                if self.lines.is_none() {
-                    self.lines = Some(xxx::Lines::new()?);
+                if self.quads.is_none() {
+                    self.quads = Some(xxx::Quads::new()?);
                 }
-                self.lines.as_mut().unwrap().set_layout(
+                self.quads.as_mut().unwrap().set_layout(
                     layout.line_extent.0,
                     layout.line_extent.1,
                     &layout.line_rects,
                 )?;
-                self.lines_dirty = true;
+                self.quads_dirty = true;
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -242,31 +242,31 @@ impl ApplicationHandler for Hull {
                     return;
                 }
                 self.pending_publish = false;
-                self.lines_dirty = true;
+                self.quads_dirty = true;
                 window.request_redraw();
                 target.set_extent(size.width, size.height)
             }
             WindowEvent::RedrawRequested => (|| {
                 // Moving the retained UI4 frame is compositor work. A generic
                 // redraw notification does not invalidate our content.
-                if !self.lines_dirty && !self.pending_publish {
+                if !self.quads_dirty && !self.pending_publish {
                     return Ok(());
                 }
                 if !self.pending_publish {
-                    if let Some(lines) = &self.lines {
-                        lines.draw(target)?;
+                    if let Some(quads) = &self.quads {
+                        quads.draw(target)?;
                     } else {
                         target.begin(rgba(35, 39, 39, 255))?;
                     }
                     self.frame_counter.produced();
-                    self.lines_dirty = false;
+                    self.quads_dirty = false;
                     self.pending_publish = true;
                 }
                 window.pre_present_notify();
                 let size = window.surface_size();
                 target.publish(Damage::full(size.width, size.height))?;
                 self.pending_publish = false;
-                if self.lines_dirty {
+                if self.quads_dirty {
                     window.request_redraw();
                 }
                 Ok(())

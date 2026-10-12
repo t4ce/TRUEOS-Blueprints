@@ -1,4 +1,5 @@
 mod storage;
+mod session;
 
 use axum::{
     Json, Router,
@@ -412,6 +413,7 @@ async fn run(instance: String, directory: PathBuf) -> Result<(), String> {
     let router = Router::new()
         .route("/healthz", get(health))
         .route("/v1/batch", post(batch))
+        .route("/v1/connect", get(session::upgrade))
         .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(service);
     axum::serve(listener, router)

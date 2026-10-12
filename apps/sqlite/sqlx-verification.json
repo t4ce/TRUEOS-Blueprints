@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-13",
+  "rig": "192.168.178.94",
+  "report": {
+    "result": "PASS",
+    "typed_values": true,
+    "nested_transactions": true,
+    "disconnect_rollback": true,
+    "concurrent_updates": 16,
+    "codex_migration_sets": 6
+  },
+  "advertisement": {
+    "protocol": "trueos-sqlite/v1",
+    "instance": "codex",
+    "endpoint": "http://localhost:42116",
+    "ipv4_endpoint": "http://127.0.0.1:42116",
+    "sqlite_version": "3.53.2",
+    "storage": "sqlite-memory-image"
+  },
+  "client_sha256": "563f6c1e3c995079283c1e2337c043242d1716b5a706a844bb00dc6da398ac4e",
+  "server_sha256": "44074ecf19108d1157a69a25925269f98b454da24869d9010087821776c980ce",
+  "persisted_probe": {
+    "database": "db-203d79c3b666dc17.sqlite",
+    "bytes": 8192,
+    "sha256": "cedf47542343d320d8d45e90ae1a76aec1868474f982470490232cb9c957794a",
+    "integrity": [
+      [
+        "ok"
+      ]
+    ],
+    "row": [
+      [
+        1,
+        26,
+        1.25,
+        "hello \ud83c\udf0d",
+        "00FF07",
+        null
+      ]
+    ]
+  }
+}

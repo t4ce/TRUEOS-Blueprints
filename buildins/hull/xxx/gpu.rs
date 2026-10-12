@@ -3,7 +3,7 @@ use trueos::ui4_winit::{Error, SceneTarget};
 use trueos::vgpu::*;
 
 /// Owns GPU resources until the renderer is dropped, not until a frame is submitted.
-pub struct Lines {
+pub struct Quads {
     device: Device,
     queue: Queue,
     shader: ShaderModule,
@@ -19,7 +19,7 @@ fn ui_error(code: i32) -> Error {
     }
 }
 
-impl Lines {
+impl Quads {
     pub fn new() -> Result<Self, i32> {
         let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
         let result = (|| {
@@ -46,17 +46,17 @@ impl Lines {
     pub fn set_layout(&mut self, width: u32, height: u32, rectangles: &[Rect]) -> Result<(), i32> {
         if width == 0
             || height == 0
-            || rectangles.len() > u32::MAX as usize / 8
+            || rectangles.len() > u32::MAX as usize / 6
             || rectangles
                 .iter()
                 .any(|&[x, y, w, h]| ![x, y, w, h, x + w, y + h].iter().all(|v| v.is_finite()))
         {
             return Err(ERR_IO);
         }
-        let replacement = if rectangles.is_empty() {
+        let (vertices, indices) = super::geometry(width, height, rectangles);
+        let replacement = if indices.is_empty() {
             None
         } else {
-            let (vertices, indices) = super::geometry(width, height, rectangles);
             let vb = self
                 .device
                 .create_buffer(vertices.len(), BUFFER_USAGE_MAP_WRITE | BUFFER_USAGE_VERTEX)?;
@@ -108,8 +108,8 @@ impl Lines {
         };
         batch.draws[0] = IndexedBatchDrawV2 {
             index_count: count,
-            rgba8_srgb: u32::from_le_bytes([255, 0, 255, 255]),
-            topology: PRIMITIVE_TOPOLOGY_LINE_LIST,
+            rgba8_srgb: u32::from_le_bytes(super::DEFAULT_COLOR),
+            topology: PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
             ..Default::default()
         };
         let point = self
@@ -127,7 +127,7 @@ impl Lines {
     }
 }
 
-impl Drop for Lines {
+impl Drop for Quads {
     fn drop(&mut self) {
         // Draws retire before returning; resources are safe to release at teardown.
         if let Some((vertices, indices, _)) = self.mesh.take() {
