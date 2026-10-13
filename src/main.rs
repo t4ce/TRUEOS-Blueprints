@@ -1665,6 +1665,28 @@ fn ensure_rust_src_replacement(
 }
 
 fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
+    ensure_rust_src_replacement(
+        "std/src/sys/fs/unix.rs",
+        r#"    let mut entries = Vec::new();
+    for name in listing.split(|byte| *byte == b'\n') {
+        if name.is_empty() || name == b"." || name == b".." {
+            continue;
+        }
+        let name = crate::ffi::CString::new(name).map_err(|_| {
+            io::const_error!(
+                io::ErrorKind::InvalidData,
+                "TRUEOSFS directory entry contains a NUL byte",
+            )
+        })?;
+        entries.push(name);
+    }
+"#,
+        &format!(
+            "{}\n    let entries = trueos_directory_names(&listing)?;\n",
+            include_str!("rust_std_trueos_dir_listing.rs"),
+        ),
+        "typed directory listing decoder",
+    )?;
     ensure_rust_src_file(
         "std/src/sys/random/trueos.rs",
         TRUEOS_STD_RANDOM_BACKEND,
@@ -3479,7 +3501,11 @@ fn rewrite_staged_source_for_target(
         rewritten.push('\n');
     }
     rewritten.push_str(
-        "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
+        // Terminate through the Hull ABI before its executable image can be
+        // released: background pthread carriers may still be using that image.
+        // This also works for no_std apps and retains the shim's existing policy
+        // of discarding main's return value.
+        "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    let _ = main();\n    unsafe extern \"C\" {\n        fn exit(code: core::ffi::c_int) -> !;\n    }\n    unsafe { exit(0) }\n}\n",
     );
 
     // A staged app may retain an upstream source symlink. Replace that link

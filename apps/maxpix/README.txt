@@ -8,9 +8,7 @@ The frame clears to fully transparent black (RGBA 0,0,0,0).
 The fragment shader gives every point the same opaque cyan color. There is no mouse/keyboard control.
 Picasso's camera stays at [-10,-10,-10], looking at [0,0,0]. UI4 resize events
 update the viewport and camera aspect. Maxpix renders 1x1 native points into
-a half-resolution scene backing. UI4 uses the display engine plane scaler for
-2x presentation (roughly 2x2 output pixels per point), with a transparent
-full-resolution foreground. No BCS0 upscale or HS/DS/GS expansion is used.
+a full-resolution streaming frame, presented at 1:1 without upscaling.
 
 Change PARTICLE_COUNT near the top of scene.rs to adjust the workload and rebuild.
 Color/motion live in TRUEOS/tools/maxpix-bake/shaders/tornado.wgsl; changing them

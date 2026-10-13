@@ -33,11 +33,109 @@ fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
         if entrypoint {
             assert!(rewritten.starts_with(&format!("#![no_main]\n{source}")));
             assert!(rewritten.contains("pub extern \"C\" fn _start() -> !"));
-            assert!(rewritten.contains("core::hint::spin_loop()"));
+            assert!(rewritten.contains("unsafe { exit(0) }"));
         } else {
             assert_eq!(rewritten, source);
         }
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn entrypoint_rewrite_exits_after_main_returns() {
+    let root = env::temp_dir().join(format!("trueos-entrypoint-exit-{}", std::process::id()));
+    let staged = root.join("staged");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(staged.join("src")).unwrap();
+    let manifest = root.join("Cargo.toml");
+    fs::write(&manifest, "[package]\nname = \"entrypoint-exit-test\"\nversion = \"0.1.0\"\n").unwrap();
+    for (index, source) in [
+        "fn main() { std::fs::write(\"marker\", b\"returned\").unwrap(); }\n",
+        "fn main() -> Result<(), &'static str> { std::fs::write(\"marker\", b\"returned\").unwrap(); Ok(()) }\n",
+    ].into_iter().enumerate() {
+        fs::write(root.join("src/main.rs"), source).unwrap();
+        fs::write(staged.join("src/main.rs"), source).unwrap();
+        let settings = resolve_build_settings(&root, &manifest, &BuildTarget::Package).unwrap();
+        rewrite_staged_source_for_target(&root, &staged, &manifest, &settings).unwrap();
+        let rewritten = fs::read_to_string(staged.join("src/main.rs")).unwrap();
+        // Run the generated function inside a module, keeping the host CRT's
+        // own _start symbol so this tests process termination without a rig.
+        let body = rewritten.trim_start_matches("#![no_main]\n")
+            .replace("#[unsafe(no_mangle)]\n", "");
+        let fixture = root.join(format!("fixture{index}.rs"));
+        let executable = root.join(format!("fixture{index}"));
+        fs::write(&fixture, format!("mod app {{\n{body}\n}}\nfn main() {{ app::_start(); }}\n")).unwrap();
+        let result = Command::new("rustc").arg("--edition=2024").arg(&fixture)
+            .arg("-o").arg(&executable).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let mut child = Command::new(&executable).current_dir(&root).spawn().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("generated entrypoint did not exit after main returned");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(fs::read(root.join("marker")).unwrap(), b"returned");
+        fs::remove_file(root.join("marker")).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn trueos_std_directory_decoder_matches_tdl1() {
+    let root = env::temp_dir().join(format!("trueos-std-directory-wire-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let fixture = root.join("directory_wire.rs");
+    let executable = root.join("directory_wire");
+    let tests = r#"
+#[test]
+fn empty_and_typed_entries_decode() {
+    assert!(trueos_directory_names(b"TDL1\0\0\0\0\0\0\0\0").unwrap().is_empty());
+    let names = trueos_directory_names(b"TDL1\0\0\0\0\x02\0\0\0\x02\0\x07\0.system\x01\0\x07\0a.rules").unwrap();
+    assert_eq!(names[0].to_bytes(), b".system");
+    assert_eq!(names[1].to_bytes(), b"a.rules");
+}
+#[test]
+fn names_preserve_newlines_and_non_utf8_bytes() {
+    let names = trueos_directory_names(b"TDL1\0\0\0\0\x02\0\0\0\x01\0\x03\0a\nb\x01\0\x01\0\xff").unwrap();
+    assert_eq!(names[0].to_bytes(), b"a\nb");
+    assert_eq!(names[1].to_bytes(), b"\xff");
+}
+#[test]
+fn malformed_and_truncated_records_are_rejected() {
+    for bytes in [
+        b"".as_slice(), b"TDL1", b"BAD!\0\0\0\0\0\0\0\0",
+        b"TDL1\x01\0\0\0\0\0\0\0", b"TDL1\0\0\x01\0\0\0\0\0",
+        b"TDL1\0\0\0\0\xff\xff\xff\xff",
+        b"TDL1\0\0\0\0\x01\0\0\0\x03\0\x01\0a",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\x01\x01\0a",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\0\x03\0ab",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\0\0\0",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\0\x01\0.",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\0\x02\0..",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\0\x03\0a/b",
+        b"TDL1\0\0\0\0\x01\0\0\0\x01\0\x03\0a\0b",
+        b"TDL1\0\0\0\0\0\0\0\0trailing",
+    ] {
+        assert_eq!(trueos_directory_names(bytes).unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+}
+"#;
+    fs::write(&fixture, format!(
+        "use std::io;\nmod ffi {{ pub use std::ffi::CString; }}\n{}\n{tests}",
+        include_str!("rust_std_trueos_dir_listing.rs"),
+    )).unwrap();
+    let result = Command::new("rustc").arg("--edition=2024").arg("--test")
+        .arg(&fixture).arg("-o").arg(&executable).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert!(Command::new(&executable).status().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -16,9 +16,7 @@ mod native {
 
     pub fn run() -> Result<(), i32> {
         let (mut width, mut height) = (800, 600);
-        let mut frame = Frame::open_winit_scaled(80, 64, width, height, 60, 2).map_err(|_| vgpu::ERR_IO)?;
-        let mut scene = frame.background().map_err(|_| vgpu::ERR_IO)?;
-        let mut repaint_foreground = true;
+        let mut frame = Frame::open_streaming(80, 64, width, height).map_err(|_| vgpu::ERR_IO)?;
         let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
         let queue = device.create_queue(QueueClass::Render)?;
         let (vertices, indices) = particle_mesh(PARTICLE_COUNT);
@@ -51,7 +49,7 @@ mod native {
         logl::log(
             logl::level::IMPORTANT,
             format_args!(
-                "maxpix: particles={} topology=POINT_LIST cpu-upload=once motion=native-VS point=1px display-scale=2x camera=-10,-10,-10",
+                "maxpix: particles={} topology=POINT_LIST cpu-upload=once motion=native-VS point=1px display-scale=1x camera=-10,-10,-10",
                 PARTICLE_COUNT
             ),
         );
@@ -71,7 +69,6 @@ mod native {
                         width = w;
                         height = h;
                         pending_resize = None;
-                        repaint_foreground = true;
                     }
                     Err(UiError::Busy) => {
                         vsys::sleep_ms(1);
@@ -80,23 +77,7 @@ mod native {
                     Err(_) => return Err(vgpu::ERR_IO),
                 }
             }
-            if repaint_foreground {
-                match frame.begin(0) {
-                    Ok(()) => {}
-                    Err(UiError::Busy) => { vsys::sleep_ms(1); continue; }
-                    Err(_) => return Err(vgpu::ERR_IO),
-                }
-                loop {
-                    match frame.publish(Damage::full(width, height)) {
-                        Ok(()) => break,
-                        Err(UiError::Busy) => { vsys::poll_once(); vsys::sleep_ms(1); }
-                        Err(_) => return Err(vgpu::ERR_IO),
-                    }
-                }
-                repaint_foreground = false;
-            }
-            let (scene_width, scene_height) = ((width / 2).max(1), (height / 2).max(1));
-            match scene.begin_gpu_frame() {
+            match frame.begin_gpu_frame() {
                 Ok(()) => {}
                 Err(UiError::Busy) => {
                     vsys::sleep_ms(1);
@@ -104,8 +85,8 @@ mod native {
                 }
                 Err(_) => return Err(vgpu::ERR_IO),
             }
-            let surface = device.acquire_ui4_surface(scene.render_target())?;
-            let mut view = camera().retained(scene_width, scene_height, previous);
+            let surface = device.acquire_ui4_surface(frame.window_id())?;
+            let mut view = camera().retained(width, height, previous);
             view.jitter_frame[2] = (clock::monotonic_millis() - started) as f32 * 0.001;
             if frames == 0 {
                 view.previous_view_projection = view.view_projection;
@@ -132,7 +113,7 @@ mod native {
             )?;
             device.wait(queue, point.value)?;
             loop {
-                match scene.publish(Damage::full(scene_width, scene_height)) {
+                match frame.publish(Damage::full(width, height)) {
                     Ok(()) => break,
                     Err(UiError::Busy) => { vsys::poll_once(); vsys::sleep_ms(1); }
                     Err(_) => return Err(vgpu::ERR_IO),
