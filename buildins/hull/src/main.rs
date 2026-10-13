@@ -62,12 +62,21 @@ impl Hull {
         window.request_redraw();
         self.window = Some(window);
         vshell::line("hull: enter an HTTPS URL to download, parse and display it");
-        self.start_page(PAGE_URL.into());
+        self.start_page_with_policy(PAGE_URL.into(), false);
         Ok(())
     }
 
     fn start_page(&mut self, url: String) {
-        match netfs::fetch_bytes(url.as_bytes()) {
+        self.start_page_with_policy(url, true);
+    }
+
+    fn start_page_with_policy(&mut self, url: String, happy_eyeballs: bool) {
+        let download = if happy_eyeballs {
+            netfs::fetch_bytes_happy_eyeballs(url.as_bytes())
+        } else {
+            netfs::fetch_bytes(url.as_bytes())
+        };
+        match download {
             Ok(operation) => {
                 self.html = None;
                 self.document = None;

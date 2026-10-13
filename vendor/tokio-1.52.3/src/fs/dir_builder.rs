@@ -94,6 +94,9 @@ impl DirBuilder {
         let path = path.as_ref().to_owned();
         #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
         {
+            // TRUEOSFS creates paths through the async filesystem broker and
+            // does not store Unix permission bits. `mode` is API compatibility
+            // state only on these targets, matching the native mkdir shim.
             if self.recursive {
                 return crate::fs::trueos::create_dir_all(&path).await;
             }
@@ -118,12 +121,15 @@ impl DirBuilder {
 }
 
 feature! {
-    #![all(unix, not(any(target_os = "trueos", target_os = "zkvm")))]
+    #![unix]
 
     impl DirBuilder {
         /// Sets the mode to create new directories with.
         ///
         /// This option defaults to 0o777.
+        ///
+        /// On TRUEOS and zkVM, this setting is accepted for compatibility but
+        /// has no effect: TRUEOSFS does not store Unix permission bits.
         ///
         /// # Examples
         ///
