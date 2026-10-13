@@ -1687,6 +1687,7 @@ fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
         ),
         "typed directory listing decoder",
     )?;
+    ensure_rust_std_trueos_file_lock_methods()?;
     ensure_rust_src_file(
         "std/src/sys/random/trueos.rs",
         TRUEOS_STD_RANDOM_BACKEND,
@@ -1777,6 +1778,97 @@ fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
         "platform clock",
     )?;
     Ok(())
+}
+
+fn patch_trueos_file_lock_methods(source: &str) -> Result<String, String> {
+    const METHODS: [&str; 6] = [
+        "lock", "lock_shared", "try_lock", "try_lock_shared", "unlock", "truncate",
+    ];
+    let mut patched = source.to_owned();
+    for pair in METHODS.windows(2) {
+        let start_marker = format!("    pub fn {}(&self)", pair[0]);
+        let end_marker = format!("    pub fn {}(&self", pair[1]);
+        let start = patched
+            .find(&start_marker)
+            .ok_or_else(|| format!("missing std File::{} method", pair[0]))?;
+        let end = patched[start..]
+            .find(&end_marker)
+            .map(|offset| start + offset)
+            .ok_or_else(|| format!("missing std File::{} boundary", pair[1]))?;
+        let method = &patched[start..end];
+        let linux = "target_os = \"linux\",";
+        if method.matches(linux).count() != 1 {
+            return Err(format!("unexpected std File::{} platform cfg", pair[0]));
+        }
+        if method.contains("target_os = \"trueos\",") {
+            continue;
+        }
+        let linux_start = start + method.find(linux).unwrap();
+        let line_start = patched[..linux_start].rfind('\n').map_or(0, |i| i + 1);
+        let indent = &patched[line_start..linux_start];
+        if !indent.chars().all(|ch| ch == ' ') {
+            return Err(format!("unexpected std File::{} cfg indentation", pair[0]));
+        }
+        let insert_at = linux_start + linux.len();
+        patched.insert_str(insert_at, &format!("\n{indent}target_os = \"trueos\","));
+    }
+    Ok(patched)
+}
+
+fn ensure_rust_std_trueos_file_lock_methods() -> Result<(), String> {
+    let path = pinned_rust_src_path("std/src/sys/fs/unix.rs")?;
+    let source = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read Rust std source {}: {err}", path.display()))?;
+    let patched = patch_trueos_file_lock_methods(&source)?;
+    if patched != source {
+        fs::write(&path, patched)
+            .map_err(|err| format!("failed to patch Rust std source {}: {err}", path.display()))?;
+        println!(
+            "trueos-blueprint: restored rust-src TRUEOS file locks: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod trueos_file_lock_tests {
+    use super::patch_trueos_file_lock_methods;
+
+    fn fixture() -> String {
+        let mut source = String::from("target_os = \"linux\",\n");
+        for method in [
+            "lock",
+            "lock_shared",
+            "try_lock",
+            "try_lock_shared",
+            "unlock",
+        ] {
+            source.push_str(&format!(
+                "    pub fn {method}(&self) {{\n        cfg_select! {{\n            any(\n                target_os = \"linux\",\n            ) => {{}}\n        }}\n    }}\n"
+            ));
+        }
+        source.push_str("    pub fn truncate(&self, size: u64) {}\n");
+        source
+    }
+
+    #[test]
+    fn enables_all_five_file_lock_methods_without_changing_other_cfgs() {
+        let source = fixture();
+        let patched = patch_trueos_file_lock_methods(&source).unwrap();
+        assert_eq!(patched.matches("target_os = \"trueos\",").count(), 5);
+        assert!(patched.starts_with("target_os = \"linux\",\n"));
+        assert_eq!(patch_trueos_file_lock_methods(&patched).unwrap(), patched);
+    }
+
+    #[test]
+    fn rejects_changed_std_lock_layout() {
+        let source = fixture().replace(
+            "target_os = \"linux\",\n            ) => {}",
+            "target_os = \"freebsd\",\n            ) => {}",
+        );
+        assert!(patch_trueos_file_lock_methods(&source).is_err());
+    }
 }
 
 fn ensure_rust_src_libc_lock_matches_overlay(
