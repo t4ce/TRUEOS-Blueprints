@@ -823,6 +823,18 @@ mod terminal_platform_vendor_tests {
     }
 
     #[test]
+    fn crossterm_0_28_overlay_stages_the_complete_input_interface() {
+        let root = env::temp_dir().join(format!("trueos-crossterm-overlay-{}", std::process::id()));
+        let staged = stage_crossterm_trueos_overlay(&root, "0.28.1").unwrap();
+        assert!(fs::read_to_string(staged.join("src/event/source/unix.rs")).unwrap().contains("mod parser;"));
+        assert!(staged.join("src/event/source/unix/parser.rs").is_file());
+        assert!(fs::read_to_string(staged.join("src/event.rs")).unwrap().contains("pub enum InputDiscardStatus"));
+        assert!(fs::read_to_string(staged.join("src/event/source.rs")).unwrap().contains("fn discard_buffered_input"));
+        assert!(fs::read_to_string(staged.join("src/event/read.rs")).unwrap().contains("source.discard_buffered_input()"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn terminal_platform_forks_use_persistent_mio_eventflow() {
         let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor");
         let crossterm =
@@ -834,7 +846,11 @@ mod terminal_platform_vendor_tests {
         assert_eq!(crossterm, CROSSTERM_TRUEOS_MIO_SOURCE);
         assert!(crossterm.contains("trueos_set_nonblocking(tty_raw_fd)?;"));
         assert!(crossterm.contains("trueos_cabi_blueprint_terminal_surface_snapshot_v1"));
-        assert!(crossterm.contains("self.poll.poll(&mut self.events, timeout.leftover())"));
+        // Retained TTY readability is drained without blocking; ordinary waits
+        // still use the caller's remaining timeout on the persistent Mio poll.
+        let compact = crossterm.split_whitespace().collect::<String>();
+        assert_eq!(crossterm.matches("Poll::new()?").count(), 1);
+        assert!(compact.contains("self.poll.poll(&mutself.events,ifpending_tty_readable{Some(Duration::ZERO)}else{timeout.leftover()},)"));
         assert!(!crossterm.contains("SURFACE_POLL_SLICE"));
         assert!(!crossterm.contains("crossterm-resize-probe"));
         assert!(!crossterm.contains("trueos_mio_selector"));

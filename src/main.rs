@@ -13,6 +13,7 @@ mod artifact;
 mod build_plan;
 mod cargo_output;
 mod cli;
+mod native_fold;
 mod publish;
 mod std_backend;
 mod toolchain;
@@ -767,6 +768,14 @@ fn build_one_target_to_in_lane(
             cargo.arg("--example").arg(name);
         }
     };
+    // Derive ownership from this staged invocation, including its profile,
+    // features, patches and build-std graph. Plan once; cached artifact names
+    // cannot establish a dependency's current package/source identity.
+    let native_fold_plan = if output_name == "codex" {
+        Some(native_fold::capture_plan(&cargo, &work_dir, "codex_network_proxy")?)
+    } else {
+        None
+    };
     cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
 
     println!(
@@ -877,10 +886,11 @@ fn build_one_target_to_in_lane(
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
     ld.arg("-r").arg("--gc-sections");
-    // Voxy's full-client link otherwise retains thousands of individual
+    // Large applications otherwise retain hundreds of thousands of individual
     // code/data sections and their ELF directory entries and names.
     if rustc_tier.is_some()
         || output_name == "voxy"
+        || output_name == "codex"
         || (output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev))
     {
         let linker_script = work_dir.join("rel-coalesce.ld");
@@ -900,8 +910,17 @@ fn build_one_target_to_in_lane(
     ld.arg(&link_app_obj);
     if !rlibs.is_empty() {
         ld.arg("--start-group");
-        for rlib in &rlibs {
-            ld.arg(rlib);
+        if let Some(plan) = &native_fold_plan {
+            let inputs = native_fold::write_link_inputs(
+                plan,
+                &rlibs,
+                &cargo_artifacts.target_archives,
+                &root_artifacts.rlink,
+                &work_dir,
+            )?;
+            ld.args(inputs);
+        } else {
+            ld.args(&rlibs);
         }
         ld.arg("--end-group");
     }
@@ -3114,12 +3133,32 @@ const CROSSTERM_TRUEOS_MIO_SOURCE: &str =
     include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/mio.rs");
 
 fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    // Crossterm 0.28 and 0.29 use the same Mio event-source shape. Keep one
-    // audited TRUEOS implementation instead of replaying a growing sequence of
-    // text substitutions that can leave staged and vendored builds divergent.
-    let mio_path = crate_dir.join("src/event/source/unix/mio.rs");
-    normalize_line_endings(&mio_path)?;
-    fs::write(&mio_path, CROSSTERM_TRUEOS_MIO_SOURCE).map_err(io_string)
+    // The shared Mio backend depends on the fork's parser and input-discard
+    // interface. Stage that interface together for older Crossterm versions.
+    for (relative, source) in [
+        ("src/event/source/unix/mio.rs", CROSSTERM_TRUEOS_MIO_SOURCE),
+        ("src/event/source/unix/parser.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/parser.rs")),
+        ("src/event/source/unix/tty.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/tty.rs")),
+        ("src/event/source/unix.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix.rs")),
+        ("src/event/source.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source.rs")),
+        ("src/event/read.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/read.rs")),
+    ] {
+        fs::write(crate_dir.join(relative), source).map_err(io_string)?;
+    }
+    let event_path = crate_dir.join("src/event.rs");
+    normalize_line_endings(&event_path)?;
+    let event = fs::read_to_string(&event_path).map_err(io_string)?;
+    if !event.contains("pub enum InputDiscardStatus") {
+        let shared_event = include_str!("../vendor/crossterm-0.29.0-trueos/src/event.rs")
+            .replace("\r\n", "\n");
+        let start = shared_event.find("/// Whether discarding buffered input")
+            .ok_or_else(|| "missing shared Crossterm input-discard interface".to_string())?;
+        let end = shared_event[start..].find("/// Checks if there is an")
+            .ok_or_else(|| "missing end of shared Crossterm input-discard interface".to_string())?;
+        fs::write(&event_path, format!("{event}\n{}", &shared_event[start..start + end]))
+            .map_err(io_string)?;
+    }
+    Ok(())
 }
 
 fn normalize_line_endings(path: &Path) -> Result<(), String> {

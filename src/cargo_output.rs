@@ -8,9 +8,9 @@ use crate::io_string;
 
 /// Artifacts whose identity is authenticated by Cargo's current JSON stream.
 ///
-/// Native linker inputs intentionally do not live here: Cargo reports every
-/// artifact it produced or reused, while the root crate's `.rlink` records the
-/// closure rustc actually selected.
+/// Cargo reports every artifact it produced or reused. Native inputs are
+/// selected separately from the root crate's `.rlink`; this inventory supplies
+/// their authenticated package and source identities, never the link closure.
 #[derive(Default)]
 pub(crate) struct CargoBuildArtifacts {
     /// Metadata artifacts for the standard-library closure emitted by this
@@ -27,6 +27,17 @@ pub(crate) struct CargoBuildArtifacts {
     /// inventory by Cargo package ID. Nothing is discovered by scraping the
     /// persistent target cache.
     pub(crate) target_metadata: Vec<CargoTargetMetadataArtifact>,
+    /// Target archives emitted or reused by this invocation. The `.rlink`
+    /// intersects this inventory when assigning native ownership folds.
+    pub(crate) target_archives: Vec<CargoNativeArchiveArtifact>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CargoNativeArchiveArtifact {
+    pub(crate) package_id: String,
+    pub(crate) crate_name: String,
+    pub(crate) source_path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -160,6 +171,7 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
     let mut artifacts = CargoBuildArtifacts::default();
     let mut sysroot_candidates = Vec::new();
     let mut target_metadata_candidates = Vec::new();
+    let mut target_archive_candidates = Vec::new();
     let mut saw_build_std_anchor = false;
     let mut rendered_stdout = String::new();
 
@@ -193,17 +205,27 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
                             continue;
                         }
 
-                        if path.extension().and_then(|extension| extension.to_str())
-                            != Some("rmeta")
-                        {
-                            continue;
-                        }
                         let Some(package_id) = message.package_id.as_ref() else {
                             continue;
                         };
                         let Some(target) = message.target.as_ref() else {
                             continue;
                         };
+                        if path.extension().and_then(|extension| extension.to_str()) == Some("rlib")
+                        {
+                            target_archive_candidates.push(CargoNativeArchiveArtifact {
+                                package_id: package_id.clone(),
+                                crate_name: target.name.clone(),
+                                source_path: PathBuf::from(&target.src_path),
+                                path,
+                            });
+                            continue;
+                        }
+                        if path.extension().and_then(|extension| extension.to_str())
+                            != Some("rmeta")
+                        {
+                            continue;
+                        }
                         let artifact = CargoTargetMetadataArtifact {
                             package_id: package_id.clone(),
                             crate_name: target.name.clone(),
@@ -253,6 +275,11 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
     let mut seen_paths = HashSet::new();
     target_metadata_candidates.retain(|artifact| seen_paths.insert(artifact.path.clone()));
     artifacts.target_metadata = target_metadata_candidates;
+    target_archive_candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    // Keep conflicting identities for one path visible to the ownership
+    // guard; repeated identical fresh messages are harmless.
+    target_archive_candidates.dedup();
+    artifacts.target_archives = target_archive_candidates;
 
     (artifacts, rendered_stdout)
 }
@@ -487,6 +514,23 @@ mod tests {
                 std_rmeta.as_path(),
             ]
         );
+        assert_eq!(
+            artifacts
+                .target_archives
+                .iter()
+                .map(|artifact| artifact.path.as_path())
+                .collect::<Vec<_>>(),
+            vec![
+                libc_rlib.as_path(),
+                object_rlib.as_path(),
+                std_rlib.as_path()
+            ]
+        );
+        assert_eq!(
+            artifacts.target_archives[0].package_id,
+            vendor_libc_package_id
+        );
+        assert_eq!(artifacts.target_archives[0].source_path, vendor_libc);
     }
 
     #[test]

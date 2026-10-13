@@ -794,7 +794,22 @@ rustc-payload-dependencies = ["trueos", "itoa"]
 
     #[test]
     fn root_catalogs_keep_apps_and_probes_separate() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        // Exercise the real catalog entries and their relative path mapping
+        // without requiring every external sibling checkout on the test host.
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let fixture = env::temp_dir().join(format!("trueos-blueprint-catalog-{nonce}"));
+        let fixture_root = fixture.join("TRUEOS-Blueprints");
+        fs::create_dir_all(&fixture_root).unwrap();
+        let root = fixture_root.as_path();
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for catalog in [PackageCatalog::Apps, PackageCatalog::Probes] {
+            fs::copy(checkout.join(catalog.registry_file()), root.join(catalog.registry_file())).unwrap();
+            for app in registered_app_specs(root, catalog).unwrap() {
+                assert!(app.dir.starts_with(root), "catalog fixture must use a relative path");
+                fs::create_dir_all(&app.dir).unwrap();
+                fs::write(app.dir.join("Cargo.toml"), format!("[package]\nname = {:?}\nversion = \"0.1.0\"\n", app.name)).unwrap();
+            }
+        }
         let apps = registered_app_specs(root, PackageCatalog::Apps).unwrap();
         let probes = package_app_specs(root, PackageCatalog::Probes).unwrap();
 
@@ -833,7 +848,7 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             "backup",
             "termdir",
             "edit",
-            "shell",
+            "hull",
         ] {
             let buildin = apps.iter().find(|app| app.name == buildin_name).unwrap();
             assert_eq!(buildin.dir, root.join("buildins").join(buildin_name));
@@ -867,6 +882,7 @@ rustc-payload-dependencies = ["trueos", "itoa"]
                     .is_none()
             );
         }
+        fs::remove_dir_all(fixture).unwrap();
     }
 
     fn temporary_manifest(key: &str, value: &str) -> PathBuf {
