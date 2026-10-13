@@ -6,7 +6,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::platform::trueos::WindowExtTrueOS;
+use winit::platform::trueos::{ActiveEventLoopExtTrueOS, WindowExtTrueOS};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 mod css;
@@ -25,6 +25,7 @@ struct Hull {
     target: Option<SceneTarget>,
     pending_publish: bool,
     quads_dirty: bool,
+    redraw_reason: &'static str,
     frame_counter: shellio::FrameCounter,
     quads: Option<xxx::Quads>,
     download: Option<u32>,
@@ -50,13 +51,14 @@ impl Hull {
                 ((i64::from(width) - 1280) / 2) as i32,
                 ((i64::from(height) - 720) / 2) as i32,
             ));
-        let window = event_loop.create_window(attributes)?;
+        let window = event_loop.create_streaming_window(attributes)?;
         let size = window.surface_size();
         self.target = Some(
             SceneTarget::for_window(window.trueos_window_id(), size.width, size.height)
                 .map_err(|error| format!("{error:?}"))?,
         );
         self.quads_dirty = true;
+        self.redraw_reason = "initial";
         window.request_redraw();
         self.window = Some(window);
         vshell::line("hull: enter an HTTPS URL to download, parse and display it");
@@ -108,7 +110,6 @@ impl Hull {
     fn page_pending(&self) -> bool {
         self.download.is_some()
             || self.css.is_pending()
-            || self.scripts.is_pending()
             || (self.document.is_some() && !self.save_attempted)
     }
 
@@ -167,11 +168,8 @@ impl ApplicationHandler for Hull {
         self.poll_download();
         self.css.poll_downloads();
         self.scripts.poll_downloads();
-        if !self.save_attempted
-            && self.document.is_some()
-            && !self.css.is_pending()
-            && !self.scripts.is_pending()
-        {
+        // Scripts are inspection-only; their downloads cannot block CSS layout.
+        if !self.save_attempted && self.document.is_some() && !self.css.is_pending() {
             self.save_attempted = true;
             let result = snapshot::save_svg(
                 self.document.as_ref().unwrap(),
@@ -193,6 +191,7 @@ impl ApplicationHandler for Hull {
                     &layout.line_rects,
                 )?;
                 self.quads_dirty = true;
+                self.redraw_reason = "layout";
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -237,34 +236,45 @@ impl ApplicationHandler for Hull {
                 event_loop.exit();
                 Ok(())
             }
-            WindowEvent::SurfaceResized(size) => {
+            WindowEvent::SurfaceResized(size) => (|| {
                 if size.width == 0 || size.height == 0 {
-                    return;
+                    return Ok(());
                 }
                 self.pending_publish = false;
                 self.quads_dirty = true;
+                self.redraw_reason = "resize";
+                self.frame_counter.resizing();
                 window.request_redraw();
                 target.set_extent(size.width, size.height)
-            }
+            })(),
             WindowEvent::RedrawRequested => (|| {
                 // Moving the retained UI4 frame is compositor work. A generic
                 // redraw notification does not invalidate our content.
                 if !self.quads_dirty && !self.pending_publish {
                     return Ok(());
                 }
-                if !self.pending_publish {
+                if !self.pending_publish && self.quads_dirty {
+                    self.frame_counter.attempt();
                     if let Some(quads) = &self.quads {
                         quads.draw(target)?;
                     } else {
                         target.begin(rgba(35, 39, 39, 255))?;
                     }
-                    self.frame_counter.produced();
+                    let size = window.surface_size();
+                    self.frame_counter.produced(
+                        self.redraw_reason,
+                        size.width,
+                        size.height,
+                        self.quads.is_some(),
+                    );
                     self.quads_dirty = false;
                     self.pending_publish = true;
                 }
                 window.pre_present_notify();
                 let size = window.surface_size();
+                self.frame_counter.publishing();
                 target.publish(Damage::full(size.width, size.height))?;
+                self.frame_counter.published();
                 self.pending_publish = false;
                 if self.quads_dirty {
                     window.request_redraw();
@@ -275,7 +285,10 @@ impl ApplicationHandler for Hull {
         };
         match result {
             Ok(()) => {}
-            Err(Error::Busy) => window.request_redraw(),
+            Err(Error::Busy) => {
+                self.frame_counter.busy();
+                window.request_redraw();
+            }
             Err(error) => {
                 logl::log(logl::level::ERROR, format_args!("hull: {error:?}"));
                 event_loop.exit();

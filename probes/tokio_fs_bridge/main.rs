@@ -18,6 +18,29 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     file.read_to_end(&mut tail).await?;
     assert_eq!(tail, b"suffix\n");
     assert_eq!(file.metadata().await?.len(), 14);
+    let identity = file.metadata().await?;
+    let id = identity.file_id().expect("committed file identity");
+    let revision = identity.revision().expect("committed file revision");
+    assert_eq!(identity.dev(), u64::from(identity.root_id()));
+    assert_eq!(identity.ino(), id);
+    assert_eq!(identity.ctime() as u64 * 1_000_000_000 + identity.ctime_nsec() as u64, revision);
+    assert!(identity.is_file());
+    assert!(!identity.is_symlink());
+    assert_eq!(identity.created().unwrap_err().kind(), std::io::ErrorKind::Unsupported);
+    assert_eq!(identity.modified().unwrap_err().kind(), std::io::ErrorKind::Unsupported);
+    let path_identity = tokio::fs::metadata(PATH).await?;
+    assert_eq!(path_identity.file_id(), Some(id));
+    assert_eq!(path_identity.root_id(), identity.root_id());
+    assert_eq!(path_identity.revision(), Some(revision));
+    #[cfg(target_os = "trueos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(PATH)?;
+        assert_eq!(metadata.ino(), id);
+        assert_eq!(metadata.dev(), u64::from(identity.root_id()));
+        assert_eq!(metadata.ctime(), identity.ctime());
+        assert_eq!(metadata.ctime_nsec(), identity.ctime_nsec());
+    }
     let mut standard = file.into_std().await;
     Seek::seek(&mut standard, SeekFrom::Start(7))?;
     let mut reader: Box<dyn Read + Send> = Box::new(standard);
@@ -38,6 +61,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     file.sync_all().await?;
     drop(file);
     assert_eq!(std::fs::read(PATH)?, b"prefix:suffix\nappended\n");
+    assert_eq!(tokio::fs::metadata(PATH).await?.file_id(), Some(id));
 
     // The original descriptor's read-only access must still be enforced.
     let mut file = tokio::fs::File::from_std(std::fs::File::open(PATH)?);
@@ -68,6 +92,39 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(contents.is_empty());
     drop(reader);
     assert_eq!(tokio::fs::read(MEMORY).await?, b"MEMORY\n");
+    phase("metadata_identity").await;
+    let memory_before = tokio::fs::metadata(MEMORY).await?;
+    let memory_id = memory_before.file_id().unwrap();
+    tokio::fs::write(MEMORY, b"changed").await?;
+    let memory_after = tokio::fs::metadata(MEMORY).await?;
+    assert_eq!(memory_before.len(), memory_after.len());
+    assert_ne!(memory_before.revision(), memory_after.revision());
+    assert_eq!(tokio::fs::metadata(MEMORY).await?.file_id(), Some(memory_id));
+    tokio::fs::remove_file(MEMORY).await?;
+    tokio::fs::write(MEMORY, b"recreated").await?;
+    assert_ne!(tokio::fs::metadata(MEMORY).await?.file_id(), Some(memory_id));
+    let directory = tokio::fs::metadata("/common").await?;
+    assert!(directory.is_dir());
+    assert!(!directory.is_symlink());
+    phase("permission_copy").await;
+    let before_permissions = tokio::fs::metadata(MEMORY).await?;
+    let permissions: std::fs::Permissions = before_permissions.permissions();
+    tokio::fs::set_permissions(MEMORY, permissions.clone()).await?;
+    let snapshot = tokio::fs::File::open(MEMORY).await?;
+    snapshot.set_permissions(permissions.clone()).await?;
+    drop(snapshot);
+    let descriptor = tokio::fs::File::from_std(std::fs::File::open(MEMORY)?);
+    descriptor.set_permissions(permissions).await?;
+    drop(descriptor);
+    let after_permissions = tokio::fs::metadata(MEMORY).await?;
+    assert_eq!(before_permissions.file_id(), after_permissions.file_id());
+    assert_eq!(before_permissions.revision(), after_permissions.revision());
+    assert_eq!(tokio::fs::read(MEMORY).await?, b"recreated");
+    let error = tokio::fs::set_permissions(
+        "/common/tokio-fs-bridge-missing-dir/file",
+        after_permissions.permissions(),
+    ).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     Ok(())
 }
 async fn phase(stage: &str) {
@@ -87,7 +144,7 @@ fn main() {
     let result = tokio::task::LocalSet::new().block_on(&rt, run());
     let report = match result {
         Ok(()) => String::from(
-            "{\"result\":\"PASS\",\"cursor\":true,\"append\":true,\"read_only\":true,\"owned_blocking_io\":true}",
+            "{\"result\":\"PASS\",\"cursor\":true,\"append\":true,\"read_only\":true,\"owned_blocking_io\":true,\"metadata_identity\":true,\"std_tokio_identity\":true,\"same_length_revision\":true,\"permission_copy\":true}",
         ),
         Err(e) => format!("FAIL {e}"),
     };

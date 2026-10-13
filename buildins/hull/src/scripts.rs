@@ -94,6 +94,7 @@ impl Scripts {
                 });
             }
         }
+        self.report_counts();
     }
 
     pub fn poll_downloads(&mut self) {
@@ -114,7 +115,19 @@ impl Scripts {
                     self.sources[index].origin
                 )),
             }
+            self.report_counts();
         }
+    }
+
+    fn report_counts(&self) {
+        logl::log(
+            logl::level::INFO,
+            format_args!(
+                "hull: scripts collected={} pending={} (inspection only)",
+                self.sources.len(),
+                self.downloads.len(),
+            ),
+        );
     }
 
     pub fn is_pending(&self) -> bool {

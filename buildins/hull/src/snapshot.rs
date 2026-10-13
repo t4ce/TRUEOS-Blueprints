@@ -18,6 +18,17 @@ pub(super) fn save_svg(
     let url = url::Url::parse(page_url).map_err(|_| -1)?;
     let host = url.host_str().ok_or(-1)?;
     let root = format!("{app_root}/{host}");
+    let started = std::time::Instant::now();
+    logl::log(
+        logl::level::INFO,
+        format_args!(
+            "hull: layout start nodes={} sheets={} viewport={}x{}",
+            document.nodes.len(),
+            css.sheets.len(),
+            viewport.0,
+            viewport.1,
+        ),
+    );
     let layout = super::layout::compute(document, css, viewport).map_err(|error| {
         logl::log(
             logl::level::ERROR,
@@ -25,6 +36,18 @@ pub(super) fn save_svg(
         );
         -1
     })?;
+    logl::log(
+        logl::level::INFO,
+        format_args!(
+            "hull: layout complete boxes={} elapsed_ms={}",
+            layout.line_rects.len(),
+            started.elapsed().as_millis(),
+        ),
+    );
+    logl::log(
+        logl::level::INFO,
+        format_args!("hull: saving {root}/layout.svg"),
+    );
     async_fs::block_on(async {
         async_fs::create_dir_all(root.as_bytes()).await?;
         async_fs::write_file(

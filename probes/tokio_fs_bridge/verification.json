@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-13",
+  "rig": "192.168.178.94",
+  "report": {
+    "result": "PASS",
+    "cursor": true,
+    "append": true,
+    "read_only": true,
+    "owned_blocking_io": true
+  },
+  "blueprint_sha256": "48a0cc68ab717af320c203fb7f4101f416173a89f26dbbfa391b0839f1fe9358",
+  "payload": "raw",
+  "module_sha256": "5d30fda6bae4d7928c88a2a84fc2463d967a7e9d2844b8b36cad83fe6d01f247",
+  "persisted_files": {
+    "tokio-fs-bridge.txt": "prefix:suffix\nappended\n",
+    "tokio-fs-bridge-memory.txt": "MEMORY\n"
+  },
+  "checks": {
+    "kernel_cargo_check": "PASS",
+    "native_codex_rollout_check": "PASS",
+    "trueos_codex_rollout_compile": "PASS"
+  },
+  "next_frontier": {
+    "codex-exec-server": 4,
+    "codex-message-history": 1
+  }
+}

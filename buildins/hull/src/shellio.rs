@@ -1,16 +1,49 @@
 //! Input and frame diagnostics for the attached VM minishell.
 
-/// Counts produced Hull frames across navigation for this browser instance.
+/// Distinguishes draw attempts, completed frames, publication, and backpressure.
 #[derive(Default)]
 pub(super) struct FrameCounter {
     f: u64,
+    attempts: u64,
+    published: u64,
+    busy: u64,
+    stage: &'static str,
 }
 
 impl FrameCounter {
-    /// Called once after a successful draw, before publication retries.
-    pub fn produced(&mut self) {
+    pub fn attempt(&mut self) {
+        self.attempts += 1;
+        self.stage = "draw";
+    }
+    pub fn produced(&mut self, reason: &str, width: u32, height: u32, gpu: bool) {
         self.f += 1;
-        trueos::vshell::linef(format_args!("hull: f={}", self.f));
+        trueos::vshell::linef(format_args!(
+            "hull: f={} attempts={} published={} busy={} reason={} viewport={}x{} gpu={}",
+            self.f, self.attempts, self.published, self.busy, reason, width, height, gpu,
+        ));
+    }
+    pub fn publishing(&mut self) {
+        self.stage = "publish";
+    }
+    pub fn published(&mut self) {
+        self.published += 1;
+        trueos::vshell::linef(format_args!(
+            "hull: published={} f={}",
+            self.published, self.f
+        ));
+    }
+    pub fn busy(&mut self) {
+        self.busy += 1;
+        // Keep backpressure diagnostics from flooding the shell/compositor.
+        if self.busy.is_power_of_two() {
+            trueos::vshell::linef(format_args!(
+                "hull: busy={} stage={} f={} attempts={} published={}",
+                self.busy, self.stage, self.f, self.attempts, self.published,
+            ));
+        }
+    }
+    pub fn resizing(&mut self) {
+        self.stage = "resize";
     }
 }
 

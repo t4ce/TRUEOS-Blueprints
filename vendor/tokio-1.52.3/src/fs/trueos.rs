@@ -29,11 +29,18 @@ impl FileType {
     }
 }
 
+// Use the normal I/O permission type on TRUEOS. These Unix mode bits do not
+// encode access keys; read/write authorization belongs in filesystem I/O.
+#[cfg(target_os = "trueos")]
+pub use std::fs::Permissions;
+
+#[cfg(not(target_os = "trueos"))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Permissions {
     readonly: bool,
 }
 
+#[cfg(not(target_os = "trueos"))]
 impl Permissions {
     pub fn readonly(&self) -> bool {
         self.readonly
@@ -44,38 +51,79 @@ impl Permissions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Metadata {
+    revision: u64,
+    file_id: u64,
+    root_id: u32,
     len: u64,
     file_type: FileType,
     permissions: Permissions,
 }
 
+fn compatibility_permissions(mode: u32) -> Permissions {
+    #[cfg(target_os = "trueos")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Permissions::from_mode(mode)
+    }
+    #[cfg(not(target_os = "trueos"))]
+    {
+        let _ = mode;
+        Permissions::default()
+    }
+}
+
+impl Default for Metadata {
+    fn default() -> Self {
+        Self {
+            revision: 0, file_id: 0, root_id: 0, len: 0,
+            file_type: FileType::default(),
+            permissions: compatibility_permissions(0o644),
+        }
+    }
+}
+
 impl Metadata {
     fn file(len: u64) -> Self {
         Self {
+            revision: 0, file_id: 0, root_id: 0,
             len,
             file_type: FileType {
                 is_file: true,
                 is_dir: false,
                 is_symlink: false,
             },
-            permissions: Permissions::default(),
+            permissions: compatibility_permissions(0o644),
         }
     }
 
     fn dir() -> Self {
         Self {
+            revision: 0, file_id: 0, root_id: 0,
             len: 0,
             file_type: FileType {
                 is_file: false,
                 is_dir: true,
                 is_symlink: false,
             },
-            permissions: Permissions::default(),
+            permissions: compatibility_permissions(0o755),
         }
     }
 
+    /// Stable within its root across writes and renames; None for uncommitted files.
+    pub fn file_id(&self) -> Option<u64> { (self.file_id != 0).then_some(self.file_id) }
+    pub fn root_id(&self) -> u32 { self.root_id }
+    /// Committed record revision; this is not wall-clock time.
+    pub fn revision(&self) -> Option<u64> { (self.revision != 0).then_some(self.revision) }
+    pub fn dev(&self) -> u64 { u64::from(self.root_id) }
+    pub fn ino(&self) -> u64 { self.file_id }
+    /// Logical revision encoded in Unix time slots; not calendar time.
+    pub fn ctime(&self) -> i64 { (self.revision / 1_000_000_000) as i64 }
+    pub fn ctime_nsec(&self) -> i64 { (self.revision % 1_000_000_000) as i64 }
+    pub fn created(&self) -> io::Result<std::time::SystemTime> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "TRUEOSFS creation time is not recorded"))
+    }
     pub fn file_type(&self) -> FileType {
         self.file_type
     }
@@ -97,10 +145,10 @@ impl Metadata {
     }
 
     pub fn permissions(&self) -> Permissions {
-        self.permissions
+        self.permissions.clone()
     }
 
-    /// TRUEOSFS stat currently exposes node kind and length, but no timestamps.
+    /// Calendar modification time is not recorded; use revision() for change detection.
     pub fn modified(&self) -> io::Result<std::time::SystemTime> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -140,7 +188,7 @@ impl TrueosDirEntry {
 
     pub(crate) fn metadata(&self) -> io::Result<Metadata> {
 
-        Ok(self.metadata)
+        Ok(self.metadata.clone())
     }
 
     pub(crate) fn file_type(&self) -> io::Result<FileType> {
@@ -182,7 +230,7 @@ unsafe extern "C" {
     ) -> i32;
     fn trueos_cabi_async_fs_write_commit(id: u32) -> i32;
     fn trueos_cabi_async_fs_create_dir_all_start(path_ptr: *const u8, path_len: usize) -> i32;
-    fn trueos_cabi_async_fs_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_metadata_start_v2(path_ptr: *const u8, path_len: usize) -> i32;
     fn trueos_cabi_async_fs_list_dir_start(path_ptr: *const u8, path_len: usize) -> i32;
     fn trueos_cabi_async_fs_remove_start(path_ptr: *const u8, path_len: usize) -> i32;
     fn trueos_cabi_async_fs_status(id: u32) -> i32;
@@ -447,7 +495,7 @@ async fn stat_async(path: &Path) -> io::Result<Metadata> {
     let path = cabi_path_string(path, true)?;
     let path = path.as_bytes();
     let mut operation = AsyncFsOperation::from_start(
-        unsafe { trueos_cabi_async_fs_stat_start(path.as_ptr(), path.len()) },
+        unsafe { trueos_cabi_async_fs_metadata_start_v2(path.as_ptr(), path.len()) },
         "stat start",
     )?;
     operation.ready().await?;
@@ -455,13 +503,13 @@ async fn stat_async(path: &Path) -> io::Result<Metadata> {
     if len < 0 {
         return Err(fs_status_to_io(len as i32, "stat len"));
     }
-    if len != 12 {
+    if len != 32 {
         return Err(io::Error::new(
             io::ErrorKind::Other,
             "TRUEOS async fs stat returned an invalid result",
         ));
     }
-    let mut result = [0u8; 12];
+    let mut result = [0u8; 32];
     let got = unsafe {
         trueos_cabi_async_fs_result_read(operation.id, 0, result.as_mut_ptr(), result.len())
     };
@@ -480,9 +528,15 @@ async fn stat_async(path: &Path) -> io::Result<Metadata> {
     let len = u64::from_le_bytes([
         result[4], result[5], result[6], result[7], result[8], result[9], result[10], result[11],
     ]);
+    let file_id = u64::from_le_bytes(result[12..20].try_into().unwrap());
+    let root_id = u32::from_le_bytes(result[20..24].try_into().unwrap());
     match kind {
-        1 => Ok(Metadata::file(len)),
-        2 => Ok(Metadata::dir()),
+        1 | 2 => {
+            let mut metadata = if kind == 1 { Metadata::file(len) } else { Metadata::dir() };
+            metadata.file_id = file_id; metadata.root_id = root_id;
+            metadata.revision = u64::from_le_bytes(result[24..32].try_into().unwrap());
+            Ok(metadata)
+        },
         _ => Err(io::Error::new(
             io::ErrorKind::Other,
             "TRUEOS fs CABI returned an unknown node kind",
@@ -870,14 +924,17 @@ impl TrueosFile {
         if let Some(file) = self.std_file.as_ref() {
             let metadata = file.metadata()?;
             let file_type = metadata.file_type();
+            use std::os::unix::fs::MetadataExt;
             return Ok(Metadata {
+                revision: (metadata.ctime() as u64).saturating_mul(1_000_000_000).saturating_add(metadata.ctime_nsec() as u64),
+                file_id: metadata.ino(), root_id: metadata.dev() as u32,
                 len: metadata.len(),
                 file_type: FileType {
                     is_file: file_type.is_file(),
                     is_dir: file_type.is_dir(),
                     is_symlink: file_type.is_symlink(),
                 },
-                permissions: Permissions { readonly: metadata.permissions().readonly() },
+                permissions: metadata.permissions(),
             });
         }
 
@@ -885,7 +942,13 @@ impl TrueosFile {
             .inner
             .lock()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "TRUEOS fs file mutex poisoned"))?;
-        Ok(Metadata::file(inner.data.len() as u64))
+        let mut metadata = match stat_sync(&inner.path) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == io::ErrorKind::NotFound && inner.dirty => Metadata::file(0),
+            Err(e) => return Err(e),
+        };
+        metadata.len = inner.data.len() as u64;
+        Ok(metadata)
     }
 
     pub(crate) fn try_clone(&self) -> io::Result<TrueosFile> {
@@ -913,8 +976,20 @@ impl TrueosFile {
         })
     }
 
-    pub(crate) fn set_permissions(&self, _perm: Permissions) -> io::Result<()> {
-        unsupported("permissions")
+    pub(crate) fn set_permissions(&self, perm: Permissions) -> io::Result<()> {
+        #[cfg(target_os = "trueos")]
+        {
+            if let Some(file) = self.std_file.as_ref() {
+                return file.set_permissions(perm);
+            }
+            // Match the native fchmod development policy. Validate the file,
+            // but do not persist Unix modes or translate them into access keys.
+            let _ = perm;
+            self.metadata()?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "trueos"))]
+        { let _ = perm; unsupported("permissions") }
     }
 }
 
@@ -1062,8 +1137,17 @@ pub(crate) async fn read_dir(path: &Path) -> io::Result<TrueosReadDir> {
     })
 }
 
-pub(crate) async fn set_permissions(_path: &Path, _perm: Permissions) -> io::Result<()> {
-    unsupported("permissions")
+pub(crate) async fn set_permissions(path: &Path, perm: Permissions) -> io::Result<()> {
+    #[cfg(target_os = "trueos")]
+    {
+        let _ = perm;
+        // Permission copying follows the existing development policy, while
+        // nonexistent or invalid paths retain their normal I/O errors.
+        stat_async(path).await?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "trueos"))]
+    { let _ = (path, perm); unsupported("permissions") }
 }
 
 pub(crate) async fn remove_file(path: &Path) -> io::Result<()> {
