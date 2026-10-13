@@ -580,17 +580,40 @@ async fn list_dir_async(path: &Path) -> io::Result<Vec<String>> {
         offset = offset.saturating_add(got as usize);
     }
     operation.discard();
-    let listing = String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "TRUEOS async fs list_dir returned invalid UTF-8",
-        )
-    })?;
-    Ok(listing
-        .lines()
-        .filter(|name| !name.is_empty() && *name != "...")
-        .map(String::from)
-        .collect())
+    decode_directory_names(&bytes)
+}
+
+// The async CABI returns TDL1 records, not newline-separated filenames.
+fn decode_directory_names(bytes: &[u8]) -> io::Result<Vec<String>> {
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid TRUEOS directory listing");
+    if bytes.len() < 12 || &bytes[..4] != b"TDL1" || bytes[4..8] != [0; 4] {
+        return Err(invalid());
+    }
+    let count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    if count > (bytes.len() - 12) / 4 {
+        return Err(invalid());
+    }
+    let mut names = Vec::with_capacity(count);
+    let mut offset = 12;
+    for _ in 0..count {
+        let header = bytes.get(offset..offset + 4).ok_or_else(invalid)?;
+        if !matches!(header[0], 1 | 2) || header[1] != 0 {
+            return Err(invalid());
+        }
+        let len = u16::from_le_bytes([header[2], header[3]]) as usize;
+        offset += 4;
+        let name = core::str::from_utf8(bytes.get(offset..offset + len).ok_or_else(invalid)?)
+            .map_err(|_| invalid())?;
+        if name.is_empty() || name.contains(['\0', '/']) || matches!(name, "." | "..") {
+            return Err(invalid());
+        }
+        names.push(name.to_owned());
+        offset += len;
+    }
+    if offset != bytes.len() {
+        return Err(invalid());
+    }
+    Ok(names)
 }
 
 async fn exists_async(path: &Path) -> io::Result<bool> {

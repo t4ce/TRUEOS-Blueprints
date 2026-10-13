@@ -620,6 +620,22 @@ impl Frame {
         }
     }
 
+    /// Open the Winit paired-frame transport with a full-resolution foreground
+    /// and scene backing reduced by `scene_divisor` (1, 2 or 4). The display
+    /// engine scales the background scene to the window's placement.
+    pub fn open_winit_scaled(
+        x: i32, y: i32, width: u32, height: u32,
+        background_hz: u32, scene_divisor: u32,
+    ) -> Result<Self, Error> {
+        let window_id = unsafe {
+            v::bp_abi::trueos_cabi_ui4_winit_frame_open_scaled_v1(
+                x, y, width, height, background_hz, scene_divisor,
+            )
+        };
+        if window_id == 0 { return Err(Error::Ui4); }
+        Ok(Self { window_id, width, height })
+    }
+
     /// Open one input window with independent foreground and background
     /// producers. Foreground is streaming/triple; background is visual/double.
     /// Hardware layer allocation is broker-owned and keeps the pair together.

@@ -1,12 +1,16 @@
 Maxpix
 
-100,000 native Intel POINT_LIST particles, seeded and uploaded once by the CPU.
+230,400 native Intel POINT_LIST particles, seeded and uploaded once by the CPU.
 A baked native vertex shader animates a rising, widening tornado.
-Its bottom/top radii are 0.75/5.5, and its vertical extent is -4.4 to 4.4. The fragment
-shader gives every point the same cyan color. There is no mouse/keyboard control.
+Its local bottom/top radii are 0.75/5.5, and its local vertical extent is
+-4.4 to 4.4. The instance scale is 1.0.
+The frame clears to fully transparent black (RGBA 0,0,0,0).
+The fragment shader gives every point the same opaque cyan color. There is no mouse/keyboard control.
 Picasso's camera stays at [-10,-10,-10], looking at [0,0,0]. UI4 resize events
-update the viewport and camera aspect. The native rasterizer stamps four-pixel
-squares, using the same point primitive as Potato Stamps; no HS/DS/GS expansion.
+update the viewport and camera aspect. Maxpix renders 1x1 native points into
+a half-resolution scene backing. UI4 uses the display engine plane scaler for
+2x presentation (roughly 2x2 output pixels per point), with a transparent
+full-resolution foreground. No BCS0 upscale or HS/DS/GS expansion is used.
 
 Change PARTICLE_COUNT near the top of scene.rs to adjust the workload and rebuild.
 Color/motion live in TRUEOS/tools/maxpix-bake/shaders/tornado.wgsl; changing them
@@ -21,6 +25,8 @@ Host checks:
 
 Requires the accompanying TRUEOS kernel with retained layout MAXPIX_TORNADO (10).
 After loading the updated OS, use Apps mode: online maxpix
-Startup and the first four/every 120 frames emit Important maxpix markers with
-particle count, time, extent, and completion timeline. Capture/host tests pass;
+Startup and the first four frames emit Important maxpix markers with
+particle count, time, extent, and completion timeline. Every four seconds an
+Important ShellIO log reports average FPS from GPU-completed, published frames.
+This includes frame pacing (the loop sleeps 16 ms) and surface backpressure. Capture/host tests pass;
 physical output needs a run on the updated kernel.

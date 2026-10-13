@@ -25,6 +25,11 @@ impl Default for InternalEventReader {
         #[cfg(unix)]
         let source = UnixInternalEventSource::new();
 
+        #[cfg(target_os = "trueos")]
+        if let Err(error) = &source {
+            eprintln!("[codex-startup] input source initialization failed: {error}");
+        }
+
         let source = source.ok().map(|x| Box::new(x) as Box<dyn EventSource>);
 
         InternalEventReader {
