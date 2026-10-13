@@ -1,4 +1,5 @@
-use std::{collections::VecDeque, io, time::Duration};
+use super::parser::Parser;
+use std::{io, time::Duration};
 
 use mio::{unix::SourceFd, Events, Interest, Poll, Token};
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -6,10 +7,8 @@ use signal_hook_mio::v1_0::Signals;
 
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
-use crate::event::Event;
-use crate::event::{
-    source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, InternalEvent,
-};
+use crate::event::{source::EventSource, timeout::PollTimeout, InternalEvent};
+use crate::event::{Event, InputDiscardStatus};
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
 // Tokens to identify file descriptor
@@ -106,6 +105,7 @@ pub(crate) struct UnixInternalEventSource {
     parser: Parser,
     tty_buffer: [u8; TTY_BUFFER_SIZE],
     tty_fd: FileDesc<'static>,
+    pending_tty_readable: bool,
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     terminal_surface: Option<TerminalSurfaceSnapshot>,
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -147,6 +147,7 @@ impl UnixInternalEventSource {
             parser: Parser::default(),
             tty_buffer: [0u8; TTY_BUFFER_SIZE],
             tty_fd: input_fd,
+            pending_tty_readable: false,
             #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
             terminal_surface,
             #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -190,11 +191,20 @@ impl EventSource for UnixInternalEventSource {
         let timeout = PollTimeout::new(timeout);
 
         loop {
-            if let Err(e) = self.poll.poll(&mut self.events, timeout.leftover()) {
+            let pending_tty_readable = std::mem::take(&mut self.pending_tty_readable);
+            if let Err(e) = self.poll.poll(
+                &mut self.events,
+                if pending_tty_readable {
+                    Some(Duration::ZERO)
+                } else {
+                    timeout.leftover()
+                },
+            ) {
                 // Mio will throw an interrupted error in case of cursor position retrieval. We need to retry until it succeeds.
                 // Previous versions of Mio (< 0.7) would automatically retry the poll call if it was interrupted (if EINTR was returned).
                 // https://docs.rs/mio/0.7.0/mio/struct.Poll.html#notes
                 if e.kind() == io::ErrorKind::Interrupted {
+                    self.pending_tty_readable = pending_tty_readable;
                     continue;
                 } else {
                     return Err(e);
@@ -206,7 +216,7 @@ impl EventSource for UnixInternalEventSource {
                 return Ok(Some(event));
             }
 
-            if self.events.is_empty() {
+            if self.events.is_empty() && !pending_tty_readable {
                 // TRUEOS may wake this poll for typed terminal state without
                 // manufacturing a readable byte or Mio token. The snapshot
                 // check above consumes a real surface change; unrelated
@@ -222,7 +232,13 @@ impl EventSource for UnixInternalEventSource {
                 return Ok(None);
             }
 
-            for token in self.events.iter().map(|x| x.token()) {
+            for token in self
+                .events
+                .iter()
+                .map(|x| x.token())
+                .filter(|token| !pending_tty_readable || *token != TTY_TOKEN)
+                .chain(pending_tty_readable.then_some(TTY_TOKEN))
+            {
                 match token {
                     TTY_TOKEN => {
                         loop {
@@ -241,6 +257,20 @@ impl EventSource for UnixInternalEventSource {
 
                             if let Some(event) = self.parser.next() {
                                 return Ok(Some(event));
+                            }
+                            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+                            {
+                                // Host descriptors may be blocking. Do not read again without bytes.
+                                let fd = unsafe {
+                                    rustix::fd::BorrowedFd::borrow_raw(self.tty_fd.raw_fd())
+                                };
+                                if rustix::io::ioctl_fionread(fd)? == 0 {
+                                    break;
+                                }
+                            }
+                            if timeout.elapsed() {
+                                self.pending_tty_readable = true;
+                                return Ok(None);
                             }
                         }
                     }
@@ -278,79 +308,13 @@ impl EventSource for UnixInternalEventSource {
         }
     }
 
+    fn discard_buffered_input(&mut self) -> InputDiscardStatus {
+        self.parser.discard_buffered_input()
+    }
+
     #[cfg(feature = "event-stream")]
     fn waker(&self) -> Waker {
         self.waker.clone()
-    }
-}
-
-//
-// Following `Parser` structure exists for two reasons:
-//
-//  * mimic anes Parser interface
-//  * move the advancing, parsing, ... stuff out of the `try_read` method
-//
-#[derive(Debug)]
-struct Parser {
-    buffer: Vec<u8>,
-    internal_events: VecDeque<InternalEvent>,
-}
-
-impl Default for Parser {
-    fn default() -> Self {
-        Parser {
-            // This buffer is used for -> 1 <- ANSI escape sequence. Are we
-            // aware of any ANSI escape sequence that is bigger? Can we make
-            // it smaller?
-            //
-            // Probably not worth spending more time on this as "there's a plan"
-            // to use the anes crate parser.
-            buffer: Vec::with_capacity(256),
-            // TTY_BUFFER_SIZE is 1_024 bytes. How many ANSI escape sequences can
-            // fit? What is an average sequence length? Let's guess here
-            // and say that the average ANSI escape sequence length is 8 bytes. Thus
-            // the buffer size should be 1024/8=128 to avoid additional allocations
-            // when processing large amounts of data.
-            //
-            // There's no need to make it bigger, because when you look at the `try_read`
-            // method implementation, all events are consumed before the next TTY_BUFFER
-            // is processed -> events pushed.
-            internal_events: VecDeque::with_capacity(128),
-        }
-    }
-}
-
-impl Parser {
-    fn advance(&mut self, buffer: &[u8], more: bool) {
-        for (idx, byte) in buffer.iter().enumerate() {
-            let more = idx + 1 < buffer.len() || more;
-
-            self.buffer.push(*byte);
-
-            match parse_event(&self.buffer, more) {
-                Ok(Some(ie)) => {
-                    self.internal_events.push_back(ie);
-                    self.buffer.clear();
-                }
-                Ok(None) => {
-                    // Event can't be parsed, because we don't have enough bytes for
-                    // the current sequence. Keep the buffer and process next bytes.
-                }
-                Err(_) => {
-                    // Event can't be parsed (not enough parameters, parameter is not a number, ...).
-                    // Clear the buffer and continue with another sequence.
-                    self.buffer.clear();
-                }
-            }
-        }
-    }
-}
-
-impl Iterator for Parser {
-    type Item = InternalEvent;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.internal_events.pop_front()
     }
 }
 
@@ -385,5 +349,69 @@ mod tests {
         };
         assert!(terminal_surface_changed(before, after));
         assert!(!terminal_surface_changed(before, before));
+    }
+}
+
+#[cfg(test)]
+mod input_boundary_tests {
+    use super::UnixInternalEventSource;
+    use crate::event::{source::EventSource, Event, InputDiscardStatus, InternalEvent, KeyCode};
+    use crate::terminal::sys::file_descriptor::FileDesc;
+    use std::{io::Write, os::unix::net::UnixStream, time::Duration};
+
+    fn source_with_input() -> (UnixInternalEventSource, UnixStream) {
+        let (reader, writer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        #[cfg(feature = "libc")]
+        let fd = {
+            use std::os::fd::IntoRawFd;
+            FileDesc::new(reader.into_raw_fd(), true)
+        };
+        #[cfg(not(feature = "libc"))]
+        let fd = FileDesc::Owned(reader.into());
+        (
+            UnixInternalEventSource::from_file_descriptor(fd).unwrap(),
+            writer,
+        )
+    }
+
+    #[test]
+    fn discard_clears_decoded_keys_in_the_source() {
+        let (mut source, _writer) = source_with_input();
+        source.parser.advance(b"y\r", false);
+        assert_eq!(
+            source.discard_buffered_input(),
+            InputDiscardStatus::Complete
+        );
+        assert_eq!(source.try_read(Some(Duration::ZERO)).unwrap(), None);
+    }
+
+    #[cfg(feature = "bracketed-paste")]
+    #[test]
+    fn delayed_paste_is_drained_through_the_terminal_reader() {
+        let (mut source, mut writer) = source_with_input();
+        source.parser.advance(b"\x1b[200~unfinished", true);
+        assert_eq!(
+            source.discard_buffered_input(),
+            InputDiscardStatus::BracketedPasteInProgress
+        );
+        writer.write_all(&vec![b'y'; 4096]).unwrap();
+        assert_eq!(
+            source.try_read(Some(Duration::from_millis(10))).unwrap(),
+            None
+        );
+        assert_eq!(
+            source.discard_buffered_input(),
+            InputDiscardStatus::BracketedPasteInProgress
+        );
+        writer.write_all(b"\r\x1b[201~n").unwrap();
+        assert_eq!(
+            source.try_read(Some(Duration::from_millis(100))).unwrap(),
+            Some(InternalEvent::Event(Event::Key(KeyCode::Char('n').into())))
+        );
+        assert_eq!(
+            source.discard_buffered_input(),
+            InputDiscardStatus::Complete
+        );
     }
 }

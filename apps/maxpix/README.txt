@@ -1,7 +1,8 @@
 Maxpix
 
-10,000 native Intel POINT_LIST particles, seeded and uploaded once by the CPU.
-A baked native vertex shader animates a rising, widening tornado. The fragment
+100,000 native Intel POINT_LIST particles, seeded and uploaded once by the CPU.
+A baked native vertex shader animates a rising, widening tornado.
+Its bottom/top radii are 0.75/5.5, and its vertical extent is -4.4 to 4.4. The fragment
 shader gives every point the same cyan color. There is no mouse/keyboard control.
 Picasso's camera stays at [-10,-10,-10], looking at [0,0,0]. UI4 resize events
 update the viewport and camera aspect. The native rasterizer stamps four-pixel

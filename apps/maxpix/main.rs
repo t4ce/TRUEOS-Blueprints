@@ -98,7 +98,7 @@ mod native {
             submit.seeds[0] = RetainedTransformSeed {
                 scale: [1.0; 3],
                 rotation: [0.0, 0.0, 0.0, 1.0],
-                local_radius: 6.0,
+                local_radius: 7.1,
                 ..RetainedTransformSeed::default()
             };
             let point = device.submit_retained_frame(

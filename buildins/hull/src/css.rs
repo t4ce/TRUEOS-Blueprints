@@ -6,10 +6,15 @@ use lightningcss::stylesheet::{ParserOptions, StyleAttribute, StyleSheet};
 use static_self::IntoOwned;
 use trueos::{logl, netfs};
 use url::Url;
+#[path = "style_index.rs"]
+mod style_index;
+pub(super) use style_index::{PreparedRule, PreparedRules, PreparedSelector, SelectorKey};
 
 #[derive(Default)]
 pub(super) struct Css {
     pub sheets: Vec<StyleSheet<'static>>,
+    pub prepared_sheets: Vec<PreparedRules>,
+    pub inline_by_node: HashMap<rp5::NodeId, usize>,
     pub attributes: Vec<(rp5::NodeId, StyleAttribute<'static>)>,
     downloads: HashMap<u32, Url>,
     requested: HashSet<String>,
@@ -68,7 +73,7 @@ impl Css {
                     code: code.to_owned(),
                 });
                 match StyleAttribute::parse(code, ParserOptions::default()) {
-                    Ok(style) => self.attributes.push((id, style.into_owned())),
+                    Ok(style) => self.add_attribute(id, style.into_owned()),
                     Err(error) => report(format_args!("inline CSS node={id}: {error}")),
                 }
             }
@@ -124,15 +129,28 @@ impl Css {
                         self.request(source, &import.url);
                     }
                 }
-                let index = self.sheets.len();
-                self.sheets.push(sheet.into_owned());
-                Some(index)
+                Some(self.add_sheet(sheet.into_owned()))
             }
             Err(error) => {
                 report(format_args!("CSS {source}: {error}"));
                 None
             }
         }
+    }
+
+    pub fn add_sheet(&mut self, sheet: StyleSheet<'static>) -> usize {
+        let index = self.sheets.len();
+        self.prepared_sheets.push(PreparedRules::new(
+            &sheet.rules.0,
+            sheet.sources.first().map(String::as_str).unwrap_or(""),
+        ));
+        self.sheets.push(sheet);
+        index
+    }
+
+    pub fn add_attribute(&mut self, node: rp5::NodeId, style: StyleAttribute<'static>) {
+        self.inline_by_node.insert(node, self.attributes.len());
+        self.attributes.push((node, style));
     }
 
     fn request(&mut self, base: &Url, reference: &str) -> Option<String> {

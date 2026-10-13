@@ -77,7 +77,7 @@ mod tests {
     fn run(html: &str, css_text: &str) -> (rp5::Document, serde_json::Value) {
         let doc = rp5::parse(html);
         let mut css = css::Css::default();
-        css.sheets.push(
+        css.add_sheet(
             lightningcss::stylesheet::StyleSheet::parse(css_text, Default::default())
                 .unwrap()
                 .into_owned(),
@@ -85,7 +85,7 @@ mod tests {
         for id in 0..doc.nodes.len() {
             if let Some((_, _, attrs)) = doc.element(id) {
                 if let Some(attr) = attrs.iter().find(|attr| attr.name == "style") {
-                    css.attributes.push((
+                    css.add_attribute(
                         id,
                         lightningcss::stylesheet::StyleAttribute::parse(
                             &attr.value,
@@ -93,7 +93,7 @@ mod tests {
                         )
                         .unwrap()
                         .into_owned(),
-                    ));
+                    );
                 }
             }
         }
@@ -397,5 +397,85 @@ mod tests {
     fn preformatted_text_preserves_line_breaks() {
         let (doc, json) = run("<pre id='box'>aa\n bb</pre>", "");
         assert_eq!(text_rect(&doc, &json, "box")["rect"]["height"], 22.0);
+    }
+    #[test]
+    fn index_keys_the_subject_instead_of_its_ancestor() {
+        let (doc, json) = run(
+            "<section id='ancestor' class='parent'><div id='box' class='child'></div></section>",
+            "#ancestor > .child{width:83px}.parent #box{height:47px}",
+        );
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["height"], 47.0);
+    }
+    #[test]
+    fn grouped_candidate_selectors_keep_maximum_specificity_and_order() {
+        let (doc, json) = run(
+            "<div id='box' class='a b a'></div>",
+            ".a,#box,.b{width:83px}.a.b{width:42px}#box{height:47px}#box{height:51px}",
+        );
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["height"], 51.0);
+    }
+    #[test]
+    fn functional_and_universal_selectors_remain_candidates() {
+        let (doc, json) = run(
+            "<div id='box' class='a'></div>",
+            "*{height:25px}:is(.a,.b){width:83px}:not(.other){min-height:47px}",
+        );
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["height"], 47.0);
+    }
+    #[test]
+    fn attribute_buckets_still_check_values() {
+        let (doc, json) = run(
+            "<div id='box' data-size='wide'></div>",
+            "[data-size]{height:47px}[data-size=wide]{width:83px}[data-size=narrow]{width:42px}",
+        );
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["height"], 47.0);
+    }
+    #[test]
+    fn prepared_media_rules_are_reselected_for_each_viewport() {
+        let doc = rp5::parse(
+            "<style>#box{width:83px}@media(max-width:600px){#box{width:42px}}</style><div id='box'></div>",
+        );
+        let mut css = css::Css::default();
+        css.parse_document(&doc, "https://viewport.example/");
+        for (width, expected) in [(1280, 83.0), (400, 42.0), (1280, 83.0)] {
+            let export = layout::compute(&doc, &css, (width, 720)).unwrap();
+            let json = serde_json::from_str(&export.json).unwrap();
+            assert_eq!(node(&doc, &json, "box")["rect"]["width"], expected);
+        }
+    }
+    #[test]
+    fn static_rejection_does_not_prune_negated_or_alternative_pseudos() {
+        let (doc, json) = run(
+            "<div id='box' class='a'></div>",
+            ":hover{width:42px}#box::before{width:42px}:not(:hover){width:83px}:is(:hover,.a){height:47px}",
+        );
+        assert_eq!(node(&doc, &json, "box")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "box")["rect"]["height"], 47.0);
+    }
+    #[test]
+    fn cached_sibling_positions_ignore_text_and_comments() {
+        let (doc, json) = run(
+            "<section><div id='first'></div>words<!-- ignored --><span id='middle'></span><div id='last'></div></section>",
+            "div:first-of-type{width:83px}div:last-of-type{width:42px}span+div{height:47px}div~div{min-height:61px}",
+        );
+        assert_eq!(node(&doc, &json, "first")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "last")["rect"]["width"], 42.0);
+        assert_eq!(node(&doc, &json, "last")["rect"]["height"], 61.0);
+    }
+    #[test]
+    fn cached_nth_positions_handle_reverse_and_negative_sequences() {
+        let (doc, json) = run(
+            "<section><div id='first'></div><span id='middle'></span><div id='last'></div></section>",
+            ":nth-child(-n+2){height:47px}div:nth-last-of-type(2){width:83px}:nth-last-child(1){width:42px}",
+        );
+        assert_eq!(node(&doc, &json, "first")["rect"]["height"], 47.0);
+        assert_eq!(node(&doc, &json, "middle")["rect"]["height"], 47.0);
+        assert_eq!(node(&doc, &json, "last")["rect"]["height"], 0.0);
+        assert_eq!(node(&doc, &json, "first")["rect"]["width"], 83.0);
+        assert_eq!(node(&doc, &json, "last")["rect"]["width"], 42.0);
     }
 }

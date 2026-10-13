@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use trueos_picasso::cam::{Camera, Projection, Quaternion};
 
 // CPU work and upload happen once. Each vertex is one native POINT_LIST stamp.
-pub const PARTICLE_COUNT: u32 = 10_000;
+pub const PARTICLE_COUNT: u32 = 100_000;
 pub const VERTEX_STRIDE: usize = 24;
 
 pub fn camera() -> Camera {

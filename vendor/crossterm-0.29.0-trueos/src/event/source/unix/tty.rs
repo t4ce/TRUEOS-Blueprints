@@ -1,6 +1,7 @@
+use super::parser::Parser;
 #[cfg(feature = "libc")]
 use std::os::unix::prelude::AsRawFd;
-use std::{collections::VecDeque, io, os::unix::net::UnixStream, time::Duration};
+use std::{io, os::unix::net::UnixStream, time::Duration};
 
 #[cfg(not(feature = "libc"))]
 use rustix::fd::{AsFd, AsRawFd};
@@ -8,12 +9,12 @@ use rustix::fd::{AsFd, AsRawFd};
 use signal_hook::low_level::pipe;
 
 use crate::event::timeout::PollTimeout;
-use crate::event::Event;
+use crate::event::{Event, InputDiscardStatus};
 use filedescriptor::{poll, pollfd, POLLIN};
 
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
-use crate::event::{source::EventSource, sys::unix::parse::parse_event, InternalEvent};
+use crate::event::{source::EventSource, InternalEvent};
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
 /// Holds a prototypical Waker and a receiver we can wait on when doing select().
@@ -100,6 +101,9 @@ fn read_complete(fd: &FileDesc, buf: &mut [u8]) -> io::Result<usize> {
 
 impl EventSource for UnixInternalEventSource {
     fn try_read(&mut self, timeout: Option<Duration>) -> io::Result<Option<InternalEvent>> {
+        if let Some(event) = self.parser.next() {
+            return Ok(Some(event));
+        }
         let timeout = PollTimeout::new(timeout);
 
         fn make_pollfd<F: AsRawFd>(fd: &F) -> pollfd {
@@ -158,6 +162,9 @@ impl EventSource for UnixInternalEventSource {
                         return Ok(Some(event));
                     }
 
+                    if timeout.elapsed() {
+                        return Ok(None);
+                    }
                     if read_count == 0 {
                         break;
                     }
@@ -201,78 +208,56 @@ impl EventSource for UnixInternalEventSource {
         Ok(None)
     }
 
+    fn discard_buffered_input(&mut self) -> InputDiscardStatus {
+        self.parser.discard_buffered_input()
+    }
+
     #[cfg(feature = "event-stream")]
     fn waker(&self) -> Waker {
         self.wake_pipe.waker.clone()
     }
 }
 
-//
-// Following `Parser` structure exists for two reasons:
-//
-//  * mimic anes Parser interface
-//  * move the advancing, parsing, ... stuff out of the `try_read` method
-//
-#[derive(Debug)]
-struct Parser {
-    buffer: Vec<u8>,
-    internal_events: VecDeque<InternalEvent>,
-}
+#[cfg(test)]
+mod input_boundary_tests {
+    use super::UnixInternalEventSource;
+    use crate::event::{source::EventSource, Event, InputDiscardStatus, InternalEvent, KeyCode};
+    use crate::terminal::sys::file_descriptor::FileDesc;
+    use std::{io::Write, os::unix::net::UnixStream, time::Duration};
 
-impl Default for Parser {
-    fn default() -> Self {
-        Parser {
-            // This buffer is used for -> 1 <- ANSI escape sequence. Are we
-            // aware of any ANSI escape sequence that is bigger? Can we make
-            // it smaller?
-            //
-            // Probably not worth spending more time on this as "there's a plan"
-            // to use the anes crate parser.
-            buffer: Vec::with_capacity(256),
-            // TTY_BUFFER_SIZE is 1_024 bytes. How many ANSI escape sequences can
-            // fit? What is an average sequence length? Let's guess here
-            // and say that the average ANSI escape sequence length is 8 bytes. Thus
-            // the buffer size should be 1024/8=128 to avoid additional allocations
-            // when processing large amounts of data.
-            //
-            // There's no need to make it bigger, because when you look at the `try_read`
-            // method implementation, all events are consumed before the next TTY_BUFFER
-            // is processed -> events pushed.
-            internal_events: VecDeque::with_capacity(128),
-        }
+    fn source_with_input() -> (UnixInternalEventSource, UnixStream) {
+        let (reader, writer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        #[cfg(feature = "libc")]
+        let fd = {
+            use std::os::fd::IntoRawFd;
+            FileDesc::new(reader.into_raw_fd(), true)
+        };
+        #[cfg(not(feature = "libc"))]
+        let fd = FileDesc::Owned(reader.into());
+        (UnixInternalEventSource::from_file_descriptor(fd).unwrap(), writer)
     }
-}
 
-impl Parser {
-    fn advance(&mut self, buffer: &[u8], more: bool) {
-        for (idx, byte) in buffer.iter().enumerate() {
-            let more = idx + 1 < buffer.len() || more;
-
-            self.buffer.push(*byte);
-
-            match parse_event(&self.buffer, more) {
-                Ok(Some(ie)) => {
-                    self.internal_events.push_back(ie);
-                    self.buffer.clear();
-                }
-                Ok(None) => {
-                    // Event can't be parsed, because we don't have enough bytes for
-                    // the current sequence. Keep the buffer and process next bytes.
-                }
-                Err(_) => {
-                    // Event can't be parsed (not enough parameters, parameter is not a number, ...).
-                    // Clear the buffer and continue with another sequence.
-                    self.buffer.clear();
-                }
-            }
-        }
+    #[test]
+    fn discard_clears_decoded_keys_in_the_source() {
+        let (mut source, _writer) = source_with_input();
+        source.parser.advance(b"y\r", false);
+        assert_eq!(source.discard_buffered_input(), InputDiscardStatus::Complete);
+        assert_eq!(source.try_read(Some(Duration::ZERO)).unwrap(), None);
     }
-}
 
-impl Iterator for Parser {
-    type Item = InternalEvent;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.internal_events.pop_front()
+    #[cfg(feature = "bracketed-paste")]
+    #[test]
+    fn delayed_paste_is_drained_through_the_terminal_reader() {
+        let (mut source, mut writer) = source_with_input();
+        source.parser.advance(b"\x1b[200~unfinished", true);
+        assert_eq!(source.discard_buffered_input(), InputDiscardStatus::BracketedPasteInProgress);
+        writer.write_all(&vec![b'y'; 4096]).unwrap();
+        assert_eq!(source.try_read(Some(Duration::from_millis(10))).unwrap(), None);
+        assert_eq!(source.discard_buffered_input(), InputDiscardStatus::BracketedPasteInProgress);
+        writer.write_all(b"\r\x1b[201~n").unwrap();
+        assert_eq!(source.try_read(Some(Duration::from_millis(100))).unwrap(),
+            Some(InternalEvent::Event(Event::Key(KeyCode::Char('n').into()))));
+        assert_eq!(source.discard_buffered_input(), InputDiscardStatus::Complete);
     }
 }

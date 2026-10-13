@@ -1,3 +1,6 @@
+#[cfg(unix)]
+use crate::event::InputDiscardStatus;
+
 use std::{collections::vec_deque::VecDeque, io, time::Duration};
 
 #[cfg(unix)]
@@ -33,6 +36,19 @@ impl Default for InternalEventReader {
 }
 
 impl InternalEventReader {
+    #[cfg(unix)]
+    pub(crate) fn discard_buffered_input(&mut self) -> io::Result<InputDiscardStatus> {
+        let source = self
+            .source
+            .as_mut()
+            .ok_or_else(|| io::Error::other("Failed to initialize input reader"))?;
+        let status = source.discard_buffered_input();
+        self.events.clear();
+        self.skipped_events.clear();
+        Ok(status)
+    }
+
+
     /// Returns a `Waker` allowing to wake/force the `poll` method to return `Ok(false)`.
     #[cfg(feature = "event-stream")]
     pub(crate) fn waker(&self) -> Waker {
@@ -128,6 +144,8 @@ impl InternalEventReader {
 #[cfg(test)]
 mod tests {
     use std::io;
+    #[cfg(unix)]
+    use super::InputDiscardStatus;
     use std::{collections::VecDeque, time::Duration};
 
     #[cfg(unix)]
@@ -142,6 +160,36 @@ mod tests {
             true
         }
     }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_discard_buffered_input_clears_all_event_queues() {
+        let mut reader = InternalEventReader {
+            events: VecDeque::from([InternalEvent::Event(Event::Resize(10, 10))]),
+            source: Some(Box::new(FakeSource::with_events(&[InternalEvent::Event(
+                Event::Resize(20, 20),
+            )]))),
+            skipped_events: vec![InternalEvent::CursorPosition(4, 8)],
+        };
+
+        assert_eq!(
+            reader.discard_buffered_input().unwrap(),
+            super::InputDiscardStatus::Complete
+        );
+
+        assert!(reader.events.is_empty());
+        assert!(reader.skipped_events.is_empty());
+        assert_eq!(
+            reader
+                .source
+                .as_mut()
+                .unwrap()
+                .try_read(Some(Duration::from_secs(0)))
+                .unwrap(),
+            None
+        );
+    }
+
 
     #[test]
     fn test_poll_fails_without_event_source() {
@@ -406,6 +454,12 @@ mod tests {
     }
 
     impl EventSource for FakeSource {
+        #[cfg(unix)]
+        fn discard_buffered_input(&mut self) -> InputDiscardStatus {
+            self.events.clear();
+            InputDiscardStatus::Complete
+        }
+
         fn try_read(&mut self, _timeout: Option<Duration>) -> io::Result<Option<InternalEvent>> {
             // Return error if set in case there's just one remaining event
             if self.events.len() == 1 {

@@ -21,6 +21,10 @@ pub(crate) trait EventSource: Sync + Send {
     /// Returns `Ok(None)` if there's no event available and timeout expires.
     fn try_read(&mut self, timeout: Option<Duration>) -> io::Result<Option<InternalEvent>>;
 
+    /// Clear decoded input and quarantine unfinished control sequences.
+    #[cfg(unix)]
+    fn discard_buffered_input(&mut self) -> super::InputDiscardStatus;
+
     /// Returns a `Waker` allowing to wake/force the `try_read` method to return `Ok(None)`.
     #[cfg(feature = "event-stream")]
     fn waker(&self) -> Waker;

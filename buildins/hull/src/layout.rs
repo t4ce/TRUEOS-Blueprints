@@ -30,6 +30,16 @@ pub(super) fn compute(
     css: &Css,
     viewport: (u32, u32),
 ) -> Result<Export, Box<dyn std::error::Error>> {
+    let match_dom = MatchDom::new(document);
+    let cascade = CascadeIndex::new(
+        css,
+        ResolveContext {
+            viewport,
+            font_size: 11.0,
+            root_font_size: 11.0,
+        },
+    );
+    let mut cascade_scratch = CascadeScratch::default();
     let mut tree: TaffyTree<TextMeasureContext> = TaffyTree::new();
     let mut ids: Vec<Vec<NodeId>> = vec![vec![]; document.nodes.len()];
     let mut owners = HashMap::new();
@@ -70,6 +80,9 @@ pub(super) fn compute(
                     document,
                     id,
                     css,
+                    &cascade,
+                    &match_dom,
+                    &mut cascade_scratch,
                     &mut style,
                     &mut metrics,
                     context,
@@ -371,21 +384,32 @@ pub(super) fn compute(
     })
 }
 
-fn matches_selector(document: &Document, id: HtmlId, selector: &Selector<'_>) -> bool {
+fn matches_selector(
+    document: &Document,
+    dom: &MatchDom<'_>,
+    id: HtmlId,
+    selector: &Selector<'_>,
+) -> bool {
+    let components: Vec<_> = selector.iter_raw_match_order().cloned().collect();
+    matches_components(document, dom, id, &components, &mut Vec::new())
+}
+
+fn matches_components(
+    document: &Document,
+    dom: &MatchDom<'_>,
+    id: HtmlId,
+    components: &[lightningcss::selector::Component<'_>],
+    pending: &mut Vec<(HtmlId, usize)>,
+) -> bool {
     use lightningcss::selector::PseudoClass;
     use parcel_selectors::parser::Combinator;
-    let components: Vec<_> = selector.iter_raw_match_order().collect();
-    let mut pending = vec![(id, 0)];
+    pending.clear();
+    pending.push((id, 0));
     while let Some((id, start)) = pending.pop() {
-        let Some((name, namespace, attrs)) = document.element(id) else {
+        let Some((name, namespace, _)) = document.element(id) else {
             continue;
         };
-        let attr = |name: &str| {
-            attrs
-                .iter()
-                .find(|attr| attr.namespace.is_none() && attr.name == name)
-                .map(|attr| attr.value.as_str())
-        };
+        let attr = |name: &str| dom.attributes[id].get(name).copied();
         let mut matched = true;
         for (offset, component) in components.iter().enumerate().skip(start) {
             if let Component::Combinator(combinator) = component {
@@ -409,21 +433,13 @@ fn matches_selector(document: &Document, id: HtmlId, selector: &Selector<'_>) ->
                         }
                     }
                     Combinator::NextSibling | Combinator::LaterSibling => {
-                        if let Some(parent) = document.nodes[id].parent {
-                            let siblings = &document.nodes[parent].children;
-                            if let Some(index) = siblings.iter().position(|&sibling| sibling == id)
-                            {
-                                for &sibling in siblings[..index]
-                                    .iter()
-                                    .rev()
-                                    .filter(|&&sibling| document.element(sibling).is_some())
-                                {
-                                    pending.push((sibling, next));
-                                    if matches!(combinator, Combinator::NextSibling) {
-                                        break;
-                                    }
-                                }
+                        let mut previous = dom.siblings[id].previous;
+                        while let Some(sibling) = previous {
+                            pending.push((sibling, next));
+                            if matches!(combinator, Combinator::NextSibling) {
+                                break;
                             }
+                            previous = dom.siblings[sibling].previous;
                         }
                     }
                     _ => {}
@@ -435,20 +451,21 @@ fn matches_selector(document: &Document, id: HtmlId, selector: &Selector<'_>) ->
                 Component::ExplicitUniversalType|Component::ExplicitAnyNamespace=>true,
                 Component::LocalName(local)=>name==local.name.as_ref(),
                 Component::ID(value)=>attr("id")==Some(value.as_ref()),
-                Component::Class(value)=>attr("class").is_some_and(|classes|classes.split_ascii_whitespace().any(|class|class==value.as_ref())),
+                Component::Class(value)=>dom.classes[id].contains(value.as_ref()),
                 Component::AttributeInNoNamespaceExists{local_name,..}=>attr(local_name.as_ref()).is_some(),
                 Component::AttributeInNoNamespace{local_name,operator,value,case_sensitivity,never_matches,..}=>!never_matches && attr(local_name.as_ref()).is_some_and(|actual|operator.eval_str(actual,value.as_ref(),case_sensitivity.to_unconditional(namespace==rp5::Namespace::Html))),
-                Component::Where(selectors)|Component::Is(selectors)=>selectors.iter().any(|selector|matches_selector(document,id,selector)),
-                Component::Negation(selectors)=>!selectors.iter().any(|selector|matches_selector(document,id,selector)),
+                Component::Where(selectors)|Component::Is(selectors)=>selectors.iter().any(|selector|matches_selector(document,dom,id,selector)),
+                Component::Negation(selectors)=>!selectors.iter().any(|selector|matches_selector(document,dom,id,selector)),
                 Component::Root=>document.nodes[id].parent==Some(document.root),
                 Component::Empty=>document.nodes[id].children.iter().all(|&child|matches!(&document.nodes[child].kind,NodeKind::Comment(_)) || matches!(&document.nodes[child].kind,NodeKind::Text(text) if text.is_empty())),
                 Component::Nth(nth)=>{
-                    let siblings:Vec<_>=document.nodes[id].parent.map(|parent|document.nodes[parent].children.iter().copied().filter(|&child|document.element(child).is_some() && (!nth.ty.is_of_type() || (document.name(child)==name && document.namespace(child)==namespace))).collect()).unwrap_or_default();
-                    if nth.ty.is_only(){siblings.len()==1}else if let Some(index)=siblings.iter().position(|&child|child==id){
-                        let position=if nth.ty.is_from_end(){siblings.len()-index}else{index+1} as i32;
-                        let delta=position-nth.b;
-                        if nth.a==0 {delta==0}else{delta%nth.a==0 && delta/nth.a>=0}
-                    }else{false}
+                    let siblings = dom.siblings[id];
+                    let (index, count) = if nth.ty.is_of_type() { (siblings.type_index, siblings.type_count) } else { (siblings.index, siblings.count) };
+                    if nth.ty.is_only() { count == 1 } else if index > 0 {
+                        let position = if nth.ty.is_from_end() { count-index+1 } else { index } as i32;
+                        let delta = position - nth.b;
+                        if nth.a == 0 { delta == 0 } else { delta % nth.a == 0 && delta / nth.a >= 0 }
+                    } else { false }
                 }
                 Component::NonTSPseudoClass(pseudo)=>match pseudo {
                     PseudoClass::Link|PseudoClass::AnyLink(_)=>matches!(name,"a"|"area"|"link") && attr("href").is_some(),
@@ -543,68 +560,64 @@ fn estimated_line_count(text: &str, width: f32, font_size: f32) -> f32 {
     (lines + usize::from(used > 0)) as f32
 }
 
-fn apply_css(
+fn apply_css<'a>(
     document: &Document,
     id: HtmlId,
-    css: &Css,
+    css: &'a Css,
+    cascade: &CascadeIndex<'a>,
+    dom: &MatchDom<'_>,
+    scratch: &mut CascadeScratch<'a>,
     style: &mut Style,
     text_metrics: &mut TextMetrics,
     context: ResolveContext,
     inline: &mut bool,
     contents: &mut bool,
 ) {
-    let mut declarations = Vec::new();
+    cascade.candidates(document, id, &mut scratch.candidates);
+    let declarations = &mut scratch.declarations;
+    declarations.clear();
     let mut order = 0;
-    if css.roots.is_empty() {
-        for index in 0..css.sheets.len() {
-            collect_sheet(
-                css,
-                index,
-                document,
-                id,
-                context,
-                &mut declarations,
-                &mut order,
-                &mut Vec::new(),
-            );
-        }
-    } else {
-        for root in &css.roots {
-            if root
-                .media
-                .as_ref()
-                .is_some_and(|media| !media_matches(media, context))
-            {
-                continue;
-            }
-            let index = match &root.source {
-                super::css::SheetReference::Embedded(index) => Some(*index),
-                super::css::SheetReference::External(url) => css.external_sheets.get(url).copied(),
-            };
-            if let Some(index) = index {
-                collect_sheet(
-                    css,
-                    index,
-                    document,
-                    id,
-                    context,
-                    &mut declarations,
-                    &mut order,
-                    &mut Vec::new(),
-                );
+    scratch.matched_rules.clear();
+    for &candidate in &scratch.candidates {
+        let entry = &cascade.selectors[candidate];
+        if matches_components(
+            document,
+            dom,
+            id,
+            &entry.selector.components,
+            &mut scratch.matching,
+        ) {
+            match scratch.matched_rules.last_mut() {
+                Some((style, specificity)) if *style == entry.style => {
+                    *specificity = (*specificity).max(entry.selector.specificity)
+                }
+                _ => scratch
+                    .matched_rules
+                    .push((entry.style, entry.selector.specificity)),
             }
         }
     }
-    for (node, attribute) in &css.attributes {
-        if *node == id {
-            for (important, properties) in [
-                (false, &attribute.declarations.declarations),
-                (true, &attribute.declarations.important_declarations),
-            ] {
-                for property in properties {
-                    declarations.push((important, true, 0, order, property));
-                    order += 1;
-                }
+    for &(style, specificity) in &scratch.matched_rules {
+        let entry = &cascade.styles[style];
+        for (important, properties) in [
+            (false, &entry.rule.declarations.declarations),
+            (true, &entry.rule.declarations.important_declarations),
+        ] {
+            for property in properties {
+                declarations.push((important, false, specificity, order, property));
+                order += 1;
+            }
+        }
+    }
+    if let Some(&attribute) = css.inline_by_node.get(&id) {
+        let attribute = &css.attributes[attribute].1;
+        for (important, properties) in [
+            (false, &attribute.declarations.declarations),
+            (true, &attribute.declarations.important_declarations),
+        ] {
+            for property in properties {
+                declarations.push((important, true, 0, order, property));
+                order += 1;
             }
         }
     }
@@ -615,7 +628,7 @@ fn apply_css(
     let mut border_visible = [true; 4];
     let mut font_size_winner: Option<&CssFontSize> = None;
     let mut line_height_winner: Option<&CssLineHeight> = None;
-    for (_, _, _, _, property) in &declarations {
+    for (_, _, _, _, property) in declarations.iter() {
         if let Property::Position(value) = property {
             positioned = !matches!(value, lightningcss::properties::position::Position::Static);
         }
@@ -1005,97 +1018,261 @@ fn apply_property(style: &mut Style, property: &Property<'_>, context: ResolveCo
 }
 
 type Declaration<'a> = (bool, bool, u32, usize, &'a Property<'static>);
-fn collect_sheet<'a>(
-    css: &'a Css,
+#[derive(Clone, Copy, Default)]
+struct SiblingPosition {
+    previous: Option<HtmlId>,
     index: usize,
-    document: &Document,
-    id: HtmlId,
-    context: ResolveContext,
-    out: &mut Vec<Declaration<'a>>,
-    order: &mut usize,
-    active: &mut Vec<usize>,
-) {
-    if active.contains(&index) {
-        return;
-    }
-    let Some(sheet) = css.sheets.get(index) else {
-        return;
-    };
-    active.push(index);
-    collect_rules(
-        &sheet.rules.0,
-        sheet.sources.first().map(String::as_str).unwrap_or(""),
-        css,
-        document,
-        id,
-        context,
-        out,
-        order,
-        active,
-    );
-    active.pop();
+    count: usize,
+    type_index: usize,
+    type_count: usize,
 }
-fn collect_rules<'a>(
-    rules: &'a [lightningcss::rules::CssRule<'static>],
-    origin: &str,
-    css: &'a Css,
-    document: &Document,
-    id: HtmlId,
-    context: ResolveContext,
-    out: &mut Vec<Declaration<'a>>,
-    order: &mut usize,
-    active: &mut Vec<usize>,
-) {
-    use lightningcss::rules::CssRule;
-    for rule in rules {
-        match rule {
-            CssRule::Style(rule) => {
-                if let Some(specificity) = rule
-                    .selectors
-                    .0
+
+/// Immutable DOM facts shared by every selector match in this layout pass.
+struct MatchDom<'a> {
+    attributes: Vec<HashMap<&'a str, &'a str>>,
+    classes: Vec<std::collections::HashSet<&'a str>>,
+    siblings: Vec<SiblingPosition>,
+}
+
+impl<'a> MatchDom<'a> {
+    fn new(document: &'a Document) -> Self {
+        let mut attributes = Vec::with_capacity(document.nodes.len());
+        let mut classes = Vec::with_capacity(document.nodes.len());
+        for id in 0..document.nodes.len() {
+            let mut node_attributes = HashMap::new();
+            let mut node_classes = std::collections::HashSet::new();
+            if let Some((_, _, attrs)) = document.element(id) {
+                for attribute in attrs
                     .iter()
-                    .filter(|selector| matches_selector(document, id, selector))
-                    .map(|selector| selector.specificity())
-                    .max()
+                    .filter(|attribute| attribute.namespace.is_none())
                 {
-                    for (important, properties) in [
-                        (false, &rule.declarations.declarations),
-                        (true, &rule.declarations.important_declarations),
-                    ] {
-                        for property in properties {
-                            out.push((important, false, specificity, *order, property));
-                            *order += 1;
+                    // Preserve the matcher's first-attribute behavior.
+                    node_attributes
+                        .entry(attribute.name.as_str())
+                        .or_insert(attribute.value.as_str());
+                }
+                if let Some(value) = node_attributes.get("class") {
+                    node_classes.extend(value.split_ascii_whitespace());
+                }
+            }
+            attributes.push(node_attributes);
+            classes.push(node_classes);
+        }
+        let mut siblings = vec![SiblingPosition::default(); document.nodes.len()];
+        for parent in &document.nodes {
+            let mut previous = None;
+            let mut count = 0;
+            let mut types = HashMap::new();
+            for &id in &parent.children {
+                if let Some((name, namespace, _)) = document.element(id) {
+                    count += 1;
+                    let type_count = types.entry((namespace as u8, name)).or_insert(0);
+                    *type_count += 1;
+                    siblings[id] = SiblingPosition {
+                        previous,
+                        index: count,
+                        type_index: *type_count,
+                        ..SiblingPosition::default()
+                    };
+                    previous = Some(id);
+                }
+            }
+            for &id in &parent.children {
+                if let Some((name, namespace, _)) = document.element(id) {
+                    siblings[id].count = count;
+                    siblings[id].type_count = types[&(namespace as u8, name)];
+                }
+            }
+        }
+        Self {
+            attributes,
+            classes,
+            siblings,
+        }
+    }
+}
+
+struct IndexedStyle<'a> {
+    rule: &'a lightningcss::rules::style::StyleRule<'static>,
+}
+
+struct IndexedSelector<'a> {
+    style: usize,
+    selector: &'a super::css::PreparedSelector,
+}
+
+/// A viewport's active cascade, in HTML/import order. Buckets contain only
+/// rules that could match a node, rather than all rules in all stylesheets.
+#[derive(Default)]
+struct CascadeIndex<'a> {
+    styles: Vec<IndexedStyle<'a>>,
+    selectors: Vec<IndexedSelector<'a>>,
+    ids: HashMap<&'a str, Vec<usize>>,
+    classes: HashMap<&'a str, Vec<usize>>,
+    tags: HashMap<&'a str, Vec<usize>>,
+    attributes: HashMap<&'a str, Vec<usize>>,
+    universal: Vec<usize>,
+}
+
+impl<'a> CascadeIndex<'a> {
+    fn new(css: &'a Css, context: ResolveContext) -> Self {
+        let mut index = Self::default();
+        let mut active = Vec::new();
+        if css.roots.is_empty() {
+            for sheet in 0..css.sheets.len() {
+                index.add_sheet(css, sheet, context, &mut active);
+            }
+        } else {
+            for root in &css.roots {
+                if root
+                    .media
+                    .as_ref()
+                    .is_some_and(|media| !media_matches(media, context))
+                {
+                    continue;
+                }
+                let sheet = match &root.source {
+                    super::css::SheetReference::Embedded(sheet) => Some(*sheet),
+                    super::css::SheetReference::External(url) => {
+                        css.external_sheets.get(url).copied()
+                    }
+                };
+                if let Some(sheet) = sheet {
+                    index.add_sheet(css, sheet, context, &mut active);
+                }
+            }
+        }
+        index
+    }
+
+    fn add_sheet(
+        &mut self,
+        css: &'a Css,
+        sheet: usize,
+        context: ResolveContext,
+        active: &mut Vec<usize>,
+    ) {
+        if active.contains(&sheet) {
+            return;
+        }
+        let Some(prepared) = css.prepared_sheets.get(sheet) else {
+            return;
+        };
+        active.push(sheet);
+        self.add_rules(css, &css.sheets[sheet].rules.0, prepared, context, active);
+        active.pop();
+    }
+
+    fn add_rules(
+        &mut self,
+        css: &'a Css,
+        rules: &'a [lightningcss::rules::CssRule<'static>],
+        prepared: &'a super::css::PreparedRules,
+        context: ResolveContext,
+        active: &mut Vec<usize>,
+    ) {
+        use super::css::{PreparedRule, SelectorKey};
+        use lightningcss::rules::CssRule;
+        for entry in &prepared.rules {
+            match entry {
+                PreparedRule::Style { index, selectors } => {
+                    let CssRule::Style(rule) = &rules[*index] else {
+                        unreachable!()
+                    };
+                    let style = self.styles.len();
+                    self.styles.push(IndexedStyle { rule });
+                    for selector in selectors {
+                        if selector.never_matches {
+                            continue;
+                        }
+                        let id = self.selectors.len();
+                        self.selectors.push(IndexedSelector { style, selector });
+                        match &selector.key {
+                            Some(SelectorKey::Id(key)) => self.ids.entry(key).or_default().push(id),
+                            Some(SelectorKey::Class(key)) => {
+                                self.classes.entry(key).or_default().push(id)
+                            }
+                            Some(SelectorKey::Tag(key)) => {
+                                self.tags.entry(key).or_default().push(id)
+                            }
+                            Some(SelectorKey::Attribute(key)) => {
+                                self.attributes.entry(key).or_default().push(id)
+                            }
+                            None => self.universal.push(id),
+                        }
+                    }
+                }
+                PreparedRule::Media { index, children } => {
+                    let CssRule::Media(rule) = &rules[*index] else {
+                        unreachable!()
+                    };
+                    if media_matches(&rule.query, context) {
+                        self.add_rules(css, &rule.rules.0, children, context, active);
+                    }
+                }
+                PreparedRule::Import { index, url } => {
+                    let CssRule::Import(rule) = &rules[*index] else {
+                        unreachable!()
+                    };
+                    if rule.supports.is_none()
+                        && rule.layer.is_none()
+                        && media_matches(&rule.media, context)
+                    {
+                        if let Some(sheet) = url
+                            .as_ref()
+                            .and_then(|url| css.external_sheets.get(url))
+                            .copied()
+                        {
+                            self.add_sheet(css, sheet, context, active);
                         }
                     }
                 }
             }
-            CssRule::Media(rule) if media_matches(&rule.query, context) => collect_rules(
-                &rule.rules.0,
-                origin,
-                css,
-                document,
-                id,
-                context,
-                out,
-                order,
-                active,
-            ),
-            CssRule::Import(rule)
-                if rule.supports.is_none()
-                    && rule.layer.is_none()
-                    && media_matches(&rule.media, context) =>
+        }
+    }
+
+    fn candidates(&self, document: &Document, id: HtmlId, out: &mut Vec<usize>) {
+        out.clear();
+        out.extend_from_slice(&self.universal);
+        if let Some((tag, _, attrs)) = document.element(id) {
+            if let Some(bucket) = self.tags.get(tag) {
+                out.extend_from_slice(bucket);
+            }
+            for attribute in attrs
+                .iter()
+                .filter(|attribute| attribute.namespace.is_none())
             {
-                if let Ok(mut url) = url::Url::parse(origin).and_then(|base| base.join(&rule.url)) {
-                    url.set_fragment(None);
-                    if let Some(&index) = css.external_sheets.get(url.as_str()) {
-                        collect_sheet(css, index, document, id, context, out, order, active);
+                if let Some(bucket) = self.attributes.get(attribute.name.as_str()) {
+                    out.extend_from_slice(bucket);
+                }
+                if attribute.name == "id" {
+                    if let Some(bucket) = self.ids.get(attribute.value.as_str()) {
+                        out.extend_from_slice(bucket);
+                    }
+                } else if attribute.name == "class" {
+                    for class in attribute.value.split_ascii_whitespace() {
+                        if let Some(bucket) = self.classes.get(class) {
+                            out.extend_from_slice(bucket);
+                        }
                     }
                 }
             }
-            _ => {}
         }
+        // One rule can be reached through several matching selectors/keys.
+        // Restore source order and apply its declarations only once.
+        out.sort_unstable();
+        out.dedup();
     }
 }
+
+#[derive(Default)]
+struct CascadeScratch<'a> {
+    candidates: Vec<usize>,
+    matching: Vec<(HtmlId, usize)>,
+    matched_rules: Vec<(usize, u32)>,
+    declarations: Vec<Declaration<'a>>,
+}
+
 fn media_matches(
     media: &lightningcss::media_query::MediaList<'_>,
     context: ResolveContext,
@@ -1484,4 +1661,55 @@ fn unused_properties(
 
 fn is_css_space(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
+}
+
+#[cfg(test)]
+mod cascade_index_tests {
+    use super::*;
+    use static_self::IntoOwned;
+    #[test]
+    fn unrelated_rules_do_not_increase_a_nodes_candidate_set() {
+        let document = rp5::parse("<div id='box' class='target target' data-size='wide'></div>");
+        let node = document
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(id, _)| {
+                document.element(id).and_then(|(_, _, attrs)| {
+                    attrs
+                        .iter()
+                        .any(|attr| attr.name == "id" && attr.value == "box")
+                        .then_some(id)
+                })
+            })
+            .unwrap();
+        let mut source =
+            String::from(".target,#box{width:83px}[data-size]{height:47px}*{margin:0}");
+        for i in 0..2000 {
+            write!(source, ".unrelated{i}{{width:42px}}").unwrap();
+        }
+        let mut css = Css::default();
+        css.add_sheet(
+            lightningcss::stylesheet::StyleSheet::parse(&source, Default::default())
+                .unwrap()
+                .into_owned(),
+        );
+        let index = CascadeIndex::new(
+            &css,
+            ResolveContext {
+                viewport: (1280, 720),
+                font_size: 11.0,
+                root_font_size: 11.0,
+            },
+        );
+        let mut candidates = Vec::new();
+        index.candidates(&document, node, &mut candidates);
+        assert_eq!(index.styles.len(), 2003);
+        let mut styles: Vec<_> = candidates
+            .iter()
+            .map(|&id| index.selectors[id].style)
+            .collect();
+        styles.dedup();
+        assert_eq!(styles, vec![0, 1, 2]);
+    }
 }
