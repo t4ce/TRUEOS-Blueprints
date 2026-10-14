@@ -1,15 +1,9 @@
-[submodule "apps/helix"]
-	path = apps/helix
-	url = https://github.com/helix-editor/helix
 [submodule "apps/tantivy"]
 	path = apps/tantivy
 	url = https://github.com/quickwit-oss/tantivy.git
 [submodule "apps/superseedr"]
 	path = apps/superseedr
 	url = https://github.com/t4ce/superseedr
-[submodule "apps/solara"]
-	path = apps/solara
-	url = https://github.com/t4ce/solara.git
 [submodule "apps/edit"]
 	path = buildins/edit
 	url = https://github.com/t4ce/edit.git

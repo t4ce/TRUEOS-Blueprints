@@ -43,6 +43,10 @@
       "path": "buildins/termdir"
     },
     {
+      "name": "edit",
+      "path": "buildins/edit"
+    },
+    {
       "name": "trueos-picasso-example",
       "path": "../TRUEOS-Picasso-Example"
     },
