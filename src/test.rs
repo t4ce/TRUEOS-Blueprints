@@ -850,7 +850,11 @@ mod terminal_platform_vendor_tests {
         // still use the caller's remaining timeout on the persistent Mio poll.
         let compact = crossterm.split_whitespace().collect::<String>();
         assert_eq!(crossterm.matches("Poll::new()?").count(), 1);
-        assert!(compact.contains("self.poll.poll(&mutself.events,ifpending_tty_readable{Some(Duration::ZERO)}else{timeout.leftover()},)"));
+        assert!(compact.contains(concat!(
+            "self.poll.poll(&mutself.events,",
+            "ifpending_tty_readable{Some(Duration::ZERO)}",
+            "else{timeout.leftover()},)",
+        )));
         assert!(!crossterm.contains("SURFACE_POLL_SLICE"));
         assert!(!crossterm.contains("crossterm-resize-probe"));
         assert!(!crossterm.contains("trueos_mio_selector"));

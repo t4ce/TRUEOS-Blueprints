@@ -897,8 +897,9 @@ fn build_one_target_to_in_lane(
         fs::write(&linker_script, REL_COALESCE_LINKER_SCRIPT).map_err(io_string)?;
         ld.arg("-T").arg(&linker_script);
     }
-    if rustc_tier.is_some() {
-        // Rustc emits hundreds of thousands of local section and symbol names.
+    if rustc_tier.is_some() || output_name == "codex" {
+        // Large compiler and CLI packs emit hundreds of thousands of local
+        // section and symbol names.
         // They are neither Blueprint imports nor entrypoints, and retaining
         // them makes the outer archive substantially less compressible.
         ld.arg("--discard-all");
