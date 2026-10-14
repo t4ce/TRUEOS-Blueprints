@@ -248,10 +248,16 @@ pub extern "C" fn depthchecker_native_worker_run() -> u64 {
         total += parse_fragmented_text();
     }
     assert_eq!(total, 32 * 23);
+    // Exercise synchronous filesystem parking on this actual native stack.
+    // The fixture is removed before join returns and the Hull's scenario 7
+    // starts, so both lanes can use the same deterministic app-scoped path.
+    let native_file_bytes = depthchecker_filesystem_run();
+    assert_eq!(native_file_bytes, 35);
+    black_box(native_file_bytes);
     black_box(total)
 }
 
-/// Scenario 6 spans spawn, worker's real parser work, and join.
+/// Scenario 6 spans spawn, worker parsing/native file I/O, and join.
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn depthchecker_native_thread_run() -> u64 {

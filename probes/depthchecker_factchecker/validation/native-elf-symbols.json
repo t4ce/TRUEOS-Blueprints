@@ -16,18 +16,18 @@
     "requested_native_flags": "-g -fno-omit-frame-pointer",
     "blueprint": {
       "path": "/home/t4ce/Repos/TRUEOS-Blueprints/dist/depthchecker_factchecker.bp",
-      "bytes": 3733546,
-      "sha256": "f086553fdad467de0b45266b82f2f9497e2540afea5e31d7bd030f9ba974b863"
+      "bytes": 3733757,
+      "sha256": "0e7e445be67c7338e92f5e315a651fd873ee01b6a7276e0f9425db7693a4c7ce"
     },
     "debug_elf": {
       "path": "/home/t4ce/Repos/TRUEOS-Blueprints/dist/depthchecker_factchecker.debug.o",
-      "bytes": 939275992,
-      "sha256": "cafaf8c7ed2b746dbe3cb016b89b810d58b2e186d61873e26ac88f729ceff41a"
+      "bytes": 939277016,
+      "sha256": "1c303f4ebfeb708c7e88aed7bcc5e0a147546bd893a5f54bfb82baa11444593a"
     },
     "packed_elf": {
       "path": "/home/t4ce/Repos/TRUEOS-Blueprints/dist/depthchecker_factchecker.packed.o",
-      "bytes": 15131240,
-      "sha256": "25c403e8fa431f1b0e699f84aab66241f8a1935ef346fd050e756dffa0a43ddf"
+      "bytes": 15131632,
+      "sha256": "abb639b29ececf5bddcbcf23771bd2e6ec013112492686850d1ca7856372a16f"
     }
   },
   "scope": "Actual emitted diagnostic ELF symbols and source/disassembly-backed selected call branches; not runtime hit evidence. Defined offsets are section-relative in a relocatable ELF. Undefined imports use matching kernel symbols.",
@@ -56,7 +56,7 @@
     {
       "symbol": "depthchecker_ready",
       "section": ".text",
-      "section_offset": "0x36b0",
+      "section_offset": "0x36e0",
       "size": 29,
       "nm_type": "T"
     }
@@ -107,14 +107,14 @@
         {
           "symbol": "_RINvMNtCsckn8uccv8Sp_4core3stre4findReECsdIw0pZZB02F_16codex_utils_text",
           "section": ".text",
-          "section_offset": "0x164b50",
+          "section_offset": "0x164b90",
           "size": 1102,
           "nm_type": "t"
         },
         {
           "symbol": "_RNvMsu_NtNtCsckn8uccv8Sp_4core3str7patternNtB5_11StrSearcher3new",
           "section": ".text",
-          "section_offset": "0x4c4260",
+          "section_offset": "0x4c42a0",
           "size": 1383,
           "nm_type": "T"
         }
@@ -123,14 +123,14 @@
         {
           "symbol": "_RNvXsv_NtNtCsckn8uccv8Sp_4core3str7patternNtB5_11StrSearcherNtB5_8Searcher10next_match",
           "section": ".text",
-          "section_offset": "0x21bbb0",
+          "section_offset": "0x21bbf0",
           "size": 1066,
           "nm_type": "t"
         },
         {
           "symbol": "_RNvXsv_NtNtCsckn8uccv8Sp_4core3str7patternNtB5_11StrSearcherNtB5_8Searcher10next_match.llvm.13086509516349149429",
           "section": ".text",
-          "section_offset": "0x2adb50",
+          "section_offset": "0x2adb90",
           "size": 1066,
           "nm_type": "T"
         }
@@ -145,21 +145,21 @@
         {
           "symbol": "_RNvMs8_NtCsewRj0u06Xzu_3url6parserNtB5_6Parser10parse_file",
           "section": ".text",
-          "section_offset": "0x414940",
+          "section_offset": "0x414980",
           "size": 4561,
           "nm_type": "t"
         },
         {
           "symbol": "_RNvMs8_NtCsewRj0u06Xzu_3url6parserNtB5_6Parser10parse_path",
           "section": ".text",
-          "section_offset": "0x416180",
+          "section_offset": "0x4161c0",
           "size": 3411,
           "nm_type": "T"
         },
         {
           "symbol": "_RNvNvMs8_NtCsewRj0u06Xzu_3url6parserNtB7_6Parser10parse_path12push_pending",
           "section": ".text",
-          "section_offset": "0x41a4f0",
+          "section_offset": "0x41a530",
           "size": 143,
           "nm_type": "t"
         }
@@ -168,14 +168,14 @@
         {
           "symbol": "_RNvMs3_Cs8TGatE05z5G_16percent_encodingNtB5_13PercentDecode6if_any",
           "section": ".text",
-          "section_offset": "0xe06b0",
+          "section_offset": "0xe06f0",
           "size": 347,
           "nm_type": "T"
         },
         {
           "symbol": "_RNvXCs8TGatE05z5G_16percent_encodingNtB2_13PercentEncodeNtNtNtNtCsckn8uccv8Sp_4core4iter6traits8iterator8Iterator4next",
           "section": ".text",
-          "section_offset": "0xe0810",
+          "section_offset": "0xe0850",
           "size": 221,
           "nm_type": "T"
         }
@@ -190,21 +190,21 @@
         {
           "symbol": "_RNvXs5_NtCs4qaQ1qd3iDc_10serde_json4readNtB5_9SliceReadNtB5_4Read9parse_str",
           "section": ".text",
-          "section_offset": "0x171a00",
+          "section_offset": "0x171a40",
           "size": 564,
           "nm_type": "T"
         },
         {
           "symbol": "_RNvMs3_NtCs4qaQ1qd3iDc_10serde_json4readNtB5_9SliceRead14skip_to_escape.llvm.8551978817713211571",
           "section": ".text",
-          "section_offset": "0x171600",
+          "section_offset": "0x171640",
           "size": 432,
           "nm_type": "T"
         },
         {
           "symbol": "_RNvMs_NtCs8APdPb3lyqO_14codex_protocol6modelsNtB4_21FileSystemPermissions21as_legacy_permissions",
           "section": ".text",
-          "section_offset": "0xbc920",
+          "section_offset": "0xbc960",
           "size": 758,
           "nm_type": "T"
         }
@@ -219,14 +219,14 @@
         {
           "symbol": "ZSTD_compressStream2",
           "section": ".text",
-          "section_offset": "0x64adc",
+          "section_offset": "0x64b1c",
           "size": 2158,
           "nm_type": "T"
         },
         {
           "symbol": "ZSTD_decompressStream",
           "section": ".text",
-          "section_offset": "0xdc43",
+          "section_offset": "0xdc83",
           "size": 3404,
           "nm_type": "T"
         }
@@ -255,7 +255,7 @@
         {
           "symbol": "_RNvMsu_NtNtCsckn8uccv8Sp_4core3str7patternNtB5_11StrSearcher3new",
           "section": ".text",
-          "section_offset": "0x4c4260",
+          "section_offset": "0x4c42a0",
           "size": 1383,
           "nm_type": "T"
         },
@@ -268,9 +268,39 @@
           "symbol": "trueos_cabi_thread_spawn",
           "section": "UNDEFINED",
           "nm_type": "U"
+        },
+        {
+          "symbol": "fsync",
+          "section": "UNDEFINED",
+          "nm_type": "U"
+        },
+        {
+          "symbol": "read",
+          "section": "UNDEFINED",
+          "nm_type": "U"
+        },
+        {
+          "symbol": "write",
+          "section": "UNDEFINED",
+          "nm_type": "U"
+        },
+        {
+          "symbol": "trueos_cabi_async_fs_remove_start",
+          "section": "UNDEFINED",
+          "nm_type": "U"
+        },
+        {
+          "symbol": "trueos_cabi_poll_once",
+          "section": "UNDEFINED",
+          "nm_type": "U"
         }
       ],
-      "reason": "Parent interval spans spawn/join; worker repeats real text parsing on a separate logical thread stack. Imported service addresses belong to the matching kernel ELF."
+      "reason": "Parent interval spans spawn/join; the worker repeats real parsing on a separate native stack, then performs the same 35-byte filesystem roundtrip. The filesystem calls can select native continuation parking; that indirect kernel branch requires a runtime hit with genuine worker ancestry. Imported service addresses belong to the matching kernel ELF.",
+      "indirect_kernel_candidate": {
+        "symbol": "trueos_thread_context_swap",
+        "resolution": "matching kernel ELF",
+        "scope": "Source-backed native continuation branch; not a Blueprint import or static proof of a hit."
+      }
     },
     {
       "id": 7,
@@ -330,5 +360,11 @@
       ],
       "reason": "Observed undefined imports confirm POSIX handle calls and asynchronous-backed remove path are linkable. Physical stacks at service entries measure those calls, not a complete history of poll/continuation turns."
     }
-  ]
+  ],
+  "source_binding": {
+    "main_rs_sha256": "d20879d2ce36a4362c29012df57314b95cab8f3acc9d640ebceeac8b89e00b75",
+    "staged_main_rs_sha256": "5a63632407b35cb1ec231cd6911a9a478806b3b78d4133b6506471d6e6126c81",
+    "staging_transform": "Packer adds #![no_main] and its _start/exit entry wrapper; remaining source is exact.",
+    "native_worker_filesystem_roundtrip": true
+  }
 }
