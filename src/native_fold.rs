@@ -64,6 +64,16 @@ pub(crate) fn capture_plan(
     work_dir: &Path,
     owner_crate: &str,
 ) -> Result<NativeFoldPlan, String> {
+    ownership_plan(capture_graph(cargo_rustc, work_dir)?, owner_crate)
+}
+
+/// Retain the exact staged build plan for diagnostics without contracting its
+/// graph or assigning ownership bundles to linker inputs.
+pub(crate) fn capture_unit_graph(cargo_rustc: &Command, work_dir: &Path) -> Result<(), String> {
+    capture_graph(cargo_rustc, work_dir).map(|_| ())
+}
+
+fn capture_graph(cargo_rustc: &Command, work_dir: &Path) -> Result<UnitGraph, String> {
     let mut plan = planning_command(cargo_rustc)?;
     let output = plan
         .output()
@@ -78,9 +88,8 @@ pub(crate) fn capture_plan(
     }
     let graph: UnitGraph = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("invalid native ownership unit graph: {err}"))?;
-    let fold = ownership_plan(graph, owner_crate)?;
     fs::write(work_dir.join("native-unit-graph.json"), &output.stdout).map_err(io_string)?;
-    Ok(fold)
+    Ok(graph)
 }
 
 fn planning_command(cargo_rustc: &Command) -> Result<Command, String> {

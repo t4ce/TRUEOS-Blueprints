@@ -83,11 +83,6 @@
       "path": "../TinyFighter",
       "optional": true
     },
-    "solara",
-    {
-      "name": "edit",
-      "path": "buildins/edit"
-    },
     "skybox",
     {
       "name": "ssh",

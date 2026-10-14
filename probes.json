@@ -11,6 +11,7 @@
     },
     "cross",
     "framework_stack",
+    "depthchecker_factchecker",
     "panick",
     "posix_file_world_probe",
     "posix_fd_probe",

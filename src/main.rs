@@ -15,6 +15,7 @@ mod cargo_output;
 mod cli;
 mod native_fold;
 mod publish;
+mod stack_capture;
 mod std_backend;
 mod toolchain;
 
@@ -27,6 +28,7 @@ use app_catalog::{
     package_blueprint_argv_entry_v1, package_blueprint_filesystem_independent,
     package_blueprint_build_env_paths, package_blueprint_profile,
     package_blueprint_replicatable,
+    package_blueprint_stack_capture,
     package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier,
     package_blueprint_trueosfs_scope, package_name, push_app_or_trueos_feature,
 };
@@ -549,6 +551,8 @@ fn build_one_target_to_in_lane(
     } else {
         cargo_profile
     };
+    let stack_capture = matches!(build_target, BuildTarget::Package)
+        && package_blueprint_stack_capture(manifest_path)?;
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         ensure_rust_std_trueos_cfg_hooks()?;
@@ -589,6 +593,11 @@ fn build_one_target_to_in_lane(
         BuildFlavor::ThinNoStd => build_settings.flavor.cache_label().to_string(),
     };
     let cargo_target_dir = cargo_cache_root.join(&target_name).join(cache_label);
+    let cargo_target_dir = if stack_capture {
+        cargo_target_dir.join("stack-capture")
+    } else {
+        cargo_target_dir
+    };
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
     let target_dir = cargo_target_dir
         .join(&target_name)
@@ -663,6 +672,10 @@ fn build_one_target_to_in_lane(
     }
     push_bindgen_clang_args(&mut cargo);
     push_trueos_cc_flags(&mut cargo);
+    if stack_capture {
+        stack_capture::configure_cargo(&mut cargo, cargo_profile);
+        println!("trueos-blueprint: diagnostic stack capture enabled (full DWARF, frame pointers, retained sidecars)");
+    }
     // SQLite's optional sort workers create POSIX pthreads directly, which
     // Blueprint loaders reject. Keep SQLite mutex/thread safety enabled and
     // execute SQL on the caller's TRUEOS carrier instead.
@@ -774,6 +787,9 @@ fn build_one_target_to_in_lane(
     let native_fold_plan = if output_name == "codex" {
         Some(native_fold::capture_plan(&cargo, &work_dir, "codex_network_proxy")?)
     } else {
+        if stack_capture {
+            native_fold::capture_unit_graph(&cargo, &work_dir)?;
+        }
         None
     };
     cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
@@ -851,6 +867,14 @@ fn build_one_target_to_in_lane(
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         verify_abort_panic_runtime(&rlibs)?;
     }
+    if stack_capture {
+        stack_capture::retain_native_inventory(
+            &root_artifacts,
+            &rlibs,
+            &cargo_artifacts.target_archives,
+            &work_dir,
+        )?;
+    }
 
     let app_obj = if root_artifacts.objects.len() == 1 {
         root_artifacts.objects[0].clone()
@@ -888,7 +912,8 @@ fn build_one_target_to_in_lane(
     ld.arg("-r").arg("--gc-sections");
     // Large applications otherwise retain hundreds of thousands of individual
     // code/data sections and their ELF directory entries and names.
-    if rustc_tier.is_some()
+    if stack_capture
+        || rustc_tier.is_some()
         || output_name == "voxy"
         || output_name == "codex"
         || (output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev))
@@ -897,7 +922,7 @@ fn build_one_target_to_in_lane(
         fs::write(&linker_script, REL_COALESCE_LINKER_SCRIPT).map_err(io_string)?;
         ld.arg("-T").arg(&linker_script);
     }
-    if rustc_tier.is_some() || output_name == "codex" {
+    if !stack_capture && (rustc_tier.is_some() || output_name == "codex") {
         // Large compiler and CLI packs emit hundreds of thousands of local
         // section and symbol names.
         // They are neither Blueprint imports nor entrypoints, and retaining
@@ -962,6 +987,9 @@ fn build_one_target_to_in_lane(
     let out = output_dir.join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
     write_blueprint(&out, &packaged_elf, &entry_hint_hex, capability_flags)?;
+    if stack_capture {
+        stack_capture::retain_sidecars(&out, &linked, &packaged_elf, cargo_profile)?;
+    }
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(out)
 }

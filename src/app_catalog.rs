@@ -461,6 +461,37 @@ pub(crate) fn package_blueprint_replicatable(manifest_path: &Path) -> Result<boo
     Ok(false)
 }
 
+/// Enables an explicitly diagnostic Blueprint build with frame pointers and
+/// separately retained symbols. Ordinary package builds keep their profile.
+pub(crate) fn package_blueprint_stack_capture(manifest_path: &Path) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() == "stack-capture" {
+            return match value.trim() {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                _ => Err(format!(
+                    "bad trueos-blueprint stack-capture value in {}",
+                    manifest_path.display()
+                )),
+            };
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn package_blueprint_filesystem_independent(
     manifest_path: &Path,
 ) -> Result<bool, String> {
@@ -728,6 +759,23 @@ filesystem-independent = true
     fn reads_argv_entry_abi_from_blueprint_metadata() {
         let path = temporary_manifest("entry-abi", "argv-v1");
         assert!(package_blueprint_argv_entry_v1(&path).unwrap());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn stack_capture_requires_explicit_boolean_metadata_opt_in() {
+        let path = temporary_manifest("stack-capture", "invalid");
+        for (metadata, expected) in [
+            ("", false),
+            ("[package.metadata.other]\nstack-capture = true\n", false),
+            ("[package.metadata.trueos-blueprint]\nstack-capture = false\n", false),
+            ("[package.metadata.trueos-blueprint]\nstack-capture = true # diagnostic\n", true),
+        ] {
+            fs::write(&path, format!("[package]\nname = \"probe\"\n{metadata}")).unwrap();
+            assert_eq!(package_blueprint_stack_capture(&path).unwrap(), expected);
+        }
+        fs::write(&path, "[package.metadata.trueos-blueprint]\nstack-capture = \"true\"\n").unwrap();
+        assert!(package_blueprint_stack_capture(&path).unwrap_err().contains("stack-capture value"));
         fs::remove_file(path).unwrap();
     }
 

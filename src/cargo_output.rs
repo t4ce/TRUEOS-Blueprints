@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -32,7 +32,7 @@ pub(crate) struct CargoBuildArtifacts {
     pub(crate) target_archives: Vec<CargoNativeArchiveArtifact>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct CargoNativeArchiveArtifact {
     pub(crate) package_id: String,
     pub(crate) crate_name: String,
