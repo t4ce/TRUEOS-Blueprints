@@ -15,10 +15,12 @@ import time
 
 HERE = Path(__file__).resolve().parent
 MAX_FRAME = 1024 * 1024
+REPORT_LOCK = threading.Lock()
 
 
 def report(event, **fields):
-    print(json.dumps(dict(event=event, **fields), sort_keys=True), flush=True)
+    with REPORT_LOCK:
+        print(json.dumps(dict(event=event, **fields), sort_keys=True), flush=True)
 
 
 def exact(stream, count):
@@ -89,11 +91,17 @@ class Raw(socketserver.BaseRequestHandler):
                 time.sleep(0.1)
                 stream.sendall(b"peek-witness")
             elif mode == "H":
+                expected = bytes((i * 23 + i // 257) % 251 for i in range(300 * 1024))
+                time.sleep(0.2)
                 while True:
                     data = stream.recv(257)
                     if not data:
                         break
+                    if data != expected[total:total + len(data)]:
+                        raise ValueError("half-close payload differs")
                     total += len(data)
+                if total != len(expected):
+                    raise ValueError(f"FIN before complete payload: {total}/{len(expected)}")
                 stream.sendall(b"half-close-ok")
                 report("fin_observed", received_bytes=total)
             elif mode == "C":

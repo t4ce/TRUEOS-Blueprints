@@ -14,6 +14,7 @@ members = [
     "apps/share",
     "probes/framework_stack",
     "apps/gridpaper",
+    "apps/ratatest",
     "apps/games",
     "apps/RbGB",
     "apps/hello_world",
@@ -60,6 +61,14 @@ members = [
     "probes/wls",
 ]
 exclude = [
+    "vendor/ratatui/ratatui",
+    "vendor/ratatui/ratatui-core",
+    "vendor/ratatui/ratatui-widgets",
+    "vendor/ratatui/ratatui-crossterm",
+    "vendor/ratatui/ratatui-macros",
+    "vendor/ratatui/ratatui-termina",
+    "vendor/ratatui/ratatui-termion",
+    "vendor/ratatui/ratatui-termwiz",
     "probes/sqlx_client",
     "buildins/hull",
     "apps/prismq/crates/prism-q",

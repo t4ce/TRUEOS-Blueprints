@@ -43,7 +43,7 @@ def main():
                 peer.wait()
             peer_log.seek(0)
             events = [json.loads(line) for line in peer_log if line.startswith("{")]
-            assert sum(event.get("event") == "fin_observed" for event in events) == 1, "missing independent FIN witness"
+            assert sum(event.get("event") == "fin_observed" and event.get("received_bytes") == 300*1024 for event in events) == 1, "missing independent FIN after complete 300 KiB payload"
             assert sum(event.get("event") == "pong_observed" for event in events) == 2, "missing independent Pong witnesses"
             assert sum(event.get("event") == "ws_frame" and event.get("opcode") == 2 and event.get("payload_bytes") == 300*1024 for event in events) == 4, "missing independent300KiB frame witnesses"
             print("network_contract fixture: FIN=1 Pong=2 binary_300k=4 verified")

@@ -46,7 +46,7 @@ fn main() {
     record(
         "BEGIN",
         "suite",
-        &format!("host={host} port={base_port} runtime={runtime_mode} protocol=1"),
+        &format!("host={host} port={base_port} runtime={runtime_mode} protocol=2"),
     );
     let mut passed = 0usize;
     let mut failed = 0usize;

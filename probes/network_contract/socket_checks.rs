@@ -113,6 +113,11 @@ fn peek(address: &str) -> Result<(), String> {
                 if n > expected.len() || buffer[..n] != expected[..n] {
                     return Err("peek bytes differ".into());
                 }
+                let mut again = [0; 32];
+                let second = stream.peek(&mut again).map_err(|e| format!("repeat peek: {e}"))?;
+                if second < n || second > expected.len() || again[..second] != expected[..second] {
+                    return Err("repeat peek consumed or changed bytes".into());
+                }
                 break;
             }
             Err(e) if pending(&e) => (),
@@ -125,7 +130,10 @@ fn peek(address: &str) -> Result<(), String> {
 
 fn half_close(address: &str) -> Result<(), String> {
     let (mut stream, deadline) = open(address, b'H')?;
-    send(&mut stream, b"half-close-witness", deadline)?;
+    let payload: Vec<u8> = (0..300 * 1024)
+        .map(|i| ((i * 23 + i / 257) % 251) as u8)
+        .collect();
+    send(&mut stream, &payload, deadline)?;
     stream
         .shutdown(Shutdown::Write)
         .map_err(|e| format!("shutdown write: {e}"))?;

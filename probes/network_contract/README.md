@@ -52,8 +52,8 @@ certificate time validity and hostname checks still apply.
 | Case | Independently checked expectation |
 | --- | --- |
 | socket.echo_300k | Interleaved nonblocking send/read, delayed 257-byte echo, exact 300 KiB beyond the native 256 KiB transmit window |
-| socket.peek_preserves_bytes | Peek returns data without consuming it |
-| socket.shutdown_write_fin | Write half-close delivers FIN; the peer replies on the still-readable socket |
+| socket.peek_preserves_bytes | Repeated peeks preserve data for the subsequent read |
+| socket.shutdown_write_fin | All 300 KiB arrive intact before FIN; the peer then replies on the still-readable socket |
 | socket.delayed_data_then_eof | Pending data is not EOF; actual peer closure becomes EOF |
 | tcp.cancel_read_resume_eof | Timed-out read is dropped, a replacement read wakes and retains all bytes, then EOF |
 | ws.text / wss.text | HTTP 101, strict TLS for WSS, bidirectional text |
@@ -87,7 +87,25 @@ See [results and artifact hash](validation/rig-2026-10-15.json),
 
 These failures match two source gaps: `std_abi_shim::shutdown` acknowledges the
 Mio route without performing half-close, and native `recv` ignores MSG_PEEK.
-This probe does not fix them. The passing async cases establish the exercised
+The kernel repair now preserves peeked bytes, drains queued writes before FIN,
+retains the readable half, implements Read/Write/Both shutdown on both socket
+routes, and wakes blocked I/O after local shutdown. Loopback EOF is ordered
+after queued bytes and preserves the peer's reply path. The repaired kernel
+passes 61 focused regression tests and builds as `bld/trueos.iso` in the sibling
+TRUEOS checkout. The published protocol-2 probe adds repeat peeks and verifies
+the complete 300 KiB witness before FIN. The old rig records above remain the
+baseline; physical verification requires booting the new kernel.
+
+A rerun also exposed and repaired dropped final reply bytes when smoltcp
+entered TIME-WAIT. The final repaired kernel passed **28/28** in QEMU in
+8.225 seconds, with FIN after all 300 KiB, both Pongs, and all four binary
+witnesses independently observed. The probe returned its terminal and completed
+teardown with zero native jobs. The canonical boot image contains the same
+runtime ELF that was tested. See [healed results](validation/healed-qemu-2026-10-15.json),
+[guest records](validation/healed-qemu-2026-10-15.log), and
+[fixture witnesses](validation/healed-qemu-fixture-2026-10-15.jsonl).
+
+The passing async cases establish the exercised
 transport contracts; they do not establish that Codex's whole turn or SQLx
 remote connection pool progresses. Idle reuse here uses four exchanges with
 350 ms idle intervals, rather than a multi-minute soak.

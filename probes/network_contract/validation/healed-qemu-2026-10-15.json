@@ -1,0 +1,174 @@
+{
+  "status": "PASS",
+  "kernel_sha256": "b436c5540fb17cef0967b524de07505568608f72960641e0ad665fa8fc3e7e49",
+  "runtime_sha256": "fcc8d56d9f760a8d361686c333d8af4c7bc0d56b855ffeef2cd78d13d854e245",
+  "iso_sha256": "6d9ef6e86074db69534322220562e268ab0ce4dda9e77a69654a2d9a13012c44",
+  "blueprint_sha256": "efcca2bcc86d35e0ddf7ad4faa9362e9227d82d0e3b30039b44a7fa857a7d219",
+  "ssh_port": 42765,
+  "suite": "network_contract: PASS case=suite passed=28 failed=0 elapsed_ms=8225",
+  "passed": 28,
+  "failed": 0,
+  "elapsed_ms": 8225,
+  "vm_id": 0,
+  "witnesses": {
+    "fin_300k": 1,
+    "pong": 2,
+    "binary_300k": 4
+  },
+  "canonical_iso": {
+    "path": "bld/trueos.iso",
+    "sha256": "f7c2b67a00e7904d13f6c13c2e2f9c74de9abc7b20021ae5bdab40972fae4987",
+    "runtime_matches_tested_kernel": true
+  },
+  "capture": {
+    "path": "/home/t4ce/Repos/TRUEOS/bld/network-contract-heal/qemu7/serial.log",
+    "probe_start_line": 446,
+    "suite_line": 978,
+    "offline_line": 1003
+  },
+  "clean_exit_after_suite": true,
+  "regression_tests_passed": 61,
+  "physical_rig": "New kernel not booted by this repair workflow; original rig baseline was26/28.",
+  "cases": {
+    "socket.echo_300k": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 500
+    },
+    "socket.peek_preserves_bytes": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 503
+    },
+    "socket.shutdown_write_fin": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 506
+    },
+    "socket.delayed_data_then_eof": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 509
+    },
+    "current.tcp.cancel_read_resume_eof": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 533
+    },
+    "current.ws.text": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 552
+    },
+    "current.wss.text": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 573
+    },
+    "current.ws.binary_300k": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 587
+    },
+    "current.wss.binary_300k": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 601
+    },
+    "current.wss.fragmented": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 615
+    },
+    "current.wss.ping_pong": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 629
+    },
+    "current.wss.idle_pump_reuse": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 643
+    },
+    "current.wss.peer_close": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 657
+    },
+    "current.wss.peer_reset": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 671
+    },
+    "current.wss.untrusted_rejected": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 685
+    },
+    "current.wss.parallel_four": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 714
+    },
+    "multi.tcp.cancel_read_resume_eof": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 786
+    },
+    "multi.ws.text": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 800
+    },
+    "multi.wss.text": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 814
+    },
+    "multi.ws.binary_300k": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 828
+    },
+    "multi.wss.binary_300k": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 842
+    },
+    "multi.wss.fragmented": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 859
+    },
+    "multi.wss.ping_pong": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 873
+    },
+    "multi.wss.idle_pump_reuse": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 897
+    },
+    "multi.wss.peer_close": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 911
+    },
+    "multi.wss.peer_reset": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 925
+    },
+    "multi.wss.untrusted_rejected": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 939
+    },
+    "multi.wss.parallel_four": {
+      "result": "PASS",
+      "detail": "",
+      "capture_line": 969
+    }
+  }
+}

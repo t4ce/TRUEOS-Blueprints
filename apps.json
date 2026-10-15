@@ -10,6 +10,7 @@
     "websys",
     "share",
     "gridpaper",
+    "ratatest",
     "pi_snake",
     "games",
     { "name": "rbgb", "path": "apps/RbGB" },
