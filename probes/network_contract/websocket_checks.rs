@@ -4,6 +4,7 @@ use tokio::{
     io::AsyncReadExt,
     net::TcpStream,
     sync::{mpsc, oneshot},
+    task::JoinSet,
     time::{sleep, timeout},
 };
 use tokio_tungstenite::{
@@ -173,7 +174,9 @@ async fn pump_reuse(host: &str, port: u16) -> Result {
     let mut socket = connect(host, port, true, "/echo").await?;
     let (tx, mut rx) = mpsc::channel::<(Message, oneshot::Sender<Result>)>(4);
     let (event_tx, mut events) = mpsc::channel::<Result<Message>>(4);
-    let task = tokio::spawn(async move {
+    // Dropping the enclosing case on timeout must abort its child task.
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async move {
         loop {
             tokio::select! {
                 command = rx.recv() => {
@@ -192,7 +195,7 @@ async fn pump_reuse(host: &str, port: u16) -> Result {
             }
         }
     });
-    let outcome = async {
+    let outcome = timeout(Duration::from_secs(10), async {
         for round in 0..4 {
             if round != 0 {
                 // Drop a timed-out receive then wake a pending socket reader
@@ -217,27 +220,28 @@ async fn pump_reuse(host: &str, port: u16) -> Result {
             }
         }
         Ok(())
-    }
-    .await;
+    })
+    .await
+    .unwrap_or_else(|_| Err("pump exchange deadline exceeded".into()));
     drop(tx);
-    task.abort();
-    let _ = task.await;
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
     outcome
 }
 
 async fn concurrent(host: &str, port: u16) -> Result {
-    let mut joins = Vec::new();
+    let mut joins = JoinSet::new();
     for _ in 0..4 {
         let host = host.to_string();
-        joins.push(tokio::spawn(async move {
+        joins.spawn(async move {
             timeout(BUDGET, baseline(&host, port, true))
                 .await
                 .map_err(|_| "parallel case timeout".to_string())?
-        }));
+        });
     }
     let mut errors = Vec::new();
-    for join in joins {
-        match join.await {
+    while let Some(join) = joins.join_next().await {
+        match join {
             Ok(Ok(())) => (),
             Ok(Err(e)) => errors.push(e),
             Err(e) => errors.push(e.to_string()),

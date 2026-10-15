@@ -1,0 +1,91 @@
+964: [hv] [info] blueprint vm0: network_contract: BEGIN case=suite host=192.168.178.111 port=32350 runtime=both protocol=1
+967: [hv] [info] blueprint vm0: network_contract: BEGIN case=socket.contracts backend=std-posix
+970: [hv] [info] blueprint vm0: network_contract: BEGIN case=socket.echo_300k backend=std-posix
+979: [hv] [info] blueprint vm0: network_contract: END case=socket.echo_300k 
+982: [hv] [info] blueprint vm0: network_contract: BEGIN case=socket.peek_preserves_bytes backend=std-posix
+990: [hv] [info] blueprint vm0: network_contract: END case=socket.peek_preserves_bytes premature EOF at 0/12
+993: [hv] [info] blueprint vm0: network_contract: BEGIN case=socket.shutdown_write_fin backend=std-posix
+1179: [hv] [info] blueprint vm0: network_contract: END case=socket.shutdown_write_fin premature EOF at 0/13
+1182: [hv] [info] blueprint vm0: network_contract: BEGIN case=socket.delayed_data_then_eof backend=std-posix
+1191: [hv] [info] blueprint vm0: network_contract: END case=socket.delayed_data_then_eof 
+1194: [hv] [info] blueprint vm0: network_contract: PASS case=socket.echo_300k 
+1197: [hv] [info] blueprint vm0: network_contract: FAIL case=socket.peek_preserves_bytes premature EOF at 0/12
+1200: [hv] [info] blueprint vm0: network_contract: FAIL case=socket.shutdown_write_fin premature EOF at 0/13
+1203: [hv] [info] blueprint vm0: network_contract: PASS case=socket.delayed_data_then_eof 
+1206: [hv] [info] blueprint vm0: network_contract: BEGIN case=runtime.current.build 
+1209: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.tcp.cancel_read_resume_eof 
+1217: [hv] [info] blueprint vm0: network_contract: PASS case=current.tcp.cancel_read_resume_eof 
+1220: [hv] [info] blueprint vm0: network_contract: END case=current.tcp.cancel_read_resume_eof elapsed_ms=319
+1223: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.ws.text 
+1237: [hv] [info] blueprint vm0: network_contract: PASS case=current.ws.text 
+1240: [hv] [info] blueprint vm0: network_contract: END case=current.ws.text elapsed_ms=15
+1243: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.text 
+1257: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.text 
+1260: [hv] [info] blueprint vm0: network_contract: END case=current.wss.text elapsed_ms=65
+1263: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.ws.binary_300k 
+1271: [hv] [info] blueprint vm0: network_contract: PASS case=current.ws.binary_300k 
+1274: [hv] [info] blueprint vm0: network_contract: END case=current.ws.binary_300k elapsed_ms=112
+1277: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.binary_300k 
+1286: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.binary_300k 
+1289: [hv] [info] blueprint vm0: network_contract: END case=current.wss.binary_300k elapsed_ms=161
+1292: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.fragmented 
+1302: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.fragmented 
+1305: [hv] [info] blueprint vm0: network_contract: END case=current.wss.fragmented elapsed_ms=162
+1308: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.ping_pong 
+1316: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.ping_pong 
+1319: [hv] [info] blueprint vm0: network_contract: END case=current.wss.ping_pong elapsed_ms=64
+1322: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.idle_pump_reuse 
+1330: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.idle_pump_reuse 
+1333: [hv] [info] blueprint vm0: network_contract: END case=current.wss.idle_pump_reuse elapsed_ms=1371
+1336: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.peer_close 
+1352: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.peer_close 
+1355: [hv] [info] blueprint vm0: network_contract: END case=current.wss.peer_close elapsed_ms=260
+1358: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.peer_reset 
+1370: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.peer_reset 
+1373: [hv] [info] blueprint vm0: network_contract: END case=current.wss.peer_reset elapsed_ms=265
+1376: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.untrusted_rejected 
+1384: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.untrusted_rejected 
+1387: [hv] [info] blueprint vm0: network_contract: END case=current.wss.untrusted_rejected elapsed_ms=10
+1390: [hv] [info] blueprint vm0: network_contract: BEGIN case=current.wss.parallel_four 
+1414: [hv] [info] blueprint vm0: network_contract: PASS case=current.wss.parallel_four 
+1417: [hv] [info] blueprint vm0: network_contract: END case=current.wss.parallel_four elapsed_ms=74
+1420: [hv] [info] blueprint vm0: network_contract: PASS case=runtime.current.drop joined
+1423: [hv] [info] blueprint vm0: network_contract: BEGIN case=runtime.multi.build 
+1434: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.tcp.cancel_read_resume_eof 
+1485: [hv] [info] blueprint vm0: network_contract: PASS case=multi.tcp.cancel_read_resume_eof 
+1488: [hv] [info] blueprint vm0: network_contract: END case=multi.tcp.cancel_read_resume_eof elapsed_ms=323
+1491: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.ws.text 
+1499: [hv] [info] blueprint vm0: network_contract: PASS case=multi.ws.text 
+1502: [hv] [info] blueprint vm0: network_contract: END case=multi.ws.text elapsed_ms=14
+1505: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.text 
+1513: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.text 
+1516: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.text elapsed_ms=64
+1519: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.ws.binary_300k 
+1527: [hv] [info] blueprint vm0: network_contract: PASS case=multi.ws.binary_300k 
+1530: [hv] [info] blueprint vm0: network_contract: END case=multi.ws.binary_300k elapsed_ms=72
+1533: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.binary_300k 
+1541: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.binary_300k 
+1544: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.binary_300k elapsed_ms=121
+1547: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.fragmented 
+1555: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.fragmented 
+1558: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.fragmented elapsed_ms=163
+1561: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.ping_pong 
+1569: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.ping_pong 
+1572: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.ping_pong elapsed_ms=65
+1575: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.idle_pump_reuse 
+1583: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.idle_pump_reuse 
+1586: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.idle_pump_reuse elapsed_ms=1369
+1589: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.peer_close 
+1597: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.peer_close 
+1600: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.peer_close elapsed_ms=259
+1603: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.peer_reset 
+1611: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.peer_reset 
+1614: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.peer_reset elapsed_ms=259
+1617: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.untrusted_rejected 
+1625: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.untrusted_rejected 
+1628: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.untrusted_rejected elapsed_ms=10
+1631: [hv] [info] blueprint vm0: network_contract: BEGIN case=multi.wss.parallel_four 
+1655: [hv] [info] blueprint vm0: network_contract: PASS case=multi.wss.parallel_four 
+1658: [hv] [info] blueprint vm0: network_contract: END case=multi.wss.parallel_four elapsed_ms=74
+1661: [hv] [info] blueprint vm0: network_contract: PASS case=runtime.multi.drop joined
+1664: [hv] [info] blueprint vm0: network_contract: FAIL case=suite passed=26 failed=2 elapsed_ms=22431

@@ -20,12 +20,18 @@ fn main() {
         if let Some(value) = arg.strip_prefix("--host=") {
             host = value.into();
         } else if let Some(value) = arg.strip_prefix("--port=") {
-            base_port = value.parse().expect("numeric base port");
+            base_port = match value.parse::<u16>() {
+                Ok(port @ 1..=65532) => port,
+                _ => {
+                    record("FAIL", "arguments", "base port must be between 1 and 65532");
+                    std::process::exit(2);
+                }
+            };
         } else if let Some(value) = arg.strip_prefix("--runtime=") {
             runtime_mode = value.into();
         } else {
             record("FAIL", "arguments", &format!("unknown argument {arg}"));
-            return;
+            std::process::exit(2);
         }
     }
     if !matches!(runtime_mode.as_str(), "both" | "current" | "multi") {
@@ -34,7 +40,7 @@ fn main() {
             "arguments",
             "runtime must be current, multi or both",
         );
-        return;
+        std::process::exit(2);
     }
     let started = Instant::now();
     record(

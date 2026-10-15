@@ -1,0 +1,90 @@
+{"case": "E", "event": "raw_begin"}
+{"case": "P", "event": "raw_begin"}
+{"case": "E", "error": "[Errno 104] Connection reset by peer", "event": "raw_error", "received_bytes": 307200}
+{"case": "P", "event": "raw_done", "received_bytes": 0}
+{"case": "H", "event": "raw_begin"}
+{"case": "H", "error": "timed out", "event": "raw_error", "received_bytes": 18}
+{"case": "C", "event": "raw_begin"}
+{"case": "C", "event": "raw_done", "received_bytes": 0}
+{"case": "C", "event": "raw_begin"}
+{"case": "C", "event": "raw_done", "received_bytes": 0}
+{"event": "ws_upgraded", "path": "/echo", "tls": false}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": false}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": false}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": false}
+{"event": "ws_frame", "opcode": 2, "path": "/echo", "payload_bytes": 307200, "tls": false}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": false}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 2, "path": "/echo", "payload_bytes": 307200, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/fragment", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/fragment", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/ping", "tls": true}
+{"event": "pong_observed", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/ping", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_upgraded", "path": "/close", "tls": true}
+{"error": "[Errno 104] Connection reset by peer", "event": "ws_end", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/close", "payload_bytes": 2, "tls": true}
+{"event": "ws_upgraded", "path": "/reset", "tls": true}
+{"error": "[Errno 104] Connection reset by peer", "event": "ws_end", "path": "?", "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"case": "C", "event": "raw_begin"}
+{"case": "C", "event": "raw_done", "received_bytes": 0}
+{"event": "ws_upgraded", "path": "/echo", "tls": false}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": false}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": false}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": false}
+{"event": "ws_frame", "opcode": 2, "path": "/echo", "payload_bytes": 307200, "tls": false}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": false}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 2, "path": "/echo", "payload_bytes": 307200, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/fragment", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/fragment", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/ping", "tls": true}
+{"event": "pong_observed", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/ping", "payload_bytes": 0, "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 15, "tls": true}
+{"event": "ws_upgraded", "path": "/close", "tls": true}
+{"error": "[Errno 104] Connection reset by peer", "event": "ws_end", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/close", "payload_bytes": 2, "tls": true}
+{"event": "ws_upgraded", "path": "/reset", "tls": true}
+{"error": "[Errno 104] Connection reset by peer", "event": "ws_end", "path": "?", "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_upgraded", "path": "/echo", "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}
+{"event": "ws_frame", "opcode": 1, "path": "/echo", "payload_bytes": 11, "tls": true}
+{"event": "ws_frame", "opcode": 8, "path": "/echo", "payload_bytes": 0, "tls": true}

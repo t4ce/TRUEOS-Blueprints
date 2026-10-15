@@ -13,7 +13,18 @@ Start the companion server on the development host:
 python3 probes/network_contract/fixture/server.py --bind 192.168.178.111 --seconds 600
 ```
 
-Build without publishing:
+Build and publish directly into the Appstore's Apps folder:
+
+```sh
+probes/network_contract/build_publish.sh
+```
+
+It stays registered only in `probes.json`; the script directs this probe's
+publish to `smb://t4ce@pdjb/home-share/TRUEOS_SITE/apps`. It replaces only older
+versions of `network_contract.bp` and preserves the hash used by Appstore.
+Launch `§§network_contract` on the rig. The socket fixes require the rebuilt
+kernel; downloading a new Blueprint alone does not update kernel ABI handlers.
+To build without publishing:
 
 ```sh
 TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bpp network_contract
@@ -59,14 +70,34 @@ current-thread and a two-worker runtime: **28 cases** total. Runtime teardown is
 also logged. Compression negotiation, proxy tunnels, and every socket option
 are outside this initial suite; a pass establishes only the cases above.
 
-The Linux baseline passed all28 cases in approximately7 seconds with the actual
-vendored transport code. The native Blueprint builds and passes the CABI pack
-guard. Physical-rig execution is still pending; host success does not prove
-native ABI behavior.
+The Linux baseline passed all 28 cases in 6.7 seconds with the actual vendored
+transport code. Independent fixture witnesses confirmed FIN=1, Pong=2, and four
+300 KiB binary frames. The native Blueprint builds and passes the CABI pack guard.
 
-Source audit identified likely native failures that this probe deliberately
-checks: `std_abi_shim::shutdown` acknowledges the Mio route without performing
-half-close, and native `recv` ignores MSG_PEEK. Error/close readiness also needs
-the runtime witnesses. These findings are not treated as probe passes or fixed
-by this addition. The shared MaybeTlsStream wrapper also needed four obsolete
-`ref mut` bindings removed to compile its plain-TCP path with Rust2024.
+The physical rig completed in 22.4 seconds on 2026-10-15: **26 passed, 2 failed**.
+All 24 async cases passed across both runtime types. Peek consumed its witness,
+so the following read reached EOF. Write half-close never delivered FIN, so the
+fixture timed out and closed without sending its reply. The native fixture
+observed both Pongs and all four 300 KiB binary frames, and zero FIN witnesses.
+The probe returned the terminal, exited cleanly, and released its carrier with
+zero native jobs remaining.
+See [results and artifact hash](validation/rig-2026-10-15.json),
+[filtered rig records](validation/rig-2026-10-15.log), and
+[independent fixture records](validation/rig-fixture-2026-10-15.jsonl).
+
+These failures match two source gaps: `std_abi_shim::shutdown` acknowledges the
+Mio route without performing half-close, and native `recv` ignores MSG_PEEK.
+This probe does not fix them. The passing async cases establish the exercised
+transport contracts; they do not establish that Codex's whole turn or SQLx
+remote connection pool progresses. Idle reuse here uses four exchanges with
+350 ms idle intervals, rather than a multi-minute soak.
+
+In the preceding Codex boot, warmup completed, but the real turn did not reach
+WebSocket connection setup until roughly 13 minutes later. SQLx logged a
+153.156-second acquisition during that interval. Its TRUEOS backend uses
+persistent remote SQLite connections; acquisition can include permit wait,
+Ping, connection opening, and initialization queries. Those records warrant a
+separate remote-pool probe and do not identify which acquisition phase stalled.
+
+The shared MaybeTlsStream wrapper also needed four obsolete `ref mut` bindings
+removed to compile its plain-TCP path with Rust 2024.
