@@ -586,7 +586,11 @@ fn review(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         review_main(frame, area, app);
     }
-    if app.popup && (!app.stress_tour || app.tick % 64 < 32) && area.width >= 48 && area.height >= 13 {
+    if app.popup
+        && (!app.stress_tour || app.tick % 64 < 32)
+        && area.width >= 48
+        && area.height >= 13
+    {
         approval(
             frame,
             area,

@@ -231,7 +231,9 @@ def verify(session, cases):
         if case_id == "composer":
             marker = "ratatest-ssh-" + uuid.uuid4().hex[:10]
             start = session.send("i")
-            session.expect("composer editing", printed_text("EDITING: type / paste"), start)
+            # Unchanged characters inside the footer can be omitted by the
+            # differential backend; the newly drawn EDITING prefix is enough.
+            session.expect("composer editing", r"EDITING:", start)
             start = session.send(marker + "\rr")
             session.expect("composer submitted input", r"You:\s*" + re.escape(marker), start, marker=marker)
             for columns, rows in [(80, 24), (120, 40)]:

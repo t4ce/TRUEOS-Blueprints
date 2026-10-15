@@ -309,14 +309,22 @@ fn interact(
             }
             last_tick = Instant::now();
         }
-        if app.paused {
+        if app.paused || app.editing {
             last_tour = Instant::now();
         }
-        if app.stress_tour && !app.paused && last_tour.elapsed() >= Duration::from_secs(6) {
+        if app.stress_tour
+            && !app.paused
+            && !app.editing
+            && last_tour.elapsed() >= Duration::from_secs(6)
+        {
             app.advance_stress();
             last_tour = Instant::now();
             dirty = true;
-        } else if app.tour && !app.paused && last_tour.elapsed() >= Duration::from_secs(3) {
+        } else if app.tour
+            && !app.paused
+            && !app.editing
+            && last_tour.elapsed() >= Duration::from_secs(3)
+        {
             app.home = false;
             app.next(1);
             last_tour = Instant::now();
