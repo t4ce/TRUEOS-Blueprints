@@ -122,6 +122,8 @@ fn configure_darwin_baremetal_cc_tools(build: &mut cc::Build, target: &str) {
 }
 
 fn ensure_quickjs_checkout(out_dir: &Path) -> PathBuf {
+    const NATIVE_ENGINE_QUICKJS_REF: &str = "c2eaa5fb7a5f8f04e084412560dd48d02bd00d8d";
+    let native_engine = env::var_os("CARGO_FEATURE_NATIVE_ENGINE").is_some();
     // User override: point directly at a QuickJS source tree.
     if let Ok(p) = env::var("TRUEOS_QJS_QUICKJS_DIR") {
         return PathBuf::from(p);
@@ -131,7 +133,7 @@ fn ensure_quickjs_checkout(out_dir: &Path) -> PathBuf {
     // This preserves the old behavior for contributors who already cloned it.
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let workspace_quickjs = manifest_dir.join("..").join("..").join("quickjs");
-    if workspace_quickjs.join("quickjs.c").is_file() {
+    if !native_engine && workspace_quickjs.join("quickjs.c").is_file() {
         return workspace_quickjs;
     }
 
@@ -139,7 +141,9 @@ fn ensure_quickjs_checkout(out_dir: &Path) -> PathBuf {
     // or pre-cloned dependencies in the repo.
     let repo = env::var("TRUEOS_QJS_QUICKJS_REPO")
         .unwrap_or_else(|_| "https://github.com/bellard/quickjs".to_string());
-    let reference = env::var("TRUEOS_QJS_QUICKJS_REF").unwrap_or_else(|_| "master".to_string());
+    let reference = env::var("TRUEOS_QJS_QUICKJS_REF").unwrap_or_else(|_| {
+        if native_engine { NATIVE_ENGINE_QUICKJS_REF } else { "master" }.to_string()
+    });
 
     // If Cargo is in offline mode, don't try to hit the network.
     if env::var_os("CARGO_NET_OFFLINE").is_some() {
@@ -151,26 +155,39 @@ Set TRUEOS_QJS_QUICKJS_DIR=/path/to/quickjs or run with network access."
 
     let checkout_dir = out_dir.join("quickjs-src");
     if checkout_dir.join("quickjs.c").is_file() {
-        return checkout_dir;
+        let pinned = reference.len() == 40 && reference.bytes().all(|b| b.is_ascii_hexdigit());
+        let actual = Command::new("git").arg("-C").arg(&checkout_dir)
+            .args(["rev-parse", "HEAD"]).output().ok();
+        if !pinned || actual.as_ref().is_some_and(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == reference
+        }) {
+            return checkout_dir;
+        }
     }
 
     // Fresh clone.
-    // Note: This is intentionally *not pinned* by default (per user choice).
-    // You can pin by setting TRUEOS_QJS_QUICKJS_REF=<commit-or-tag>.
+    // The workbench keeps its chosen master default. The new native-engine
+    // embedding defaults to its tested source revision. Explicit overrides
+    // remain available for both.
     std::fs::create_dir_all(out_dir).expect("create OUT_DIR");
     if checkout_dir.exists() {
         let _ = std::fs::remove_dir_all(&checkout_dir);
     }
 
-    // Prefer git because it's widely available and QuickJS doesn't always publish tarball tags.
-    run(Command::new("git")
-        .arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg("--branch")
-        .arg(&reference)
-        .arg(&repo)
-        .arg(&checkout_dir));
+    // A raw commit is not a branch accepted by `git clone --branch`.
+    if reference.len() == 40 && reference.bytes().all(|b| b.is_ascii_hexdigit()) {
+        run(Command::new("git").arg("init").arg(&checkout_dir));
+        run(Command::new("git").arg("-C").arg(&checkout_dir)
+            .args(["remote", "add", "origin", &repo]));
+        run(Command::new("git").arg("-C").arg(&checkout_dir)
+            .args(["fetch", "--depth", "1", "origin", &reference]));
+        run(Command::new("git").arg("-C").arg(&checkout_dir)
+            .args(["checkout", "--detach", "FETCH_HEAD"]));
+    } else {
+        run(Command::new("git")
+            .arg("clone").arg("--depth").arg("1").arg("--branch")
+            .arg(&reference).arg(&repo).arg(&checkout_dir));
+    }
 
     if !checkout_dir.join("quickjs.c").is_file() {
         panic!(
@@ -704,6 +721,9 @@ fn main() {
     patch_quickjs_trueos(&quickjs_dir);
 
     let trueos_stdio = manifest_dir.join("src").join("stdio.c");
+    let engine_abi = manifest_dir.join("src").join("engine_abi.c");
+    let engine_stdio = manifest_dir.join("src").join("engine_stdio.c");
+    let engine_formatter = manifest_dir.join("src").join("stb_sprintf.h");
 
     let sources = [
         "quickjs.c",
@@ -717,6 +737,9 @@ fn main() {
         println!("cargo:rerun-if-changed={}", quickjs_dir.join(src).display());
     }
     println!("cargo:rerun-if-changed={}", trueos_stdio.display());
+    println!("cargo:rerun-if-changed={}", engine_abi.display());
+    println!("cargo:rerun-if-changed={}", engine_stdio.display());
+    println!("cargo:rerun-if-changed={}", engine_formatter.display());
     println!(
         "cargo:rerun-if-changed={}",
         quickjs_dir.join("quickjs.h").display()
@@ -733,12 +756,25 @@ fn main() {
     let target = env::var("TARGET").unwrap_or_default();
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "x86_64".to_string());
     let kernel_code_model = env::var_os("CARGO_FEATURE_KERNEL_CODE_MODEL").is_some();
+    let native_engine = env::var_os("CARGO_FEATURE_NATIVE_ENGINE").is_some();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let mut build = cc::Build::new();
     build.include(&quickjs_dir);
     for src in &sources {
         build.file(quickjs_dir.join(src));
     }
-    build.file(&trueos_stdio);
+    build.file(&engine_abi);
+    if native_engine {
+        if target_os == "trueos" {
+            // Engine-private formatting, never interpose on the embedding
+            // application's libc or clocks. Host tests use their actual libc.
+            build.file(&engine_stdio);
+            build.define("snprintf", Some("native_engine_snprintf"));
+            build.define("vsnprintf", Some("native_engine_vsnprintf"));
+        }
+    } else {
+        build.file(&trueos_stdio);
+    }
 
     let effective_target = if !target.contains('-') {
         format!("{}-unknown-none", arch)

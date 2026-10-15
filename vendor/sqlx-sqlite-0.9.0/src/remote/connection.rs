@@ -28,6 +28,51 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{mpsc, oneshot},
 };
+use tokio::time::{Instant, timeout_at};
+
+const SETUP_TIMEOUT: Duration = Duration::from_secs(30);
+const HTTP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+const HEALTH_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(750);
+const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(300);
+static NEXT_CONNECTION_ID: AtomicUsize = AtomicUsize::new(1);
+static NEXT_REQUEST_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// Fixed phase names and numeric correlation only. Never include endpoint,
+/// instance, database, SQL, parameters, response content or free-form errors.
+struct PhaseTiming {
+    connection_id: usize,
+    phase: &'static str,
+    started: Instant,
+    completed: bool,
+}
+impl PhaseTiming {
+    fn new(connection_id: usize, phase: &'static str) -> Self {
+        Self { connection_id, phase, started: Instant::now(), completed: false }
+    }
+    fn complete(&mut self) { self.completed = true; }
+}
+impl Drop for PhaseTiming {
+    fn drop(&mut self) {
+        tracing::info!(target: "sqlx_sqlite::remote_timing", connection_id = self.connection_id,
+            phase = self.phase, elapsed_ms = self.started.elapsed().as_millis() as u64,
+            completed = self.completed, "SQLite setup phase");
+    }
+}
+
+fn setup_timeout() -> Error {
+    Error::Protocol("SQLite setup deadline exceeded (30 seconds total)".into())
+}
+
+async fn setup_step<T>(deadline: Instant, connection_id: usize, phase: &'static str,
+    future: impl std::future::Future<Output = Result<T, Error>>) -> Result<T, Error> {
+    let mut timing = PhaseTiming::new(connection_id, phase);
+    let result = timeout_at(deadline, future).await.map_err(|_| setup_timeout())?;
+    // A future may do synchronous work between yields. Do not accept a late
+    // successful completion even when that work crossed Tokio's timer poll.
+    if Instant::now() >= deadline { return Err(setup_timeout()); }
+    if result.is_ok() { timing.complete(); }
+    result
+}
 
 pub(crate) mod collation {
     #[derive(Clone, Debug)]
@@ -88,7 +133,7 @@ pub(crate) struct ResultSet {
     last_insert_rowid: i64,
 }
 
-type Pending = (Command, oneshot::Sender<Result<Reply, Error>>);
+type Pending = (Command, oneshot::Sender<Result<Reply, Error>>, Instant, usize);
 pub struct SqliteConnection {
     commands: mpsc::UnboundedSender<Pending>,
     transaction_depth: Arc<AtomicUsize>,
@@ -111,36 +156,52 @@ pub struct UpdateHookResult<'a> {
 }
 
 impl SqliteConnection {
-    pub(crate) async fn establish(options: &SqliteConnectOptions) -> Result<Self, Error> {
+    pub(crate) fn establish(options: &SqliteConnectOptions) -> BoxFuture<'_, Result<Self, Error>> {
+        // Erase the nested HTTP/timeout state machine at the adapter boundary.
+        // Callers retain a Send future without recursively proving hyper's
+        // entire upgrade future through each SQLx/pool/store abstraction.
+        Box::pin(async move {
+            let deadline = Instant::now() + SETUP_TIMEOUT;
+            Self::establish_until(options, endpoint()?, deadline).await
+        })
+    }
+
+    async fn establish_until(options: &SqliteConnectOptions, endpoint: String, deadline: Instant) -> Result<Self, Error> {
+        let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
+        // The outer budget includes readiness-lock contention, launch, every
+        // health probe/retry, upgrade headers and the initial Open wire reply.
+        setup_step(deadline, connection_id, "setup_total", Self::establish_inner(options, endpoint, deadline, connection_id)).await
+    }
+
+    async fn establish_inner(options: &SqliteConnectOptions, endpoint: String, deadline: Instant, connection_id: usize) -> Result<Self, Error> {
         if options.vfs.is_some() || options.immutable {
             return Err(Error::Protocol(
                 "remote SQLite does not support client VFS/immutable options".into(),
             ));
         }
-        let endpoint = endpoint()?;
         let client = reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(Duration::from_secs(5))
             .build()
             .map_err(protocol)?;
-        let connect = || {
-            client
+        let connect = || async {
+            timeout_at(deadline.min(Instant::now() + HTTP_ATTEMPT_TIMEOUT), client
                 .get(format!("{endpoint}/v1/connect"))
                 .header("connection", "upgrade")
                 .header("upgrade", "trueos-sqlite-v1")
-                .send()
+                .send()).await.map_err(|_| Error::Protocol("SQLite upgrade headers timed out".into()))?.map_err(protocol)
         };
-        let response = match connect().await {
+        let response = match setup_step(deadline, connection_id, "connect_headers", connect()).await {
             Ok(response) => response,
             Err(_first) => {
                 #[cfg(target_os = "trueos")]
                 {
-                    ensure_service(&client, &endpoint).await?;
-                    connect().await.map_err(protocol)?
+                    setup_step(deadline, connection_id, "service_ready", ensure_service(&client, &endpoint, deadline)).await?;
+                    setup_step(deadline, connection_id, "connect_headers_retry", connect()).await?
                 }
                 #[cfg(not(target_os = "trueos"))]
                 {
-                    return Err(protocol(_first));
+                    return Err(_first);
                 }
             }
         };
@@ -150,7 +211,7 @@ impl SqliteConnection {
                 response.status()
             )));
         }
-        let mut socket = response.upgrade().await.map_err(protocol)?;
+        let mut socket = setup_step(deadline, connection_id, "upgrade", async { response.upgrade().await.map_err(protocol) }).await?;
         let filename = options.filename.to_string_lossy();
         let database = if options.in_memory || filename == ":memory:" {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -165,14 +226,14 @@ impl SqliteConnection {
             });
             format!("db-{hash:016x}")
         };
-        let opened = exchange(
+        let opened = setup_step(deadline, connection_id, "open", exchange(
             &mut socket,
             &Command::Open {
                 database,
                 create: options.create_if_missing || options.in_memory || filename == ":memory:",
                 read_only: options.read_only,
-            },
-        )
+            }, connection_id, 0, Duration::ZERO,
+        ))
         .await?;
         if let Some(e) = opened.error {
             return Err(Error::Database(Box::new(SqliteError {
@@ -184,11 +245,11 @@ impl SqliteConnection {
         let transaction_depth = Arc::new(AtomicUsize::new(0));
         let depth = transaction_depth.clone();
         tokio::spawn(async move {
-            while let Some((command, done)) = pending.recv().await {
+            while let Some((command, done, queued_at, request_id)) = pending.recv().await {
                 let begin = matches!(command, Command::Begin { .. });
                 let close = matches!(command, Command::Close);
                 let result =
-                    tokio::time::timeout(Duration::from_secs(30), exchange(&mut socket, &command))
+                    tokio::time::timeout(Duration::from_secs(30), exchange(&mut socket, &command, connection_id, request_id, queued_at.elapsed()))
                         .await
                         .unwrap_or_else(|_| {
                             Err(Error::Protocol(
@@ -214,7 +275,7 @@ impl SqliteConnection {
                     .is_some_and(|e| !matches!(e, Error::Database(_)));
                 if done.send(result).is_err() && successful_begin && !fatal {
                     // Cancellation before Transaction construction must release its server lock.
-                    if let Ok(reply) = exchange(&mut socket, &Command::Rollback).await {
+                    if let Ok(reply) = tokio::time::timeout(Duration::from_secs(30), exchange(&mut socket, &Command::Rollback, connection_id, NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed), Duration::ZERO)).await.unwrap_or_else(|_| Err(Error::Protocol("SQLite cancellation rollback timed out".into()))) {
                         depth.store(reply.depth, Ordering::Release);
                     }
                 }
@@ -251,7 +312,7 @@ impl SqliteConnection {
     ) -> Result<oneshot::Receiver<Result<Reply, Error>>, Error> {
         let (done, result) = oneshot::channel();
         self.commands
-            .send((command, done))
+            .send((command, done, Instant::now(), NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)))
             .map_err(|_| Error::WorkerCrashed)?;
         Ok(result)
     }
@@ -352,24 +413,17 @@ fn endpoint() -> Result<String, Error> {
     ))
 }
 #[cfg(target_os = "trueos")]
-async fn ensure_service(client: &reqwest::Client, endpoint: &str) -> Result<(), Error> {
+async fn ensure_service(client: &reqwest::Client, endpoint: &str, deadline: Instant) -> Result<(), Error> {
     static LAUNCH: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     let _guard = LAUNCH
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
-    if client
-        .get(format!("{endpoint}/healthz"))
-        .send()
-        .await
-        .is_ok()
-    {
+    if health_ready(client, endpoint, deadline).await {
         return Ok(());
     }
     if std::env::var_os("TRUEOS_SQLITE_ENDPOINT").is_some() {
-        return Err(Error::Protocol(
-            "configured SQLite endpoint is unavailable".into(),
-        ));
+        return wait_for_service(client, endpoint, deadline).await;
     }
     let instance = std::env::var("TRUEOS_SQLITE_INSTANCE").unwrap_or_else(|_| "codex".into());
     if instance.is_empty()
@@ -386,39 +440,100 @@ async fn ensure_service(client: &reqwest::Client, endpoint: &str) -> Result<(), 
         trueos::vshell::LaunchDestination::Headless,
     )
     .map_err(protocol)?;
-    for _ in 0..100 {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        if let Ok(response) = client.get(format!("{endpoint}/healthz")).send().await {
-            if response.status().is_success() {
-                return Ok(());
-            }
+    wait_for_service(client, endpoint, deadline).await
+}
+
+#[cfg(any(target_os = "trueos", test))]
+async fn health_ready(client: &reqwest::Client, endpoint: &str, deadline: Instant) -> bool {
+    if Instant::now() >= deadline { return false; }
+    let probe_deadline = deadline.min(Instant::now() + HEALTH_ATTEMPT_TIMEOUT);
+    matches!(timeout_at(probe_deadline, client.get(format!("{endpoint}/healthz")).send()).await,
+        Ok(Ok(response)) if response.status().is_success() && Instant::now() < probe_deadline)
+}
+
+#[cfg(any(target_os = "trueos", test))]
+async fn wait_for_service(client: &reqwest::Client, endpoint: &str, deadline: Instant) -> Result<(), Error> {
+    loop {
+        if Instant::now() >= deadline { return Err(setup_timeout()); }
+        if health_ready(client, endpoint, deadline).await { return Ok(()); }
+        tokio::time::sleep_until(deadline.min(Instant::now() + HEALTH_RETRY_DELAY)).await;
+    }
+}
+
+struct ExchangeTiming {
+    connection_id: usize,
+    request_id: usize,
+    queued_ms: u64,
+    started: Instant,
+    phase: &'static str,
+    serialize_ms: Option<u64>,
+    write_ms: Option<u64>,
+    header_ms: Option<u64>,
+    body_ms: Option<u64>,
+    parse_ms: Option<u64>,
+    completed: bool,
+}
+impl Drop for ExchangeTiming {
+    fn drop(&mut self) {
+        let elapsed_ms = self.started.elapsed().as_millis() as u64;
+        // One bounded summary per slow exchange (and the initial Open), not
+        // one log per read or row. Optional durations stay absent on failure.
+        if self.request_id == 0 || elapsed_ms >= 100 || self.queued_ms >= 100 {
+            tracing::info!(target: "sqlx_sqlite::remote_timing",
+                connection_id = self.connection_id, request_id = self.request_id,
+                phase = self.phase, queued_ms = self.queued_ms, elapsed_ms,
+                serialize_ms = ?self.serialize_ms, write_ms = ?self.write_ms,
+                header_ms = ?self.header_ms, body_ms = ?self.body_ms, parse_ms = ?self.parse_ms,
+                completed = self.completed, "SQLite RPC timing");
         }
     }
-    Err(Error::Protocol(
-        "SQLite Blueprint did not become ready within 30 seconds".into(),
-    ))
 }
-async fn exchange(socket: &mut reqwest::Upgraded, command: &Command) -> Result<Reply, Error> {
+
+async fn exchange(socket: &mut reqwest::Upgraded, command: &Command, connection_id: usize, request_id: usize, queued: Duration) -> Result<Reply, Error> {
     const LIMIT: usize = 8 * 1024 * 1024;
+    let mut timing = ExchangeTiming { connection_id, request_id, queued_ms: queued.as_millis() as u64,
+        started: Instant::now(), phase: "serialize", serialize_ms: None, write_ms: None,
+        header_ms: None, body_ms: None, parse_ms: None, completed: false };
+    let stage = Instant::now();
     let bytes = serde_json::to_vec(command).map_err(protocol)?;
+    timing.serialize_ms = Some(stage.elapsed().as_millis() as u64);
     if bytes.len() > LIMIT {
         return Err(Error::Protocol("SQLite request limit exceeded".into()));
     }
+    timing.phase = "write";
+    let stage = Instant::now();
     socket
         .write_u32(bytes.len() as u32)
         .await
         .map_err(protocol)?;
     socket.write_all(&bytes).await.map_err(protocol)?;
     socket.flush().await.map_err(protocol)?;
+    timing.write_ms = Some(stage.elapsed().as_millis() as u64);
+    timing.phase = "read_header";
+    let stage = Instant::now();
     let len = socket.read_u32().await.map_err(protocol)? as usize;
+    timing.header_ms = Some(stage.elapsed().as_millis() as u64);
     if len > LIMIT {
         return Err(Error::Protocol("SQLite reply limit exceeded".into()));
     }
     let mut bytes = vec![0; len];
+    timing.phase = "read_body";
+    let stage = Instant::now();
     socket.read_exact(&mut bytes).await.map_err(protocol)?;
+    timing.body_ms = Some(stage.elapsed().as_millis() as u64);
+    timing.phase = "parse";
+    let stage = Instant::now();
     let reply: Reply = serde_json::from_slice(&bytes).map_err(protocol)?;
+    timing.parse_ms = Some(stage.elapsed().as_millis() as u64);
+    timing.phase = "complete";
+    timing.completed = true;
     Ok(reply)
 }
+
+#[cfg(test)]
+#[path = "connection_tests.rs"]
+mod remote_setup_tests;
+
 fn columns(set: &ResultSet, declared: &[Option<String>]) -> Vec<SqliteColumn> {
     set.columns
         .iter()

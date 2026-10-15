@@ -1,0 +1,16 @@
+{
+  "package": "mcp_http_probe",
+  "target": "x86_64-unknown-trueos",
+  "profile": "release",
+  "package_sha256": "6b6a81c0ee1c248aca1f0f214eb795320e5dd5b5fc662fabc3a6bc4f90a020d0",
+  "published": true,
+  "protocol_under_test": "http1",
+  "linux_baseline_passed": 9,
+  "linux_baseline_total": 9,
+  "native_execution": "pending",
+  "source_sha256": {
+    "main.rs": "9121dfd71b5ca3d95383ff453918f19fe0bad31a778479ab7808a633a1ebc5c5",
+    "Cargo.toml": "c94fdec504e1a6c935bf7643f085c648ea28840fe25ab5cec42b0456d6d19e6e",
+    "fixture.py": "9741571191fa192f2fd2eb7b3a689ce96cf8f8bd1c6f2e349851f12cf2404e5b"
+  }
+}

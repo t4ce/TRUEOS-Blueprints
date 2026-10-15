@@ -1,0 +1,14 @@
+[package]
+name = "file_replace_contract"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "file_replace_contract"
+path = "main.rs"
+
+[dependencies]
+tempfile = "=3.27.0"
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos.workspace = true

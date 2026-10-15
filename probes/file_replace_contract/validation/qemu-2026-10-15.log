@@ -1,0 +1,11 @@
+[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=suite elapsed_ms=2 backend=tempfile-3.27-rustix protocol=1 deadline_ms=120000
+[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.open_source_fd elapsed_ms=6 
+[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.open_source_fd elapsed_ms=47 
+[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.detached_destination_fd elapsed_ms=48 
+[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.detached_destination_fd elapsed_ms=66 
+[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.failed_rename_preserves_both elapsed_ms=67 
+[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.failed_rename_preserves_both elapsed_ms=89 
+[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.second_save elapsed_ms=90 
+[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.second_save elapsed_ms=120 
+[hv] [info] blueprint vm1: file_replace_contract: PASS case=cleanup.owned_directory elapsed_ms=137 
+[hv] [info] blueprint vm1: file_replace_contract: PASS case=suite elapsed_ms=142 passed=5 failed=0

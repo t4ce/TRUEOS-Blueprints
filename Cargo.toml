@@ -53,6 +53,7 @@ members = [
     "probes/tokio_mrt",
     "probes/tokio_net",
     "probes/network_contract",
+    "probes/file_replace_contract",
     "probes/tokio_rt",
     "probes/tokio_stack",
     "apps/webmail",
@@ -61,6 +62,8 @@ members = [
     "probes/wls",
 ]
 exclude = [
+    "probes/mcp_http_probe",
+    "probes/code_mode_probe",
     "vendor/ratatui/ratatui",
     "vendor/ratatui/ratatui-core",
     "vendor/ratatui/ratatui-widgets",

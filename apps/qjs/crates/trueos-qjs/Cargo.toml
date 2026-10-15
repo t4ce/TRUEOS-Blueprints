@@ -26,6 +26,9 @@ lightningcss = { version = "1.0.0-alpha.70", default-features = false, optional 
 
 [features]
 default = []
+# Raw interpreter for std applications. Does not export workbench libc shims or
+# install filesystem/network bindings in the JavaScript context.
+native-engine = []
 lightningcss-native = ["dep:lightningcss"]
 kernel-code-model = []
 

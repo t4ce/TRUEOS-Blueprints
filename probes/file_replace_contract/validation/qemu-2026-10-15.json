@@ -1,0 +1,31 @@
+{
+  "status": "PASS",
+  "records": [
+    "[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=suite elapsed_ms=2 backend=tempfile-3.27-rustix protocol=1 deadline_ms=120000",
+    "[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.open_source_fd elapsed_ms=6 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.open_source_fd elapsed_ms=47 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.detached_destination_fd elapsed_ms=48 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.detached_destination_fd elapsed_ms=66 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.failed_rename_preserves_both elapsed_ms=67 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.failed_rename_preserves_both elapsed_ms=89 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: BEGIN case=persist.second_save elapsed_ms=90 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: PASS case=persist.second_save elapsed_ms=120 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: PASS case=cleanup.owned_directory elapsed_ms=137 ",
+    "[hv] [info] blueprint vm1: file_replace_contract: PASS case=suite elapsed_ms=142 passed=5 failed=0"
+  ],
+  "root_id": "2",
+  "passed": 5,
+  "failed": 0,
+  "elapsed_ms": 142,
+  "kernel_sha256": "0913a59eaf5a060e880afc8dffe8d6e3b371333161c30451a9fd77321cf972dc",
+  "runtime_sha256": "56e0424fe99d868ddf906f086ee5eeb27f99686c4da3854b1c209e3bae1cd1d5",
+  "iso_sha256": "9f5dab022fb1361bfe919a37ce283137c45fd8efb58f940d3ad624075dc7e6c9",
+  "blueprint_sha256": "22fee863c7746dca0f935f4b5d25797b625d8345e063715d4d44188d9a4e9007",
+  "storage": "disposable 512MiB RAM TRUEOSFS",
+  "ssh_port": 48322,
+  "teardown": {
+    "clean_exit": true,
+    "native_jobs": 0,
+    "carrier": "released"
+  }
+}

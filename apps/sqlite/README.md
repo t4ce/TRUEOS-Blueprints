@@ -101,6 +101,28 @@ can have an unknown outcome; the adapter does not retry SQL automatically.
 Result limits remain 10,000 rows / 8 MiB, and transaction lock waits and SQL work
 are bounded at five seconds. Query budgets are enforced inside the SQLite server.
 
+Connection setup has one 30-second deadline covering service-launch lock wait,
+service readiness, HTTP upgrade headers, the upgrade itself, and the initial
+Open reply. Upgrade header attempts use at most five seconds; health probes use
+at most 750 ms and require a 2xx status. Readiness retries every 300 ms within
+the remaining deadline, rather than counting probes as elapsed time. This is a
+setup budget, not a global reqwest timeout on the persistent upgraded stream.
+As with Tokio timers generally, an executor blocked in synchronous code must
+resume polling before it can observe a deadline; late completions are rejected.
+
+The `sqlx_sqlite::remote_timing` tracing target records fixed setup phase names,
+numeric connection/request IDs and elapsed milliseconds. Initial Open and slow
+RPC exchanges (wire or actor-queue time at least 100 ms) emit one summary
+separating queue, serialization, write, reply header, body and parse time.
+Unfinished stage durations are absent; `completed` describes transport phase
+completion, not SQLite command success. No SQL, database name, endpoint,
+parameters, response content or error messages are included. Run the real
+TCP/HTTP deadline regressions with:
+
+```sh
+python3 apps/sqlite/tests/test_remote_setup.py
+```
+
 ## Verification
 
 The isolated `host/Cargo.toml` builds the exact service source without the

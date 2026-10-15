@@ -133,34 +133,25 @@ impl JSValue {
     }
 }
 
-/// Mirrors the `JS_FreeValue` inline in `quickjs.h` for the non-NAN-boxing (PTR64) ABI.
+unsafe extern "C" {
+    fn native_engine_js_free_value(ctx: *mut JSContext, value: JSValue);
+    fn native_engine_js_dup_value(ctx: *mut JSContext, value: JSValue) -> JSValue;
+}
+
+/// Use the inline implementation from the actual compiled QuickJS header.
 ///
 /// Safety: `ctx` must be a live context and `v` must be a valid value for that context.
 #[inline]
 pub unsafe fn js_free_value(ctx: *mut JSContext, v: JSValue) {
-    if v.tag >= JS_TAG_FIRST && v.tag < 0 {
-        let p = unsafe { v.u.ptr } as *mut JSRefCountHeader;
-        unsafe {
-            (*p).ref_count -= 1;
-            if (*p).ref_count <= 0 {
-                __JS_FreeValue(ctx, v);
-            }
-        }
-    }
+    unsafe { native_engine_js_free_value(ctx, v) }
 }
 
-/// Mirrors the `JS_DupValue` inline in `quickjs.h` for the non-NAN-boxing (PTR64) ABI.
+/// Use the inline implementation from the actual compiled QuickJS header.
 ///
 /// Safety: `v` must be a valid value for the given runtime.
 #[inline]
-pub unsafe fn js_dup_value(_ctx: *mut JSContext, v: JSValue) -> JSValue {
-    if v.tag >= JS_TAG_FIRST && v.tag < 0 {
-        let p = unsafe { v.u.ptr } as *mut JSRefCountHeader;
-        unsafe {
-            (*p).ref_count += 1;
-        }
-    }
-    v
+pub unsafe fn js_dup_value(ctx: *mut JSContext, v: JSValue) -> JSValue {
+    unsafe { native_engine_js_dup_value(ctx, v) }
 }
 
 /// Convenience wrapper for `JS_ToCStringLen2(..., cesu8=false)`.

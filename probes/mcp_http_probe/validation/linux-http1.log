@@ -1,0 +1,92 @@
+mcp_http_probe: case=json phase=construct state=started
+mcp_http_probe: case=json phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=json phase=headers sequence=0 status_code=200 duration_ms=12
+mcp_http_probe: case=json phase=headers sequence=1 status_code=202 duration_ms=0
+mcp_http_probe: case=json phase=initialize ok=1 duration_ms=15
+mcp_http_probe: case=json phase=tools_list state=started deadline_ms=5000
+mcp_http_probe: case=json phase=headers sequence=2 status_code=200 duration_ms=1
+mcp_http_probe: case=json phase=tools_list ok=1 tools=106 duration_ms=11
+mcp_http_probe: case=json phase=shutdown duration_ms=0
+mcp_http_probe: case=json phase=result ok=1 duration_ms=28
+mcp_http_probe: case=sse phase=construct state=started
+mcp_http_probe: case=sse phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=sse phase=headers sequence=0 status_code=200 duration_ms=12
+mcp_http_probe: case=sse phase=headers sequence=1 status_code=202 duration_ms=1
+mcp_http_probe: case=sse phase=initialize ok=1 duration_ms=15
+mcp_http_probe: case=sse phase=tools_list state=started deadline_ms=5000
+mcp_http_probe: case=sse phase=headers sequence=2 status_code=200 duration_ms=2
+mcp_http_probe: case=sse phase=tools_list ok=1 tools=106 duration_ms=32
+mcp_http_probe: case=sse phase=shutdown duration_ms=0
+mcp_http_probe: case=sse phase=result ok=1 duration_ms=49
+mcp_http_probe: case=404 phase=construct state=started
+mcp_http_probe: case=404 phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=404 phase=headers sequence=0 status_code=200 duration_ms=8
+mcp_http_probe: case=404 phase=headers sequence=1 status_code=202 duration_ms=1
+mcp_http_probe: case=404 phase=initialize ok=1 duration_ms=11
+mcp_http_probe: case=404 phase=tools_list state=started deadline_ms=5000
+mcp_http_probe: case=404 phase=headers sequence=2 status_code=404 duration_ms=0
+mcp_http_probe: case=404 phase=tools_list ok=1 tools=0 duration_ms=1
+mcp_http_probe: case=404 phase=shutdown duration_ms=0
+mcp_http_probe: case=404 phase=result ok=1 duration_ms=13
+mcp_http_probe: case=401 phase=construct state=started
+mcp_http_probe: case=401 phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=401 phase=headers sequence=0 status_code=200 duration_ms=8
+mcp_http_probe: case=401 phase=headers sequence=1 status_code=202 duration_ms=0
+mcp_http_probe: case=401 phase=initialize ok=1 duration_ms=9
+mcp_http_probe: case=401 phase=tools_list state=started deadline_ms=5000
+mcp_http_probe: case=401 phase=headers sequence=2 status_code=401 duration_ms=0
+mcp_http_probe: case=401 phase=tools_list ok=1 tools=0 duration_ms=1
+mcp_http_probe: case=401 phase=shutdown duration_ms=0
+mcp_http_probe: case=401 phase=result ok=1 duration_ms=12
+mcp_http_probe: case=reset phase=construct state=started
+mcp_http_probe: case=reset phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=reset phase=headers sequence=0 status_code=200 duration_ms=12
+mcp_http_probe: case=reset phase=headers sequence=1 status_code=202 duration_ms=0
+mcp_http_probe: case=reset phase=initialize ok=1 duration_ms=14
+mcp_http_probe: case=reset phase=tools_list state=started deadline_ms=5000
+mcp_http_probe: case=reset phase=headers sequence=2 status_code=0 duration_ms=0
+mcp_http_probe: case=reset phase=headers sequence=3 status_code=0 duration_ms=1
+mcp_http_probe: case=reset phase=headers sequence=4 status_code=0 duration_ms=1
+mcp_http_probe: case=reset phase=tools_list ok=1 tools=0 duration_ms=1259
+mcp_http_probe: case=reset phase=shutdown duration_ms=0
+mcp_http_probe: case=reset phase=result ok=1 duration_ms=1276
+mcp_http_probe: case=headers_timeout phase=construct state=started
+mcp_http_probe: case=headers_timeout phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=headers_timeout phase=headers sequence=0 status_code=200 duration_ms=17
+mcp_http_probe: case=headers_timeout phase=headers sequence=1 status_code=202 duration_ms=1
+mcp_http_probe: case=headers_timeout phase=initialize ok=1 duration_ms=21
+mcp_http_probe: case=headers_timeout phase=tools_list state=started deadline_ms=300
+mcp_http_probe: case=headers_timeout phase=tools_list ok=1 tools=0 duration_ms=300
+mcp_http_probe: case=headers_timeout phase=shutdown duration_ms=0
+mcp_http_probe: case=headers_timeout phase=result ok=1 duration_ms=323
+mcp_http_probe: case=body_timeout phase=construct state=started
+mcp_http_probe: case=body_timeout phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=body_timeout phase=headers sequence=0 status_code=200 duration_ms=10
+mcp_http_probe: case=body_timeout phase=headers sequence=1 status_code=202 duration_ms=1
+mcp_http_probe: case=body_timeout phase=initialize ok=1 duration_ms=13
+mcp_http_probe: case=body_timeout phase=tools_list state=started deadline_ms=300
+mcp_http_probe: case=body_timeout phase=headers sequence=2 status_code=200 duration_ms=1
+mcp_http_probe: case=body_timeout phase=tools_list ok=1 tools=0 duration_ms=301
+mcp_http_probe: case=body_timeout phase=shutdown duration_ms=0
+mcp_http_probe: case=body_timeout phase=result ok=1 duration_ms=315
+mcp_http_probe: case=cancel phase=construct state=started
+mcp_http_probe: case=cancel phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=cancel phase=headers sequence=0 status_code=200 duration_ms=11
+mcp_http_probe: case=cancel phase=headers sequence=1 status_code=202 duration_ms=0
+mcp_http_probe: case=cancel phase=initialize ok=1 duration_ms=13
+mcp_http_probe: case=cancel phase=tools_list state=started deadline_ms=150
+mcp_http_probe: case=cancel phase=tools_list ok=1 tools=0 duration_ms=151
+mcp_http_probe: case=cancel phase=shutdown duration_ms=0
+mcp_http_probe: case=cancel phase=result ok=1 duration_ms=166
+mcp_http_probe: case=recovery phase=construct state=started
+mcp_http_probe: case=recovery phase=initialize state=started deadline_ms=5000
+mcp_http_probe: case=recovery phase=headers sequence=0 status_code=200 duration_ms=11
+mcp_http_probe: case=recovery phase=headers sequence=1 status_code=202 duration_ms=0
+mcp_http_probe: case=recovery phase=initialize ok=1 duration_ms=13
+mcp_http_probe: case=recovery phase=tools_list state=started deadline_ms=5000
+mcp_http_probe: case=recovery phase=headers sequence=2 status_code=200 duration_ms=1
+mcp_http_probe: case=recovery phase=tools_list ok=1 tools=106 duration_ms=6
+mcp_http_probe: case=recovery phase=shutdown duration_ms=0
+mcp_http_probe: case=recovery phase=result ok=1 duration_ms=20
+mcp_http_probe: phase=summary passed=9 total=9
+mcp_http_probe: ALL PASS

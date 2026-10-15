@@ -35,6 +35,9 @@
     "unix_api_probe",
     "veloren_executor",
     "wls",
-    "network_contract"
+    "network_contract",
+    "file_replace_contract",
+    "code_mode_probe",
+    "mcp_http_probe"
   ]
 }

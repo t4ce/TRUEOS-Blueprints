@@ -1,0 +1,37 @@
+{"monotonic_ns": 99683016474930, "port": 18766, "protocol": "http1", "stage": "ready", "tools": 106, "unix_ms": 1792063357112}
+{"bytes": 164, "case": "json", "monotonic_ns": 99765111451481, "stage": "initialize", "unix_ms": 1792063439207}
+{"case": "json", "monotonic_ns": 99765113083041, "stage": "initialized", "unix_ms": 1792063439208}
+{"case": "json", "monotonic_ns": 99765114348302, "stage": "tools_list", "unix_ms": 1792063439210}
+{"bytes": 330447, "case": "json", "monotonic_ns": 99765115084431, "stage": "body_written", "unix_ms": 1792063439210}
+{"bytes": 164, "case": "sse", "monotonic_ns": 99765128219155, "stage": "initialize", "unix_ms": 1792063439224}
+{"case": "sse", "monotonic_ns": 99765129131342, "stage": "initialized", "unix_ms": 1792063439224}
+{"case": "sse", "monotonic_ns": 99765129898056, "stage": "tools_list", "unix_ms": 1792063439225}
+{"bytes": 330447, "case": "sse", "fragments": 101, "monotonic_ns": 99765160411354, "stage": "event_written", "unix_ms": 1792063439256}
+{"case": "sse", "duration_ms": 0, "monotonic_ns": 99765160485271, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792063439256}
+{"bytes": 164, "case": "404", "monotonic_ns": 99765162777747, "stage": "initialize", "unix_ms": 1792063439258}
+{"case": "404", "monotonic_ns": 99765164473202, "stage": "initialized", "unix_ms": 1792063439260}
+{"case": "404", "monotonic_ns": 99765166128898, "stage": "tools_list", "unix_ms": 1792063439261}
+{"bytes": 164, "case": "401", "monotonic_ns": 99765175984997, "stage": "initialize", "unix_ms": 1792063439271}
+{"case": "401", "monotonic_ns": 99765177541435, "stage": "initialized", "unix_ms": 1792063439273}
+{"case": "401", "monotonic_ns": 99765178939527, "stage": "tools_list", "unix_ms": 1792063439274}
+{"bytes": 164, "case": "reset", "monotonic_ns": 99765188495424, "stage": "initialize", "unix_ms": 1792063439284}
+{"case": "reset", "monotonic_ns": 99765189950154, "stage": "initialized", "unix_ms": 1792063439285}
+{"case": "reset", "monotonic_ns": 99765191405946, "stage": "tools_list", "unix_ms": 1792063439287}
+{"case": "reset", "monotonic_ns": 99765445500981, "stage": "tools_list", "unix_ms": 1792063439541}
+{"case": "reset", "monotonic_ns": 99766448794736, "stage": "tools_list", "unix_ms": 1792063440544}
+{"bytes": 164, "case": "headers_timeout", "monotonic_ns": 99766465504005, "stage": "initialize", "unix_ms": 1792063440561}
+{"case": "headers_timeout", "monotonic_ns": 99766467620497, "stage": "initialized", "unix_ms": 1792063440563}
+{"case": "headers_timeout", "monotonic_ns": 99766469856309, "stage": "tools_list", "unix_ms": 1792063440565}
+{"case": "headers_timeout", "duration_ms": 299, "monotonic_ns": 99766769919226, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792063440865}
+{"bytes": 164, "case": "body_timeout", "monotonic_ns": 99766784832181, "stage": "initialize", "unix_ms": 1792063440880}
+{"case": "body_timeout", "monotonic_ns": 99766786974314, "stage": "initialized", "unix_ms": 1792063440882}
+{"case": "body_timeout", "monotonic_ns": 99766788851746, "stage": "tools_list", "unix_ms": 1792063440884}
+{"case": "body_timeout", "duration_ms": 298, "monotonic_ns": 99767088536299, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792063441184}
+{"bytes": 164, "case": "cancel", "monotonic_ns": 99767106418469, "stage": "initialize", "unix_ms": 1792063441202}
+{"case": "cancel", "monotonic_ns": 99767108246177, "stage": "initialized", "unix_ms": 1792063441204}
+{"case": "cancel", "monotonic_ns": 99767109899516, "stage": "tools_list", "unix_ms": 1792063441205}
+{"case": "cancel", "duration_ms": 154, "monotonic_ns": 99767264056726, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792063441359}
+{"bytes": 164, "case": "recovery", "monotonic_ns": 99767301661320, "stage": "initialize", "unix_ms": 1792063441397}
+{"case": "recovery", "monotonic_ns": 99767308370250, "stage": "initialized", "unix_ms": 1792063441404}
+{"case": "recovery", "monotonic_ns": 99767314644919, "stage": "tools_list", "unix_ms": 1792063441410}
+{"bytes": 330447, "case": "recovery", "monotonic_ns": 99767315998691, "stage": "body_written", "unix_ms": 1792063441411}

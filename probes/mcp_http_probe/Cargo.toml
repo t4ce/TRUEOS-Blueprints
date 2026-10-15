@@ -1,0 +1,33 @@
+[package]
+name = "mcp_http_probe"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "mcp_http_probe"
+path = "main.rs"
+
+[dependencies]
+codex-rmcp-client = { path = "../../../codex/codex-rs/rmcp-client" }
+codex-config = { path = "../../../codex/codex-rs/config" }
+codex-exec-server = { path = "../../../codex/codex-rs/exec-server" }
+codex-transport = { path = "../../../codex/codex-rs/transport" }
+futures = "0.3"
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", rev = "4048ac40e958fb1a7d614617a2ae8d26666ee2fa", version = "=3.5.1", default-features = false, features = ["client"] }
+tokio = { version = "=1.52.3", features = ["macros", "rt", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos = { path = "../../api", features = ["tokio-runtime"] }
+codex-utils-pty = { path = "../../../codex/codex-rs/utils/pty", features = ["sh3"] }
+codex-shell-command = { path = "../../../codex/codex-rs/shell-command", features = ["nopowersh"] }
+
+[workspace]
+
+[patch.crates-io]
+httpdate = { path = "../../vendor/httpdate-1.0.3" }
+rama-dns = { path = "../../vendor/rama-dns-0.3.0-alpha.4-trueos" }
+rustls-rustcrypto = { path = "../../vendor/rustls-rustcrypto-0.0.2-alpha" }
+rama-tls-rustls = { path = "../../vendor/rama-tls-rustls-0.3.0-alpha.4-rustcrypto" }
+sqlx-sqlite = { path = "../../vendor/sqlx-sqlite-0.9.0" }
