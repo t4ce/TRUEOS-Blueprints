@@ -1736,6 +1736,25 @@ fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
         "typed directory listing decoder",
     )?;
     ensure_rust_std_trueos_file_lock_methods()?;
+    ensure_rust_src_replacement(
+        "std/src/sys/fs/unix.rs",
+        r#"#[cfg(target_os = "trueos")]
+pub fn rename(old: &CStr, new: &CStr) -> io::Result<()> {
+    // There is deliberately no process-wide atomic-rename contract yet.
+    // A compiler Blueprint is a single writer, so copy-then-remove provides
+    // the required metadata/object publication semantics without inventing a
+    // process or IPC subsystem.
+    let old = Path::new(OsStr::from_bytes(old.to_bytes()));
+    let new = Path::new(OsStr::from_bytes(new.to_bytes()));
+    crate::fs::copy(old, new)?;
+    crate::fs::remove_file(old)
+}"#,
+        r#"#[cfg(target_os = "trueos")]
+pub fn rename(old: &CStr, new: &CStr) -> io::Result<()> {
+    cvt(unsafe { libc::rename(old.as_ptr(), new.as_ptr()) }).map(|_| ())
+}"#,
+        "metadata-only POSIX rename",
+    )?;
     ensure_rust_src_file(
         "std/src/sys/random/trueos.rs",
         TRUEOS_STD_RANDOM_BACKEND,

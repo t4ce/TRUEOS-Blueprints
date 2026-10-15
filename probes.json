@@ -34,6 +34,7 @@
     "tokio_stack",
     "unix_api_probe",
     "veloren_executor",
-    "wls"
+    "wls",
+    "network_contract"
   ]
 }

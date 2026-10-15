@@ -233,6 +233,12 @@ unsafe extern "C" {
     fn trueos_cabi_async_fs_metadata_start_v2(path_ptr: *const u8, path_len: usize) -> i32;
     fn trueos_cabi_async_fs_list_dir_start(path_ptr: *const u8, path_len: usize) -> i32;
     fn trueos_cabi_async_fs_remove_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_rename_start(
+        source_ptr: *const u8,
+        source_len: usize,
+        destination_ptr: *const u8,
+        destination_len: usize,
+    ) -> i32;
     fn trueos_cabi_async_fs_status(id: u32) -> i32;
     fn trueos_cabi_async_fs_result_len(id: u32) -> isize;
     fn trueos_cabi_async_fs_result_read(
@@ -642,6 +648,22 @@ async fn remove_async(path: &Path) -> io::Result<()> {
     let mut operation = AsyncFsOperation::from_start(
         unsafe { trueos_cabi_async_fs_remove_start(path.as_ptr(), path.len()) },
         "remove start",
+    )?;
+    operation.ready().await?;
+    operation.discard();
+    Ok(())
+}
+
+async fn rename_async(source: &Path, destination: &Path) -> io::Result<()> {
+    let source = cabi_path_string(source, false)?;
+    let destination = cabi_path_string(destination, false)?;
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe {
+            trueos_cabi_async_fs_rename_start(
+                source.as_ptr(), source.len(), destination.as_ptr(), destination.len(),
+            )
+        },
+        "rename start",
     )?;
     operation.ready().await?;
     operation.discard();
@@ -1175,4 +1197,8 @@ pub(crate) async fn set_permissions(path: &Path, perm: Permissions) -> io::Resul
 
 pub(crate) async fn remove_file(path: &Path) -> io::Result<()> {
     remove_async(path).await
+}
+
+pub(crate) async fn rename(source: &Path, destination: &Path) -> io::Result<()> {
+    rename_async(source, destination).await
 }

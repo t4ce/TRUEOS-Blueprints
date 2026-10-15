@@ -204,20 +204,9 @@ pub(crate) fn cvt<T>(r: Result<T, WsError>) -> Poll<Result<T, WsError>> {
     }
 }
 
-#[cfg(target_os = "trueos")]
-fn map_tokio_io<T, E>(poll: Poll<Result<T, E>>) -> Poll<CompatIoResult<T>> {
-    match poll {
-        Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
-        Poll::Ready(Err(_error)) => Poll::Ready(Err(CompatIoError::new(
-            CompatIoErrorKind::Other,
-            "tokio io error",
-        ))),
-        Poll::Pending => Poll::Pending,
-    }
-}
-
-#[cfg(not(target_os = "trueos"))]
-fn map_tokio_io<T>(poll: Poll<::std::io::Result<T>>) -> Poll<CompatIoResult<T>> {
+// Both interfaces share std::io::Error. Preserve WouldBlock and the TLS
+// source chain across the synchronous WebSocket handshake adapter.
+fn map_tokio_io<T>(poll: Poll<tokio::io::Result<T>>) -> Poll<CompatIoResult<T>> {
     poll
 }
 

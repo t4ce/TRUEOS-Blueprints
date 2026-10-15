@@ -44,7 +44,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeTlsStream<S> {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(feature = "__rustls-tls")]
@@ -60,7 +60,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<S> {
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         match self.get_mut() {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(s) => Pin::new(s).poll_write(cx, buf),
             #[cfg(feature = "__rustls-tls")]
@@ -70,7 +70,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<S> {
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         match self.get_mut() {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_flush(cx),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_flush(cx),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(s) => Pin::new(s).poll_flush(cx),
             #[cfg(feature = "__rustls-tls")]
@@ -83,7 +83,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<S> {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         match self.get_mut() {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_shutdown(cx),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(s) => Pin::new(s).poll_shutdown(cx),
             #[cfg(feature = "__rustls-tls")]

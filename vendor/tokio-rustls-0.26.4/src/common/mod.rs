@@ -9,36 +9,14 @@ use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 mod handshake;
 pub(crate) use handshake::{IoSession, MidHandshake};
 
+// Tokio re-exports std::io errors on TRUEOS as well. Keep the original
+// kind, OS code and typed TLS source instead of reducing it to a bare kind.
 pub(crate) fn std_to_tokio_error(err: std_io::Error) -> io::Error {
-    std_to_tokio_error_kind(err.kind()).into()
+    err
 }
 
 pub(crate) fn tokio_to_std_error(err: io::Error) -> std_io::Error {
-    tokio_to_std_error_kind(err.kind()).into()
-}
-
-fn std_to_tokio_error_kind(kind: std_io::ErrorKind) -> io::ErrorKind {
-    match kind {
-        std_io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,
-        std_io::ErrorKind::InvalidData => io::ErrorKind::InvalidData,
-        std_io::ErrorKind::WriteZero => io::ErrorKind::WriteZero,
-        std_io::ErrorKind::UnexpectedEof => io::ErrorKind::UnexpectedEof,
-        std_io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,
-        std_io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,
-        _ => io::ErrorKind::Other,
-    }
-}
-
-fn tokio_to_std_error_kind(kind: io::ErrorKind) -> std_io::ErrorKind {
-    match kind {
-        io::ErrorKind::WouldBlock => std_io::ErrorKind::WouldBlock,
-        io::ErrorKind::InvalidData => std_io::ErrorKind::InvalidData,
-        io::ErrorKind::WriteZero => std_io::ErrorKind::WriteZero,
-        io::ErrorKind::UnexpectedEof => std_io::ErrorKind::UnexpectedEof,
-        io::ErrorKind::NotConnected => std_io::ErrorKind::NotConnected,
-        io::ErrorKind::ConnectionAborted => std_io::ErrorKind::ConnectionAborted,
-        _ => std_io::ErrorKind::Other,
-    }
+    err
 }
 
 #[derive(Debug)]
@@ -138,13 +116,13 @@ where
             Err(err) => return Poll::Ready(Err(std_to_tokio_error(err))),
         };
 
-        self.session.process_new_packets().map_err(|_| {
+        self.session.process_new_packets().map_err(|error| {
             // In case we have an alert to send describing this error,
             // try a last-gasp write -- but don't predate the primary
             // error.
             let _ = self.write_io(cx);
 
-            io::Error::from(io::ErrorKind::InvalidData)
+            io::Error::new(io::ErrorKind::InvalidData, error)
         })?;
 
         Poll::Ready(Ok(n))

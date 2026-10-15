@@ -51,6 +51,7 @@ members = [
     "probes/tokio_fs_bridge",
     "probes/tokio_mrt",
     "probes/tokio_net",
+    "probes/network_contract",
     "probes/tokio_rt",
     "probes/tokio_stack",
     "apps/webmail",
