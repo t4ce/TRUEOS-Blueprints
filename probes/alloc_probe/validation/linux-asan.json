@@ -1,0 +1,15 @@
+{
+  "platform": "Linux host; does not test the TRUEOS allocator",
+  "source_sha256": "39cd32fbb072eaa2b88d119bcce8017f77d7bce81fa4bfbbd9162a5a19145295",
+  "rustc": "rustc 1.99.0-nightly (af3d95584 2026-07-09)",
+  "build_arguments": [
+    "-Zsanitizer=address",
+    "-O",
+    "-g",
+    "--edition=2024"
+  ],
+  "ASAN_OPTIONS": "detect_leaks=1",
+  "exit_code": 0,
+  "log_sha256": "89876bbad78d2c068bfa0d2f86c5760f3a36d8d6e46c4fb7b019fc0c7869657e",
+  "final_record": "alloc_probe: PASS case=all blocks=0 ops=0 elapsed_us=36376 max_batch_us=0 batch=256"
+}

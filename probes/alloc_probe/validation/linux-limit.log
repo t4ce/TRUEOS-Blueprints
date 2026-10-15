@@ -1,0 +1,10 @@
+alloc_probe: BEGIN case=all blocks=0 ops=0 elapsed_us=0 max_batch_us=0 batch=256
+alloc_probe: BEGIN case=c_contract blocks=0 ops=0 elapsed_us=0 max_batch_us=0 batch=256
+alloc_probe: PASS case=c_contract blocks=0 ops=1 elapsed_us=96 max_batch_us=96 batch=256
+alloc_probe: BEGIN case=rust_contract blocks=0 ops=0 elapsed_us=0 max_batch_us=0 batch=256
+alloc_probe: PASS case=rust_contract blocks=0 ops=1 elapsed_us=154 max_batch_us=154 batch=256
+alloc_probe: BEGIN case=allocate blocks=50000 ops=0 elapsed_us=0 max_batch_us=0 batch=256
+alloc_probe: LIMIT case=allocate blocks=50000 ops=15360 elapsed_us=1002 max_batch_us=45 batch=256
+alloc_probe: BEGIN case=cleanup blocks=15360 ops=0 elapsed_us=0 max_batch_us=0 batch=256
+alloc_probe: PASS case=cleanup blocks=15360 ops=15360 elapsed_us=275 max_batch_us=81 batch=256
+alloc_probe: LIMIT case=phase_budget blocks=0 ops=0 elapsed_us=1699 max_batch_us=0 batch=256

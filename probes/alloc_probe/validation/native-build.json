@@ -1,0 +1,10 @@
+{
+  "package": "alloc_probe",
+  "package_sha256": "dc8bf05ac8091ef451d0b5981e72de461bef9f63515822eb1d4b98279de0b68f",
+  "package_bytes": 83495,
+  "source_sha256": "39cd32fbb072eaa2b88d119bcce8017f77d7bce81fa4bfbbd9162a5a19145295",
+  "catalog": "probes.json",
+  "published": false,
+  "native_execution": "not yet run",
+  "cabi_imports_checked": 7
+}

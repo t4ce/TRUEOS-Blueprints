@@ -39,6 +39,7 @@
     "file_replace_contract",
     "code_mode_probe",
     "mcp_http_probe",
-    "libc_contract"
+    "libc_contract",
+    "alloc_probe"
   ]
 }
