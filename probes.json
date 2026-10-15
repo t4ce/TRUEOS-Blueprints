@@ -40,6 +40,10 @@
     "code_mode_probe",
     "mcp_http_probe",
     "libc_contract",
-    "alloc_probe"
+    "alloc_probe",
+    {
+      "name": "thread_fanout",
+      "path": "../TRUEOS/tools/probes/thread_fanout"
+    }
   ]
 }

@@ -1,6 +1,7 @@
 {
   "apps": [
     { "name": "codex-cli", "path": "../codex/codex-rs/cli", "optional": true },
+      { "name": "solara", "path": "../solara", "optional": true },
     { "name": "hull", "path": "buildins/hull" },
     { "name": "rebsky", "path": "../rebels-in-the-sky" },
     "badc",
@@ -13,6 +14,7 @@
     "ratatest",
     "pi_snake",
     "games",
+    "gboi",
     { "name": "rbgb", "path": "apps/RbGB" },
     "tredb",
     "hello_world",
@@ -102,7 +104,6 @@
       "optional": true
     },
     "superseedr",
-    { "name": "aud-player-scope-tui", "path": "apps/scope-tui" },
     "webmail",
     "xpapp",
     { "name": "staticgl-triangle", "path": "apps/xpapp/staticgl-triangle" },
