@@ -1,0 +1,66 @@
+{
+  "package_sha256": "9f12bab4e38c974e6fcb6b5d4fc6edfecf74c41fd012228517a5cfba5cfcbffd",
+  "runtime_sha256": "da52b6df7c6c587b1308addd9ac83724bd6a412036fde1169e59c9066042ca49",
+  "iso_sha256": "168feecbd968568a9fbd8e732329dc2d48191d9d0327b57a18bdaf9a9f88ab27",
+  "full_elf_sha256": "6383c973a218a7d6344bc57db2eb3a6f1a8df7d881ab5ec9889dc08d5769cfab",
+  "native_passed": 10,
+  "native_total": 10,
+  "environment_contract": true,
+  "environment_worker": true,
+  "ca_readback": true,
+  "trusted_tls_verified": true,
+  "unknown_issuer_verified": true,
+  "actual_h2_requests": 20,
+  "actual_alpn_h2": true,
+  "tools_list": {
+    "json": {
+      "ok": 1,
+      "tools": 106,
+      "duration_ms": 203
+    },
+    "sse": {
+      "ok": 1,
+      "tools": 106,
+      "duration_ms": 212
+    },
+    "404": {
+      "ok": 1,
+      "tools": 0,
+      "duration_ms": 35
+    },
+    "401": {
+      "ok": 1,
+      "tools": 0,
+      "duration_ms": 39
+    },
+    "reset": {
+      "ok": 1,
+      "tools": 0,
+      "duration_ms": 1387
+    },
+    "headers_timeout": {
+      "ok": 1,
+      "tools": 0,
+      "duration_ms": 307
+    },
+    "body_timeout": {
+      "ok": 1,
+      "tools": 0,
+      "duration_ms": 306
+    },
+    "cancel": {
+      "ok": 1,
+      "tools": 0,
+      "duration_ms": 151
+    },
+    "recovery": {
+      "ok": 1,
+      "tools": 106,
+      "duration_ms": 200
+    }
+  },
+  "safe_records": 320,
+  "ept_faults": 0,
+  "panics": 0,
+  "scope": "controlled synthetic current-thread Codex MCP transport; passive FS instrumentation smoke, not physical stall reproduction"
+}

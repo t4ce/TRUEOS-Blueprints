@@ -1,0 +1,36 @@
+L390 code_mode_probe: clock preflight platform_before_ns=7880000000 c_monotonic_ns=7880000000 platform_after_ns=7880000000
+L393 code_mode_probe: PASS C/platform monotonic clock bracket
+L407 code_mode_probe: PASS stdCondvar2ms timed_out=true elapsed_ns=4000000
+L412 code_mode_probe: BEGIN runtime profile=multi_thread_1
+L454 code_mode_probe: PASS real ES module 42
+L458 code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+L463 code_mode_probe: PASS session store/load
+L467 code_mode_probe: PASS infinite-loop cancellation and cleanup
+L537 code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=572 max_cell_ms=14
+L681 code_mode_probe: gri result state=running_at_deadline exit_code=null captured_bytes=38707
+L684 code_mode_probe: PASS real JavaScript delegated gri to native transport; UI4 visibility requires observation
+L687 code_mode_probe: PASS shutdown
+L695 code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=135
+L765 code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=456
+L768 code_mode_probe: PASS runtime profile=multi_thread_1
+L771 code_mode_probe: BEGIN runtime profile=multi_thread_4
+L779 code_mode_probe: PASS real ES module 42
+L783 code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+L788 code_mode_probe: PASS session store/load
+L792 code_mode_probe: PASS infinite-loop cancellation and cleanup
+L862 code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=501 max_cell_ms=14
+L868 code_mode_probe: PASS shutdown
+L874 code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=128
+L944 code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=416
+L947 code_mode_probe: PASS runtime profile=multi_thread_4
+L950 code_mode_probe: BEGIN runtime profile=current_thread
+L956 code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=128
+L1030 code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=495
+L1034 code_mode_probe: PASS real ES module 42
+L1038 code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+L1043 code_mode_probe: PASS session store/load
+L1047 code_mode_probe: PASS infinite-loop cancellation and cleanup
+L1118 code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=745 max_cell_ms=54
+L1124 code_mode_probe: PASS shutdown
+L1127 code_mode_probe: PASS runtime profile=current_thread
+L1130 code_mode_probe: ALL PASS all runtime profiles

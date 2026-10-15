@@ -1,0 +1,11 @@
+{
+  "iso_sha256": "168feecbd968568a9fbd8e732329dc2d48191d9d0327b57a18bdaf9a9f88ab27",
+  "runtime_sha256": "da52b6df7c6c587b1308addd9ac83724bd6a412036fde1169e59c9066042ca49",
+  "full_elf_sha256": "6383c973a218a7d6344bc57db2eb3a6f1a8df7d881ab5ec9889dc08d5769cfab",
+  "package_sha256": "1c1101292177331dec5a39f3f70181a0f58a23145b76b92888253efd90bb4c52",
+  "all_pass": true,
+  "elapsed_ms": 33,
+  "ept_faults": 0,
+  "panics": 0,
+  "scope": "controlled native libc filesystem semantics and passive FS tracker smoke; no long stall reproduction"
+}

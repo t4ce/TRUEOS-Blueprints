@@ -1,6 +1,7 @@
 mod catalog;
 mod pullbot;
 mod mouse;
+mod http_diagnostics;
 use std::io::{self, Write};
 use std::time::{Duration};
 use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor, Print}, terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, DisableLineWrap, EnableLineWrap}, event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseButton, MouseEventKind}};
@@ -50,7 +51,16 @@ fn draw(apps: &[catalog::OnlineApp], query: &str, selected: usize, message: &str
     out.flush()
 }
 async fn fetch(client: &reqwest::Client, url: &str, limit: usize) -> Result<Vec<u8>, String> {
-    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
+    let endpoint = if url == CATALOG { "apps_catalog" } else if url == "https://trueos.eu/probes" { "probes_catalog" } else { "archive_or_other" };
+    let started = std::time::Instant::now();
+    pullbot::report(&format!("http phase=send state=started endpoint={endpoint}"));
+    let sent = client.get(url).send().await.map_err(|error| {
+        let sources = http_diagnostics::summarize(&error);
+        pullbot::report(&format!("http phase=send state=error endpoint={} elapsed_ms={} is_timeout={} is_connect={} is_request={} source_depth={} source_truncated={} io_kind={} tls_class={} source_classes={}",endpoint,started.elapsed().as_millis(),u8::from(error.is_timeout()),u8::from(error.is_connect()),u8::from(error.is_request()),sources.depth,u8::from(sources.truncated),sources.io_kind,sources.tls_class,sources.classes));
+        String::from("HTTP send failed; see fixed diagnostic categories")
+    })?;
+    pullbot::report(&format!("http phase=send state=complete endpoint={} elapsed_ms={} status_code={}",endpoint,started.elapsed().as_millis(),sent.status().as_u16()));
+    let mut response = sent.error_for_status().map_err(|e| e.to_string())?;
     if response.content_length().is_some_and(|len| len > limit as u64) { return Err("Download exceeds size limit".into()); }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {

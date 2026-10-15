@@ -1,0 +1,5 @@
+appstore pullbot: http phase=send state=started endpoint=apps_catalog
+native_catalog: tcp_connect_submitted socket=1 handle=0
+native_catalog: tcp_socket_opened socket=1 handle=19
+native_catalog: tcp_closed_before_established socket=1 handle=19
+appstore pullbot: http phase=send state=error endpoint=apps_catalog elapsed_ms=171 is_timeout=0 is_connect=1 is_request=1 source_depth=4 source_truncated=0 io_kind=io_other tls_class=none source_classes=opaque,opaque,opaque,io_other
