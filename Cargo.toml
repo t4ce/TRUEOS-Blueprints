@@ -17,6 +17,7 @@ members = [
     "apps/ratatest",
     "apps/games",
     "apps/RbGB",
+    "apps/gboi",
     "apps/hello_world",
     "apps/potatomin",
     "apps/hello_world_replicatable",

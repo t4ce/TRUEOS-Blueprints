@@ -102,6 +102,7 @@
       "optional": true
     },
     "superseedr",
+    { "name": "aud-player-scope-tui", "path": "apps/scope-tui" },
     "webmail",
     "xpapp",
     { "name": "staticgl-triangle", "path": "apps/xpapp/staticgl-triangle" },
