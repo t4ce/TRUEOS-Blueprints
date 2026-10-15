@@ -1,0 +1,19 @@
+{
+  "package": "mcp_http_probe",
+  "package_sha256": "2fec62da2642154d9515a47f21713d824a1e68b0e06ea9451a7c8872430e5d19",
+  "published": true,
+  "native_execution": "pending_kernel_environment_abi",
+  "native_tls_verified": false,
+  "host_http1_cases_passed": 9,
+  "host_https_h2_cases_passed": 10,
+  "host_environment_contract": true,
+  "host_environment_worker_contract": true,
+  "host_ca_readback": true,
+  "native_default_mode": "https-h2",
+  "source_sha256": {
+    "main.rs": "69f0f2beceaf8f99ca1fd1df4835d199b23c3fd245d54434adaf56cbba4a7c3e",
+    "Cargo.toml": "c94fdec504e1a6c935bf7643f085c648ea28840fe25ab5cec42b0456d6d19e6e",
+    "fixture_https.mjs": "fc79debd8f26c3f03a4d42f31c04c6c8ca8d38478e5ef14ef3fc01a3957380dd",
+    "tls/ca.pem": "3aac16bcbd72ebd2a51c6efef9d06c898c8edf28ea8e56890ab525428e333015"
+  }
+}

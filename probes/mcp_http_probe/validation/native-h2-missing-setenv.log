@@ -1,0 +1,204 @@
+diagnostic class=unresolved_setenv_returned_zero
+phase=fixture_ca ok=1
+case=json phase=construct state=started
+case=json phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=1 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=1 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=1 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=json phase=headers sequence=0 status_code=0 duration_ms=40
+event.name=codex.mcp_phase sequence=1 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=42 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=2 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=2 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=4678 status_code=0
+event.name=codex.mcp_phase sequence=2 layer=http method=initialize phase=headers state=started offset_ms=10 duration_ms=0 bytes=0 deadline_ms=4678 status_code=0
+case=json phase=headers sequence=1 status_code=0 duration_ms=28
+event.name=codex.mcp_phase sequence=2 layer=http method=initialize phase=headers state=error offset_ms=10 duration_ms=30 bytes=0 deadline_ms=4678 status_code=0
+event.name=codex.mcp_phase sequence=3 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=3 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3627 status_code=0
+event.name=codex.mcp_phase sequence=3 layer=http method=initialize phase=headers state=started offset_ms=9 duration_ms=0 bytes=0 deadline_ms=3627 status_code=0
+case=json phase=headers sequence=2 status_code=0 duration_ms=23
+event.name=codex.mcp_phase sequence=3 layer=http method=initialize phase=headers state=error offset_ms=9 duration_ms=28 bytes=0 deadline_ms=3627 status_code=0
+case=json phase=initialize ok=0 duration_ms=1414
+case=json phase=result ok=0 duration_ms=1415
+case=sse phase=construct state=started
+case=sse phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=4 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=4 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=4 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=sse phase=headers sequence=0 status_code=0 duration_ms=49
+event.name=codex.mcp_phase sequence=4 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=54 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=5 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=5 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=4679 status_code=0
+event.name=codex.mcp_phase sequence=5 layer=http method=initialize phase=headers state=started offset_ms=7 duration_ms=0 bytes=0 deadline_ms=4679 status_code=0
+case=sse phase=headers sequence=1 status_code=0 duration_ms=23
+event.name=codex.mcp_phase sequence=5 layer=http method=initialize phase=headers state=error offset_ms=7 duration_ms=25 bytes=0 deadline_ms=4679 status_code=0
+event.name=codex.mcp_phase sequence=6 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=6 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=3640 status_code=0
+event.name=codex.mcp_phase sequence=6 layer=http method=initialize phase=headers state=started offset_ms=4 duration_ms=0 bytes=0 deadline_ms=3640 status_code=0
+case=sse phase=headers sequence=2 status_code=0 duration_ms=28
+event.name=codex.mcp_phase sequence=6 layer=http method=initialize phase=headers state=error offset_ms=4 duration_ms=30 bytes=0 deadline_ms=3640 status_code=0
+case=sse phase=initialize ok=0 duration_ms=1405
+case=sse phase=result ok=0 duration_ms=1407
+case=404 phase=construct state=started
+case=404 phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=7 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=7 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4999 status_code=0
+event.name=codex.mcp_phase sequence=7 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4999 status_code=0
+diagnostic class=ca_environment_missing
+case=404 phase=headers sequence=0 status_code=0 duration_ms=42
+event.name=codex.mcp_phase sequence=7 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=44 bytes=0 deadline_ms=4999 status_code=0
+event.name=codex.mcp_phase sequence=8 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=8 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=3 bytes=0 deadline_ms=4691 status_code=0
+event.name=codex.mcp_phase sequence=8 layer=http method=initialize phase=headers state=started offset_ms=4 duration_ms=0 bytes=0 deadline_ms=4691 status_code=0
+case=404 phase=headers sequence=1 status_code=0 duration_ms=20
+event.name=codex.mcp_phase sequence=8 layer=http method=initialize phase=headers state=error offset_ms=4 duration_ms=22 bytes=0 deadline_ms=4691 status_code=0
+event.name=codex.mcp_phase sequence=9 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=9 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3655 status_code=0
+event.name=codex.mcp_phase sequence=9 layer=http method=initialize phase=headers state=started offset_ms=9 duration_ms=0 bytes=0 deadline_ms=3655 status_code=0
+case=404 phase=headers sequence=2 status_code=0 duration_ms=31
+event.name=codex.mcp_phase sequence=9 layer=http method=initialize phase=headers state=error offset_ms=9 duration_ms=38 bytes=0 deadline_ms=3655 status_code=0
+case=404 phase=initialize ok=0 duration_ms=1399
+case=404 phase=result ok=0 duration_ms=1401
+case=401 phase=construct state=started
+case=401 phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=10 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=10 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=10 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=401 phase=headers sequence=0 status_code=0 duration_ms=27
+event.name=codex.mcp_phase sequence=10 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=30 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=11 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=11 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4706 status_code=0
+event.name=codex.mcp_phase sequence=11 layer=http method=initialize phase=headers state=started offset_ms=4 duration_ms=0 bytes=0 deadline_ms=4706 status_code=0
+case=401 phase=headers sequence=1 status_code=0 duration_ms=27
+event.name=codex.mcp_phase sequence=11 layer=http method=initialize phase=headers state=error offset_ms=4 duration_ms=29 bytes=0 deadline_ms=4706 status_code=0
+event.name=codex.mcp_phase sequence=12 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=12 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=3664 status_code=0
+event.name=codex.mcp_phase sequence=12 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=3664 status_code=0
+case=401 phase=headers sequence=2 status_code=0 duration_ms=22
+event.name=codex.mcp_phase sequence=12 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=24 bytes=0 deadline_ms=3664 status_code=0
+case=401 phase=initialize ok=0 duration_ms=1368
+case=401 phase=result ok=0 duration_ms=1369
+case=reset phase=construct state=started
+case=reset phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=13 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=13 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=13 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=reset phase=headers sequence=0 status_code=0 duration_ms=26
+event.name=codex.mcp_phase sequence=13 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=29 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=14 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=14 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=4702 status_code=0
+event.name=codex.mcp_phase sequence=14 layer=http method=initialize phase=headers state=started offset_ms=10 duration_ms=0 bytes=0 deadline_ms=4702 status_code=0
+case=reset phase=headers sequence=1 status_code=0 duration_ms=24
+event.name=codex.mcp_phase sequence=14 layer=http method=initialize phase=headers state=error offset_ms=10 duration_ms=29 bytes=0 deadline_ms=4702 status_code=0
+event.name=codex.mcp_phase sequence=15 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=15 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3654 status_code=0
+event.name=codex.mcp_phase sequence=15 layer=http method=initialize phase=headers state=started offset_ms=10 duration_ms=0 bytes=0 deadline_ms=3654 status_code=0
+case=reset phase=headers sequence=2 status_code=0 duration_ms=26
+event.name=codex.mcp_phase sequence=15 layer=http method=initialize phase=headers state=error offset_ms=10 duration_ms=32 bytes=0 deadline_ms=3654 status_code=0
+case=reset phase=initialize ok=0 duration_ms=1388
+case=reset phase=result ok=0 duration_ms=1390
+case=headers_timeout phase=construct state=started
+case=headers_timeout phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=16 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=16 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4999 status_code=0
+event.name=codex.mcp_phase sequence=16 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4999 status_code=0
+diagnostic class=ca_environment_missing
+case=headers_timeout phase=headers sequence=0 status_code=0 duration_ms=24
+event.name=codex.mcp_phase sequence=16 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=27 bytes=0 deadline_ms=4999 status_code=0
+event.name=codex.mcp_phase sequence=17 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=17 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=4707 status_code=0
+event.name=codex.mcp_phase sequence=17 layer=http method=initialize phase=headers state=started offset_ms=9 duration_ms=0 bytes=0 deadline_ms=4707 status_code=0
+case=headers_timeout phase=headers sequence=1 status_code=0 duration_ms=30
+event.name=codex.mcp_phase sequence=17 layer=http method=initialize phase=headers state=error offset_ms=9 duration_ms=38 bytes=0 deadline_ms=4707 status_code=0
+event.name=codex.mcp_phase sequence=18 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=18 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3629 status_code=0
+event.name=codex.mcp_phase sequence=18 layer=http method=initialize phase=headers state=started offset_ms=10 duration_ms=0 bytes=0 deadline_ms=3629 status_code=0
+case=headers_timeout phase=headers sequence=2 status_code=0 duration_ms=27
+event.name=codex.mcp_phase sequence=18 layer=http method=initialize phase=headers state=error offset_ms=10 duration_ms=36 bytes=0 deadline_ms=3629 status_code=0
+case=headers_timeout phase=initialize ok=0 duration_ms=1425
+case=headers_timeout phase=result ok=0 duration_ms=1426
+case=body_timeout phase=construct state=started
+case=body_timeout phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=19 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=19 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=19 layer=http method=initialize phase=headers state=started offset_ms=4 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=body_timeout phase=headers sequence=0 status_code=0 duration_ms=32
+event.name=codex.mcp_phase sequence=19 layer=http method=initialize phase=headers state=error offset_ms=4 duration_ms=34 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=20 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=20 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4701 status_code=0
+event.name=codex.mcp_phase sequence=20 layer=http method=initialize phase=headers state=started offset_ms=2 duration_ms=0 bytes=0 deadline_ms=4701 status_code=0
+case=body_timeout phase=headers sequence=1 status_code=0 duration_ms=20
+event.name=codex.mcp_phase sequence=20 layer=http method=initialize phase=headers state=error offset_ms=2 duration_ms=23 bytes=0 deadline_ms=4701 status_code=0
+event.name=codex.mcp_phase sequence=21 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=21 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=3666 status_code=0
+event.name=codex.mcp_phase sequence=21 layer=http method=initialize phase=headers state=started offset_ms=4 duration_ms=0 bytes=0 deadline_ms=3666 status_code=0
+case=body_timeout phase=headers sequence=2 status_code=0 duration_ms=19
+event.name=codex.mcp_phase sequence=21 layer=http method=initialize phase=headers state=error offset_ms=4 duration_ms=22 bytes=0 deadline_ms=3666 status_code=0
+case=body_timeout phase=initialize ok=0 duration_ms=1364
+case=body_timeout phase=result ok=0 duration_ms=1366
+case=cancel phase=construct state=started
+case=cancel phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=22 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=22 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=22 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=cancel phase=headers sequence=0 status_code=0 duration_ms=26
+event.name=codex.mcp_phase sequence=22 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=29 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=23 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=23 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4708 status_code=0
+event.name=codex.mcp_phase sequence=23 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4708 status_code=0
+case=cancel phase=headers sequence=1 status_code=0 duration_ms=21
+event.name=codex.mcp_phase sequence=23 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=23 bytes=0 deadline_ms=4708 status_code=0
+event.name=codex.mcp_phase sequence=24 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=24 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3669 status_code=0
+event.name=codex.mcp_phase sequence=24 layer=http method=initialize phase=headers state=started offset_ms=9 duration_ms=0 bytes=0 deadline_ms=3669 status_code=0
+case=cancel phase=headers sequence=2 status_code=0 duration_ms=29
+event.name=codex.mcp_phase sequence=24 layer=http method=initialize phase=headers state=error offset_ms=9 duration_ms=37 bytes=0 deadline_ms=3669 status_code=0
+case=cancel phase=initialize ok=0 duration_ms=1387
+case=cancel phase=result ok=0 duration_ms=1389
+case=recovery phase=construct state=started
+case=recovery phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=25 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=25 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4999 status_code=0
+event.name=codex.mcp_phase sequence=25 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4999 status_code=0
+diagnostic class=ca_environment_missing
+case=recovery phase=headers sequence=0 status_code=0 duration_ms=31
+event.name=codex.mcp_phase sequence=25 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=35 bytes=0 deadline_ms=4999 status_code=0
+event.name=codex.mcp_phase sequence=26 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=26 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=1 bytes=0 deadline_ms=4683 status_code=0
+event.name=codex.mcp_phase sequence=26 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4683 status_code=0
+case=recovery phase=headers sequence=1 status_code=0 duration_ms=20
+event.name=codex.mcp_phase sequence=26 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=22 bytes=0 deadline_ms=4683 status_code=0
+event.name=codex.mcp_phase sequence=27 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=27 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3644 status_code=0
+event.name=codex.mcp_phase sequence=27 layer=http method=initialize phase=headers state=started offset_ms=7 duration_ms=0 bytes=0 deadline_ms=3644 status_code=0
+case=recovery phase=headers sequence=2 status_code=0 duration_ms=22
+event.name=codex.mcp_phase sequence=27 layer=http method=initialize phase=headers state=error offset_ms=7 duration_ms=24 bytes=0 deadline_ms=3644 status_code=0
+case=recovery phase=initialize ok=0 duration_ms=1388
+case=recovery phase=result ok=0 duration_ms=1389
+case=wrong_root phase=construct state=started
+case=wrong_root phase=initialize state=started deadline_ms=5000
+event.name=codex.mcp_phase sequence=28 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=28 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=2 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=28 layer=http method=initialize phase=headers state=started offset_ms=3 duration_ms=0 bytes=0 deadline_ms=4998 status_code=0
+diagnostic class=ca_environment_missing
+case=wrong_root phase=headers sequence=0 status_code=0 duration_ms=26
+event.name=codex.mcp_phase sequence=28 layer=http method=initialize phase=headers state=error offset_ms=3 duration_ms=28 bytes=0 deadline_ms=4998 status_code=0
+event.name=codex.mcp_phase sequence=29 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=29 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=4684 status_code=0
+event.name=codex.mcp_phase sequence=29 layer=http method=initialize phase=headers state=started offset_ms=9 duration_ms=0 bytes=0 deadline_ms=4684 status_code=0
+case=wrong_root phase=headers sequence=1 status_code=0 duration_ms=29
+event.name=codex.mcp_phase sequence=29 layer=http method=initialize phase=headers state=error offset_ms=9 duration_ms=37 bytes=0 deadline_ms=4684 status_code=0
+event.name=codex.mcp_phase sequence=30 layer=http method=initialize phase=prepare state=started offset_ms=0 duration_ms=0 bytes=0 status_code=0
+event.name=codex.mcp_phase sequence=30 layer=http method=initialize phase=prepare state=complete offset_ms=0 duration_ms=5 bytes=0 deadline_ms=3608 status_code=0
+event.name=codex.mcp_phase sequence=30 layer=http method=initialize phase=headers state=started offset_ms=11 duration_ms=0 bytes=0 deadline_ms=3608 status_code=0
+case=wrong_root phase=headers sequence=2 status_code=0 duration_ms=25
+event.name=codex.mcp_phase sequence=30 layer=http method=initialize phase=headers state=error offset_ms=11 duration_ms=34 bytes=0 deadline_ms=3608 status_code=0
+case=wrong_root phase=initialize ok=0 duration_ms=1446
+case=wrong_root phase=certificate_rejection ok=1
+case=wrong_root phase=result ok=1
+phase=summary passed=1 total=10

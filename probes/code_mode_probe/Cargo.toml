@@ -12,7 +12,7 @@ codex-code-mode-quickjs = { path = "../../../codex/codex-rs/code-mode-quickjs" }
 codex-code-mode-protocol = { path = "../../../codex/codex-rs/code-mode-protocol" }
 codex-protocol = { path = "../../../codex/codex-rs/protocol" }
 serde_json = "=1.0.150"
-tokio = { version = "=1.52.3", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "=1.52.3", features = ["full"] }
 tokio-util = { version = "=0.7.18", features = ["rt"] }
 
 [target.'cfg(target_os = "trueos")'.dependencies]

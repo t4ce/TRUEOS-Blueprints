@@ -1,0 +1,37 @@
+{"monotonic_ns": 100697079220816, "port": 18767, "protocol": "http1", "stage": "ready", "tools": 106, "unix_ms": 1792064371175}
+{"bytes": 164, "case": "json", "monotonic_ns": 100697101442993, "stage": "initialize", "unix_ms": 1792064371197}
+{"case": "json", "monotonic_ns": 100697102789263, "stage": "initialized", "unix_ms": 1792064371198}
+{"case": "json", "monotonic_ns": 100697103709205, "stage": "tools_list", "unix_ms": 1792064371199}
+{"bytes": 330447, "case": "json", "monotonic_ns": 100697104494557, "stage": "body_written", "unix_ms": 1792064371200}
+{"bytes": 164, "case": "sse", "monotonic_ns": 100697117560533, "stage": "initialize", "unix_ms": 1792064371213}
+{"case": "sse", "monotonic_ns": 100697119118535, "stage": "initialized", "unix_ms": 1792064371214}
+{"case": "sse", "monotonic_ns": 100697120620382, "stage": "tools_list", "unix_ms": 1792064371216}
+{"bytes": 330447, "case": "sse", "fragments": 101, "monotonic_ns": 100697151867490, "stage": "event_written", "unix_ms": 1792064371247}
+{"case": "sse", "duration_ms": 0, "monotonic_ns": 100697151954620, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792064371247}
+{"bytes": 164, "case": "404", "monotonic_ns": 100697161178635, "stage": "initialize", "unix_ms": 1792064371257}
+{"case": "404", "monotonic_ns": 100697162963490, "stage": "initialized", "unix_ms": 1792064371258}
+{"case": "404", "monotonic_ns": 100697164529657, "stage": "tools_list", "unix_ms": 1792064371260}
+{"bytes": 164, "case": "401", "monotonic_ns": 100697177158307, "stage": "initialize", "unix_ms": 1792064371273}
+{"case": "401", "monotonic_ns": 100697178597193, "stage": "initialized", "unix_ms": 1792064371274}
+{"case": "401", "monotonic_ns": 100697179960853, "stage": "tools_list", "unix_ms": 1792064371275}
+{"bytes": 164, "case": "reset", "monotonic_ns": 100697191498982, "stage": "initialize", "unix_ms": 1792064371287}
+{"case": "reset", "monotonic_ns": 100697192933653, "stage": "initialized", "unix_ms": 1792064371288}
+{"case": "reset", "monotonic_ns": 100697194258134, "stage": "tools_list", "unix_ms": 1792064371290}
+{"case": "reset", "monotonic_ns": 100697446824270, "stage": "tools_list", "unix_ms": 1792064371542}
+{"case": "reset", "monotonic_ns": 100698449841534, "stage": "tools_list", "unix_ms": 1792064372545}
+{"bytes": 164, "case": "headers_timeout", "monotonic_ns": 100698461745133, "stage": "initialize", "unix_ms": 1792064372557}
+{"case": "headers_timeout", "monotonic_ns": 100698463560243, "stage": "initialized", "unix_ms": 1792064372559}
+{"case": "headers_timeout", "monotonic_ns": 100698465167083, "stage": "tools_list", "unix_ms": 1792064372561}
+{"case": "headers_timeout", "duration_ms": 300, "monotonic_ns": 100698766168121, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792064372862}
+{"bytes": 164, "case": "body_timeout", "monotonic_ns": 100698775621710, "stage": "initialize", "unix_ms": 1792064372871}
+{"case": "body_timeout", "monotonic_ns": 100698777061675, "stage": "initialized", "unix_ms": 1792064372872}
+{"case": "body_timeout", "monotonic_ns": 100698778044452, "stage": "tools_list", "unix_ms": 1792064372873}
+{"case": "body_timeout", "duration_ms": 300, "monotonic_ns": 100699078915631, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792064373174}
+{"bytes": 164, "case": "cancel", "monotonic_ns": 100699087244866, "stage": "initialize", "unix_ms": 1792064373183}
+{"case": "cancel", "monotonic_ns": 100699088897081, "stage": "initialized", "unix_ms": 1792064373184}
+{"case": "cancel", "monotonic_ns": 100699090349206, "stage": "tools_list", "unix_ms": 1792064373186}
+{"case": "cancel", "duration_ms": 150, "monotonic_ns": 100699241278977, "peer_closed": 1, "stage": "stream_end", "unix_ms": 1792064373337}
+{"bytes": 164, "case": "recovery", "monotonic_ns": 100699250862011, "stage": "initialize", "unix_ms": 1792064373346}
+{"case": "recovery", "monotonic_ns": 100699252434778, "stage": "initialized", "unix_ms": 1792064373348}
+{"case": "recovery", "monotonic_ns": 100699253923713, "stage": "tools_list", "unix_ms": 1792064373349}
+{"bytes": 330447, "case": "recovery", "monotonic_ns": 100699254982376, "stage": "body_written", "unix_ms": 1792064373350}

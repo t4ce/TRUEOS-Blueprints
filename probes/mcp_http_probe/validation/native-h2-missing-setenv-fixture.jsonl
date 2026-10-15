@@ -1,0 +1,32 @@
+{"monotonic_ns": "101078639614138", "port": 18768, "stage": "ready", "tools": 106, "unix_ms": 1792064752735, "wrong_root": 0}
+{"monotonic_ns": "101078640653648", "port": 18769, "stage": "ready", "tools": 106, "unix_ms": 1792064752736, "wrong_root": 1}
+{"monotonic_ns": "101600803494886", "stage": "tls_rejected", "unix_ms": 1792065274899, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101601110704133", "stage": "tls_rejected", "unix_ms": 1792065275206, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101602160731553", "stage": "tls_rejected", "unix_ms": 1792065276256, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101602230467376", "stage": "tls_rejected", "unix_ms": 1792065276326, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101602520821607", "stage": "tls_rejected", "unix_ms": 1792065276616, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101603562627090", "stage": "tls_rejected", "unix_ms": 1792065277658, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101603627597367", "stage": "tls_rejected", "unix_ms": 1792065277723, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101603912606354", "stage": "tls_rejected", "unix_ms": 1792065278008, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101604963201592", "stage": "tls_rejected", "unix_ms": 1792065279059, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101605012967136", "stage": "tls_rejected", "unix_ms": 1792065279108, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101605302851977", "stage": "tls_rejected", "unix_ms": 1792065279398, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101606342691736", "stage": "tls_rejected", "unix_ms": 1792065280438, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101606382980068", "stage": "tls_rejected", "unix_ms": 1792065280478, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101606682683787", "stage": "tls_rejected", "unix_ms": 1792065280778, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101607732901459", "stage": "tls_rejected", "unix_ms": 1792065281828, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101607772777232", "stage": "tls_rejected", "unix_ms": 1792065281868, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101608073131067", "stage": "tls_rejected", "unix_ms": 1792065282168, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101609147946821", "stage": "tls_rejected", "unix_ms": 1792065283243, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101609202980522", "stage": "tls_rejected", "unix_ms": 1792065283298, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101609492923043", "stage": "tls_rejected", "unix_ms": 1792065283588, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101610528131052", "stage": "tls_rejected", "unix_ms": 1792065284623, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101610568125591", "stage": "tls_rejected", "unix_ms": 1792065284663, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101610853080922", "stage": "tls_rejected", "unix_ms": 1792065284948, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101611902998108", "stage": "tls_rejected", "unix_ms": 1792065285998, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101611958193527", "stage": "tls_rejected", "unix_ms": 1792065286054, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101612268168789", "stage": "tls_rejected", "unix_ms": 1792065286364, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101613308192694", "stage": "tls_rejected", "unix_ms": 1792065287404, "unknown_ca": 0, "wrong_root": 0}
+{"monotonic_ns": "101613349964166", "stage": "tls_rejected", "unix_ms": 1792065287445, "unknown_ca": 0, "wrong_root": 1}
+{"monotonic_ns": "101613668220243", "stage": "tls_rejected", "unix_ms": 1792065287764, "unknown_ca": 0, "wrong_root": 1}
+{"monotonic_ns": "101614743270442", "stage": "tls_rejected", "unix_ms": 1792065288839, "unknown_ca": 0, "wrong_root": 1}

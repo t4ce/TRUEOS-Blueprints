@@ -1,0 +1,48 @@
+code_mode_probe: clock preflight platform_before_ns=7355000000 c_monotonic_ns=7355000000 platform_after_ns=7355000000
+code_mode_probe: PASS C/platform monotonic clock bracket
+code_mode_probe: PASS stdCondvar2ms timed_out=true elapsed_ns=7000000
+code_mode_probe: BEGIN runtime profile=multi_thread_1
+code_mode_probe: PASS real ES module 42
+code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+code_mode_probe: PASS session store/load
+code_mode_probe: PASS infinite-loop cancellation and cleanup
+code_mode_probe: BEGIN quiet repeated asynchronous cells count=64
+code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=541 max_cell_ms=12
+code_mode_probe: Shell3 gri admitted; observing captured transport for at most 30s
+code_mode_probe: gri result state=running_at_deadline exit_code=null captured_bytes=38765
+code_mode_probe: PASS real JavaScript delegated gri to native transport; UI4 visibility requires observation
+code_mode_probe: PASS shutdown
+code_mode_probe: BEGIN direct Tokio timers count=64
+code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=128
+code_mode_probe: BEGIN no-JS timer bridge count=64
+code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=463
+code_mode_probe: PASS runtime profile=multi_thread_1
+code_mode_probe: BEGIN runtime profile=multi_thread_4
+code_mode_probe: PASS real ES module 42
+code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+code_mode_probe: PASS session store/load
+code_mode_probe: PASS infinite-loop cancellation and cleanup
+code_mode_probe: BEGIN quiet repeated asynchronous cells count=64
+code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=765 max_cell_ms=51
+code_mode_probe: SKIP native Shell3 launch (pass --gri to authorize)
+code_mode_probe: PASS shutdown
+code_mode_probe: BEGIN direct Tokio timers count=64
+code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=150
+code_mode_probe: BEGIN no-JS timer bridge count=64
+code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=515
+code_mode_probe: PASS runtime profile=multi_thread_4
+code_mode_probe: BEGIN runtime profile=current_thread
+code_mode_probe: BEGIN direct Tokio timers count=64
+code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=128
+code_mode_probe: BEGIN no-JS timer bridge count=64
+code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=426
+code_mode_probe: PASS real ES module 42
+code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+code_mode_probe: PASS session store/load
+code_mode_probe: PASS infinite-loop cancellation and cleanup
+code_mode_probe: BEGIN quiet repeated asynchronous cells count=64
+code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=703 max_cell_ms=33
+code_mode_probe: SKIP native Shell3 launch (pass --gri to authorize)
+code_mode_probe: PASS shutdown
+code_mode_probe: PASS runtime profile=current_thread
+code_mode_probe: ALL PASS all runtime profiles

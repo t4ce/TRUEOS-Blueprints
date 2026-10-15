@@ -1,0 +1,12 @@
+{
+  "iso_sha256": "ec072679aa88e190f2f4a7d36ab7bc2b65e3086aef8edd3b8a9fd16b01e97fef",
+  "source_iso": "/home/t4ce/Repos/TRUEOS/bld/codex-native-runtime-accepted/trueos.iso",
+  "package_sha256": "1c1101292177331dec5a39f3f70181a0f58a23145b76b92888253efd90bb4c52",
+  "full_elf_sha256": "cf13ed84cdc7781774ecfe225caae72944ab9f7bd269f21acdbde9a4e59204b0",
+  "all_pass": true,
+  "elapsed_ms": 33,
+  "capacity": "ENOSYS with unchanged output; actual capacity reporting unsupported",
+  "timestamps": "valid FD ENOSYS; invalid FD EBADF",
+  "directory_semantics": "path anchors, sequential mkdir contract; no atomic mkdir or inode rename guarantee",
+  "cleanup": "native asynchronous filesystem remove completed; probe-owned root absence checked"
+}

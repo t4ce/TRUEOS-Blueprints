@@ -1,0 +1,41 @@
+{"stage":"ready","port":18770,"wrong_root":0,"tools":106,"monotonic_ns":"103370353978074","unix_ms":1792067044449}
+{"stage":"ready","port":18771,"wrong_root":1,"tools":106,"monotonic_ns":"103370354519197","unix_ms":1792067044450}
+{"case":"json","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103370766623682","unix_ms":1792067044862}
+{"case":"json","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103370789206691","unix_ms":1792067044885}
+{"case":"json","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103370790945075","unix_ms":1792067044886}
+{"case":"json","stage":"body_written","bytes":330447,"protocol":2,"alpn_h2":1,"monotonic_ns":"103370791861620","unix_ms":1792067044887}
+{"case":"sse","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103370941430807","unix_ms":1792067045037}
+{"case":"sse","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103370943230860","unix_ms":1792067045039}
+{"case":"sse","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103370944777088","unix_ms":1792067045040}
+{"case":"sse","stage":"event_written","bytes":330447,"fragments":101,"protocol":2,"alpn_h2":1,"monotonic_ns":"103370976349479","unix_ms":1792067045072}
+{"case":"sse","stage":"stream_end","peer_closed":1,"duration_ms":141,"protocol":2,"alpn_h2":1,"monotonic_ns":"103371086171173","unix_ms":1792067045182}
+{"case":"404","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103371120783880","unix_ms":1792067045216}
+{"case":"404","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103371136654928","unix_ms":1792067045232}
+{"case":"404","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103371149087438","unix_ms":1792067045244}
+{"case":"401","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103371170520453","unix_ms":1792067045266}
+{"case":"401","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103371174902442","unix_ms":1792067045270}
+{"case":"401","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103371178163300","unix_ms":1792067045274}
+{"case":"reset","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103371197061646","unix_ms":1792067045292}
+{"case":"reset","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103371199850462","unix_ms":1792067045295}
+{"case":"reset","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103371202079061","unix_ms":1792067045297}
+{"case":"reset","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103371455713199","unix_ms":1792067045551}
+{"case":"reset","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103372460238498","unix_ms":1792067046556}
+{"case":"headers_timeout","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103372472603498","unix_ms":1792067046568}
+{"case":"headers_timeout","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103372475774746","unix_ms":1792067046571}
+{"case":"headers_timeout","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103372478546392","unix_ms":1792067046574}
+{"case":"headers_timeout","stage":"stream_end","peer_closed":1,"duration_ms":300,"protocol":2,"alpn_h2":1,"monotonic_ns":"103372778998579","unix_ms":1792067046874}
+{"case":"body_timeout","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103372794082329","unix_ms":1792067046889}
+{"case":"body_timeout","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103372796882187","unix_ms":1792067046892}
+{"case":"body_timeout","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103372799430190","unix_ms":1792067046895}
+{"case":"body_timeout","stage":"stream_end","peer_closed":1,"duration_ms":304,"protocol":2,"alpn_h2":1,"monotonic_ns":"103373104498149","unix_ms":1792067047200}
+{"case":"cancel","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103373158262568","unix_ms":1792067047254}
+{"case":"cancel","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103373162607480","unix_ms":1792067047258}
+{"case":"cancel","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103373166128529","unix_ms":1792067047261}
+{"case":"cancel","stage":"stream_end","peer_closed":1,"duration_ms":150,"protocol":2,"alpn_h2":1,"monotonic_ns":"103373316285399","unix_ms":1792067047412}
+{"case":"recovery","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"103373330373829","unix_ms":1792067047426}
+{"case":"recovery","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"103373332808263","unix_ms":1792067047428}
+{"case":"recovery","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"103373334904982","unix_ms":1792067047430}
+{"case":"recovery","stage":"body_written","bytes":330447,"protocol":2,"alpn_h2":1,"monotonic_ns":"103373335826867","unix_ms":1792067047431}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"103373460360748","unix_ms":1792067047556}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"103373706288148","unix_ms":1792067047802}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"103374710962394","unix_ms":1792067048806}

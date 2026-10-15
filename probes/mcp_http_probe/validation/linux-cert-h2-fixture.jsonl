@@ -1,0 +1,42 @@
+{"stage":"ready","port":18770,"wrong_root":0,"tools":106,"monotonic_ns":"104265412490027","unix_ms":1792067939508}
+{"stage":"ready","port":18771,"wrong_root":1,"tools":106,"monotonic_ns":"104265412964003","unix_ms":1792067939508}
+{"case":"json","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104265768428103","unix_ms":1792067939864}
+{"case":"json","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104265775389369","unix_ms":1792067939871}
+{"case":"json","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104265778220352","unix_ms":1792067939874}
+{"case":"json","stage":"body_written","bytes":330447,"protocol":2,"alpn_h2":1,"monotonic_ns":"104265779579886","unix_ms":1792067939875}
+{"case":"sse","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104265922279718","unix_ms":1792067940018}
+{"case":"sse","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104265925281290","unix_ms":1792067940021}
+{"case":"sse","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104265927008606","unix_ms":1792067940022}
+{"case":"sse","stage":"event_written","bytes":330447,"fragments":101,"protocol":2,"alpn_h2":1,"monotonic_ns":"104265959611617","unix_ms":1792067940055}
+{"case":"sse","stage":"stream_end","peer_closed":1,"duration_ms":208,"protocol":2,"alpn_h2":1,"monotonic_ns":"104266135537544","unix_ms":1792067940231}
+{"case":"404","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104266144292422","unix_ms":1792067940240}
+{"case":"404","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104266145811185","unix_ms":1792067940241}
+{"case":"404","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104266147211721","unix_ms":1792067940243}
+{"case":"401","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104266155379010","unix_ms":1792067940251}
+{"case":"401","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104266156792988","unix_ms":1792067940252}
+{"case":"401","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104266157986037","unix_ms":1792067940253}
+{"case":"reset","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104266166274241","unix_ms":1792067940262}
+{"case":"reset","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104266167847812","unix_ms":1792067940263}
+{"case":"reset","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104266169146210","unix_ms":1792067940265}
+{"case":"reset","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104266421418063","unix_ms":1792067940517}
+{"case":"reset","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104267424758923","unix_ms":1792067941520}
+{"case":"headers_timeout","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104267441754528","unix_ms":1792067941537}
+{"case":"headers_timeout","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104267443873105","unix_ms":1792067941539}
+{"case":"headers_timeout","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104267446563878","unix_ms":1792067941542}
+{"case":"headers_timeout","stage":"stream_end","peer_closed":1,"duration_ms":301,"protocol":2,"alpn_h2":1,"monotonic_ns":"104267747957653","unix_ms":1792067941843}
+{"case":"body_timeout","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104267763055308","unix_ms":1792067941858}
+{"case":"body_timeout","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104267766102182","unix_ms":1792067941861}
+{"case":"body_timeout","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104267768742628","unix_ms":1792067941864}
+{"case":"body_timeout","stage":"stream_end","peer_closed":1,"duration_ms":300,"protocol":2,"alpn_h2":1,"monotonic_ns":"104268069622125","unix_ms":1792067942165}
+{"case":"cancel","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104268084670590","unix_ms":1792067942180}
+{"case":"cancel","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104268087142838","unix_ms":1792067942183}
+{"case":"cancel","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104268088807626","unix_ms":1792067942184}
+{"case":"cancel","stage":"stream_end","peer_closed":1,"duration_ms":150,"protocol":2,"alpn_h2":1,"monotonic_ns":"104268238716897","unix_ms":1792067942334}
+{"case":"recovery","stage":"initialize","protocol":2,"alpn_h2":1,"monotonic_ns":"104268248299410","unix_ms":1792067942344}
+{"case":"recovery","stage":"initialized","protocol":2,"alpn_h2":1,"monotonic_ns":"104268250702559","unix_ms":1792067942346}
+{"case":"recovery","stage":"tools_list","protocol":2,"alpn_h2":1,"monotonic_ns":"104268252106980","unix_ms":1792067942347}
+{"case":"recovery","stage":"body_written","bytes":330447,"protocol":2,"alpn_h2":1,"monotonic_ns":"104268252840660","unix_ms":1792067942348}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"104268385870555","unix_ms":1792067942481}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"104268640598597","unix_ms":1792067942736}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"104269645465813","unix_ms":1792067943741}
+{"stage":"tls_rejected","wrong_root":1,"unknown_ca":1,"tls_code":"ERR_SSL_TLSV1_ALERT_UNKNOWN_CA","tls_reason":"tlsv1 alert unknown ca","monotonic_ns":"104269649091548","unix_ms":1792067943744}

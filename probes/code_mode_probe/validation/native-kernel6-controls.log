@@ -1,0 +1,37 @@
+code_mode_probe: BEGIN runtime profile=multi_thread_1
+code_mode_probe: PASS real ES module 42
+code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+code_mode_probe: PASS session store/load
+code_mode_probe: PASS infinite-loop cancellation and cleanup
+code_mode_probe: BEGIN quiet repeated asynchronous cells count=64
+code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=774 max_cell_ms=45
+code_mode_probe: PASS shutdown
+code_mode_probe: BEGIN direct Tokio timers count=64
+code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=128
+code_mode_probe: BEGIN no-JS timer bridge count=64
+code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=541
+code_mode_probe: PASS runtime profile=multi_thread_1
+code_mode_probe: BEGIN runtime profile=multi_thread_4
+code_mode_probe: PASS real ES module 42
+code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+code_mode_probe: PASS session store/load
+code_mode_probe: PASS infinite-loop cancellation and cleanup
+code_mode_probe: BEGIN quiet repeated asynchronous cells count=64
+code_mode_probe: PASS quiet repeated asynchronous cells count=64 calls=128 closed=64 elapsed_ms=636 max_cell_ms=20
+code_mode_probe: PASS shutdown
+code_mode_probe: BEGIN direct Tokio timers count=64
+code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=154
+code_mode_probe: BEGIN no-JS timer bridge count=64
+code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=704
+code_mode_probe: PASS runtime profile=multi_thread_4
+code_mode_probe: BEGIN runtime profile=current_thread
+code_mode_probe: BEGIN direct Tokio timers count=64
+code_mode_probe: PASS direct Tokio timers count=64 elapsed_ms=128
+code_mode_probe: BEGIN no-JS timer bridge count=64
+code_mode_probe: PASS no-JS timer bridge count=64 calls=128 timer_returned=128 closed=64 elapsed_ms=444
+code_mode_probe: PASS real ES module 42
+code_mode_probe: PASS async nested tools with authoritative ToolName and computed arguments
+code_mode_probe: PASS session store/load
+code_mode_probe: PASS infinite-loop cancellation and cleanup
+code_mode_probe: BEGIN quiet repeated asynchronous cells count=64
+code_mode_probe: FAIL 60s watchdog expired profile=current_thread quiet_completed=3 calls=7 timer_returned=6 closed=3 direct_completed=64 pure_completed=64 pure_calls=128 pure_timer_returned=128 pure_closed=64

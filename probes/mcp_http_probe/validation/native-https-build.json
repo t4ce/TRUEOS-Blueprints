@@ -1,0 +1,28 @@
+{
+  "package": "mcp_http_probe",
+  "package_sha256": "4d765030b27eaeb240459ceeb083b8ab03e5a50a7435f1a3d7ffd0f56c7bf31d",
+  "profile": "release",
+  "target": "x86_64-unknown-trueos",
+  "published": true,
+  "required_native_arguments": [],
+  "native_execution": "failed_missing_setenv_ca_override",
+  "linux_loopback_passed": 10,
+  "linux_lan_passed": 10,
+  "linux_fixture_witness": "all MCP requests negotiated h2; unknown CA alerts and no requests at wrong-root listener; four peer closures",
+  "source_sha256": {
+    "main.rs": "e43fbcdc9c42aee672441ed7c289b586460aeb425b424132c0329d16c26c1e9f",
+    "Cargo.toml": "c94fdec504e1a6c935bf7643f085c648ea28840fe25ab5cec42b0456d6d19e6e",
+    "fixture_https.mjs": "d97e19dc71804efd4b97b26f670013385856ae109357c91d676ff5bf11f293e0",
+    "tls/ca.pem": "3aac16bcbd72ebd2a51c6efef9d06c898c8edf28ea8e56890ab525428e333015",
+    "tls/cert.pem": "d4ab5ca8d94ea0813c7ae916d977425eb02be5ad08f7f2be9e756fba49ae97b2",
+    "tls/wrong-cert.pem": "ae5b7c819763954431dc3e109b97a9a93beabeff40857376f2f6c8fd080c0a25"
+  },
+  "native_default_mode": "https-h2",
+  "host_default_mode": "http1",
+  "host_final_source_checks": [
+    "linux-default-fix-http1.log",
+    "linux-default-fix-h2.log"
+  ],
+  "native_tls_verified": false,
+  "native_result_details": "native-h2-missing-setenv.json"
+}

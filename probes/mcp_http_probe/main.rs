@@ -8,7 +8,9 @@ use codex_rmcp_client::{
     ElicitationAction, ElicitationResponse, McpOAuthRefreshMode, McpProtocolMode, RmcpClient,
     StreamableHttpBearerToken, StreamableHttpRedirectMode,
 };
-use codex_transport::http::{HttpClientFactory, OutboundProxyPolicy};
+use codex_transport::http::{
+    ClientRouteClass, HttpClientFactory, OutboundProxyPolicy, RouteAwareClientPool,
+};
 use futures::{FutureExt, future::BoxFuture};
 use rmcp::model::{ClientCapabilities, Implementation, InitializeRequestParams, ProtocolVersion};
 use std::{
@@ -20,6 +22,93 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing_subscriber::prelude::*;
+
+unsafe extern "C" {
+    fn setenv(
+        name: *const std::ffi::c_char,
+        value: *const std::ffi::c_char,
+        overwrite: std::ffi::c_int,
+    ) -> std::ffi::c_int;
+    fn unsetenv(name: *const std::ffi::c_char) -> std::ffi::c_int;
+    fn getenv(name: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+}
+
+fn environment_contract() -> bool {
+    // Retain an unlogged per-instance sentinel until process teardown. A second
+    // VM must not inherit it through a shared host/environment pointer cell.
+    let owner = std::env::var("TRUEOS_APP_INSTANCE").unwrap_or_else(|_| "host".into());
+    let owner_isolated = std::env::var_os("MCP_PROBE_ENV_OWNER").is_none();
+    let owner_value = std::ffi::CString::new(owner.as_bytes()).unwrap();
+    let owner_set =
+        unsafe { setenv(c"MCP_PROBE_ENV_OWNER".as_ptr(), owner_value.as_ptr(), 1) } == 0;
+    if !owner_set {
+        log(format_args!(
+            "phase=environment_owner ok=0 errno={}",
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        ));
+    }
+    let owner_isolated = owner_isolated
+        && owner_set
+        && std::env::vars_os()
+            .any(|(name, value)| name == "MCP_PROBE_ENV_OWNER" && value == owner.as_str());
+    let key = "MCP_PROBE_ENV_CONTRACT";
+    let raw_key = c"MCP_PROBE_ENV_CONTRACT";
+    let snapshot =
+        |value: &str| std::env::vars_os().any(|(name, entry)| name == key && entry == value);
+    let ok = owner_isolated
+        && unsafe { setenv(raw_key.as_ptr(), c"first".as_ptr(), 1) } == 0
+        && std::env::var(key).as_deref() == Ok("first")
+        && snapshot("first")
+        && unsafe { setenv(raw_key.as_ptr(), c"ignored".as_ptr(), 0) } == 0
+        && std::env::var(key).as_deref() == Ok("first")
+        && unsafe { setenv(raw_key.as_ptr(), c"second".as_ptr(), 1) } == 0
+        && std::env::var(key).as_deref() == Ok("second")
+        && snapshot("second");
+    let raw = unsafe { getenv(raw_key.as_ptr()) };
+    let ok =
+        ok && !raw.is_null() && unsafe { std::ffi::CStr::from_ptr(raw) }.to_bytes() == b"second";
+    let ok = ok
+        && unsafe { unsetenv(raw_key.as_ptr()) } == 0
+        && std::env::var_os(key).is_none()
+        && !std::env::vars_os().any(|(name, _)| name == key)
+        && unsafe { setenv(c"".as_ptr(), c"value".as_ptr(), 1) } == -1
+        && std::io::Error::last_os_error().raw_os_error() == Some(22);
+    #[cfg(target_os = "trueos")]
+    let ok = ok
+        && unsafe { setenv(c"TRUEOS_FS_SCOPE".as_ptr(), c"trueosfs".as_ptr(), 1) } == -1
+        && std::io::Error::last_os_error().raw_os_error() == Some(1);
+    log(format_args!(
+        "phase=environment_contract ok={}",
+        u8::from(ok)
+    ));
+    ok
+}
+
+async fn environment_worker_contract() -> bool {
+    let key = "MCP_PROBE_ENV_WORKER";
+    unsafe {
+        std::env::set_var(key, "main");
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let thread = std::thread::spawn(move || {
+        let ok = std::env::var(key).as_deref() == Ok("main")
+            && std::env::vars_os().any(|(name, value)| name == key && value == "main");
+        unsafe {
+            std::env::set_var(key, "worker");
+        }
+        let _ = tx.send(ok);
+    });
+    let ok = matches!(
+        tokio::time::timeout(Duration::from_secs(3), rx).await,
+        Ok(Ok(true))
+    ) && std::env::var(key).as_deref() == Ok("worker");
+    drop(thread);
+    unsafe {
+        std::env::remove_var(key);
+    }
+    log(format_args!("phase=environment_worker ok={}", u8::from(ok)));
+    ok
+}
 
 fn log(message: impl std::fmt::Display) {
     #[cfg(target_os = "trueos")]
@@ -179,6 +268,21 @@ async fn case(base: &str, name: &'static str) -> Result<(), &'static str> {
         u8::from(initialized.is_ok()),
         start.elapsed().as_millis()
     ));
+    if name == "wrong_root" {
+        // Paired fixture evidence must witness an unknown-CA TLS alert and no
+        // HTTP request; status zero alone cannot distinguish an unreachable peer.
+        let ok = initialized.is_err() && http.last_status.load(Ordering::Relaxed) == 0;
+        client.shutdown().await;
+        log(format_args!(
+            "case=wrong_root phase=untrusted_endpoint_failed ok={}",
+            u8::from(ok)
+        ));
+        return if ok {
+            Ok(())
+        } else {
+            Err("certificate_rejection")
+        };
+    }
     if initialized.is_err() {
         client.shutdown().await;
         return Err("initialize");
@@ -246,8 +350,48 @@ async fn case(base: &str, name: &'static str) -> Result<(), &'static str> {
     if ok { Ok(()) } else { Err("tools_list") }
 }
 
-async fn run(base: &str) -> bool {
+async fn certificate_rejection_witness(base: &str) -> bool {
+    // The exec-server adapter intentionally flattens transport error chains.
+    // Inspect the same normal pool directly for this synthetic negative case;
+    // never print the chain or weaken the verifier to make the request pass.
+    let client = RouteAwareClientPool::with_chatgpt_cloudflare_cookies_without_request_logging(
+        HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+        ClientRouteClass::Other,
+    );
+    let result = tokio::time::timeout(
+        Duration::from_secs(4),
+        client
+            .get(format!("{base}/wrong_root"))
+            .timeout(Duration::from_secs(3))
+            .send(),
+    )
+    .await;
+    let unknown_issuer = match result {
+        Ok(Err(error)) => {
+            let mut current: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+            let mut found = false;
+            while let Some(error) = current {
+                found |= format!("{error:?}").contains("UnknownIssuer");
+                current = error.source();
+            }
+            found
+        }
+        _ => false,
+    };
+    log(format_args!(
+        "case=wrong_root phase=certificate_validation unknown_issuer={} ok={}",
+        u8::from(unknown_issuer),
+        u8::from(unknown_issuer)
+    ));
+    unknown_issuer
+}
+
+async fn run(base: &str, wrong_root_base: Option<&str>) -> bool {
+    if !environment_worker_contract().await {
+        return false;
+    }
     let mut passed = 0;
+    let mut trusted_endpoint_succeeded = false;
     for name in [
         "json",
         "sse",
@@ -262,6 +406,9 @@ async fn run(base: &str) -> bool {
         let start = Instant::now();
         let result = tokio::time::timeout(Duration::from_secs(12), case(base, name)).await;
         let ok = matches!(result, Ok(Ok(())));
+        if name == "json" {
+            trusted_endpoint_succeeded = ok;
+        }
         passed += usize::from(ok);
         log(format_args!(
             "case={name} phase=result ok={} duration_ms={}",
@@ -269,18 +416,90 @@ async fn run(base: &str) -> bool {
             start.elapsed().as_millis()
         ));
     }
-    log(format_args!("phase=summary passed={passed} total=9"));
-    passed == 9
+    let mut total = 9;
+    if let Some(wrong_root_base) = wrong_root_base {
+        total += 1;
+        let result =
+            tokio::time::timeout(Duration::from_secs(12), case(wrong_root_base, "wrong_root"))
+                .await;
+        let certificate_rejected = certificate_rejection_witness(wrong_root_base).await;
+        let ok = trusted_endpoint_succeeded && certificate_rejected && matches!(result, Ok(Ok(())));
+        passed += usize::from(ok);
+        log(format_args!(
+            "case=wrong_root phase=result ok={}",
+            u8::from(ok)
+        ));
+    }
+    log(format_args!("phase=summary passed={passed} total={total}"));
+    passed == total
 }
 
 fn main() {
     install_phase_logging();
+    if !environment_contract() {
+        log("FAIL environment");
+        return;
+    }
     // LAN fixture only; no auth files, bearer headers or account state are read.
-    let base = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "http://192.168.178.111:18766".into());
+    let mut args = std::env::args().skip(1);
+    let mut base = None;
+    let mut wrong_root_base = None;
+    // Shell3 exact-name launch has no argv forwarding. The native probe now
+    // defaults to the next contract under test; host CLI defaults stay HTTP1.
+    let mut https = cfg!(target_os = "trueos");
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--https" => https = true,
+            "--http1" => https = false,
+            "--wrong-root" => wrong_root_base = args.next(),
+            _ if !arg.starts_with('-') && base.is_none() => base = Some(arg),
+            _ => {
+                log("phase=arguments ok=0");
+                return;
+            }
+        }
+    }
+    let base = base.unwrap_or_else(|| {
+        if https {
+            "https://192.168.178.111:18768"
+        } else {
+            "http://192.168.178.111:18766"
+        }
+        .into()
+    });
+    let ca_file = if https {
+        let path = std::env::temp_dir().join("mcp_http_probe-synthetic-ca.pem");
+        if std::fs::create_dir_all(std::env::temp_dir())
+            .and_then(|_| std::fs::write(&path, include_bytes!("tls/ca.pem")))
+            .is_err()
+        {
+            log("phase=fixture_ca ok=0");
+            return;
+        }
+        // This process owns the environment before starting any Tokio threads.
+        // The unmodified route-aware transport consumes its normal CA setting.
+        unsafe {
+            std::env::set_var("CODEX_CA_CERTIFICATE", &path);
+        }
+        let env_ok = std::env::var_os("CODEX_CA_CERTIFICATE").as_deref() == Some(path.as_os_str())
+            && std::env::vars_os()
+                .any(|(key, value)| key == "CODEX_CA_CERTIFICATE" && value == path.as_os_str());
+        log(format_args!(
+            "phase=fixture_ca_readback ok={}",
+            u8::from(env_ok)
+        ));
+        if !env_ok {
+            log("FAIL environment");
+            return;
+        }
+        wrong_root_base.get_or_insert_with(|| "https://192.168.178.111:18769".into());
+        log("phase=fixture_ca ok=1");
+        Some(path)
+    } else {
+        None
+    };
     #[cfg(target_os = "trueos")]
-    let runtime = trueos::t::runtime::current_thread().build();
+    let runtime = trueos::t::runtime::current_thread().enable_io().build();
     #[cfg(not(target_os = "trueos"))]
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -289,7 +508,12 @@ fn main() {
         log("phase=runtime ok=0");
         return;
     };
-    if runtime.block_on(run(&base)) {
+    let ok = runtime.block_on(run(&base, wrong_root_base.as_deref()));
+    drop(runtime);
+    if let Some(path) = ca_file {
+        let _ = std::fs::remove_file(path);
+    }
+    if ok {
         log("ALL PASS");
     } else {
         log("FAIL");

@@ -1,0 +1,8 @@
+{
+  "iso_sha256": "a44d8237c8570f8973ac2d4f8a7624da5f9211be5846e4caba6f371663434d7f",
+  "source_iso": "/home/t4ce/Repos/TRUEOS/bld/codex-native-runtime-fixed2/trueos.iso",
+  "package_sha256": "a6eb684a0d82b9dd441eb7c9ef1cb94fe16dc197eb400faf241c4935d56bc633",
+  "result": "all three runtime profiles pass, including 64 quiet JavaScript cells, 128 delegated timers, 64 closures each",
+  "full_elf_sha256": "d332e9e109966a93e97dfed7e4b7fe65e27606b974bb66e30d55c54dac84d0ab",
+  "causality": "Kernel8 combines timer dedup, C clock and eager environment initialization; test recovery does not isolate sole cause."
+}

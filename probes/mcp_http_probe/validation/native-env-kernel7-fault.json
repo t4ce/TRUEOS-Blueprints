@@ -1,0 +1,12 @@
+{
+  "package_sha256": "2fec62da2642154d9515a47f21713d824a1e68b0e06ea9451a7c8872430e5d19",
+  "kernel_runtime_sha256": "b5933c9e87da058cf384cb9690f4c0ea91d9bcf972112ce02856f47675d7e8f8",
+  "iso_sha256": "9e4b3a8aa12ccf45aa374f8044f6d47f6d39f0ac66895434d1b595c1c68dcdb0",
+  "native_execution": "blocked_appstore_guest_environment_lazy_init_fault",
+  "probe_started": false,
+  "native_tls_verified": false,
+  "guest_rip": "0xFFFFFFFF80564420",
+  "symbol": "TRUEOS::hv::blueprint_initial_process_env",
+  "fixture_requests": 0,
+  "next_fix": "eager guest-domain environment copy during host stage_blueprint_launch"
+}
