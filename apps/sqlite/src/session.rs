@@ -5,6 +5,9 @@ use fallible_iterator::FallibleIterator;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod timing;
+use timing::RequestTiming;
+
 const MAX_FRAME: usize = 8 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -30,6 +33,30 @@ enum Command {
     Rollback,
     Ping,
     Close,
+}
+
+impl Command {
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Open { .. } => "open",
+            Self::Execute { .. } => "execute",
+            Self::Prepare { .. } => "prepare",
+            Self::Begin { .. } => "begin",
+            Self::Commit => "commit",
+            Self::Rollback => "rollback",
+            Self::Ping => "ping",
+            Self::Close => "close",
+        }
+    }
+}
+
+/// Optional scalar correlation preserves legacy requests and older peers.
+#[derive(Deserialize)]
+struct WireCommand {
+    connection_id: Option<u64>,
+    request_id: Option<u64>,
+    #[serde(flatten)]
+    command: Command,
 }
 
 #[derive(Default, Serialize)]
@@ -97,7 +124,7 @@ struct Session {
     read_only: bool,
 }
 
-async fn read_command(socket: &mut TokioIo<hyper::upgrade::Upgraded>) -> Result<Command, String> {
+async fn read_command(socket: &mut TokioIo<hyper::upgrade::Upgraded>) -> Result<WireCommand, String> {
     let len = socket.read_u32().await.map_err(|e| e.to_string())? as usize;
     if len > MAX_FRAME {
         return Err("frame limit exceeded".into());
@@ -125,8 +152,9 @@ async fn serve(
             } else {
                 read_command(&mut socket).await?
             };
-            let closing = matches!(request, Command::Close);
-            let mut reply = match request {
+            let mut timing = RequestTiming::new(request.command.operation(), request.connection_id, request.request_id);
+            let closing = matches!(request.command, Command::Close);
+            let mut reply = match request.command {
                 Command::Close => Ok(Reply::default()),
                 Command::Open {
                     database,
@@ -169,7 +197,7 @@ async fn serve(
                     })
                 }
                 request => match session.as_mut() {
-                    Some(s) => s.command(request).await,
+                    Some(s) => s.command(request, &mut timing).await,
                     None => Err("session must open a database first".to_string().into()),
                 },
             }
@@ -178,16 +206,26 @@ async fn serve(
                 ..Reply::default()
             });
             reply.depth = session.as_ref().map_or(0, |s| s.depth);
-            let bytes = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
-            if bytes.len() > MAX_FRAME {
+            timing.phase = "reply_serialize";
+            let stage = Instant::now();
+            // Emit a complete frame in one write. A short length-only write can
+            // otherwise wait for delayed ACK before Nagle releases its body.
+            let mut bytes = vec![0; 4];
+            serde_json::to_writer(&mut bytes, &reply).map_err(|e| e.to_string())?;
+            let payload_len = bytes.len() - 4;
+            if payload_len > MAX_FRAME {
                 return Err("reply limit exceeded".into());
             }
-            socket
-                .write_u32(bytes.len() as u32)
-                .await
-                .map_err(|e| e.to_string())?;
+            bytes[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
+            timing.reply_serialize_us = timing::elapsed_us(stage);
+            timing.reply_bytes = payload_len as u64;
+            timing.phase = "reply_write";
+            let stage = Instant::now();
             socket.write_all(&bytes).await.map_err(|e| e.to_string())?;
             socket.flush().await.map_err(|e| e.to_string())?;
+            timing.reply_write_us = timing::elapsed_us(stage);
+            timing.completed = reply.error.is_none();
+            timing.phase = "complete";
             if closing {
                 break;
             }
@@ -206,52 +244,50 @@ async fn serve(
 }
 
 impl Session {
-    async fn command(&mut self, command: Command) -> Result<Reply, SqlError> {
+    async fn command(&mut self, command: Command, timing: &mut RequestTiming) -> Result<Reply, SqlError> {
         if matches!(command, Command::Ping) {
             return Ok(Reply::default());
         }
+        timing.phase = "lock";
+        let lock_started = Instant::now();
         let guard = match self.transaction.take() {
             Some(guard) => guard,
             None => {
-                tokio::time::timeout(Duration::from_secs(5), self.database.clone().lock_owned())
-                    .await
-                    .map_err(|_| SqlError {
+                let result = tokio::time::timeout(Duration::from_secs(5), self.database.clone().lock_owned()).await;
+                timing.lock_us = timing::elapsed_us(lock_started);
+                result.map_err(|_| SqlError {
                         code: 5,
                         message: "database is busy".into(),
                     })?
             }
         };
+        timing.lock_us = timing::elapsed_us(lock_started);
         let depth = self.depth;
         let read_only = self.read_only;
-        let (mut guard, outcome, before) = tokio::task::spawn_blocking(move || {
+        timing.phase = "run";
+        let queued = Instant::now();
+        let (mut guard, outcome, mut before, queue_us, before_us, execute_us) = tokio::task::spawn_blocking(move || {
+            let queue_us = timing::elapsed_us(queued);
             let guard = guard;
-            let before = if depth == 0 {
-                guard
-                    .connection
-                    .serialize(MAIN_DB)
-                    .map(|b| b.to_vec())
-                    .map_err(SqlError::from)
-            } else {
-                Ok(Vec::new())
-            };
-            let result = before
-                .as_ref()
-                .map_err(|e| SqlError {
-                    code: e.code,
-                    message: e.message.clone(),
-                })
-                .and_then(|_| run(&guard.connection, command, depth, read_only));
-            (guard, result, before.unwrap_or_default())
+            let mut snapshot = CommandSnapshot::default();
+            let stage = Instant::now();
+            let result = run(&guard.connection, command, depth, read_only, &mut snapshot);
+            let execute_us = timing::elapsed_us(stage).saturating_sub(snapshot.elapsed_us);
+            (guard, result, snapshot.bytes, queue_us, snapshot.elapsed_us, execute_us)
         })
         .await
         .map_err(|e| e.to_string())?;
+        timing.queue_us = queue_us;
+        timing.before_us = before_us;
+        timing.before_bytes = before.as_ref().map_or(0, |bytes| bytes.len() as u64);
+        timing.execute_us = execute_us;
         let autocommit = guard.connection.is_autocommit();
         let (reply, next_depth) = match outcome {
             Ok((reply, next_depth)) => (Ok(reply), next_depth),
             Err(e) => (Err(e), if autocommit { 0 } else { depth }),
         };
         if depth == 0 && next_depth > 0 {
-            self.before = before.clone();
+            self.before = before.take().unwrap_or_default();
         }
         self.depth = next_depth;
         if next_depth > 0 {
@@ -259,34 +295,51 @@ impl Session {
             return reply;
         }
         let snapshot = if depth > 0 {
-            std::mem::take(&mut self.before)
+            Some(std::mem::take(&mut self.before))
         } else {
             before
         };
+        // Preparing or stepping only SQLite-classified read-only statements
+        // cannot change the image. Keep their cost independent of database size.
+        let Some(snapshot) = snapshot else { return reply; };
         // Autocommit scripts and outermost commits publish before acknowledgement.
         if reply.is_ok() && !self.read_only {
+            timing.phase = "reclaim";
+            let stage = Instant::now();
             guard = tokio::task::spawn_blocking(move || {
                 reclaim(&guard.connection);
                 guard
             })
             .await
             .map_err(|e| e.to_string())?;
+            timing.reclaim_us = timing::elapsed_us(stage);
         }
+        timing.phase = "snapshot_after";
+        let stage = Instant::now();
         let after = guard
             .connection
             .serialize(MAIN_DB)
             .map_err(SqlError::from)?
             .to_vec();
+        timing.after_us = timing::elapsed_us(stage);
+        timing.after_bytes = after.len() as u64;
         let failure = if reply.is_err() && depth == 0 {
             Some("restore failed autocommit script".to_string())
         } else if after.len() > MAX_IMAGE {
             Some("database image limit exceeded".into())
         } else if after != snapshot {
-            storage::publish(&guard.path, &after).await.err()
+            timing.phase = "publish";
+            let stage = Instant::now();
+            let result = storage::publish(&guard.path, &after).await.err();
+            timing.publish_us = timing::elapsed_us(stage);
+            timing.publish_bytes = after.len() as u64;
+            result
         } else {
             None
         };
         if let Some(message) = failure {
+            timing.phase = "restore";
+            let stage = Instant::now();
             let restored = tokio::task::spawn_blocking(move || {
                 guard.connection = connection(&snapshot)?;
                 Ok::<_, String>(guard)
@@ -294,10 +347,87 @@ impl Session {
             .await
             .map_err(|e| e.to_string())?;
             drop(restored.map_err(SqlError::from)?);
+            timing.restore_us = timing::elapsed_us(stage);
             return reply.and(Err(message.into()));
         }
         reply
     }
+}
+
+/// Snapshot before the first compiler action that may change state. Pure
+/// read actions need no image; all PRAGMA/function/unknown actions retain the
+/// conservative snapshot contract even when their statement is read-only.
+#[derive(Default)]
+struct CommandSnapshot {
+    bytes: Option<Vec<u8>>,
+    elapsed_us: u64,
+}
+impl CommandSnapshot {
+    fn capture(&mut self, conn: &Connection) -> Result<(), SqlError> {
+        if self.bytes.is_none() {
+            let started = Instant::now();
+            let result = conn.serialize(MAIN_DB).map(|bytes| bytes.to_vec()).map_err(SqlError::from);
+            self.elapsed_us = self.elapsed_us.saturating_add(timing::elapsed_us(started));
+            self.bytes = Some(result?);
+        }
+        Ok(())
+    }
+}
+
+/// SQLite can apply PRAGMA effects during preparation. Ask its compiler to
+/// reject every non-read action before taking the first snapshot, then retry
+/// that unchanged batch cursor. This also conservatively covers SQL functions,
+/// virtual-table setup and unknown future authorization actions.
+struct CompileGuard {
+    protected: Arc<std::sync::atomic::AtomicBool>,
+    needs_snapshot: Arc<std::sync::atomic::AtomicBool>,
+}
+impl CompileGuard {
+    fn new(conn: &Connection, execute: bool, protected: bool) -> Result<Self, SqlError> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let guard = Self { protected: Arc::new(AtomicBool::new(protected)), needs_snapshot: Arc::new(AtomicBool::new(false)) };
+        let protected = guard.protected.clone();
+        let needs_snapshot = guard.needs_snapshot.clone();
+        conn.authorizer(Some(move |ctx: AuthContext<'_>| {
+            if matches!(ctx.action, AuthAction::Attach { .. } | AuthAction::Detach { .. })
+                || execute && matches!(ctx.action, AuthAction::Transaction { .. } | AuthAction::Savepoint { .. }) {
+                return Authorization::Deny;
+            }
+            if protected.load(Ordering::Relaxed)
+                && !matches!(ctx.action, AuthAction::Read { .. } | AuthAction::Select | AuthAction::Recursive) {
+                needs_snapshot.store(true, Ordering::Relaxed);
+                return Authorization::Deny;
+            }
+            Authorization::Allow
+        }))?;
+        Ok(guard)
+    }
+
+    fn next<'conn>(&self, conn: &Connection, batch: &mut rusqlite::Batch<'conn, '_>, snapshot: Option<&mut CommandSnapshot>) -> Result<Option<rusqlite::Statement<'conn>>, SqlError> {
+        use std::sync::atomic::Ordering;
+        let result = batch.next();
+        if self.needs_snapshot.swap(false, Ordering::Relaxed) {
+            drop(result);
+            let snapshot = snapshot.ok_or_else(|| SqlError::from("compiler snapshot guard without an owner".to_string()))?;
+            // sqlite3_serialize itself prepares an internal page-count PRAGMA.
+            // Remove the temporary compiler guard before that trusted capture;
+            // the rejected user statement has not run and the base policy stays.
+            self.protected.store(false, Ordering::Relaxed);
+            snapshot.capture(conn)?;
+            // rusqlite advances Batch::tail only after successful preparation.
+            batch.next().map_err(SqlError::from)
+        } else {
+            result.map_err(SqlError::from)
+        }
+    }
+}
+
+fn reset_authorizer(conn: &Connection) -> Result<(), SqlError> {
+    conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+        AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
+        _ => Authorization::Allow,
+    }))?;
+    Ok(())
 }
 
 fn run(
@@ -305,9 +435,11 @@ fn run(
     command: Command,
     depth: usize,
     read_only: bool,
+    snapshot: &mut CommandSnapshot,
 ) -> Result<(Reply, usize), SqlError> {
     match command {
         Command::Begin { sql } => {
+            if depth == 0 { snapshot.capture(conn)?; }
             let statement = if depth == 0 {
                 sql.unwrap_or_else(|| "BEGIN IMMEDIATE".into())
             } else {
@@ -346,9 +478,11 @@ fn run(
             Ok((Reply::default(), depth - 1))
         }
         Command::Prepare { sql } => {
+            let guard = CompileGuard::new(conn, false, depth == 0 && snapshot.bytes.is_none())?;
+            let result = (|| {
             let mut batch = rusqlite::Batch::new(conn, &sql);
             let mut reply = Reply::default();
-            while let Some(stmt) = batch.next()? {
+            while let Some(stmt) = guard.next(conn, &mut batch, if depth == 0 { Some(&mut *snapshot) } else { None })? {
                 reply.parameters += stmt.parameter_count();
                 if reply.results.is_empty() && stmt.column_count() > 0 {
                     reply.declared_types = stmt
@@ -365,6 +499,9 @@ fn run(
                 }
             }
             Ok((reply, depth))
+            })();
+            reset_authorizer(conn)?;
+            result
         }
         Command::Execute {
             sql,
@@ -374,19 +511,10 @@ fn run(
             let deadline = Instant::now() + Duration::from_millis(timeout_ms.clamp(1, 5000));
             conn.progress_handler(1000, Some(move || Instant::now() >= deadline))?;
             // SQLx owns transaction control, so raw scripts cannot desynchronize the session.
-            conn.authorizer(Some(move |ctx: AuthContext<'_>| match ctx.action {
-                AuthAction::Attach { .. }
-                | AuthAction::Detach { .. }
-                | AuthAction::Transaction { .. }
-                | AuthAction::Savepoint { .. } => Authorization::Deny,
-                _ => Authorization::Allow,
-            }))?;
-            let result = execute_script(conn, &sql, params, read_only);
+            let guard = CompileGuard::new(conn, true, depth == 0 && snapshot.bytes.is_none())?;
+            let result = execute_script(conn, &sql, params, read_only, if depth == 0 { Some(snapshot) } else { None }, &guard);
             conn.progress_handler(0, None::<fn() -> bool>)?;
-            conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
-                AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
-                _ => Authorization::Allow,
-            }))?;
+            reset_authorizer(conn)?;
             result.map(|reply| (reply, depth))
         }
         _ => Err("invalid session operation".to_string().into()),
@@ -398,15 +526,20 @@ fn execute_script(
     sql: &str,
     params: Vec<Value>,
     read_only: bool,
+    mut snapshot: Option<&mut CommandSnapshot>,
+    guard: &CompileGuard,
 ) -> Result<Reply, SqlError> {
     let mut batch = rusqlite::Batch::new(conn, sql);
     let mut reply = Reply::default();
     let mut offset = 0;
     let mut row_count = 0;
     let mut byte_count = 0;
-    while let Some(mut stmt) = batch.next()? {
+    while let Some(mut stmt) = guard.next(conn, &mut batch, snapshot.as_deref_mut())? {
         if read_only && !stmt.readonly() {
             return Err("read-only session".to_string().into());
+        }
+        if !stmt.readonly() {
+            if let Some(snapshot) = snapshot.as_deref_mut() { snapshot.capture(conn)?; }
         }
         let changes_before = conn.total_changes();
         let columns: Vec<String> = stmt.column_names().iter().map(|s| (*s).into()).collect();
@@ -478,7 +611,7 @@ fn execute_script(
 }
 
 // The service owns maintenance along with the database. Reclaim at most 64 pages
-// per successful request, preserving Codex's 16 MiB / 10% reusable reserve.
+// per successful potentially mutating request, preserving Codex's 16 MiB / 10% reusable reserve.
 fn reclaim(conn: &Connection) {
     let stats: rusqlite::Result<(i64, i64, i64, i64)> = conn.query_row(
         "SELECT auto_vacuum, page_size, page_count, freelist_count FROM pragma_auto_vacuum, pragma_page_size, pragma_page_count, pragma_freelist_count",
@@ -498,4 +631,93 @@ fn reclaim(conn: &Connection) {
     let _ = conn.progress_handler(1000, Some(move || Instant::now() >= deadline));
     let _ = conn.execute_batch(&format!("PRAGMA incremental_vacuum({count})"));
     let _ = conn.progress_handler(0, None::<fn() -> bool>);
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    #[test]
+    fn correlation_ids_are_only_optional_unsigned_scalars() {
+        for bad in [serde_json::json!(-1), serde_json::json!("not-an-id"), serde_json::json!({"nested":1})] {
+            let mut request = serde_json::json!({"op":"ping","request_id":7});
+            request["connection_id"] = bad;
+            assert!(serde_json::from_value::<WireCommand>(request).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_and_correlated_frames_decode_with_both_peer_versions() {
+        for command in [
+            serde_json::json!({"op":"open","database":"test","create":true,"read_only":false}),
+            serde_json::json!({"op":"execute","sql":"SELECT 1","params":[],"timeout_ms":5000}),
+            serde_json::json!({"op":"prepare","sql":"SELECT 1"}),
+            serde_json::json!({"op":"begin","sql":null}),
+            serde_json::json!({"op":"commit"}),
+            serde_json::json!({"op":"rollback"}),
+            serde_json::json!({"op":"ping"}),
+            serde_json::json!({"op":"close"}),
+        ] {
+            let legacy: Command = serde_json::from_value(command.clone()).unwrap();
+            let request: WireCommand = serde_json::from_value(command.clone()).unwrap();
+            assert_eq!(request.command.operation(), legacy.operation());
+            assert_eq!((request.connection_id, request.request_id), (None, None));
+            let mut correlated = command;
+            correlated["connection_id"] = 7.into();
+            correlated["request_id"] = 42.into();
+            let request: WireCommand = serde_json::from_value(correlated.clone()).unwrap();
+            assert_eq!((request.connection_id, request.request_id), (Some(7), Some(42)));
+            let older_peer: Command = serde_json::from_value(correlated).unwrap();
+            assert_eq!(request.command.operation(), older_peer.operation());
+        }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn plain_reads_prepare_without_copying_an_image() {
+        let conn = connection(&[]).unwrap();
+        for command in [
+            Command::Prepare { sql: "SELECT 1".into() },
+            Command::Execute { sql: "SELECT 1".into(), params: vec![], timeout_ms: 5000 },
+        ] {
+            let mut snapshot = CommandSnapshot::default();
+            run(&conn, command, 0, false, &mut snapshot).unwrap();
+            assert!(snapshot.bytes.is_none());
+        }
+    }
+
+    #[test]
+    fn pragma_and_function_actions_capture_before_preparation() {
+        for sql in [
+            "PRAGMA encoding='UTF-16le'", "PRAGMA schema_version=12",
+            "PRAGMA application_id=17", "PRAGMA page_size=8192",
+            "PRAGMA user_version=23", "PRAGMA auto_vacuum=INCREMENTAL",
+            "PRAGMA journal_mode=MEMORY", "PRAGMA writable_schema=ON",
+            "PRAGMA cache_size=100", "SELECT random()",
+        ] {
+            let conn = connection(&[]).unwrap();
+            let before = conn.serialize(MAIN_DB).unwrap().to_vec();
+            let mut snapshot = CommandSnapshot::default();
+            run(&conn, Command::Prepare { sql: sql.into() }, 0, false, &mut snapshot).unwrap();
+            assert_eq!(snapshot.bytes.as_deref(), Some(before.as_slice()), "{sql}");
+        }
+    }
+
+    #[test]
+    fn compiler_retry_preserves_mixed_script_order_and_initial_snapshot() {
+        let conn = connection(&[]).unwrap();
+        let before = conn.serialize(MAIN_DB).unwrap().to_vec();
+        let mut snapshot = CommandSnapshot::default();
+        let (reply, _) = run(&conn, Command::Execute {
+            sql: "SELECT 1; CREATE TABLE x(value); INSERT INTO x VALUES(7); SELECT value FROM x".into(),
+            params: vec![], timeout_ms: 5000,
+        }, 0, false, &mut snapshot).unwrap();
+        assert_eq!(snapshot.bytes.as_deref(), Some(before.as_slice()));
+        assert_eq!(reply.results.len(), 4);
+        assert_eq!(conn.query_row("SELECT value FROM x", [], |r| r.get::<_, i64>(0)).unwrap(), 7);
+    }
 }

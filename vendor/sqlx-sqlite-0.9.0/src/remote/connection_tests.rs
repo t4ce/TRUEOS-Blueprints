@@ -41,6 +41,8 @@ async fn server(mode: Mode) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandl
                             let mut request = vec![0; len as usize];
                             stream.read_exact(&mut request).await.unwrap();
                             let command: serde_json::Value = serde_json::from_slice(&request).unwrap();
+                            assert!(command["connection_id"].as_u64().is_some());
+                            assert!(command["request_id"].as_u64().is_some());
                             if first {
                                 assert_eq!(command["op"], "open");
                                 if stall_open { std::future::pending::<()>().await; }
@@ -153,4 +155,43 @@ fn upgraded_rpc_survives_past_setup_deadline_and_remains_persistent() { run(asyn
     connection.request(Command::Close).await.unwrap();
     assert_eq!(accepted.load(Ordering::Relaxed), 1);
     task.abort();
+}); }
+
+#[test]
+fn operation_labels_are_static_and_do_not_contain_payloads() {
+    for (command, expected) in [
+        (Command::Open { database: "private database".into(), create: true, read_only: false }, "open"),
+        (Command::Execute { sql: "private SQL".into(), params: vec![], timeout_ms: 5000 }, "execute"),
+        (Command::Prepare { sql: "private SQL".into() }, "prepare"),
+        (Command::Begin { sql: Some("private SQL".into()) }, "begin"),
+        (Command::Commit, "commit"),
+        (Command::Rollback, "rollback"),
+        (Command::Ping, "ping"),
+        (Command::Close, "close"),
+    ] {
+        assert_eq!(command.operation(), expected);
+    }
+}
+
+#[test]
+fn truncated_reply_body_fails_without_waiting_for_deadline() { run(async {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let peer = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") { headers.push(stream.read_u8().await.unwrap()); }
+        stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: upgrade\r\nUpgrade: trueos-sqlite-v1\r\n\r\n").await.unwrap();
+        let len = stream.read_u32().await.unwrap() as usize;
+        assert!(len < 4096);
+        let mut request = vec![0; len];
+        stream.read_exact(&mut request).await.unwrap();
+        let mut partial = 100u32.to_be_bytes().to_vec();
+        partial.push(b'{');
+        stream.write_all(&partial).await.unwrap();
+    });
+    let started = Instant::now();
+    assert!(SqliteConnection::establish_until(&SqliteConnectOptions::new().in_memory(true), endpoint, started + Duration::from_secs(2)).await.is_err());
+    assert!(started.elapsed() < Duration::from_millis(500));
+    peer.await.unwrap();
 }); }

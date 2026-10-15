@@ -112,6 +112,22 @@ pub(crate) enum Command {
     Ping,
     Close,
 }
+impl Command {
+    /// Fixed operation labels keep phase attribution independent of SQL/content.
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Open { .. } => "open",
+            Self::Execute { .. } => "execute",
+            Self::Prepare { .. } => "prepare",
+            Self::Begin { .. } => "begin",
+            Self::Commit => "commit",
+            Self::Rollback => "rollback",
+            Self::Ping => "ping",
+            Self::Close => "close",
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub(crate) struct Reply {
     pub(crate) results: Vec<ResultSet>,
@@ -463,6 +479,7 @@ async fn wait_for_service(client: &reqwest::Client, endpoint: &str, deadline: In
 struct ExchangeTiming {
     connection_id: usize,
     request_id: usize,
+    operation: &'static str,
     queued_ms: u64,
     started: Instant,
     phase: &'static str,
@@ -481,7 +498,7 @@ impl Drop for ExchangeTiming {
         if self.request_id == 0 || elapsed_ms >= 100 || self.queued_ms >= 100 {
             tracing::info!(target: "sqlx_sqlite::remote_timing",
                 connection_id = self.connection_id, request_id = self.request_id,
-                phase = self.phase, queued_ms = self.queued_ms, elapsed_ms,
+                operation = self.operation, phase = self.phase, queued_ms = self.queued_ms, elapsed_ms,
                 serialize_ms = ?self.serialize_ms, write_ms = ?self.write_ms,
                 header_ms = ?self.header_ms, body_ms = ?self.body_ms, parse_ms = ?self.parse_ms,
                 completed = self.completed, "SQLite RPC timing");
@@ -491,21 +508,27 @@ impl Drop for ExchangeTiming {
 
 async fn exchange(socket: &mut reqwest::Upgraded, command: &Command, connection_id: usize, request_id: usize, queued: Duration) -> Result<Reply, Error> {
     const LIMIT: usize = 8 * 1024 * 1024;
-    let mut timing = ExchangeTiming { connection_id, request_id, queued_ms: queued.as_millis() as u64,
+    let mut timing = ExchangeTiming { connection_id, request_id, operation: command.operation(), queued_ms: queued.as_millis() as u64,
         started: Instant::now(), phase: "serialize", serialize_ms: None, write_ms: None,
         header_ms: None, body_ms: None, parse_ms: None, completed: false };
     let stage = Instant::now();
-    let bytes = serde_json::to_vec(command).map_err(protocol)?;
+    #[derive(serde::Serialize)]
+    struct WireCommand<'a> {
+        connection_id: usize,
+        request_id: usize,
+        #[serde(flatten)]
+        command: &'a Command,
+    }
+    let mut bytes = vec![0; 4];
+    serde_json::to_writer(&mut bytes, &WireCommand { connection_id, request_id, command }).map_err(protocol)?;
+    let payload_len = bytes.len() - 4;
     timing.serialize_ms = Some(stage.elapsed().as_millis() as u64);
-    if bytes.len() > LIMIT {
+    if payload_len > LIMIT {
         return Err(Error::Protocol("SQLite request limit exceeded".into()));
     }
     timing.phase = "write";
     let stage = Instant::now();
-    socket
-        .write_u32(bytes.len() as u32)
-        .await
-        .map_err(protocol)?;
+    bytes[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
     socket.write_all(&bytes).await.map_err(protocol)?;
     socket.flush().await.map_err(protocol)?;
     timing.write_ms = Some(stage.elapsed().as_millis() as u64);

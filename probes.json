@@ -44,6 +44,10 @@
     {
       "name": "thread_fanout",
       "path": "../TRUEOS/tools/probes/thread_fanout"
+    },
+    {
+      "name": "alloc_registry",
+      "path": "../TRUEOS/tools/probes/alloc_registry"
     }
   ]
 }
