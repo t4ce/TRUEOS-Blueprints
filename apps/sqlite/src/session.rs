@@ -210,12 +210,16 @@ async fn serve(
             let stage = Instant::now();
             // Emit a complete frame in one write. A short length-only write can
             // otherwise wait for delayed ACK before Nagle releases its body.
-            let mut bytes = vec![0; 4];
-            serde_json::to_writer(&mut bytes, &reply).map_err(|e| e.to_string())?;
-            let payload_len = bytes.len() - 4;
+            let mut bytes = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
+            let payload_len = bytes.len();
             if payload_len > MAX_FRAME {
                 return Err("reply limit exceeded".into());
             }
+            // The public alloc-only serializer works in every SDK feature set.
+            // Reserve the prefix in this same Vec with one overlapping move.
+            bytes.reserve(4);
+            bytes.resize(payload_len + 4, 0);
+            bytes.copy_within(..payload_len, 4);
             bytes[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
             timing.reply_serialize_us = timing::elapsed_us(stage);
             timing.reply_bytes = payload_len as u64;
@@ -403,6 +407,13 @@ impl CompileGuard {
         Ok(guard)
     }
 
+    fn capture(&self, conn: &Connection, snapshot: &mut CommandSnapshot) -> Result<(), SqlError> {
+        // Serialization compiles an internal page-count PRAGMA. The user's
+        // statement is not stepped while the temporary guard is removed.
+        self.protected.store(false, std::sync::atomic::Ordering::Relaxed);
+        snapshot.capture(conn)
+    }
+
     fn next<'conn>(&self, conn: &Connection, batch: &mut rusqlite::Batch<'conn, '_>, snapshot: Option<&mut CommandSnapshot>) -> Result<Option<rusqlite::Statement<'conn>>, SqlError> {
         use std::sync::atomic::Ordering;
         let result = batch.next();
@@ -412,8 +423,7 @@ impl CompileGuard {
             // sqlite3_serialize itself prepares an internal page-count PRAGMA.
             // Remove the temporary compiler guard before that trusted capture;
             // the rejected user statement has not run and the base policy stays.
-            self.protected.store(false, Ordering::Relaxed);
-            snapshot.capture(conn)?;
+            self.capture(conn, snapshot)?;
             // rusqlite advances Batch::tail only after successful preparation.
             batch.next().map_err(SqlError::from)
         } else {
@@ -539,7 +549,7 @@ fn execute_script(
             return Err("read-only session".to_string().into());
         }
         if !stmt.readonly() {
-            if let Some(snapshot) = snapshot.as_deref_mut() { snapshot.capture(conn)?; }
+            if let Some(snapshot) = snapshot.as_deref_mut() { guard.capture(conn, snapshot)?; }
         }
         let changes_before = conn.total_changes();
         let columns: Vec<String> = stmt.column_names().iter().map(|s| (*s).into()).collect();
@@ -713,11 +723,11 @@ mod snapshot_tests {
         let before = conn.serialize(MAIN_DB).unwrap().to_vec();
         let mut snapshot = CommandSnapshot::default();
         let (reply, _) = run(&conn, Command::Execute {
-            sql: "SELECT 1; CREATE TABLE x(value); INSERT INTO x VALUES(7); SELECT value FROM x".into(),
+            sql: "SELECT 1; DROP TABLE IF EXISTS absent; CREATE TABLE x(value); INSERT INTO x VALUES(7); SELECT value FROM x".into(),
             params: vec![], timeout_ms: 5000,
         }, 0, false, &mut snapshot).unwrap();
         assert_eq!(snapshot.bytes.as_deref(), Some(before.as_slice()));
-        assert_eq!(reply.results.len(), 4);
+        assert_eq!(reply.results.len(), 5);
         assert_eq!(conn.query_row("SELECT value FROM x", [], |r| r.get::<_, i64>(0)).unwrap(), 7);
     }
 }

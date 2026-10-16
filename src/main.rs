@@ -3393,6 +3393,7 @@ fn staged_manifest_for_overlay(
 
     let staged_app_dir = work_dir.join("source-overlay-app");
     copy_app_tree(app_dir, &staged_app_dir)?;
+    seed_staged_lockfile(app_dir, &staged_app_dir)?;
     link_blueprint_siblings_for_staged_app(app_dir, work_dir)?;
     let manifest_relative = manifest_path.strip_prefix(app_dir).map_err(|_| {
         format!(
@@ -3445,6 +3446,32 @@ fn staged_manifest_for_overlay(
     }
 
     Ok(Some(staged_manifest))
+}
+
+/// A staged workspace member becomes standalone, so Cargo can no longer find
+/// its owning workspace lockfile. Seed a private copy before any staged Cargo
+/// resolution; re-resolving from nothing can drop upstream pins (including
+/// versions that were yanked after the upstream lock was written).
+fn seed_staged_lockfile(app_dir: &Path, staged_app_dir: &Path) -> Result<(), String> {
+    let lock_root = app_workspace_manifest(app_dir)
+        .map(|(root, _)| root)
+        .unwrap_or_else(|| app_dir.to_path_buf());
+    let source = lock_root.join("Cargo.lock");
+    if !source.is_file() {
+        return Ok(());
+    }
+    let staged = staged_app_dir.join("Cargo.lock");
+    // copy_app_tree preserves source symlinks. Cargo must never update a lock
+    // through a staged link into the upstream checkout.
+    if fs::symlink_metadata(&staged)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        fs::remove_file(&staged).map_err(io_string)?;
+    }
+    fs::copy(&source, &staged).map_err(|error| {
+        format!("failed to seed staged lockfile from {}: {error}", source.display())
+    })?;
+    Ok(())
 }
 
 /// Staging copies only the application tree. Resolve dependency paths against

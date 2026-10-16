@@ -1,5 +1,6 @@
 {
   "apps": [
+    { "name": "rayforge", "path": "../rayforge/crates/rayforge", "optional": true },
     { "name": "codex-cli", "path": "../codex/codex-rs/cli", "optional": true },
       { "name": "solara", "path": "../solara", "optional": true },
     { "name": "hull", "path": "buildins/hull" },

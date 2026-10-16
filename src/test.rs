@@ -18,7 +18,11 @@ fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
         ("fn main() {}\n", false, true),
         ("#![no_std]\nfn main() {}\n", true, true),
         ("#![no_std]\n#![no_main]\n", true, false),
-        ("#![cfg_attr(target_os = \"trueos\", no_main)]\nfn main() {}\n#[cfg(target_os = \"trueos\")]\npub extern \"C\" fn _start() -> ! { loop {} }\n", false, false),
+        (
+            "#![cfg_attr(target_os = \"trueos\", no_main)]\nfn main() {}\n#[cfg(target_os = \"trueos\")]\npub extern \"C\" fn _start() -> ! { loop {} }\n",
+            false,
+            false,
+        ),
     ] {
         fs::write(root.join("src/main.rs"), source).unwrap();
         fs::write(staged.join("src/main.rs"), source).unwrap();
@@ -26,10 +30,7 @@ fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
         assert_eq!(matches!(settings.flavor, BuildFlavor::ThinNoStd), thin);
         rewrite_staged_source_for_target(&root, &staged, &manifest, &settings).unwrap();
         let rewritten = fs::read_to_string(staged.join("src/main.rs")).unwrap();
-        assert_eq!(
-            rewritten.matches("#![no_std]").count(),
-            usize::from(thin)
-        );
+        assert_eq!(rewritten.matches("#![no_std]").count(), usize::from(thin));
         if entrypoint {
             assert!(rewritten.starts_with(&format!("#![no_main]\n{source}")));
             assert!(rewritten.contains("pub extern \"C\" fn _start() -> !"));
@@ -48,7 +49,11 @@ fn entrypoint_rewrite_exits_after_main_returns() {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::create_dir_all(staged.join("src")).unwrap();
     let manifest = root.join("Cargo.toml");
-    fs::write(&manifest, "[package]\nname = \"entrypoint-exit-test\"\nversion = \"0.1.0\"\n").unwrap();
+    fs::write(
+        &manifest,
+        "[package]\nname = \"entrypoint-exit-test\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     for (index, source) in [
         "fn main() { std::fs::write(\"marker\", b\"returned\").unwrap(); }\n",
         "fn main() -> Result<(), &'static str> { std::fs::write(\"marker\", b\"returned\").unwrap(); Ok(()) }\n",
@@ -128,13 +133,27 @@ fn malformed_and_truncated_records_are_rejected() {
     }
 }
 "#;
-    fs::write(&fixture, format!(
-        "use std::io;\nmod ffi {{ pub use std::ffi::CString; }}\n{}\n{tests}",
-        include_str!("rust_std_trueos_dir_listing.rs"),
-    )).unwrap();
-    let result = Command::new("rustc").arg("--edition=2024").arg("--test")
-        .arg(&fixture).arg("-o").arg(&executable).output().unwrap();
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    fs::write(
+        &fixture,
+        format!(
+            "use std::io;\nmod ffi {{ pub use std::ffi::CString; }}\n{}\n{tests}",
+            include_str!("rust_std_trueos_dir_listing.rs"),
+        ),
+    )
+    .unwrap();
+    let result = Command::new("rustc")
+        .arg("--edition=2024")
+        .arg("--test")
+        .arg(&fixture)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(Command::new(&executable).status().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -147,16 +166,28 @@ fn entrypoint_rewrite_does_not_modify_upstream_source_symlink() {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::create_dir_all(staged.join("src")).unwrap();
     let manifest = root.join("Cargo.toml");
-    fs::write(&manifest, "[package]\nname = \"entrypoint-symlink-test\"\nversion = \"0.1.0\"\n").unwrap();
+    fs::write(
+        &manifest,
+        "[package]\nname = \"entrypoint-symlink-test\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     let original = "fn main() {}\n";
     fs::write(root.join("src/main.rs"), original).unwrap();
     std::os::unix::fs::symlink(root.join("src/main.rs"), staged.join("src/main.rs")).unwrap();
     let settings = resolve_build_settings(&root, &manifest, &BuildTarget::Package).unwrap();
     rewrite_staged_source_for_target(&root, &staged, &manifest, &settings).unwrap();
-    assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(root.join("src/main.rs")).unwrap(),
+        original
+    );
     let rewritten = fs::read_to_string(staged.join("src/main.rs")).unwrap();
     assert!(rewritten.contains("pub extern \"C\" fn _start() -> !"));
-    assert!(!fs::symlink_metadata(staged.join("src/main.rs")).unwrap().file_type().is_symlink());
+    assert!(
+        !fs::symlink_metadata(staged.join("src/main.rs"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -351,6 +382,99 @@ mod external_path_overlay_tests {
                 .any(|package| package["name"] == "external-app")
         );
         assert!(packages.iter().any(|package| package["name"] == "helper"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_workspace_member_preserves_lock_before_resolution_and_after_restage() {
+        let root = test_dir("staged-workspace-lock");
+        let app = root.join("member");
+        let work = root.join("work");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::create_dir_all(app.join("target")).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"member\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        let manifest = app.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"locked-member\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(app.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let locked = "# Upstream resolution, never rewritten by the packer.\nversion = 4\n\n[[package]]\nname = \"locked-member\"\nversion = \"0.1.0\"\n";
+        fs::write(root.join("Cargo.lock"), locked).unwrap();
+        // Cargo ignores member-local locks inside a workspace. The staged copy
+        // must use the owning workspace lock instead of this stale file.
+        fs::write(app.join("Cargo.lock"), "stale member lock\n").unwrap();
+        let settings = resolve_build_settings(&app, &manifest, &BuildTarget::Package).unwrap();
+        for _ in 0..2 {
+            reset_dir(&work).unwrap();
+            let staged = staged_manifest_for_overlay(&app, &manifest, &work, &settings, &[], &[])
+                .unwrap()
+                .expect("entrypoint needs source staging");
+            let staged_lock = staged.parent().unwrap().join("Cargo.lock");
+            assert_eq!(fs::read_to_string(&staged_lock).unwrap(), locked);
+            let output = Command::new("cargo")
+                .arg("metadata")
+                .arg("--manifest-path")
+                .arg(&staged)
+                .args(["--format-version", "1", "--offline", "--locked"])
+                .output()
+                .expect("resolve staged member using preserved lock");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            fs::write(staged_lock, "a later staged resolution\n").unwrap();
+            assert_eq!(fs::read_to_string(root.join("Cargo.lock")).unwrap(), locked);
+            assert_eq!(
+                fs::read_to_string(app.join("Cargo.lock")).unwrap(),
+                "stale member lock\n"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_standalone_lock_is_a_private_copy_even_when_source_is_a_symlink() {
+        let root = test_dir("staged-private-lock");
+        let app = root.join("standalone");
+        let staged = root.join("stage");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "unrelated outer workspace\n").unwrap();
+        fs::write(
+            app.join("Cargo.toml"),
+            "[package]\nname = \"standalone\"\nversion = \"0.1.0\"\n[workspace]\n",
+        )
+        .unwrap();
+        let lock = root.join("pinned.lock");
+        fs::write(&lock, "standalone pins\n").unwrap();
+        std::os::unix::fs::symlink(&lock, app.join("Cargo.lock")).unwrap();
+        copy_app_tree(&app, &staged).unwrap();
+        seed_staged_lockfile(&app, &staged).unwrap();
+        assert!(
+            !fs::symlink_metadata(staged.join("Cargo.lock"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_to_string(staged.join("Cargo.lock")).unwrap(),
+            "standalone pins\n"
+        );
+        fs::write(staged.join("Cargo.lock"), "staged pins\n").unwrap();
+        assert_eq!(fs::read_to_string(&lock).unwrap(), "standalone pins\n");
+        assert_eq!(
+            fs::read_to_string(root.join("Cargo.lock")).unwrap(),
+            "unrelated outer workspace\n"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -826,11 +950,27 @@ mod terminal_platform_vendor_tests {
     fn crossterm_0_28_overlay_stages_the_complete_input_interface() {
         let root = env::temp_dir().join(format!("trueos-crossterm-overlay-{}", std::process::id()));
         let staged = stage_crossterm_trueos_overlay(&root, "0.28.1").unwrap();
-        assert!(fs::read_to_string(staged.join("src/event/source/unix.rs")).unwrap().contains("mod parser;"));
+        assert!(
+            fs::read_to_string(staged.join("src/event/source/unix.rs"))
+                .unwrap()
+                .contains("mod parser;")
+        );
         assert!(staged.join("src/event/source/unix/parser.rs").is_file());
-        assert!(fs::read_to_string(staged.join("src/event.rs")).unwrap().contains("pub enum InputDiscardStatus"));
-        assert!(fs::read_to_string(staged.join("src/event/source.rs")).unwrap().contains("fn discard_buffered_input"));
-        assert!(fs::read_to_string(staged.join("src/event/read.rs")).unwrap().contains("source.discard_buffered_input()"));
+        assert!(
+            fs::read_to_string(staged.join("src/event.rs"))
+                .unwrap()
+                .contains("pub enum InputDiscardStatus")
+        );
+        assert!(
+            fs::read_to_string(staged.join("src/event/source.rs"))
+                .unwrap()
+                .contains("fn discard_buffered_input")
+        );
+        assert!(
+            fs::read_to_string(staged.join("src/event/read.rs"))
+                .unwrap()
+                .contains("source.discard_buffered_input()")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

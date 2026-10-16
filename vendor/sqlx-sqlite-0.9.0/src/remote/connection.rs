@@ -519,16 +519,20 @@ async fn exchange(socket: &mut reqwest::Upgraded, command: &Command, connection_
         #[serde(flatten)]
         command: &'a Command,
     }
-    let mut bytes = vec![0; 4];
-    serde_json::to_writer(&mut bytes, &WireCommand { connection_id, request_id, command }).map_err(protocol)?;
-    let payload_len = bytes.len() - 4;
-    timing.serialize_ms = Some(stage.elapsed().as_millis() as u64);
+    let mut bytes = serde_json::to_vec(&WireCommand { connection_id, request_id, command }).map_err(protocol)?;
+    let payload_len = bytes.len();
     if payload_len > LIMIT {
+        timing.serialize_ms = Some(stage.elapsed().as_millis() as u64);
         return Err(Error::Protocol("SQLite request limit exceeded".into()));
     }
+    // One Vec and one payload move retain the public alloc-only JSON API.
+    bytes.reserve(4);
+    bytes.resize(payload_len + 4, 0);
+    bytes.copy_within(..payload_len, 4);
+    bytes[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
+    timing.serialize_ms = Some(stage.elapsed().as_millis() as u64);
     timing.phase = "write";
     let stage = Instant::now();
-    bytes[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
     socket.write_all(&bytes).await.map_err(protocol)?;
     socket.flush().await.map_err(protocol)?;
     timing.write_ms = Some(stage.elapsed().as_millis() as u64);

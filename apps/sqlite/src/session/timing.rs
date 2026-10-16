@@ -1,9 +1,23 @@
 //! Bounded numeric service timing. Never record SQL, filenames or values.
 use std::sync::{OnceLock, atomic::{AtomicU64, Ordering}};
-use std::time::Instant;
+use super::Instant;
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 static TIMING_ALL: OnceLock<bool> = OnceLock::new();
+static EPOCH: OnceLock<Instant> = OnceLock::new();
+static NEXT_SAMPLE_MS: AtomicU64 = AtomicU64::new(0);
+static SKIPPED: AtomicU64 = AtomicU64::new(0);
+
+fn admit_sample(now_ms: u64, next: &AtomicU64) -> bool {
+    let mut deadline = next.load(Ordering::Relaxed);
+    loop {
+        if now_ms < deadline { return false; }
+        match next.compare_exchange_weak(deadline, now_ms.saturating_add(250), Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(updated) => deadline = updated,
+        }
+    }
+}
 
 pub(super) fn elapsed_us(started: Instant) -> u64 {
     started.elapsed().as_micros().min(u64::MAX as u128) as u64
@@ -46,15 +60,39 @@ impl Drop for RequestTiming {
     fn drop(&mut self) {
         let elapsed_us = elapsed_us(self.started);
         let all = *TIMING_ALL.get_or_init(|| std::env::var("TRUEOS_SQLITE_TIMING_ALL").as_deref() == Ok("1"));
-        if !all && self.seq > 16 && self.seq % 64 != 0 && elapsed_us < 100_000 && self.completed { return; }
-        let line = format!("sqlite-service-timing seq={} connection_id={} request_id={} operation={} phase={} elapsed_us={} lock_us={} queue_us={} before_us={} before_bytes={} execute_us={} reclaim_us={} after_us={} after_bytes={} publish_us={} publish_bytes={} restore_us={} reply_serialize_us={} reply_write_us={} reply_bytes={} completed={}",
+        if !all && self.seq > 16 {
+            if self.seq % 64 != 0 && elapsed_us < 100_000 && self.completed { return; }
+            let now_ms = EPOCH.get_or_init(Instant::now).elapsed().as_millis().min(u64::MAX as u128) as u64;
+            if !admit_sample(now_ms, &NEXT_SAMPLE_MS) {
+                SKIPPED.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        }
+        let skipped = SKIPPED.swap(0, Ordering::Relaxed);
+        let line = format!("sqlite-service-timing seq={} connection_id={} request_id={} operation={} phase={} elapsed_us={} lock_us={} queue_us={} before_us={} before_bytes={} execute_us={} reclaim_us={} after_us={} after_bytes={} publish_us={} publish_bytes={} restore_us={} reply_serialize_us={} reply_write_us={} reply_bytes={} completed={} skipped={}",
             self.seq, self.connection_id, self.request_id, self.operation, self.phase, elapsed_us, self.lock_us,
             self.queue_us, self.before_us, self.before_bytes, self.execute_us, self.reclaim_us,
             self.after_us, self.after_bytes, self.publish_us, self.publish_bytes, self.restore_us,
-            self.reply_serialize_us, self.reply_write_us, self.reply_bytes, self.completed);
+            self.reply_serialize_us, self.reply_write_us, self.reply_bytes, self.completed, skipped);
         #[cfg(target_os = "trueos")]
-        trueos::logl::log(trueos::logl::level::INFO, &line);
+        trueos::logl::log(trueos::logl::level::INFO, line.as_str());
         #[cfg(not(target_os = "trueos"))]
         eprintln!("{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_rate_gate_admits_at_most_one_sample_per_250_ms() {
+        let next = AtomicU64::new(0);
+        assert!(admit_sample(0, &next));
+        for now in 0..250 { assert!(!admit_sample(now, &next)); }
+        assert!(admit_sample(250, &next));
+        assert!(!admit_sample(250, &next));
+        assert!(!admit_sample(499, &next));
+        assert!(admit_sample(500, &next));
     }
 }
