@@ -1,1 +1,0 @@
-subtitle-campfire = Trzaski ogniska

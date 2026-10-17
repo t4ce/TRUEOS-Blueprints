@@ -1,4 +1,0 @@
-[
-    // Fallback loot table
-    (1.0, Item("common.items.food.cheese")),
-]

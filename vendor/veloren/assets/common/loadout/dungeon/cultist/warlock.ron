@@ -1,4 +1,0 @@
-#![enable(implicit_some)]
-(
-    chest: Item("common.items.npc_armor.biped_large.warlock"),
-)

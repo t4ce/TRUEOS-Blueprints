@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Diamond",
-    legacy_description: "A sparkling silver gem.",
-    kind: Ingredient(
-        descriptor: "Diamond",
-    ),
-    quality: High,
-    tags: [],
-)

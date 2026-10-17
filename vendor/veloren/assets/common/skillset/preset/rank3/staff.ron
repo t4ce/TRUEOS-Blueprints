@@ -1,7 +1,0 @@
-[
-    Group(Weapon(Staff)),
-    
-    Skill((Staff(FireShockwave), 1)),
-    Skill((Staff(FireDash), 1)),
-    Skill((Staff(FlameCloak), 1)),
-]

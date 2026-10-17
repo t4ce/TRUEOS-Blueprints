@@ -1,5 +1,0 @@
-[
-    Group(Weapon(Hammer)),
-
-    Skill((Hammer(ScornfulSwipe), 1)),
-]

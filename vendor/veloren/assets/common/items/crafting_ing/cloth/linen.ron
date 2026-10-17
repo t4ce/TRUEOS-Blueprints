@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Linen",
-    legacy_description: "A textile made from flax fibers.",
-    kind: Ingredient(
-        descriptor: "Linen",
-    ),
-    quality: Low,
-    tags: [MaterialKind(Cloth), Material(Linen)],
-)

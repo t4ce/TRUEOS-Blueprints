@@ -1,5 +1,0 @@
-[
-    Group(Weapon(Staff)),
-    
-    Skill((Staff(FireShockwave), 1)),
-]

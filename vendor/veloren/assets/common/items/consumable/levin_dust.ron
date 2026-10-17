@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Levin Dust",
-    legacy_description: "description.txt",
-    kind: Utility(
-        kind: AbilityReq,
-    ),
-    quality: Common,
-    tags: [Utility],
-)

@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Obsidian",
-    legacy_description: "An igneous rock that comes from felsic lava, it never seems to dwindle.",
-    kind: Ingredient(
-        descriptor: "Obsidian",
-    ),
-    quality: Epic,
-    tags: [],
-)

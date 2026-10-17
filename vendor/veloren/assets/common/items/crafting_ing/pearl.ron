@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Pearl",
-    legacy_description: "Would make a nice lamp.",
-    kind: Ingredient(
-        // Descriptor not needed
-        descriptor: "",    ),
-    quality: Epic,
-    tags: [],
-)

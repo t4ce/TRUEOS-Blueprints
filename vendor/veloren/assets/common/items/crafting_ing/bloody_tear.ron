@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Bloody Tear",
-    legacy_description: "The hardened, concentrated blood of the beasts' countless victims.",
-    kind: Ingredient(
-        // Descriptor not needed
-        descriptor: "",    ),
-    quality: Epic,
-    tags: [],
-)

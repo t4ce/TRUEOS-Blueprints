@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Miner Key",
-    legacy_description: "Used to open doors. Will break after use.",
-    kind: Utility(
-        kind: Key,
-    ),
-    quality: High,
-    tags: [],
-)

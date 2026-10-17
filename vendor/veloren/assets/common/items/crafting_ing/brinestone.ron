@@ -1,9 +1,0 @@
-ItemDef(
-    legacy_name: "Brinestone",
-    legacy_description: "Used for armor crafting.",
-    kind: Ingredient(
-        // Descriptor not needed
-        descriptor: "",    ),
-    quality: Epic,
-    tags: [],
-)

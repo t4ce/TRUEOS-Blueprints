@@ -1,7 +1,0 @@
-ItemDef(
-    legacy_name: "Blue Falcon",
-    legacy_description: "Sky colored.",
-    kind: Glider,
-    quality: High,
-    tags: [],
-)
