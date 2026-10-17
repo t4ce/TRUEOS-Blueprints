@@ -1,8 +1,0 @@
-#![enable(unwrap_newtypes)]
-
-[
-    (
-        specifier: "world.structure.natural.big_mushroom",
-        center: (14, 14, 15),
-    ),
-]

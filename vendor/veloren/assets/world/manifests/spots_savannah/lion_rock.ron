@@ -1,8 +1,0 @@
-#![enable(unwrap_newtypes)]
-
-[
-    (
-        specifier: "world.structure.natural.lionrock_0",
-        center: (14, 13, 5)
-    ),
-]

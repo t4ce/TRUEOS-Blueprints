@@ -1,2 +1,0 @@
-UPDATE pet
-SET name="";

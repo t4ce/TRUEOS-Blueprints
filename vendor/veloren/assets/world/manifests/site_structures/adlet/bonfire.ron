@@ -1,8 +1,0 @@
-#![enable(unwrap_newtypes)]
-
-[
-    (
-        specifier: "world.structure.natural.bonfire",
-        center: (10, 10, 2)
-    ),
-]

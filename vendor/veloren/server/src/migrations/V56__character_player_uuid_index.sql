@@ -1,1 +1,0 @@
-CREATE INDEX idx_character_player_uuid ON character(player_uuid);

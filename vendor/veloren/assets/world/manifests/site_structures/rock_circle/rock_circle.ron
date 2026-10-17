@@ -1,8 +1,0 @@
-#![enable(unwrap_newtypes)]
-
-[
-    (
-        specifier: "world.structure.natural.rock-circle",
-        center: (30, 30, 4),
-    ),
-]
