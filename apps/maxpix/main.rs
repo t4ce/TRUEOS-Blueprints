@@ -3,10 +3,14 @@
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod native {
-    use maxpix::{PARTICLE_COUNT, camera, particle_mesh};
+    use maxpix::{
+        PARTICLE_COUNT, POINTER_COUNT, PointerInput, camera, next_point_width_raw, particle_mesh,
+    };
     use trueos::{
-        clock, logl,
-        ui4_scene::{Damage, Error as UiError, Frame},
+        clock,
+        input::{KEYBOARD_OUTPUT_FLAG_PRESS, KEYBOARD_OUTPUT_KIND_TEXT},
+        logl,
+        ui4_scene::{CursorSource, Damage, Error as UiError, Frame},
         vgpu::{
             self, Capabilities, Device, QueueClass, RetainedFrameSubmit, RetainedMeshDescriptor,
             RetainedTransformSeed,
@@ -49,12 +53,16 @@ mod native {
         logl::log(
             logl::level::IMPORTANT,
             format_args!(
-                "maxpix: particles={} topology=POINT_LIST cpu-upload=once motion=native-VS point=1px display-scale=1x camera=-10,-10,-10",
+                "maxpix: particles={} topology=POINT_LIST cpu-upload=once motion=native-VS point=1px display-scale=1x camera=-10,-10,-10 pointers=4 input-contract=pointer-v1 mouse-x=speed mouse-y=angle key-1=point-size",
                 PARTICLE_COUNT
             ),
         );
         let started = clock::monotonic_millis();
-        let mut previous = [0.0; 16];
+        let mut pointers = [PointerInput::default(); POINTER_COUNT];
+        let mut sources: [Option<CursorSource>; POINTER_COUNT] = [None; POINTER_COUNT];
+        let mut input_tick = started;
+        let mut point_width_raw = 8u32;
+        let mut pointer_reports = 0u64;
         let mut pending_resize = None;
         let mut frames = 0u64;
         let mut fps_started = started;
@@ -77,6 +85,69 @@ mod native {
                     Err(_) => return Err(vgpu::ERR_IO),
                 }
             }
+            // Advance using the previous state before applying newly received reports.
+            let now = clock::monotonic_millis();
+            let seconds = now.saturating_sub(input_tick) as f32 * 0.001;
+            input_tick = now;
+            for pointer in &mut pointers {
+                pointer.advance(seconds);
+            }
+            while let Some(event) = frame.take_pointer_event().map_err(|_| vgpu::ERR_IO)? {
+                let slot = sources
+                    .iter()
+                    .position(|source| *source == Some(event.source))
+                    .or_else(|| sources.iter().position(Option::is_none));
+                if let Some(slot) = slot {
+                    let new_source = sources[slot].is_none();
+                    sources[slot] = Some(event.source);
+                    pointers[slot].report(
+                        [event.local_x, event.local_y],
+                        [width, height],
+                        event.buttons_down,
+                        event.buttons_pressed,
+                        event.buttons_released,
+                        event.wheel,
+                    );
+                    pointer_reports += 1;
+                    if new_source || pointer_reports % 120 == 0 {
+                        logl::log(
+                            logl::level::IMPORTANT,
+                            format_args!(
+                                "maxpix: pointer slot={} source={}:{}:{}:{} reports={} local={},{} normalized={:.3},{:.3} speed={:.3} angle={:.3}",
+                                slot,
+                                event.source.controller_id,
+                                event.source.slot_id,
+                                event.source.ep_target,
+                                event.source.hid_kind,
+                                pointer_reports,
+                                event.local_x,
+                                event.local_y,
+                                pointers[slot].position[0],
+                                pointers[slot].position[1],
+                                pointers[slot].position[0] * 2.0,
+                                (pointers[slot].position[1] - 0.5) * core::f32::consts::TAU
+                            ),
+                        );
+                    }
+                }
+            }
+            while let Some(event) = frame.take_keyboard_event().map_err(|_| vgpu::ERR_IO)? {
+                // Printable digits arrive as TEXT, not as named KEY events.
+                if event.kind == KEYBOARD_OUTPUT_KIND_TEXT
+                    && event.codepoint == u32::from(b'1')
+                    && event.flags & KEYBOARD_OUTPUT_FLAG_PRESS != 0
+                {
+                    point_width_raw = next_point_width_raw(point_width_raw);
+                    logl::log(
+                        logl::level::IMPORTANT,
+                        format_args!(
+                            "maxpix: point-size={:.3}px native-u8.3={} key=1",
+                            point_width_raw as f32 / 8.0,
+                            point_width_raw
+                        ),
+                    );
+                }
+            }
             match frame.begin_gpu_frame() {
                 Ok(()) => {}
                 Err(UiError::Busy) => {
@@ -86,10 +157,14 @@ mod native {
                 Err(_) => return Err(vgpu::ERR_IO),
             }
             let surface = device.acquire_ui4_surface(frame.window_id())?;
-            let mut view = camera().retained(width, height, previous);
+            let mut view = camera().retained(width, height, [0.0; 16]);
             view.jitter_frame[2] = (clock::monotonic_millis() - started) as f32 * 0.001;
-            if frames == 0 {
-                view.previous_view_projection = view.view_projection;
+            // Dedicated Maxpix native raster control, validated by the kernel.
+            view.jitter_frame[3] = point_width_raw as f32;
+            for (slot, pointer) in pointers.iter().enumerate() {
+                let (state, buttons) = pointer.pack();
+                view.inverse_view_projection[slot * 4..slot * 4 + 4].copy_from_slice(&state);
+                view.previous_view_projection[slot * 4..slot * 4 + 4].copy_from_slice(&buttons);
             }
             let mut submit = RetainedFrameSubmit {
                 camera: view,
@@ -115,11 +190,16 @@ mod native {
             loop {
                 match frame.publish(Damage::full(width, height)) {
                     Ok(()) => break,
-                    Err(UiError::Busy) => { vsys::poll_once(); vsys::sleep_ms(1); }
+                    Err(UiError::Busy) => {
+                        vsys::poll_once();
+                        vsys::sleep_ms(1);
+                    }
                     Err(_) => return Err(vgpu::ERR_IO),
                 }
             }
-            previous = view.view_projection;
+            for pointer in &mut pointers {
+                pointer.published();
+            }
             frames += 1;
             if frames <= 4 {
                 logl::log(
@@ -138,8 +218,15 @@ mod native {
                 logl::log(
                     logl::level::IMPORTANT,
                     format_args!(
-                        "maxpix: fps={:.1} frames={} elapsed_ms={} particles={} extent={}x{}",
-                        fps, fps_frames, elapsed_ms, PARTICLE_COUNT, width, height
+                        "maxpix: fps={:.1} frames={} elapsed_ms={} particles={} extent={}x{} pointer-reports={} point-size={:.3}px",
+                        fps,
+                        fps_frames,
+                        elapsed_ms,
+                        PARTICLE_COUNT,
+                        width,
+                        height,
+                        pointer_reports,
+                        point_width_raw as f32 / 8.0
                     ),
                 );
                 fps_started = now;
