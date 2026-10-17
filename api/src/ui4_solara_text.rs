@@ -2230,7 +2230,7 @@ pub const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> u32 {
     u32::from_le_bytes([red, green, blue, alpha])
 }
 
-fn status(code: i32) -> Result<(), Error> {
+pub(crate) fn status(code: i32) -> Result<(), Error> {
     if code == 0 {
         Ok(())
     } else {

@@ -76,7 +76,7 @@ than one screen; movement should precede tile fills and white borders stay opaqu
 
 Execution evidence at Important: "osm: execution=tokio-local runtime=current-thread loader=cooperative".
 
-App-owned compact window:
+Kernel-owned compact window:
 The frame registers its dynamic context menu before the first publication,
 so right-click offers "collapse" and "Frog lon,lat" instead of the generic desktop menu.
 Frog uses the frozen right-click map point, displays four decimal places, and
@@ -87,16 +87,11 @@ as Frog's own start script. The kernel creates one Shell3 window and enters
 Frog's Matrix slot there. Frog does not need to be installed in AppDB.
 The launch retains full coordinate precision. Frog is disabled over the footer,
 outside the projected world, and while compact.
-Collapse saves the expanded extent and position, shrinks the frame to 128x128,
-displays an embedded 24,033-byte transparent PNG converted from logo.svg, and
-animates toward the saved window's bottom-left over 180 ms, following Solara.
-The compact tile enables UI4 primary-click activation. Left-click/release
-inside it restores the saved extent and position; dragging does not restore.
-The menu disables both collapse and Frog while already compact.
-The expanded map center/zoom/pixels are preserved. Queued tile loading pauses
-until restore; an already-running request may complete normally.
-Important markers: "osm: collapsed" and "osm: restored".
-This uses the existing APIs without kernel changes or native worker threads.
-
-Compact logo pixels use source-over on a transparent frame; PNG alpha is
-preserved through UI4. The expanded map retains its opaque BCS0 copy path.
+The app registers its embedded 128x128 PNG once with Frame::enable_collapse.
+UI4 adds collapse/restore to the app menu and shows the image at its exact size,
+with transparent pixels preserved. Click/release inside the tile restores the
+normal window; dragging does not restore. While compact, only restore is offered.
+The producer frame, map center/zoom, and logical extent remain intact. Background
+tile work can continue without overwriting the compact icon. No app-side compact
+renderer, resize transaction, animation, or input pump is needed.
+The expanded map retains its opaque BCS0 copy path.

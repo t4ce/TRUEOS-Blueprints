@@ -1,5 +1,5 @@
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod compact;
+mod menu;
 #[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
 mod logo;
 // trueos-blueprint: features=["tokio-net-probe", "ui4-scene"]
@@ -206,8 +206,11 @@ async fn run_ui() -> Result<()> {
     let mut map = Map::new(51.471336, 13.827807, 17);
     let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + FOOTER)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
-    let mut compact = compact::Compact::new(&mut frame)
-        .map_err(|e| anyhow::anyhow!("map compact/menu setup: {e:?}"))?;
+    let icon = logo::decode()?;
+    frame.enable_collapse(icon.width(), icon.height(), icon.as_raw())
+        .map_err(|e| anyhow::anyhow!("map collapse setup: {e:?}"))?;
+    let mut menu = menu::MapMenu::new(&mut frame)
+        .map_err(|e| anyhow::anyhow!("map menu setup: {e:?}"))?;
     let mut view = viewport::Viewport::new(map, frame.width(), frame.height());
     println!("OSM: pan gesture to move, wheel to zoom; https://www.openstreetmap.org/copyright");
     let mut dirty = true;
@@ -216,27 +219,7 @@ async fn run_ui() -> Result<()> {
     let mut presentations = 0u64;
     let mut discarded = 0u64;
     loop {
-        let was_collapsed = compact.collapsed();
-        if compact
-            .tick(&mut frame, &view)
-            .await
-            .map_err(|e| anyhow::anyhow!("map collapse/restore: {e:?}"))?
-        {
-            if !was_collapsed {
-                loader.request(Vec::new())?;
-                pending_resize = None;
-            }
-            // Keep the expanded view intact; an already-running fetch can
-            // still finish, but the compact frame displays only its logo.
-            dirty |= apply_completions(&mut loader, &mut view, &mut discarded)?;
-            trueos::vsys::poll_once();
-            tokio::time::sleep(Duration::from_millis(16)).await;
-            continue;
-        }
-        if was_collapsed {
-            dirty = true;
-            request = true;
-        }
+        menu.tick(&mut frame, &view).map_err(|e| anyhow::anyhow!("map menu: {e:?}"))?;
         let mut navigated = false;
         while let Some(event) = frame
             .take_resize_event()

@@ -33,3 +33,31 @@ pub fn display_fade(window_id: u32, amount: f32) -> Result<(), Error> {
     match rc { 0 => Ok(()), -1 => Err(Error::Invalid), -2 => Err(Error::NoBlueprintContext),
         code => Err(Error::Unknown(code)) }
 }
+
+/// Maximum exact pixel extent for a kernel-owned compact window image.
+pub const MAX_COLLAPSE_IMAGE_SIZE: u32 = 256;
+
+impl Frame {
+    /// Enable the standard collapse/restore menu and click-to-restore behavior.
+    /// Copies tightly packed straight-alpha RGBA8, at its exact size (up to
+    /// 256x256). Call again to update the icon. No menu or input pump is needed;
+    /// the producer's frame, layers, and logical extent remain intact.
+    pub fn enable_collapse(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), Error> {
+        if !(1..=MAX_COLLAPSE_IMAGE_SIZE).contains(&width)
+            || !(1..=MAX_COLLAPSE_IMAGE_SIZE).contains(&height)
+            || rgba.len() != width as usize * height as usize * 4
+        {
+            return Err(Error::Invalid);
+        }
+        let rc = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_enable_collapse_v1(
+                self.window_id(),
+                width,
+                height,
+                rgba.as_ptr(),
+                rgba.len(),
+            )
+        };
+        crate::ui4_solara_text::status(rc)
+    }
+}
