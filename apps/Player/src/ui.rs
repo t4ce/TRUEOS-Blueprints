@@ -63,115 +63,48 @@ const SYSTEM_EDGE: &str = "┨";
 /// Action requested when the terminal UI closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiExit {
-    /// Restore the terminal and hand control back to the mini-VM shell.
+    /// Restore the terminal and hand control back to the shell.
     ReturnToShell,
     /// Shut down the current Blueprint after restoring the terminal.
     Terminate,
 }
 
-/// Runs the terminal UI with the provided data/configuration.
+/// Run the Ratatui UI, releasing the TRUEOS terminal while parked.
 pub fn run(config: UiConfig) -> Result<UiExit> {
-    tokio_worker_probe();
-    let mut terminal = setup_terminal()?;
-    let result = App::new(config).run(&mut terminal);
-    restore_terminal(&mut terminal)?;
-    result
-}
-
-/// Runs Player as a command/response service on the attached VMX minishell.
-///
-/// TRUEOS owns line editing and command echo. Player only consumes completed
-/// command lines and emits the corresponding response and next prompt through
-/// the attached-session vlayer. Ratatui and terminal raw mode are never entered.
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub fn run_vmx_minishell(config: UiConfig) -> Result<UiExit> {
-    tokio_worker_probe();
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    let mut lease = trueos::vshell::terminal_initial_lease()
+        .map_err(|error| io::Error::other(error.to_string()))?;
     let mut app = App::new(config);
-    let mut input = String::new();
-
-    vmx_shell_line(&app.shell_response);
-    vmx_shell_prompt();
-
-    while app.exit.is_none() {
-        while let Some(byte) = trueos::vshell::attached_read_byte() {
-            match byte {
-                b'\r' | b'\n' => {
-                    let command = input.trim();
-                    if !command.is_empty() {
-                        app.run_command(command);
-                        vmx_shell_line(&app.shell_response);
-                    }
-                    input.clear();
-                    if app.exit.is_none() {
-                        vmx_shell_prompt();
-                    }
-                }
-                0x08 | 0x7f => {
-                    input.pop();
-                }
-                byte if byte.is_ascii_graphic() || byte == b' ' => {
-                    if input.len() < 512 {
-                        input.push(char::from(byte));
-                    }
-                }
-                _ => {}
-            }
+    loop {
+        let result = (|| -> Result<UiExit> {
+            let mut terminal = setup_terminal()?;
+            let result = (|| -> Result<UiExit> {
+                terminal.draw(|frame| app.draw(frame))?;
+                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                lease
+                    .acknowledge_ready()
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                app.run(&mut terminal)
+            })();
+            let restored = restore_terminal(&mut terminal);
+            result.and_then(|exit| restored.map(|()| exit))
+        })();
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        let ticket = lease
+            .release_to_shell()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let exit = result?;
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        if exit == UiExit::ReturnToShell {
+            lease = ticket
+                .wait_for_reentry()
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            app.exit = None;
+            continue;
         }
-
-        app.tick();
-        trueos::platform::poll_once();
-        trueos::platform::sleep_ms(10);
+        return Ok(exit);
     }
-
-    Ok(app.exit.unwrap_or(UiExit::ReturnToShell))
 }
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn vmx_shell_line(text: &str) {
-    let _ = trueos::vshell::attached_write(text.as_bytes());
-    let _ = trueos::vshell::attached_write(b"\r\n");
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn vmx_shell_prompt() {
-    let _ = trueos::vshell::attached_write(b"player> ");
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn tokio_worker_probe() {
-    let runtime = match trueos::runtime::current_thread().build() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            trueos::logl::log(trueos::logl::level::WARN,
-                format_args!("player: native worker startup probe runtime: {error}"));
-            return;
-        }
-    };
-
-    runtime.block_on(async {
-        let join = match trueos::worker::spawn(|| 0xA11D_10u32) {
-            Ok(join) => join,
-            Err(error) => {
-                trueos::logl::log(trueos::logl::level::WARN,
-                    format_args!("player: native worker startup probe submit: {error}"));
-                return;
-            }
-        };
-        // This is a startup diagnostic. A timed-out handle detaches its finite
-        // sentinel job; the UI can open while kernel lifetime tracking retains it.
-        match trueos::time::timeout(trueos::time::Duration::from_secs(5), join).await {
-            Ok(Ok(0xA11D_10)) => trueos::logl::log(trueos::logl::level::INFO,
-                format_args!("player: native worker startup probe passed")),
-            Ok(result) => trueos::logl::log(trueos::logl::level::WARN,
-                format_args!("player: native worker startup probe completion: {result:?}")),
-            Err(_) => trueos::logl::log(trueos::logl::level::WARN,
-                format_args!("player: native worker startup probe timed out; job detached, continuing UI")),
-        }
-    });
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn tokio_worker_probe() {}
 
 /// Initial state and demo data used by the terminal UI.
 #[derive(Debug, Clone)]
@@ -347,7 +280,7 @@ impl App {
         }
     }
 
-    fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<UiExit> {
+    fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<UiExit> {
         while self.exit.is_none() {
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -1641,7 +1574,7 @@ impl control::ControlEventHandler for App {
     }
 
     fn on_quit(&mut self, _event: &control::ParsedCommand) {
-        self.finish(UiExit::ReturnToShell, "quit: returning to mini-VM shell");
+        self.finish(UiExit::ReturnToShell, "quit: returning to shell");
     }
 
     fn on_terminate(&mut self, _event: &control::ParsedCommand) {

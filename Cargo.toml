@@ -36,6 +36,7 @@ members = [
     "probes/posix_fd_probe",
     "probes/panick",
     "apps/PlotTwist",
+    "apps/Player",
     "apps/shadertoy",
     "probes/unix_api_probe",
     "probes/redb_probe",

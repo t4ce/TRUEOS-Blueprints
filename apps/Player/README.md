@@ -11,8 +11,12 @@ as your platform desires.
 ## Run
 
 ```sh
-cargo run --example demo
+cargo run
 ```
+
+On TRUEOS, Player opens the same Ratatui interface using a terminal lease.
+`quit` or Ctrl-C returns to the shell and parks the UI; terminal re-entry
+resumes the existing Player state. `terminate` closes the Blueprint.
 
 ## Command API
 
