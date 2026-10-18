@@ -248,8 +248,17 @@ fn main() {
     let mut rendered_pitch = view.pitch;
     let mut shell = ShellInput::new();
     let mut render_pending = false;
+    let mut pending_resize = None;
 
     loop {
+        match handle_resize_events(&mut frame, &mut layout, &mut rgba, &mut pending_resize) {
+            Ok(resized) => render_pending |= resized,
+            Err(error) => {
+                status_line(format!("skybox: resize failed error={error:?}").as_str());
+                return;
+            }
+        }
+
         if let Some(command) = shell.poll() {
             match handle_command(command, &mut frame, &mut layout, &mut rgba) {
                 CommandResult::Render => render_pending = true,
@@ -291,6 +300,36 @@ enum CommandResult {
     Render,
     NoRender,
     Quit,
+}
+
+fn handle_resize_events(
+    frame: &mut Frame,
+    layout: &mut Layout,
+    rgba: &mut Vec<u8>,
+    pending_resize: &mut Option<(u32, u32)>,
+) -> Result<bool, Ui4Error> {
+    while let Some(event) = frame.take_resize_event()? {
+        *pending_resize = Some((event.width, event.height));
+    }
+    let Some((width, height)) = *pending_resize else {
+        return Ok(false);
+    };
+
+    // UI4 owns the dock/free-resize placement. Accept its exact extent without
+    // applying shell-command clamps or moving the window back to layout.x/y.
+    match frame.resize(width, height) {
+        Ok(()) => {
+            *pending_resize = None;
+            layout.width = width;
+            layout.height = height;
+            rgba.resize(width as usize * height as usize * 4, 0);
+            // Publishing the replacement commits UI4's pending geometry, even
+            // when the cursor is stationary or the requested extent repeats.
+            Ok(true)
+        }
+        Err(Ui4Error::Busy) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn handle_command(
