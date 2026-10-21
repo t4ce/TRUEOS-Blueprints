@@ -9,7 +9,6 @@
     "dobby",
     "websys",
     "share",
-    "gridpaper",
     "gridpape",
     "ratatest",
     "pi_snake",
@@ -110,8 +109,6 @@
     },
     "superseedr",
     "webmail",
-    "xpapp",
-    { "name": "staticgl-triangle", "path": "apps/xpapp/staticgl-triangle" },
     {
       "name": "commander",
       "path": "buildins/commander"

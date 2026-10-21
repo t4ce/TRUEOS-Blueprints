@@ -26,7 +26,7 @@ GPU device. This app does not advertise the replicatable lifecycle.
 Build from the Blueprint repository:
 
 ```sh
-cargo bp gridpape
+TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp gridpape
 ```
 
 Requires a kernel built with the additive
