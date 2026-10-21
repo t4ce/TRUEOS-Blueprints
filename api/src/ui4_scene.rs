@@ -61,3 +61,11 @@ impl Frame {
         crate::ui4_solara_text::status(rc)
     }
 }
+
+/// Convert a physical size through the active output's EDID metrics.
+/// Returns an error when physical display dimensions are unavailable.
+pub fn physical_extent(width_mm: u32, height_mm: u32) -> Result<(u32, u32), Error> {
+    let packed = unsafe { v::bp_abi::trueos_cabi_ui4_scene_physical_extent_v1(width_mm, height_mm) };
+    let extent = ((packed >> 32) as u32, packed as u32);
+    if extent.0 == 0 || extent.1 == 0 { Err(Error::Ui4) } else { Ok(extent) }
+}
