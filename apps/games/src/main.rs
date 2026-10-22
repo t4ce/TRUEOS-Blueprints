@@ -29,8 +29,8 @@ use tic::TicTacToe;
 use trueos::input;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    BackgroundLayer, Damage, Error as UiError, Font, FontCanvasRow, Frame, POINTER_BUTTON_PRIMARY,
-    SpriteCorner, SpriteQuad, output_dimensions, rgba,
+    BackgroundLayer, Damage, Error as UiError, Frame, POINTER_BUTTON_PRIMARY, SpriteCorner,
+    SpriteQuad, output_dimensions, rgba,
 };
 use trueos::vgpu::{
     BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ, BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_VERTEX,
@@ -65,11 +65,6 @@ const CUBE_VERTICES: [u8; 12] = [0; 12];
 const CUBE_INDICES: [u8; 44 * 4] = [0; 44 * 4];
 const CUSTOM_RGB555: u32 = 1 << 15;
 const BG: u32 = u32::from_le_bytes([11, 17, 30, 128]);
-const MINE_GLYPH_SPRITE: u32 = 1;
-const MINE_GLYPHS: &[u8; 10] = b"12345678FX";
-const MINE_TILE_WIDTH: usize = microfont::FWIDTH + 4;
-const MINE_TILE_HEIGHT: usize = microfont::FHEIGHT + 4;
-const MINE_ATLAS_WIDTH: usize = MINE_GLYPHS.len() * MINE_TILE_WIDTH;
 const SCENE_WIDTH: f32 = SCENE_HEIGHT * WIDTH as f32 / HEIGHT as f32;
 const SCENE_HEIGHT: f32 = 25.0;
 
@@ -89,6 +84,14 @@ enum Mode {
 enum Error {
     Ui(&'static str, UiError),
     Gpu(&'static str, i32),
+}
+
+struct TextRow<'a> {
+    text: &'a str,
+    x: f32,
+    y: f32,
+    pixels: f32,
+    color_rgba: u32,
 }
 
 struct Layout {
@@ -113,12 +116,12 @@ impl Layout {
         }
     }
 
-    fn row<'a>(&self, text: &'a str, x: f32, y: f32, pixels: f32, color: u32) -> FontCanvasRow<'a> {
-        FontCanvasRow {
+    fn row<'a>(&self, text: &'a str, x: f32, y: f32, pixels: f32, color: u32) -> TextRow<'a> {
+        TextRow {
             text,
             x: self.offset_x + x * self.scale,
             y: self.offset_y + y * self.scale,
-            font_pixels: pixels * self.scale,
+            pixels: pixels * self.scale,
             color_rgba: color,
         }
     }
@@ -131,13 +134,13 @@ fn chess_hud_row<'a>(
     y: f32,
     pixels: f32,
     color: u32,
-) -> FontCanvasRow<'a> {
+) -> TextRow<'a> {
     let scale = (height as f32 / HEIGHT as f32).clamp(0.75, 2.0);
-    FontCanvasRow {
+    TextRow {
         text,
         x: (width as f32 - 200.0 * scale).max(12.0),
         y: (14.0 + y) * scale,
-        font_pixels: pixels * scale,
+        pixels: pixels * scale,
         color_rgba: color,
     }
 }
@@ -205,7 +208,6 @@ fn run() -> Result<(), Error> {
         .unwrap_or((80, 60));
     let mut frame =
         Frame::open_layered(x, y, WIDTH, HEIGHT, 60).map_err(|e| Error::Ui("open frame", e))?;
-    upload_mine_glyphs(&mut frame)?;
     let mut background = frame
         .background()
         .map_err(|e| Error::Ui("background layer", e))?;
@@ -1558,93 +1560,86 @@ fn rgb555(color: Rgb8) -> u32 {
     CUSTOM_RGB555 | quantize(color.r) | (quantize(color.g) << 5) | (quantize(color.b) << 10)
 }
 
-fn upload_mine_glyphs(frame: &mut Frame) -> Result<(), Error> {
-    let mut atlas = alloc::vec![0_u8; MINE_ATLAS_WIDTH * MINE_TILE_HEIGHT * 4];
-    for (index, &glyph) in MINE_GLYPHS.iter().enumerate() {
-        let mut mask = [0_u8; microfont::FWIDTH * microfont::FHEIGHT];
-        microfont::stamp_bytes(
-            &mut mask,
-            microfont::FWIDTH,
-            microfont::FHEIGHT,
-            0,
-            0,
-            core::slice::from_ref(&glyph),
-            1_u8,
-        )
-        .map_err(|_| Error::Ui("stamp mine glyph", UiError::Invalid))?;
-        for y in 0..microfont::FHEIGHT {
-            for x in 0..microfont::FWIDTH {
-                if mask[y * microfont::FWIDTH + x] == 0 {
+/// Expand the hex MicroFont cells into horizontal solid-quad runs.
+/// No glyph image or FontKernel canvas is allocated.
+fn append_text_quads(quads: &mut Vec<SpriteQuad>, row: &TextRow<'_>) {
+    let scale = row.pixels / 11.0;
+    for (index, byte) in row.text.bytes().enumerate() {
+        let glyph = dialog::glyph(byte);
+        for y in 0..11 {
+            let mut x = 0;
+            while x < 6 {
+                let filled = |x: usize| {
+                    let bit = y * 6 + x;
+                    bit < 64 && glyph >> (63 - bit) & 1 != 0
+                };
+                if !filled(x) {
+                    x += 1;
                     continue;
                 }
-                let px = index * MINE_TILE_WIDTH + 2 + x;
-                let py = 2 + y;
-                let offset = (py * MINE_ATLAS_WIDTH + px) * 4;
-                atlas[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+                let start = x;
+                while x < 6 && filled(x) {
+                    x += 1;
+                }
+                let left = row.x + (index * 6 + start + usize::from(byte == b'q')) as f32 * scale;
+                let top = row.y + y as f32 * scale;
+                let right = left + (x - start) as f32 * scale;
+                let bottom = top + scale;
+                quads.push(SpriteQuad {
+                    sprite_id: 0,
+                    c0: SpriteCorner {
+                        x: left,
+                        y: top,
+                        u: 0.,
+                        v: 0.,
+                    },
+                    c1: SpriteCorner {
+                        x: right,
+                        y: top,
+                        u: 1.,
+                        v: 0.,
+                    },
+                    c2: SpriteCorner {
+                        x: right,
+                        y: bottom,
+                        u: 1.,
+                        v: 1.,
+                    },
+                    c3: SpriteCorner {
+                        x: left,
+                        y: bottom,
+                        u: 0.,
+                        v: 1.,
+                    },
+                    color_rgba: row.color_rgba,
+                    source_over: true,
+                });
             }
         }
     }
-    frame
-        .upload_sprite_rgba8(
-            MINE_GLYPH_SPRITE,
-            MINE_ATLAS_WIDTH as u32,
-            MINE_TILE_HEIGHT as u32,
-            &atlas,
-        )
-        .map_err(|e| Error::Ui("upload mine glyphs", e))
 }
 
-fn mine_glyph_quad(
+fn append_mine_glyph(
+    quads: &mut Vec<SpriteQuad>,
     layout: &Layout,
-    glyph: u8,
+    label: &str,
     col: usize,
     row: usize,
     color: u32,
-    glyph_scale: f32,
-) -> SpriteQuad {
-    let index = MINE_GLYPHS
-        .iter()
-        .position(|&candidate| candidate == glyph)
-        .unwrap();
-    let u0 = index as f32 / MINE_GLYPHS.len() as f32;
-    let u1 = (index + 1) as f32 / MINE_GLYPHS.len() as f32;
+    scale: f32,
+) {
     let center_x = layout.offset_x + (114.8 + col as f32 * 31.97) * layout.scale;
     let center_y = layout.offset_y + (66.6 + row as f32 * 31.97) * layout.scale;
-    let half_width = MINE_TILE_WIDTH as f32 * glyph_scale * 0.5;
-    let half_height = MINE_TILE_HEIGHT as f32 * glyph_scale * 0.5;
-    let x0 = center_x - half_width;
-    let y0 = center_y - half_height;
-    let x1 = center_x + half_width;
-    let y1 = center_y + half_height;
-    SpriteQuad {
-        sprite_id: MINE_GLYPH_SPRITE,
-        c0: SpriteCorner {
-            x: x0,
-            y: y0,
-            u: u0,
-            v: 0.,
+    append_text_quads(
+        quads,
+        &TextRow {
+            text: label,
+            x: center_x - 3.0 * scale,
+            y: center_y - 5.5 * scale,
+            pixels: 11.0 * scale,
+            color_rgba: color,
         },
-        c1: SpriteCorner {
-            x: x1,
-            y: y0,
-            u: u1,
-            v: 0.,
-        },
-        c2: SpriteCorner {
-            x: x1,
-            y: y1,
-            u: u1,
-            v: 1.,
-        },
-        c3: SpriteCorner {
-            x: x0,
-            y: y1,
-            u: u0,
-            v: 1.,
-        },
-        color_rgba: color,
-        source_over: true,
-    }
+    );
 }
 
 fn present_text(
@@ -1868,14 +1863,15 @@ fn present_text(
                                 MineCellStatus::Exploded => white,
                                 _ => mine_number_color(cell.adjacent_mine_count()),
                             };
-                            glyph_quads.push(mine_glyph_quad(
+                            append_mine_glyph(
+                                &mut glyph_quads,
                                 &layout,
-                                label.as_bytes()[0],
+                                label,
                                 col,
                                 row,
                                 color,
                                 glyph_scale,
-                            ));
+                            );
                         }
                     }
                 }
@@ -1986,19 +1982,14 @@ fn present_text(
         }
     }
     let canvas = (frame.width(), frame.height());
-    frame
-        .retain_font_canvas(Font::Inconsolata, canvas, &rows)
-        .map_err(|e| Error::Ui("font canvas", e))?;
+    let mut quads = Vec::new();
+    for row in &rows {
+        append_text_quads(&mut quads, row);
+    }
+    quads.extend(glyph_quads);
     frame
         .begin_sprite_frame(rgba(0, 0, 0, 0))
         .map_err(|e| Error::Ui("begin text", e))?;
-    let mut quads = Vec::with_capacity(glyph_quads.len() + 1);
-    quads.push(
-        frame
-            .font_canvas_quad(canvas, (0, 0))
-            .map_err(|e| Error::Ui("font canvas quad", e))?,
-    );
-    quads.extend(glyph_quads);
     frame
         .draw_sprite_quads(&quads)
         .map_err(|e| Error::Ui("draw text and mine glyphs", e))?;

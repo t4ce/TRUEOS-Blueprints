@@ -6,6 +6,11 @@ use alloc::vec::Vec;
 #[path = "dialog_style.rs"]
 mod style;
 
+/// Hex-encoded MicroFont glyph shared by dialogs and the game HUD.
+pub fn glyph(byte: u8) -> u64 {
+    style::GLYPHS[usize::from(byte.clamp(32, 126) - 32)]
+}
+
 pub const WIDTH: usize = 150;
 pub const HEIGHT: usize = 100;
 pub const ATLAS_COLUMNS: usize = 4;
@@ -83,7 +88,7 @@ impl Canvas {
 
     fn label(&mut self, text: &str, x: i32, y: i32, z: u8, color: u32) {
         for (i, c) in text.bytes().enumerate() {
-            let glyph = style::GLYPHS[usize::from(c.clamp(32, 126) - 32)];
+            let glyph = glyph(c);
             for bit in 0..64 {
                 if glyph >> (63 - bit) & 1 != 0 {
                     self.put(

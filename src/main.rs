@@ -2856,6 +2856,7 @@ fn ensure_overlay_registry_sources(
         ("ctrlc", "3.4.4", "ctrlc-3.4.4"),
         ("futures-timer", "3.0.4", "futures-timer-3.0.4"),
         ("hyper-timeout", "0.5.2", "hyper-timeout-0.5.2"),
+        ("rama-http", "0.3.0-alpha.4", "rama-http-0.3.0-alpha.4"),
         ("rustix", "0.38.44", "rustix-0.38.44"),
         ("socket2", "0.5.10", "socket2-0.5.10"),
         ("tokio-stream", "0.1.19", "tokio-stream-0.1.19"),

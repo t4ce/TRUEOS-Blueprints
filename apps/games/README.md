@@ -9,9 +9,11 @@ reveal, flag, clues, and win/loss rules come from Gamie, as do Tic-Tac-Toe turns
 and win/draw rules. Sudokitty core generates Sudoku puzzles, protects clues,
 tracks conflicts, and checks completion. Cozy-chess supplies legal chess moves,
 turns, castling, promotions, and endgame status.
-TRUEOS FontKernel renders the sidebar labels; CPU MicroFont stamps the
-Minesweeper digits and markers into a retained UI4 sprite atlas. Mine glyphs
-are native 1x size normally and 2x when the frame is maximized. The board layer clears to
+The sidebar labels, chess HUD, settings text, and Minesweeper digits use the
+same hex-encoded MicroFont glyphs as the dialogs. HUD and mine glyphs are drawn
+directly as solid UI4 quad runs, without a font canvas or glyph image atlas.
+Mine glyphs are native 1x size normally and 2x when the frame is maximized.
+The board layer clears to
 50% alpha; the cube faces remain opaque. The camera fits the entire playfield,
 and maximizing or restoring the UI4 window scales the board and text together.
 Quarter-size hull cubes frame both the whole UI4 window and the playfield
