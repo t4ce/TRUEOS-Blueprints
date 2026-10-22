@@ -1,0 +1,34 @@
+[package]
+name = "rustc-min"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+profile = "release"
+rustc-tier = "min"
+rustc-workers = 1
+rustc-payload-dependencies = ["trueos"]
+
+[dependencies]
+# This package intentionally targets the exact archived compiler source.
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
+rustc_ast = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_ast" }
+rustc_codegen_cranelift = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_codegen_cranelift" }
+rustc_driver_impl = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_driver_impl" }
+rustc_interface = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_interface" }
+rustc_middle = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_middle" }
+rustc_session = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_session" }
+rustc_span = { path = "../../../TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_span" }
+object = { version = "0.39.1", default-features = false, features = ["elf", "read_core", "std"] }
+redb = "4.2.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.142", default-features = false, features = ["std"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["std"] }
+tokio = { version = "=1.52.3", default-features = false, features = ["rt", "sync", "time"] }
+trueos = { path = "../../api" }
+
+[workspace]
+
+[patch.crates-io]
+# target-lexicon's registry release predates the TRUEOS target triple.
+target-lexicon = { path = "vendor/target-lexicon-0.13.5-trueos" }

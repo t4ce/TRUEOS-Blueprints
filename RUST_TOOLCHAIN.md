@@ -79,7 +79,7 @@ Pack from this repository:
 ```text
 TRUEOS_RUST_TOOLCHAIN_ROOT=/home/t4ce/Repos/TRUEOS-Rust-Toolchain-nightly-2026-07-10 \
 TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 \
-cargo bp /home/t4ce/Repos/TRUEOS-Rust-Toolchain-nightly-2026-07-10/blueprints/rustc-min
+cargo bp rustc-min
 ```
 
 The resulting file is `dist/rustc-min.bp`.

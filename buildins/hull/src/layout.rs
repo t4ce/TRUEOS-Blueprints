@@ -156,8 +156,8 @@ pub(super) fn compute(
                     style.display = Display::Flex;
                     style.flex_wrap = FlexWrap::Wrap;
                     style.flex_shrink = 0.0;
-                    style.align_items = Some(AlignItems::Start);
-                    style.justify_content = Some(text_metrics[id].align.justify());
+                    style.align_items = AlignItems::START;
+                    style.justify_content = text_metrics[id].align.justify();
                 }
                 for &child in &node.children {
                     if contents[id] || is_line_container {
@@ -213,51 +213,61 @@ pub(super) fn compute(
             width: AvailableSpace::Definite(viewport.0 as f32),
             height: AvailableSpace::Definite(viewport.1 as f32),
         },
-        |known_dimensions, available_space, _, context, _| {
-            let fallback = TextMetrics::default();
-            let (text, metrics) = context
-                .as_deref()
-                .map(|context| (context.text.as_str(), context.metrics))
-                .unwrap_or(("", fallback));
-            let natural = if matches!(
-                metrics.whitespace,
-                WhiteSpaceMetric::Pre | WhiteSpaceMetric::PreWrap
-            ) {
-                text.split('\n')
-                    .map(|line| estimate_text_width(line, metrics.font_size))
-                    .fold(0.0, f32::max)
-            } else {
-                estimate_text_width(text, metrics.font_size)
-            };
-            let limit = known_dimensions
-                .width
-                .unwrap_or_else(|| match available_space.width {
-                    AvailableSpace::Definite(width) => width,
-                    AvailableSpace::MinContent => text
-                        .split_whitespace()
-                        .map(|word| estimate_text_width(word, metrics.font_size))
-                        .fold(0.0f32, f32::max),
-                    AvailableSpace::MaxContent => natural,
-                });
-            let width = known_dimensions
-                .width
-                .unwrap_or(natural.min(limit.max(1.0)));
-            let height = known_dimensions.height.unwrap_or(if natural == 0.0 {
-                0.0
-            } else {
-                (match metrics.whitespace {
-                    WhiteSpaceMetric::Pre => text.split('\n').count() as f32,
-                    WhiteSpaceMetric::NoWrap => 1.0,
-                    WhiteSpaceMetric::PreWrap => text
-                        .split('\n')
-                        .map(|line| estimated_line_count(line, width, metrics.font_size).max(1.0))
-                        .sum(),
-                    WhiteSpaceMetric::Normal => {
-                        estimated_line_count(text, width, metrics.font_size)
-                    }
-                }) * metrics.line_height.used(metrics.font_size)
-            });
-            Size { width, height }
+        |inputs, _, context, style| {
+            taffy::compute_leaf_layout(
+                inputs,
+                style,
+                |_, _| 0.0,
+                |known_dimensions, available_space| {
+                    let fallback = TextMetrics::default();
+                    let (text, metrics) = context
+                        .as_deref()
+                        .map(|context| (context.text.as_str(), context.metrics))
+                        .unwrap_or(("", fallback));
+                    let natural = if matches!(
+                        metrics.whitespace,
+                        WhiteSpaceMetric::Pre | WhiteSpaceMetric::PreWrap
+                    ) {
+                        text.split('\n')
+                            .map(|line| estimate_text_width(line, metrics.font_size))
+                            .fold(0.0, f32::max)
+                    } else {
+                        estimate_text_width(text, metrics.font_size)
+                    };
+                    let limit =
+                        known_dimensions
+                            .width
+                            .unwrap_or_else(|| match available_space.width {
+                                AvailableSpace::Definite(width) => width,
+                                AvailableSpace::MinContent => text
+                                    .split_whitespace()
+                                    .map(|word| estimate_text_width(word, metrics.font_size))
+                                    .fold(0.0f32, f32::max),
+                                AvailableSpace::MaxContent => natural,
+                            });
+                    let width = known_dimensions
+                        .width
+                        .unwrap_or(natural.min(limit.max(1.0)));
+                    let height = known_dimensions.height.unwrap_or(if natural == 0.0 {
+                        0.0
+                    } else {
+                        (match metrics.whitespace {
+                            WhiteSpaceMetric::Pre => text.split('\n').count() as f32,
+                            WhiteSpaceMetric::NoWrap => 1.0,
+                            WhiteSpaceMetric::PreWrap => text
+                                .split('\n')
+                                .map(|line| {
+                                    estimated_line_count(line, width, metrics.font_size).max(1.0)
+                                })
+                                .sum(),
+                            WhiteSpaceMetric::Normal => {
+                                estimated_line_count(text, width, metrics.font_size)
+                            }
+                        }) * metrics.line_height.used(metrics.font_size)
+                    });
+                    Size { width, height }
+                },
+            )
         },
     )?;
     let mut fragments: Vec<Vec<BoxRect>> = vec![vec![]; document.nodes.len()];
@@ -357,7 +367,7 @@ pub(super) fn compute(
         }
     }
     let json = serde_json::to_string_pretty(
-        &serde_json::json!({"engine":"taffy","engine_version":"0.7.7","viewport":{"width":viewport.0,"height":viewport.1},"units":"layout units; CSS lengths currently map 1:1 for compatibility; SVG uses the same numeric coordinates","coordinates":"absolute layout units; right/bottom are rectangle edges, not CSS insets","text_metrics":"synthetic monospace cell metrics: 6 layout units advance by 11 layout units line height at 11-unit default font-size, scaled by inherited CSS font-size and line-height; no font shaping","limitations":["text widths and wrapping use synthetic monospace metrics; no font shaping","dynamic pseudo-classes, pseudo-elements, :has and namespace selectors are not implemented","media conditions cover viewport sizes and orientation; device preference queries, variables, calc, grid tracks, cascade layers and supports conditions are not implemented","inline flow uses approximate flex line boxes; nested inline boxes may wrap as a single item; no complete browser default stylesheet"],"unsupported_rule_count":unsupported_rules,"properties_not_used_for_layout":unused,"nodes":rows}),
+        &serde_json::json!({"engine":"taffy","engine_version":"0.15.0","viewport":{"width":viewport.0,"height":viewport.1},"units":"layout units; CSS lengths currently map 1:1 for compatibility; SVG uses the same numeric coordinates","coordinates":"absolute layout units; right/bottom are rectangle edges, not CSS insets","text_metrics":"synthetic monospace cell metrics: 6 layout units advance by 11 layout units line height at 11-unit default font-size, scaled by inherited CSS font-size and line-height; no font shaping","limitations":["text widths and wrapping use synthetic monospace metrics; no font shaping","dynamic pseudo-classes, pseudo-elements, :has and namespace selectors are not implemented","media conditions cover viewport sizes and orientation; device preference queries, variables, calc, grid tracks, cascade layers and supports conditions are not implemented","inline flow uses approximate flex line boxes; nested inline boxes may wrap as a single item; no complete browser default stylesheet"],"unsupported_rule_count":unsupported_rules,"properties_not_used_for_layout":unused,"nodes":rows}),
     )?;
     let extent = tree.layout(root)?.size.height.max(viewport.1 as f32);
     let mut svg = format!(
@@ -868,19 +878,21 @@ fn dimension(value: &CssSize, context: ResolveContext) -> Option<Dimension> {
         _ => None,
     }
 }
-fn minimum(value: &CssSize, context: ResolveContext) -> Option<Dimension> {
-    dimension(value, context)
+fn minimum(value: &CssSize, context: ResolveContext) -> Option<LengthPercentageAuto> {
+    match value {
+        CssSize::Auto => Some(LengthPercentageAuto::AUTO),
+        CssSize::LengthPercentage(value) => raw_length(value, context).map(Into::into),
+        _ => None,
+    }
 }
 fn maximum(
     value: &lightningcss::properties::size::MaxSize,
     context: ResolveContext,
-) -> Option<Dimension> {
+) -> Option<LengthPercentageAuto> {
     use lightningcss::properties::size::MaxSize;
     match value {
-        MaxSize::None => Some(Dimension::AUTO),
-        MaxSize::LengthPercentage(value) => {
-            dimension(&CssSize::LengthPercentage(value.clone()), context)
-        }
+        MaxSize::None => Some(LengthPercentageAuto::AUTO),
+        MaxSize::LengthPercentage(value) => raw_length(value, context).map(Into::into),
         _ => None,
     }
 }
@@ -1398,9 +1410,9 @@ enum TextAlignMetric {
 impl TextAlignMetric {
     fn justify(self) -> JustifyContent {
         match self {
-            Self::Start => JustifyContent::Start,
-            Self::Center => JustifyContent::Center,
-            Self::End => JustifyContent::End,
+            Self::Start => JustifyContent::START,
+            Self::Center => JustifyContent::CENTER,
+            Self::End => JustifyContent::END,
         }
     }
 }
@@ -1508,9 +1520,9 @@ fn flush_inline_run(
         } else {
             FlexWrap::Wrap
         },
-        align_items: Some(AlignItems::Start),
-        align_content: Some(AlignContent::Start),
-        justify_content: Some(metrics.align.justify()),
+        align_items: AlignItems::START,
+        align_content: AlignContent::START,
+        justify_content: metrics.align.justify(),
         size: Size {
             width: if full_width {
                 Dimension::from_percent(1.0)

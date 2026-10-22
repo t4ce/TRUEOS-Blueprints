@@ -250,18 +250,28 @@ mod tests {
         assert!(b["left"].as_f64().unwrap() > a["left"].as_f64().unwrap());
     }
     #[test]
-    fn enum_dimensions_preserve_auto_length_and_zero() {
+    fn compact_dimensions_preserve_auto_length_and_zero() {
         use taffy::prelude::*;
+        use taffy::style::{ExpandedDimension, ExpandedLengthPercentageAuto};
         assert_eq!(
-            LengthPercentageAuto::from_length(0.0),
-            LengthPercentageAuto::Length(0.0)
+            LengthPercentageAuto::from_length(0.0).expand(),
+            ExpandedLengthPercentageAuto::Length(0.0)
         );
-        assert_eq!(LengthPercentageAuto::AUTO, LengthPercentageAuto::Auto);
-        assert_eq!(Dimension::from_percent(0.5), Dimension::Percent(0.5));
+        assert_eq!(
+            LengthPercentageAuto::AUTO.expand(),
+            ExpandedLengthPercentageAuto::Auto
+        );
+        assert_eq!(
+            Dimension::from_percent(0.5).expand(),
+            ExpandedDimension::Percent(0.5)
+        );
         let styles: Vec<Style> = vec![Style::default(); 16];
         for style in styles {
-            assert_eq!(style.margin.top, LengthPercentageAuto::Length(0.0));
-            assert_eq!(style.size.height, Dimension::Auto);
+            assert_eq!(
+                style.margin.top.expand(),
+                ExpandedLengthPercentageAuto::Length(0.0)
+            );
+            assert!(style.size.height.is_auto());
         }
     }
 

@@ -14,7 +14,7 @@ trueos = { path = "../../api", features = ["ui4-scene"] }
 rp5 = { path = "rp5" }
 lightningcss = { version = "=1.0.0-alpha.72", default-features = false, features = ["into_owned"] }
 static-self = "0.1.2"
-taffy = { version = "=0.7.7", default-features = false, features = ["std", "taffy_tree", "block_layout", "flexbox", "grid"] }
+taffy = { version = "=0.15.0", path = "../../vendor/taffy-0.15.0-trueos", default-features = false, features = ["std", "taffy_tree", "block_layout", "flexbox", "grid"] }
 parcel_selectors = "0.28.3"
 cssparser = "0.37"
 serde_json = "1"
