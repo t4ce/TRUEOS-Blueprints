@@ -236,8 +236,9 @@ getrandom = { path = "vendor/getrandom-0.2.17" }
 getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }
 getrandom_04 = { package = "getrandom", path = "vendor/getrandom-0.4.2" }
 h2 = { path = "vendor/h2-0.4.14" }
-hickory-proto = { path = "vendor/hickory-proto-0.25.2" }
-hickory-resolver = { path = "vendor/hickory-resolver-0.25.2" }
+hickory-net = { path = "vendor/hickory-net-0.26.3" }
+hickory-proto = { path = "vendor/hickory-proto-0.26.3" }
+hickory-resolver = { path = "vendor/hickory-resolver-0.26.3" }
 if-watch = { path = "vendor/if-watch-3.2.2" }
 http = { path = "vendor/http-1.4.0" }
 http-body = { path = "vendor/http-body-1.0.1" }
