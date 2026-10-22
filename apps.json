@@ -96,7 +96,6 @@
     },
     "swarm",
     "cubesrv",
-    "velosrv",
     {
       "name": "velory",
       "path": "../Velory",
