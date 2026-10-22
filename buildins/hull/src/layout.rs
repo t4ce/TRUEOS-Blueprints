@@ -23,6 +23,17 @@ pub(super) struct Export {
     pub svg: String,
     pub line_rects: Vec<[f32; 4]>,
     pub line_extent: (u32, u32),
+    pub text_runs: Vec<TextRun>,
+}
+
+/// The same baseline and textLength geometry written into the SVG snapshot.
+pub(super) struct TextRun {
+    pub text: String,
+    pub x: f32,
+    pub baseline_y: f32,
+    pub size_px: f32,
+    pub advance_px: f32,
+    pub color: [u8; 4],
 }
 
 pub(super) fn compute(
@@ -272,6 +283,7 @@ pub(super) fn compute(
     )?;
     let mut fragments: Vec<Vec<BoxRect>> = vec![vec![]; document.nodes.len()];
     let mut text_svg = String::new();
+    let mut text_runs = Vec::new();
     let mut pending = vec![(root, 0.0f32, 0.0f32)];
     while let Some((tid, parent_x, parent_y)) = pending.pop() {
         let box_layout = tree.layout(tid)?;
@@ -296,12 +308,22 @@ pub(super) fn compute(
                             + (line_height - context.metrics.font_size) / 2.0
                             + context.metrics.font_size * 0.8;
                         let length = estimate_text_width(line, context.metrics.font_size);
+                        let [r, g, b, a] = context.metrics.color;
                         let _ = write!(
                             text_svg,
-                            "<text x=\"{left}\" y=\"{y}\" font-size=\"{}\" font-family=\"monospace\" xml:space=\"preserve\" textLength=\"{length}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
+                            "<text x=\"{left}\" y=\"{y}\" font-size=\"{}\" font-family=\"monospace\" fill=\"#{r:02x}{g:02x}{b:02x}\" fill-opacity=\"{}\" xml:space=\"preserve\" textLength=\"{length}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
                             context.metrics.font_size,
+                            f32::from(a) / 255.0,
                             xml_escape(line)
                         );
+                        text_runs.push(TextRun {
+                            text: line.clone(),
+                            x: left,
+                            baseline_y: y,
+                            size_px: context.metrics.font_size,
+                            advance_px: length,
+                            color: context.metrics.color,
+                        });
                     }
                 }
             }
@@ -391,6 +413,7 @@ pub(super) fn compute(
         svg,
         line_rects,
         line_extent: (viewport.0, extent.ceil() as u32),
+        text_runs,
     })
 }
 
@@ -504,6 +527,7 @@ struct TextMetrics {
     line_height: LineHeightMetric,
     align: TextAlignMetric,
     whitespace: WhiteSpaceMetric,
+    color: [u8; 4],
 }
 
 struct TextMeasureContext {
@@ -535,6 +559,7 @@ impl Default for TextMetrics {
             line_height: LineHeightMetric::Normal,
             align: TextAlignMetric::Start,
             whitespace: WhiteSpaceMetric::Normal,
+            color: [0, 0, 0, 255],
         }
     }
 }
@@ -638,11 +663,13 @@ fn apply_css<'a>(
     let mut border_visible = [true; 4];
     let mut font_size_winner: Option<&CssFontSize> = None;
     let mut line_height_winner: Option<&CssLineHeight> = None;
+    let mut color_winner = None;
     for (_, _, _, _, property) in declarations.iter() {
         if let Property::Position(value) = property {
             positioned = !matches!(value, lightningcss::properties::position::Position::Static);
         }
         match property {
+            Property::Color(value) => color_winner = Some(value),
             Property::FontSize(value) => font_size_winner = Some(value),
             Property::LineHeight(value) => line_height_winner = Some(value),
             Property::Display(CssDisplay::Pair(value)) => {
@@ -678,6 +705,11 @@ fn apply_css<'a>(
                 line_height_winner = Some(&value.line_height);
             }
             _ => {}
+        }
+    }
+    if let Some(value) = color_winner {
+        if let Ok(lightningcss::values::color::CssColor::RGBA(value)) = value.to_rgb() {
+            text_metrics.color = [value.red, value.green, value.blue, value.alpha];
         }
     }
     // Resolve every relative value against the inherited size, independent of
@@ -1636,6 +1668,7 @@ fn used_for_layout(name: &str) -> bool {
             | "display"
             | "font"
             | "font-size"
+            | "color"
             | "line-height"
             | "text-align"
             | "white-space"

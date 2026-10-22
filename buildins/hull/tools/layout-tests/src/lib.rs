@@ -158,6 +158,67 @@ mod tests {
             .unwrap()
     }
     #[test]
+    fn text_runs_and_svg_share_baselines_widths_and_escaped_unicode() {
+        let doc = rp5::parse("<div>A&amp;Ω\nB&lt;</div><span class='hide'>invisible</span>");
+        let mut css = css::Css::default();
+        css.add_sheet(
+            lightningcss::stylesheet::StyleSheet::parse(
+                "div{font-size:22px;line-height:30px;white-space:pre}.hide{display:none}",
+                Default::default(),
+            )
+            .unwrap()
+            .into_owned(),
+        );
+        let output = layout::compute(&doc, &css, (1280, 720)).unwrap();
+        assert_eq!(output.text_runs.len(), 2);
+        assert_eq!(output.svg.matches("<text ").count(), 2);
+        for run in &output.text_runs {
+            assert_eq!(run.size_px, 22.0);
+            assert_eq!(run.advance_px, layout::estimate_text_width(&run.text, 22.0));
+            assert!(output.svg.contains(&format!(
+                "<text x=\"{}\" y=\"{}\" font-size=\"{}\"",
+                run.x, run.baseline_y, run.size_px,
+            )));
+            assert!(
+                output
+                    .svg
+                    .contains(&format!("textLength=\"{}\"", run.advance_px))
+            );
+        }
+        assert_eq!(output.text_runs[0].text, "A&Ω");
+        assert_eq!(output.text_runs[1].text, "B<");
+        assert!(
+            (output.text_runs[1].baseline_y - output.text_runs[0].baseline_y - 30.0).abs() < 0.001
+        );
+        assert!(output.svg.contains("A&amp;Ω</text>"));
+        assert!(output.svg.contains("B&lt;</text>"));
+    }
+    #[test]
+    fn text_color_inherits_and_uses_the_cascade_without_changing_geometry() {
+        let doc = rp5::parse("<div><span>A</span><b>B</b><i>C</i></div>");
+        let mut css = css::Css::default();
+        css.add_sheet(
+            lightningcss::stylesheet::StyleSheet::parse(
+            "div{color:#123456}b{color:red!important}b{color:blue}i{color:red;color:currentColor}",
+                Default::default(),
+            )
+            .unwrap()
+            .into_owned(),
+        );
+        let output = layout::compute(&doc, &css, (1280, 720)).unwrap();
+        let colors: Vec<_> = output.text_runs.iter().map(|run| run.color).collect();
+        assert_eq!(
+            colors,
+            [
+                [0x12, 0x34, 0x56, 255],
+                [255, 0, 0, 255],
+                [0x12, 0x34, 0x56, 255]
+            ]
+        );
+        assert!(output.svg.contains("fill=\"#123456\""));
+        assert!(output.svg.contains("fill=\"#ff0000\""));
+    }
+    #[test]
     fn default_text_uses_six_by_eleven_cell() {
         assert_eq!(layout::estimate_text_width("xx", 11.0), 12.0);
         let (doc, json) = run("<div id='p' style='width:18px'>xx</div>", "");

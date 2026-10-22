@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use trueos::ui4_scene::{output_dimensions, rgba};
-use trueos::ui4_winit::{Damage, Error, SceneTarget};
+use trueos::ui4_winit::{Damage, Error, HullTextRun, SceneTarget};
 use trueos::{logl, netfs, vshell};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -28,6 +28,8 @@ struct Hull {
     redraw_reason: &'static str,
     frame_counter: shellio::FrameCounter,
     quads: Option<xxx::Quads>,
+    text_runs: Vec<layout::TextRun>,
+    layout_extent: (u32, u32),
     download: Option<u32>,
     html: Option<Vec<u8>>,
     document: Option<rp5::Document>,
@@ -199,6 +201,8 @@ impl ApplicationHandler for Hull {
                     layout.line_extent.1,
                     &layout.line_rects,
                 )?;
+                self.layout_extent = layout.line_extent;
+                self.text_runs = layout.text_runs;
                 self.quads_dirty = true;
                 self.redraw_reason = "layout";
                 if let Some(window) = &self.window {
@@ -270,6 +274,25 @@ impl ApplicationHandler for Hull {
                         target.begin(rgba(35, 39, 39, 255))?;
                     }
                     let size = window.surface_size();
+                    if !self.text_runs.is_empty() {
+                        // Quads use fixed clip coordinates. Apply that identical
+                        // viewport transform to the SVG's baselines/textLength.
+                        let sx = size.width as f32 / self.layout_extent.0.max(1) as f32;
+                        let sy = size.height as f32 / self.layout_extent.1.max(1) as f32;
+                        let runs: Vec<_> = self
+                            .text_runs
+                            .iter()
+                            .map(|run| HullTextRun {
+                                text: &run.text,
+                                x: run.x * sx,
+                                baseline_y: run.baseline_y * sy,
+                                size_px: run.size_px * sy,
+                                advance_px: run.advance_px * sx,
+                                rgba: u32::from_le_bytes(run.color),
+                            })
+                            .collect();
+                        target.draw_hull_text_runs(&runs)?;
+                    }
                     self.frame_counter.produced(
                         self.redraw_reason,
                         size.width,

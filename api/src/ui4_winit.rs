@@ -8,6 +8,21 @@
 use crate::ui4_solara_text::Frame;
 pub use crate::ui4_solara_text::{Damage, Error, SpriteCorner, SpriteQuad};
 
+/// A simple Hull microfont run in physical foreground pixels. All fonts use
+/// microfont; missing glyphs become red question marks. The service snaps size
+/// down to the display's 0.25 cm ladder while preserving the SVG baseline and
+/// whole-run advance. `rgba` is `u32::from_le_bytes([r, g, b, a])`.
+#[derive(Clone, Copy, Debug)]
+pub struct HullTextRun<'a> {
+    pub text: &'a str,
+    pub x: f32,
+    pub baseline_y: f32,
+    pub size_px: f32,
+    /// Whole SVG textLength in pixels; zero selects the natural font advance.
+    pub advance_px: f32,
+    pub rgba: u32,
+}
+
 /// How a retained sprite command writes the producer's frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpriteBackend {
@@ -109,6 +124,85 @@ impl SceneTarget {
     }
     pub fn draw_sprite_quads(&mut self, quads: &[SpriteQuad]) -> Result<(), Error> {
         self.surface.draw_sprite_quads(quads)
+    }
+    /// Paint cached microfont coverage over the foreground's retired sprite
+    /// draw. Call after drawing quads and before publishing the same frame.
+    /// The kernel copies text and checks ownership and exact producer release.
+    /// Large pages are transported in bounded batches; long UTF-8 runs retain
+    /// their original whole-run spacing across batch boundaries.
+    pub fn draw_hull_text_runs(&mut self, runs: &[HullTextRun<'_>]) -> Result<(), Error> {
+        // Reject invalid input before writing any part of this page.
+        for run in runs {
+            if !run.x.is_finite()
+                || !run.baseline_y.is_finite()
+                || !run.size_px.is_finite()
+                || !run.advance_px.is_finite()
+                || run.x.abs() > 1_000_000.0
+                || run.baseline_y.abs() > 1_000_000.0
+                || run.size_px <= 0.0
+                || run.size_px > 1_440.0
+                || run.advance_px < 0.0
+                || run.advance_px > 1_000_000.0
+                || run.text.len() > u32::MAX as usize
+            {
+                return Err(Error::Invalid);
+            }
+        }
+        let submit = |raw: &[v::bp_abi::TrueosUi4HullTextRunV1]| {
+            crate::ui4_solara_text::status(unsafe {
+                v::bp_abi::trueos_cabi_ui4_hull_text_runs_v1(
+                    self.render_target(),
+                    raw.as_ptr(),
+                    raw.len(),
+                )
+            })
+        };
+        let mut raw = alloc::vec::Vec::with_capacity(runs.len().min(2_048));
+        let mut batch_bytes = 0usize;
+        for run in runs {
+            let columns = run.text.chars().count();
+            let mut byte_offset = 0usize;
+            let mut column_offset = 0usize;
+            while byte_offset < run.text.len() {
+                let mut end = byte_offset.saturating_add(4_096).min(run.text.len());
+                while !run.text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let text = &run.text[byte_offset..end];
+                let chunk_columns = text.chars().count();
+                if raw.len() == 2_048 || batch_bytes + text.len() > 64 * 1024 {
+                    submit(&raw)?;
+                    raw.clear();
+                    batch_bytes = 0;
+                }
+                let explicit = run.advance_px > 0.0;
+                raw.push(v::bp_abi::TrueosUi4HullTextRunV1 {
+                    text: text.as_ptr(),
+                    text_len: text.len(),
+                    x: if explicit {
+                        run.x + run.advance_px * column_offset as f32 / columns as f32
+                    } else {
+                        run.x
+                    },
+                    baseline_y: run.baseline_y,
+                    size_px: run.size_px,
+                    advance_px: if explicit {
+                        run.advance_px * chunk_columns as f32 / columns as f32
+                    } else {
+                        0.0
+                    },
+                    rgba: run.rgba,
+                    column_offset: if explicit { 0 } else { column_offset as u32 },
+                });
+                batch_bytes += text.len();
+                byte_offset = end;
+                column_offset += chunk_columns;
+            }
+        }
+        if !raw.is_empty() {
+            submit(&raw)?;
+        }
+        Ok(())
     }
     /// Publish this producer's frame, including background updates and staged
     /// paired resize handoffs. Retry Busy before acquiring another write lease.
