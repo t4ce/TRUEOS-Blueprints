@@ -84,11 +84,6 @@
     "osm",
     "maxpix",
     "Player",
-    {
-      "name": "tinyfighter",
-      "path": "../TinyFighter",
-      "optional": true
-    },
     "skybox",
     {
       "name": "ssh",

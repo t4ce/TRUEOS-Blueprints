@@ -1063,7 +1063,6 @@ unsafe extern "C" {
     pub fn trueos_time_unix_seconds() -> u64;
     pub fn trueos_time_unix_nanos() -> u64;
     pub fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);
-    pub fn trueos_cabi_write_cstr(stream: u32, cstr: *const u8);
     pub fn trueos_cabi_log(
         level: u32,
         target_ptr: *const u8,
@@ -1132,7 +1131,6 @@ unsafe extern "C" {
     pub fn trueos_cabi_async_fs_write_commit(id: u32) -> i32;
     pub fn trueos_cabi_async_fs_create_dir_all_start(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_metadata_start_v2(path_ptr: *const u8, path_len: usize) -> i32;
-    pub fn trueos_cabi_async_fs_metadata_start_v1(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_typed_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_record_key_start(path_ptr: *const u8, path_len: usize) -> i32;
@@ -1286,9 +1284,6 @@ unsafe extern "C" {
     pub fn trueos_cabi_socket_tcp_open(domain: i32, socket_type: i32, protocol: i32) -> i32;
     pub fn trueos_cabi_socket_tcp_close(socket_id: u32) -> i32;
     pub fn trueos_cabi_socket_tcp_set_nonblocking(socket_id: u32, nonblocking: u32) -> i32;
-    pub fn trueos_cabi_socket_tcp_bind_v4(socket_id: u32, addr_be: u32, port_be: u16) -> i32;
-    pub fn trueos_cabi_socket_tcp_bind_v6(socket_id: u32, addr_ptr: *const u8, port_be: u16)
-    -> i32;
     pub fn trueos_cabi_socket_tcp_connect_v4(
         socket_id: u32,
         addr_be: u32,
@@ -1427,7 +1422,6 @@ unsafe extern "C" {
 
     pub fn trueos_cabi_vgpu_open(requested_caps: u64, out_device: *mut u64) -> i32;
     pub fn trueos_cabi_vgpu_scalar_f32_v1(device: u64, code: u64, bytes: usize, a: f32, b: f32, out: *mut f32) -> i32;
-    pub fn trueos_cabi_vgpu_call_f32_v1(code: *const u8, bytes: usize, a: f32, b: f32, out: *mut f32) -> i32;
     pub fn trueos_cabi_vgpu_close(device: u64) -> i32;
     pub fn trueos_cabi_vgpu_device_info(device: u64, out_info: *mut crate::vgpu::DeviceInfo)
     -> i32;
