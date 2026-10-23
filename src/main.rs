@@ -14,6 +14,7 @@ mod build_plan;
 mod cargo_output;
 mod cli;
 mod native_fold;
+mod native_odin;
 mod publish;
 mod stack_capture;
 mod std_backend;
@@ -289,6 +290,11 @@ fn run() -> Result<(), String> {
         }
 
         for example_name in requested_apps {
+            if package_catalog == PackageCatalog::Apps && example_name == "odin-son" {
+                let bp_file = native_odin::build(&app_dir)?;
+                publish_blueprint_file(&bp_file, package_catalog)?;
+                continue;
+            }
             if package_catalog == PackageCatalog::Apps
                 && let Ok(required_features) =
                     example_required_features(&manifest_path, &example_name)
