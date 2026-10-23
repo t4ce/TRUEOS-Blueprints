@@ -1,0 +1,22 @@
+[package]
+name = "vm_recovery"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "vm_recovery"
+path = "main.rs"
+
+[lib]
+path = "lib.rs"
+
+[workspace]
+
+[dependencies]
+tokio = { version = "=1.52.3", default-features = false, features = ["rt-multi-thread", "time", "sync", "net", "io-util"] }
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos = { path = "../../api" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }

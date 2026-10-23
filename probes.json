@@ -41,6 +41,8 @@
     "mcp_http_probe",
     "libc_contract",
     "alloc_probe",
+    "vm_recovery",
+    "vm_recovery_peer",
     {
       "name": "thread_fanout",
       "path": "../TRUEOS/tools/probes/thread_fanout"
