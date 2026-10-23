@@ -72,7 +72,12 @@ impl Graphics {
             .map_err(|error| format!("ui4-begin {error:?}"))?;
         frame.publish(trueos::ui4_scene::Damage { x: 0, y: 0, width: 320, height: 180 })
             .map_err(|error| format!("ui4-publish {error:?}"))?;
-        let device = trueos::vgpu::Device::open(trueos::vgpu::Capabilities::BUFFER)
+        // Device admission requires the base buffer/queue/timeline contract,
+        // even when this probe only retains a buffer and submits no GPU work.
+        let capabilities = trueos::vgpu::Capabilities::BUFFER
+            .union(trueos::vgpu::Capabilities::QUEUE)
+            .union(trueos::vgpu::Capabilities::TIMELINE);
+        let device = trueos::vgpu::Device::open(capabilities)
             .map_err(|error| format!("vgpu-open status={error}"))?;
         let buffer = device.create_buffer(65536, trueos::vgpu::BUFFER_USAGE_STORAGE)
             .map_err(|error| format!("vgpu-buffer status={error}"))?;
@@ -96,9 +101,11 @@ struct State {
     started: AtomicUsize,
     ticks: [AtomicU64; 2],
     parked: AtomicBool,
-    native_control: std::sync::mpsc::Sender<bool>,
+    native_control: std::sync::mpsc::Sender<NativeCommand>,
     done: AtomicBool,
 }
+
+enum NativeCommand { Panic, Oom, Exit }
 
 fn runtime(state: &Arc<State>, index: usize) -> Result<tokio::runtime::Runtime, String> {
     let start = state.clone();
@@ -131,18 +138,19 @@ async fn serve(listener: tokio::net::TcpListener, state: Arc<State>) {
         };
         let request = String::from_utf8_lossy(&request[..count]);
         let route = request.split_whitespace().nth(1).unwrap_or("");
-        let command = match route { "/panic" => 1, "/exit" => 2, _ => 0 };
+        let command = match route { "/panic" => 1, "/exit" => 2, "/oom" => 3, _ => 0 };
         let body = format!("instance={} workers={} parked={} ticks0={} ticks1={} command={}\n",
             state.instance, state.started.load(Ordering::Acquire),
             state.parked.load(Ordering::Acquire),
             state.ticks[0].load(Ordering::Relaxed), state.ticks[1].load(Ordering::Relaxed),
-            match command { 1 => "panic", 2 => "exit", _ => "status" });
+            match command { 1 => "panic", 2 => "exit", 3 => "oom", _ => "status" });
         let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
         if socket.write_all(response.as_bytes()).await.is_err() { continue; }
         let _ = socket.shutdown().await;
-        if command == 1 { let _ = state.native_control.send(true); }
+        if command == 1 { let _ = state.native_control.send(NativeCommand::Panic); }
+        if command == 3 { let _ = state.native_control.send(NativeCommand::Oom); }
         if command == 2 {
-            let _ = state.native_control.send(false);
+            let _ = state.native_control.send(NativeCommand::Exit);
             state.done.store(true, Ordering::Release);
             return;
         }
@@ -183,11 +191,24 @@ fn run(peer: bool) -> Result<(), String> {
     let worker_state = state.clone();
     let native = std::thread::Builder::new().name("vm-recovery-native".into()).spawn(move || {
         worker_state.parked.store(true, Ordering::Release);
-        if matches!(native_commands.recv(), Ok(true)) {
-            // The channel and log calls finish before panic; no host lock crosses this boundary.
-            record("NATIVE-PANIC", format_args!("instance={} locks=none", worker_state.instance));
-            std::thread::sleep(Duration::from_millis(100));
-            panic!("vm_recovery explicit native terminal instance={}", worker_state.instance);
+        match native_commands.recv() {
+            Ok(NativeCommand::Panic) => {
+                // The channel and log calls finish before panic; no host lock crosses this boundary.
+                record("NATIVE-PANIC", format_args!("instance={} locks=none", worker_state.instance));
+                std::thread::sleep(Duration::from_millis(100));
+                panic!("vm_recovery explicit native terminal instance={}", worker_state.instance);
+            }
+            Ok(NativeCommand::Oom) => {
+                let bytes = 4usize * 1024 * 1024 * 1024;
+                record("NATIVE-OOM", format_args!("instance={} requested={bytes} touch=0 locks=none", worker_state.instance));
+                std::thread::sleep(Duration::from_millis(100));
+                // Real infallible allocation failure, without touching/reserving
+                // kernel physical pages or reaching a capacity-overflow panic.
+                let allocation = Vec::<u8>::with_capacity(bytes);
+                std::hint::black_box(&allocation);
+                record("FAIL", format_args!("instance={} impossible-allocation-succeeded capacity={}", worker_state.instance, allocation.capacity()));
+            }
+            _ => {}
         }
     }).map_err(|error| format!("native-spawn {error}"))?;
     let deadline = Instant::now() + Duration::from_secs(10);
