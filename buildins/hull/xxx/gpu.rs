@@ -41,8 +41,8 @@ impl Quads {
         result
     }
 
-    /// Upload only when a new page layout arrives. Width/height define its original extent.
-    /// Subsequent draws preserve each vertex's relative position in any surface size.
+    /// Upload the visible clipped rectangles when layout, scroll or extent changes.
+    /// Width/height are the frame viewport, never the full document's height.
     pub fn set_layout(&mut self, width: u32, height: u32, rectangles: &[Rect]) -> Result<(), i32> {
         if width == 0
             || height == 0

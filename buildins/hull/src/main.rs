@@ -4,8 +4,9 @@ use trueos::ui4_winit::{Damage, Error, HullTextRun, SceneTarget};
 use trueos::{logl, netfs, vshell};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, NamedKey};
 use winit::platform::trueos::{ActiveEventLoopExtTrueOS, WindowExtTrueOS};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -14,6 +15,7 @@ mod layout;
 mod scripts;
 mod shellio;
 mod snapshot;
+mod viewport;
 #[path = "../xxx/mod.rs"]
 mod xxx;
 
@@ -29,7 +31,10 @@ struct Hull {
     frame_counter: shellio::FrameCounter,
     quads: Option<xxx::Quads>,
     text_runs: Vec<layout::TextRun>,
+    rectangles: Vec<xxx::Rect>,
     layout_extent: (u32, u32),
+    viewport: viewport::Viewport,
+    shift_scroll: bool,
     download: Option<u32>,
     html: Option<Vec<u8>>,
     document: Option<rp5::Document>,
@@ -59,11 +64,15 @@ impl Hull {
             SceneTarget::for_window(window.trueos_window_id(), size.width, size.height)
                 .map_err(|error| format!("{error:?}"))?,
         );
+        self.viewport.resize(size.width, size.height);
         self.quads_dirty = true;
         self.redraw_reason = "initial";
         window.request_redraw();
         self.window = Some(window);
         vshell::line("hull: enter an HTTPS URL to download, parse and display it");
+        vshell::line(
+            "hull: scroll with wheel, arrows or Page Up/Down; Home/End; Shift+wheel pans sideways",
+        );
         self.start_page_with_policy(PAGE_URL.into(), false);
         Ok(())
     }
@@ -196,13 +205,25 @@ impl ApplicationHandler for Hull {
                 if self.quads.is_none() {
                     self.quads = Some(xxx::Quads::new()?);
                 }
-                self.quads.as_mut().unwrap().set_layout(
-                    layout.line_extent.0,
-                    layout.line_extent.1,
-                    &layout.line_rects,
-                )?;
                 self.layout_extent = layout.line_extent;
                 self.text_runs = layout.text_runs;
+                self.rectangles = layout.line_rects;
+                // CSS overflow can extend beyond the SVG's declared viewBox.
+                // Keep that overflow reachable without allocating a page-sized frame.
+                let mut right = self.layout_extent.0 as f32;
+                let mut bottom = self.layout_extent.1 as f32;
+                for &[x, y, width, height] in &self.rectangles {
+                    if [x, y, width, height].iter().all(|value| value.is_finite()) {
+                        right = right.max(x + width);
+                        bottom = bottom.max(y + height);
+                    }
+                }
+                for run in &self.text_runs {
+                    right = right.max(run.x + run.advance_px);
+                    bottom = bottom.max(run.baseline_y + run.size_px * 0.25 + 1.0);
+                }
+                self.viewport
+                    .set_document(right.ceil() as u32, bottom.ceil() as u32);
                 self.quads_dirty = true;
                 self.redraw_reason = "layout";
                 if let Some(window) = &self.window {
@@ -256,10 +277,53 @@ impl ApplicationHandler for Hull {
                 self.pending_publish = false;
                 self.quads_dirty = true;
                 self.redraw_reason = "resize";
+                self.viewport.resize(size.width, size.height);
                 self.frame_counter.resizing();
                 window.request_redraw();
                 target.set_extent(size.width, size.height)
             })(),
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift_scroll = modifiers.state().shift_key();
+                Ok(())
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (mut dx, mut dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        (-f64::from(x) * 48.0, -f64::from(y) * 48.0)
+                    }
+                    MouseScrollDelta::PixelDelta(position) => (-position.x, -position.y),
+                    _ => (0.0, 0.0),
+                };
+                if self.shift_scroll && dx == 0.0 {
+                    dx = dy;
+                    dy = 0.0;
+                }
+                if self.viewport.scroll_by(dx, dy) {
+                    self.quads_dirty = true;
+                    self.redraw_reason = "scroll";
+                    window.request_redraw();
+                }
+                Ok(())
+            }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                let changed = match event.logical_key {
+                    Key::Named(NamedKey::ArrowUp) => self.viewport.scroll_by(0.0, -48.0),
+                    Key::Named(NamedKey::ArrowDown) => self.viewport.scroll_by(0.0, 48.0),
+                    Key::Named(NamedKey::ArrowLeft) => self.viewport.scroll_by(-48.0, 0.0),
+                    Key::Named(NamedKey::ArrowRight) => self.viewport.scroll_by(48.0, 0.0),
+                    Key::Named(NamedKey::PageUp) => self.viewport.page(-1),
+                    Key::Named(NamedKey::PageDown) => self.viewport.page(1),
+                    Key::Named(NamedKey::Home) => self.viewport.home(),
+                    Key::Named(NamedKey::End) => self.viewport.end(),
+                    _ => false,
+                };
+                if changed {
+                    self.quads_dirty = true;
+                    self.redraw_reason = "scroll";
+                    window.request_redraw();
+                }
+                Ok(())
+            }
             WindowEvent::RedrawRequested => (|| {
                 // Moving the retained UI4 frame is compositor work. A generic
                 // redraw notification does not invalidate our content.
@@ -268,30 +332,72 @@ impl ApplicationHandler for Hull {
                 }
                 if !self.pending_publish && self.quads_dirty {
                     self.frame_counter.attempt();
-                    if let Some(quads) = &self.quads {
+                    let size = window.surface_size();
+                    let visible_rectangles: Vec<_> = self
+                        .rectangles
+                        .iter()
+                        .filter_map(|&rect| self.viewport.clip_rect(rect))
+                        .collect();
+                    if let Some(quads) = &mut self.quads {
+                        quads
+                            .set_layout(size.width, size.height, &visible_rectangles)
+                            .map_err(|code| {
+                                if code == trueos::vgpu::ERR_BUSY {
+                                    Error::Busy
+                                } else {
+                                    Error::Unknown(code)
+                                }
+                            })?;
                         quads.draw(target)?;
                     } else {
                         target.begin(rgba(35, 39, 39, 255))?;
                     }
-                    let size = window.surface_size();
                     if !self.text_runs.is_empty() {
-                        // Quads use fixed clip coordinates. Apply that identical
-                        // viewport transform to the SVG's baselines/textLength.
-                        let sx = size.width as f32 / self.layout_extent.0.max(1) as f32;
-                        let sy = size.height as f32 / self.layout_extent.1.max(1) as f32;
+                        // Document pixels remain document pixels. Cull and trim
+                        // offscreen runs before transport or font preparation.
                         let runs: Vec<_> = self
                             .text_runs
                             .iter()
-                            .map(|run| HullTextRun {
-                                text: &run.text,
-                                x: run.x * sx,
-                                baseline_y: run.baseline_y * sy,
-                                size_px: run.size_px * sy,
-                                advance_px: run.advance_px * sx,
-                                rgba: u32::from_le_bytes(run.color),
+                            .filter_map(|run| {
+                                if run.color[3] == 0 {
+                                    return None;
+                                }
+                                let visible = self.viewport.text_slice(
+                                    &run.text,
+                                    run.x,
+                                    run.baseline_y,
+                                    run.size_px,
+                                    run.advance_px,
+                                )?;
+                                Some(HullTextRun {
+                                    text: visible.text,
+                                    x: visible.x,
+                                    baseline_y: visible.baseline_y,
+                                    size_px: visible.size_px,
+                                    advance_px: visible.advance_px,
+                                    rgba: u32::from_le_bytes(run.color),
+                                })
                             })
                             .collect();
                         target.draw_hull_text_runs(&runs)?;
+                        let (x, y) = self.viewport.offset();
+                        let (doc_width, doc_height) = self.viewport.document_extent();
+                        vshell::linef(format_args!(
+                            "hull: viewport={}x{} document={}x{} scroll={},{} rects={}/{} text_runs={}/{} glyphs={} scale=1",
+                            size.width,
+                            size.height,
+                            doc_width,
+                            doc_height,
+                            x,
+                            y,
+                            visible_rectangles.len(),
+                            self.rectangles.len(),
+                            runs.len(),
+                            self.text_runs.len(),
+                            runs.iter()
+                                .map(|run| run.text.chars().count())
+                                .sum::<usize>(),
+                        ));
                     }
                     self.frame_counter.produced(
                         self.redraw_reason,

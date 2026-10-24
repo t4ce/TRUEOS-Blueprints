@@ -8,6 +8,12 @@ use crossterm::{execute, queue, cursor::{MoveTo, Hide, Show}, style::{Color, Set
 use trueos::{runtime, task::LocalSet};
 const CATALOG: &str = "https://trueos.eu/apps";
 const MAX_APP: usize = 512 * 1024 * 1024;
+// Match Shell3's three control rows; the content inherits the terminal background.
+const CONTROL_BACKGROUND: Color = Color::Rgb {
+    r: trueos::terminal_style::CONTROL_BACKGROUND_RGB[0],
+    g: trueos::terminal_style::CONTROL_BACKGROUND_RGB[1],
+    b: trueos::terminal_style::CONTROL_BACKGROUND_RGB[2],
+};
 struct Terminal;
 impl Terminal {
     fn enter() -> io::Result<Self> {
@@ -35,8 +41,12 @@ fn draw(apps: &[catalog::OnlineApp], query: &str, selected: usize, message: &str
     let ids = visible(apps, query);
     let start = selected / rows * rows;
     let mut out = io::stdout().lock();
-    queue!(out, ResetColor, Clear(ClearType::All), MoveTo(0,0), SetForegroundColor(Color::Cyan), Print("TRUEOS APPSTORE"), ResetColor,
-        MoveTo(0,1), Print(format!("{} apps · {} matches", apps.len(), ids.len())),
+    queue!(out, ResetColor, Clear(ClearType::All), SetBackgroundColor(CONTROL_BACKGROUND),
+        MoveTo(0,0), Clear(ClearType::CurrentLine),
+        MoveTo(0,1), Clear(ClearType::CurrentLine),
+        MoveTo(0,2), Clear(ClearType::CurrentLine),
+        MoveTo(0,0), SetForegroundColor(Color::Cyan), Print("TRUEOS APPSTORE"), SetForegroundColor(Color::Reset),
+        MoveTo(0,1), Print(format!("{} apps · {} matches", apps.len(), ids.len())), ResetColor,
         MoveTo(0,3), Print(format!("Search / ID: {query}").chars().take(width).collect::<String>()))?;
     for (offset, (position, id)) in ids.iter().enumerate().skip(start).take(rows).enumerate() {
         let (x, y, cell_width) = mouse::cell(width as u16, offset);

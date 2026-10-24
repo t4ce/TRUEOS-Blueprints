@@ -142,9 +142,21 @@ pub(super) fn compute(
         match &node.kind {
             NodeKind::Text(text) if !hidden[id] => {
                 for text in text_chunks(text, text_metrics[id].whitespace) {
+                    let pre_wrap = matches!(text_metrics[id].whitespace, WhiteSpaceMetric::PreWrap);
                     let style = Style {
                         display: Display::Block,
-                        flex_shrink: 0.0,
+                        flex_shrink: if pre_wrap { 1.0 } else { 0.0 },
+                        // Preserved text is one leaf, unlike normal word
+                        // fragments. Permit it to shrink to the line width so
+                        // its measurement and output can actually wrap.
+                        min_size: Size {
+                            width: if pre_wrap {
+                                LengthPercentageAuto::from_length(0.0)
+                            } else {
+                                LengthPercentageAuto::AUTO
+                            },
+                            height: LengthPercentageAuto::AUTO,
+                        },
                         ..Style::default()
                     };
                     let tid = tree.new_leaf_with_context(
@@ -259,22 +271,9 @@ pub(super) fn compute(
                     let width = known_dimensions
                         .width
                         .unwrap_or(natural.min(limit.max(1.0)));
-                    let height = known_dimensions.height.unwrap_or(if natural == 0.0 {
-                        0.0
-                    } else {
-                        (match metrics.whitespace {
-                            WhiteSpaceMetric::Pre => text.split('\n').count() as f32,
-                            WhiteSpaceMetric::NoWrap => 1.0,
-                            WhiteSpaceMetric::PreWrap => text
-                                .split('\n')
-                                .map(|line| {
-                                    estimated_line_count(line, width, metrics.font_size).max(1.0)
-                                })
-                                .sum(),
-                            WhiteSpaceMetric::Normal => {
-                                estimated_line_count(text, width, metrics.font_size)
-                            }
-                        }) * metrics.line_height.used(metrics.font_size)
+                    let height = known_dimensions.height.unwrap_or_else(|| {
+                        visual_line_count(text, metrics.whitespace, width, metrics.font_size) as f32
+                            * metrics.line_height.used(metrics.font_size)
                     });
                     Size { width, height }
                 },
@@ -298,11 +297,22 @@ pub(super) fn compute(
                     height: box_layout.size.height,
                 });
                 if let Some(context) = tree.get_node_context(tid) {
+                    if !context.metrics.paints()
+                        || !context.metrics.font_size.is_finite()
+                        || context.metrics.font_size <= 0.0
+                    {
+                        continue;
+                    }
                     let line_height = context.metrics.line_height.used(context.metrics.font_size);
                     for (line_index, line) in visual_lines(context, box_layout.size.width)
                         .iter()
                         .enumerate()
                     {
+                        // Whitespace retains its measured advance and line
+                        // boxes, but has no ink to export or submit to UI4.
+                        if line.chars().all(is_css_space) {
+                            continue;
+                        }
                         let y = top
                             + line_index as f32 * line_height
                             + (line_height - context.metrics.font_size) / 2.0
@@ -349,8 +359,10 @@ pub(super) fn compute(
                 document.name(id)
             };
             let rect = BoxRect::bounds(&fragments[id]);
-            rows.push(serde_json::json!({"node":id,"tag":tag,"rect":rect.as_ref().map(BoxRect::json),"hidden":hidden[id],"display_contents":contents[id],"text_metrics":{"font_size":text_metrics[id].font_size,"advance":text_metrics[id].font_size*6.0/11.0,"line_height":text_metrics[id].line_height.used(text_metrics[id].font_size)},"fragments":fragments[id].iter().map(BoxRect::json).collect::<Vec<_>>() }));
-            if matches!(document.nodes[id].kind, NodeKind::Element { .. }) {
+            rows.push(serde_json::json!({"node":id,"tag":tag,"rect":rect.as_ref().map(BoxRect::json),"hidden":hidden[id],"paint_visible":!hidden[id] && text_metrics[id].paints(),"display_contents":contents[id],"text_metrics":{"font_size":text_metrics[id].font_size,"advance":text_metrics[id].font_size*6.0/11.0,"line_height":text_metrics[id].line_height.used(text_metrics[id].font_size)},"fragments":fragments[id].iter().map(BoxRect::json).collect::<Vec<_>>() }));
+            if text_metrics[id].paints()
+                && matches!(document.nodes[id].kind, NodeKind::Element { .. })
+            {
                 if let Some(rect) = rect {
                     rectangles.push((id, rect.left, rect.top, rect.width, rect.height));
                 }
@@ -389,7 +401,7 @@ pub(super) fn compute(
         }
     }
     let json = serde_json::to_string_pretty(
-        &serde_json::json!({"engine":"taffy","engine_version":"0.15.0","viewport":{"width":viewport.0,"height":viewport.1},"units":"layout units; CSS lengths currently map 1:1 for compatibility; SVG uses the same numeric coordinates","coordinates":"absolute layout units; right/bottom are rectangle edges, not CSS insets","text_metrics":"synthetic monospace cell metrics: 6 layout units advance by 11 layout units line height at 11-unit default font-size, scaled by inherited CSS font-size and line-height; no font shaping","limitations":["text widths and wrapping use synthetic monospace metrics; no font shaping","dynamic pseudo-classes, pseudo-elements, :has and namespace selectors are not implemented","media conditions cover viewport sizes and orientation; device preference queries, variables, calc, grid tracks, cascade layers and supports conditions are not implemented","inline flow uses approximate flex line boxes; nested inline boxes may wrap as a single item; no complete browser default stylesheet"],"unsupported_rule_count":unsupported_rules,"properties_not_used_for_layout":unused,"nodes":rows}),
+        &serde_json::json!({"engine":"taffy","engine_version":"0.15.0","viewport":{"width":viewport.0,"height":viewport.1},"units":"layout units; CSS lengths currently map 1:1 for compatibility; SVG uses the same numeric coordinates","coordinates":"absolute layout units; right/bottom are rectangle edges, not CSS insets","text_metrics":"synthetic monospace cell metrics: 6 layout units advance by 11 layout units line height at 11-unit default font-size, scaled by inherited CSS font-size and line-height; no font shaping","limitations":["opacity:0 suppresses subtree paint and visibility is inherited; partial-opacity groups and compositing are not implemented","text widths and wrapping use synthetic monospace metrics; no font shaping","dynamic pseudo-classes, pseudo-elements, :has and namespace selectors are not implemented","media conditions cover viewport sizes and orientation; device preference queries, variables, calc, grid tracks, cascade layers and supports conditions are not implemented","inline flow uses approximate flex line boxes; nested inline boxes may wrap as a single item; no complete browser default stylesheet"],"unsupported_rule_count":unsupported_rules,"properties_not_used_for_layout":unused,"nodes":rows}),
     )?;
     let extent = tree.layout(root)?.size.height.max(viewport.1 as f32);
     let mut svg = format!(
@@ -528,6 +540,10 @@ struct TextMetrics {
     align: TextAlignMetric,
     whitespace: WhiteSpaceMetric,
     color: [u8; 4],
+    // Zero opacity suppresses the whole subtree. Visibility is inherited but
+    // a child may explicitly become visible; the two policies are distinct.
+    opacity_zero: bool,
+    visibility_hidden: bool,
 }
 
 struct TextMeasureContext {
@@ -560,39 +576,20 @@ impl Default for TextMetrics {
             align: TextAlignMetric::Start,
             whitespace: WhiteSpaceMetric::Normal,
             color: [0, 0, 0, 255],
+            opacity_zero: false,
+            visibility_hidden: false,
         }
+    }
+}
+
+impl TextMetrics {
+    fn paints(self) -> bool {
+        !self.opacity_zero && !self.visibility_hidden
     }
 }
 
 pub(super) fn estimate_text_width(text: &str, font_size: f32) -> f32 {
     text.chars().count() as f32 * font_size * (6.0 / 11.0)
-}
-
-fn estimated_line_count(text: &str, width: f32, font_size: f32) -> f32 {
-    let advance = font_size * (6.0 / 11.0);
-    if advance <= 0.0 {
-        return 0.0;
-    }
-    let columns = (width / advance).floor().max(1.0) as usize;
-    let mut lines = 0usize;
-    let mut used = 0usize;
-    for word in text.split(is_css_space).filter(|word| !word.is_empty()) {
-        let count = word.chars().count();
-        if used > 0 && used + 1 + count > columns {
-            lines += 1;
-            used = 0;
-        }
-        if count > columns {
-            lines += (count - 1) / columns;
-            used = (count - 1) % columns + 1;
-        } else {
-            if used > 0 {
-                used += 1;
-            }
-            used += count;
-        }
-    }
-    (lines + usize::from(used > 0)) as f32
 }
 
 fn apply_css<'a>(
@@ -664,6 +661,7 @@ fn apply_css<'a>(
     let mut font_size_winner: Option<&CssFontSize> = None;
     let mut line_height_winner: Option<&CssLineHeight> = None;
     let mut color_winner = None;
+    let mut opacity_winner = None;
     for (_, _, _, _, property) in declarations.iter() {
         if let Property::Position(value) = property {
             positioned = !matches!(value, lightningcss::properties::position::Position::Static);
@@ -672,6 +670,13 @@ fn apply_css<'a>(
             Property::Color(value) => color_winner = Some(value),
             Property::FontSize(value) => font_size_winner = Some(value),
             Property::LineHeight(value) => line_height_winner = Some(value),
+            Property::Opacity(value) => opacity_winner = Some(value.0),
+            Property::Visibility(value) => {
+                text_metrics.visibility_hidden = !matches!(
+                    value,
+                    lightningcss::properties::display::Visibility::Visible
+                );
+            }
             Property::Display(CssDisplay::Pair(value)) => {
                 *inline = matches!(
                     value.outside,
@@ -707,6 +712,10 @@ fn apply_css<'a>(
             _ => {}
         }
     }
+    // Opacity is not inherited as a CSS value, but an ancestor's zero group
+    // opacity cannot be undone by a child's opacity:1. Choose the winning own
+    // value first so opacity:0 followed by opacity:1 remains visible.
+    text_metrics.opacity_zero |= opacity_winner.is_some_and(|value| value <= 0.0);
     if let Some(value) = color_winner {
         if let Ok(lightningcss::values::color::CssColor::RGBA(value)) = value.to_rgb() {
             text_metrics.color = [value.red, value.green, value.blue, value.alpha];
@@ -1601,28 +1610,80 @@ fn xml_escape(text: &str) -> String {
 }
 
 fn visual_lines(context: &TextMeasureContext, width: f32) -> Vec<String> {
-    let advance = context.metrics.font_size * (6.0 / 11.0);
+    let mut lines = Vec::new();
+    for_each_visual_line(
+        &context.text,
+        context.metrics.whitespace,
+        width,
+        context.metrics.font_size,
+        |line| lines.push(line.to_owned()),
+    );
+    lines
+}
+
+fn visual_line_count(
+    text: &str,
+    whitespace: WhiteSpaceMetric,
+    width: f32,
+    font_size: f32,
+) -> usize {
+    let mut count = 0;
+    for_each_visual_line(text, whitespace, width, font_size, |_| count += 1);
+    count
+}
+
+// Measurement and emission must wrap the same Unicode characters. In
+// particular, pre-wrap spaces consume columns just like visible letters.
+// Walking borrowed slices keeps Taffy's repeated measurements allocation-free.
+fn for_each_visual_line(
+    text: &str,
+    whitespace: WhiteSpaceMetric,
+    width: f32,
+    font_size: f32,
+    mut emit: impl FnMut(&str),
+) {
+    if !font_size.is_finite() || font_size <= 0.0 {
+        return;
+    }
+    let text = if matches!(whitespace, WhiteSpaceMetric::Normal) {
+        // The leaf's natural width still reserves its inter-word spacing.
+        // A trailing collapsed space must not create a second visual line.
+        text.trim_end_matches(is_css_space)
+    } else {
+        text
+    };
+    if text.is_empty()
+        && !matches!(
+            whitespace,
+            WhiteSpaceMetric::Pre | WhiteSpaceMetric::PreWrap
+        )
+    {
+        return;
+    }
+    let advance = font_size * (6.0 / 11.0);
     let columns = if advance > 0.0 {
         (width / advance).floor().max(1.0) as usize
     } else {
         usize::MAX
     };
-    let nowrap = matches!(
-        context.metrics.whitespace,
-        WhiteSpaceMetric::Pre | WhiteSpaceMetric::NoWrap
-    );
-    let mut lines = Vec::new();
-    for line in context.text.split('\n') {
+    let nowrap = matches!(whitespace, WhiteSpaceMetric::Pre | WhiteSpaceMetric::NoWrap);
+    for line in text.split('\n') {
         if nowrap || line.is_empty() {
-            lines.push(line.into());
+            emit(line);
             continue;
         }
-        let chars: Vec<_> = line.chars().collect();
-        for chunk in chars.chunks(columns) {
-            lines.push(chunk.iter().collect());
+        let mut start = 0;
+        let mut used = 0;
+        for (index, _) in line.char_indices() {
+            if used == columns {
+                emit(&line[start..index]);
+                start = index;
+                used = 0;
+            }
+            used += 1;
         }
+        emit(&line[start..]);
     }
-    lines
 }
 
 fn used_for_layout(name: &str) -> bool {
@@ -1669,6 +1730,8 @@ fn used_for_layout(name: &str) -> bool {
             | "font"
             | "font-size"
             | "color"
+            | "opacity"
+            | "visibility"
             | "line-height"
             | "text-align"
             | "white-space"

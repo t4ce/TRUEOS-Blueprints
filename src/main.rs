@@ -968,7 +968,9 @@ fn build_one_target_to_in_lane(
     let entry_hint_hex = entry_hint_hex(&linked);
 
     let mut objcopy = tool_command(&["llvm-objcopy", "rust-objcopy", "objcopy"])?;
-    objcopy.arg("--strip-debug").arg(&linked).arg(&stripped);
+    objcopy.arg("--strip-debug")
+        .arg("--set-section-flags").arg(".trueos.shaders=readonly")
+        .arg(&linked).arg(&stripped);
     run_command(&mut objcopy, "objcopy")?;
 
     let packaged_elf = match rustc_tier {

@@ -70,11 +70,17 @@ pub mod netfs {
 mod css;
 #[path = "../../../src/layout.rs"]
 mod layout;
+#[path = "../../../src/viewport.rs"]
+mod viewport;
 #[cfg(test)]
 mod tests {
     use super::*;
     use static_self::IntoOwned;
     fn run(html: &str, css_text: &str) -> (rp5::Document, serde_json::Value) {
+        let (doc, output) = export(html, css_text);
+        (doc, serde_json::from_str(&output.json).unwrap())
+    }
+    fn export(html: &str, css_text: &str) -> (rp5::Document, layout::Export) {
         let doc = rp5::parse(html);
         let mut css = css::Css::default();
         css.add_sheet(
@@ -99,7 +105,7 @@ mod tests {
         }
         let output = layout::compute(&doc, &css, (1280, 720)).unwrap();
         assert!(output.svg.starts_with("<svg"));
-        (doc, serde_json::from_str(&output.json).unwrap())
+        (doc, output)
     }
     fn node<'a>(
         doc: &rp5::Document,
@@ -217,6 +223,150 @@ mod tests {
         );
         assert!(output.svg.contains("fill=\"#123456\""));
         assert!(output.svg.contains("fill=\"#ff0000\""));
+    }
+    #[test]
+    fn zero_size_subtree_and_whitespace_do_not_emit_invalid_or_empty_ink_runs() {
+        let (doc, output) = export(
+            "<div id='zero'>zero<span>inherited zero</span></div><div id='space'>   </div><div>ink</div>",
+            "#zero{font-size:0}#space{white-space:pre}",
+        );
+        assert_eq!(
+            output
+                .text_runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            ["ink"]
+        );
+        assert_eq!(output.svg.matches("<text ").count(), 1);
+        assert!(
+            output
+                .text_runs
+                .iter()
+                .all(|run| run.size_px.is_finite() && run.size_px > 0.0)
+        );
+        let json = serde_json::from_str(&output.json).unwrap();
+        assert_eq!(text_rect(&doc, &json, "zero")["rect"]["height"], 0.0);
+        assert_eq!(text_rect(&doc, &json, "space")["rect"]["height"], 11.0);
+        assert_eq!(text_rect(&doc, &json, "space")["rect"]["width"], 18.0);
+    }
+    #[test]
+    fn pre_wrap_preserves_space_columns_and_reserves_every_emitted_line() {
+        let (doc, output) = export(
+            "<div id='wrapped'>a        b</div><div id='next'>next</div>",
+            "#wrapped{white-space:pre-wrap;width:12px}",
+        );
+        let json = serde_json::from_str(&output.json).unwrap();
+        let wrapped = &text_rect(&doc, &json, "wrapped")["rect"];
+        assert_eq!(wrapped["height"], 55.0);
+        assert!(
+            node(&doc, &json, "next")["rect"]["top"].as_f64().unwrap()
+                >= wrapped["bottom"].as_f64().unwrap()
+        );
+        let a = output
+            .text_runs
+            .iter()
+            .find(|run| run.text.starts_with('a'))
+            .unwrap();
+        let b = output
+            .text_runs
+            .iter()
+            .find(|run| run.text.ends_with('b'))
+            .unwrap();
+        assert_eq!(b.baseline_y - a.baseline_y, 44.0);
+        assert!(
+            output
+                .text_runs
+                .iter()
+                .all(|run| !run.text.trim().is_empty())
+        );
+    }
+    #[test]
+    fn normal_trailing_space_reserves_advance_without_a_phantom_line() {
+        let (doc, output) = export(
+            "<div id='wrapped'>aa </div><div id='next'>next</div>",
+            "#wrapped{width:12px}",
+        );
+        let json = serde_json::from_str(&output.json).unwrap();
+        assert_eq!(text_rect(&doc, &json, "wrapped")["rect"]["height"], 11.0);
+        assert_eq!(output.text_runs[0].text, "aa");
+        assert_eq!(output.text_runs[0].advance_px, 12.0);
+        assert!(
+            output
+                .text_runs
+                .iter()
+                .all(|run| !run.text.trim().is_empty())
+        );
+    }
+    #[test]
+    fn zero_opacity_fade_slides_keep_layout_but_only_the_current_slide_paints() {
+        let (doc, output) = export(
+            "<div data-animation-type='fade'><div data-wrapper><div><h2 id='old'>Old headline</h2><h2 id='current' data-current>Current headline</h2></div></div></div>",
+            "[data-animation-type=fade] [data-wrapper]>div>*{position:absolute;opacity:0}[data-animation-type=fade] [data-wrapper]>div>*[data-current]{opacity:1;z-index:1}",
+        );
+        let json = serde_json::from_str(&output.json).unwrap();
+        for id in ["old", "current"] {
+            assert!(!node(&doc, &json, id)["rect"].is_null());
+        }
+        assert_eq!(node(&doc, &json, "old")["paint_visible"], false);
+        assert_eq!(node(&doc, &json, "current")["paint_visible"], true);
+        let ink = output
+            .text_runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>();
+        assert_eq!(ink, "Currentheadline");
+        let old_id = node(&doc, &json, "old")["node"].as_u64().unwrap();
+        let current_id = node(&doc, &json, "current")["node"].as_u64().unwrap();
+        assert!(
+            !output
+                .svg
+                .contains(&format!("<title>node {old_id}</title>"))
+        );
+        assert!(
+            output
+                .svg
+                .contains(&format!("<title>node {current_id}</title>"))
+        );
+    }
+    #[test]
+    fn zero_opacity_ancestor_cannot_be_overridden_but_own_cascade_can() {
+        let (doc, output) = export(
+            "<div id='zero'><span id='child'>Hidden</span></div><div id='winner'>Visible</div>",
+            "#zero{opacity:0}#child{opacity:1}#winner{opacity:0;opacity:1}",
+        );
+        let json = serde_json::from_str(&output.json).unwrap();
+        assert_eq!(node(&doc, &json, "child")["paint_visible"], false);
+        assert_eq!(node(&doc, &json, "winner")["paint_visible"], true);
+        assert!(!node(&doc, &json, "zero")["rect"].is_null());
+        assert_eq!(
+            output
+                .text_runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Visible"]
+        );
+    }
+    #[test]
+    fn inherited_visibility_can_be_overridden_by_a_visible_child() {
+        let (doc, output) = export(
+            "<div id='hidden'>Hidden<span>Inherited</span><span id='visible'>Shown</span></div><div id='collapse'>Collapsed</div>",
+            "#hidden{visibility:hidden}#visible{visibility:visible}#collapse{visibility:collapse}",
+        );
+        let json = serde_json::from_str(&output.json).unwrap();
+        assert_eq!(node(&doc, &json, "hidden")["paint_visible"], false);
+        assert_eq!(node(&doc, &json, "visible")["paint_visible"], true);
+        assert_eq!(node(&doc, &json, "collapse")["paint_visible"], false);
+        assert!(!node(&doc, &json, "collapse")["rect"].is_null());
+        assert_eq!(
+            output
+                .text_runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Shown"]
+        );
     }
     #[test]
     fn default_text_uses_six_by_eleven_cell() {

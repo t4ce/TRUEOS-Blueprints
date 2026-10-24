@@ -1,4 +1,4 @@
-//! Retained translucent layout quads. Resize maps fixed clip coordinates to the viewport.
+//! Translucent layout quads. The caller supplies clipped viewport coordinates.
 mod gpu;
 pub use gpu::Quads;
 
