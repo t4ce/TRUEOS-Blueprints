@@ -440,6 +440,102 @@ mod external_path_overlay_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn workspace_member_overlay_mismatches_use_the_seeded_workspace_lock() {
+        let root = test_dir("workspace-overlay-lock");
+        let app = root.join("member");
+        let overlay = root.join("tokio");
+        let staged = root.join("stage");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&overlay).unwrap();
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"member\"]\n").unwrap();
+        fs::write(
+            app.join("Cargo.toml"),
+            "[package]\nname = \"member\"\nversion = \"0.1.0\"\n",
+        ).unwrap();
+        fs::write(
+            overlay.join("Cargo.toml"),
+            "[package]\nname = \"tokio\"\nversion = \"1.54.1\"\n",
+        ).unwrap();
+        let workspace_lock = "version = 4\n[[package]]\nname = \"tokio\"\nversion = \"1.52.3\"\n";
+        fs::write(root.join("Cargo.lock"), workspace_lock).unwrap();
+        fs::write(
+            app.join("Cargo.lock"),
+            "version = 4\n[[package]]\nname = \"tokio\"\nversion = \"1.54.1\"\n",
+        ).unwrap();
+
+        let patches = [CratePatch::new("tokio", overlay)];
+        let mismatches = source_overlay_lock_mismatches(&app, &patches).unwrap();
+        assert_eq!(mismatches.len(), 1);
+        assert_eq!(mismatches[0].name, "tokio");
+        assert_eq!(mismatches[0].locked_version, "1.52.3");
+        assert_eq!(mismatches[0].overlay_version, "1.54.1");
+        seed_staged_lockfile(&app, &staged).unwrap();
+        assert_eq!(fs::read_to_string(staged.join("Cargo.lock")).unwrap(), workspace_lock);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn version_alignment_only_checks_the_selected_workspace_dependency_closure() {
+        let root = test_dir("workspace-alignment-closure");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"selected\", \"unrelated\"]\nexclude = [\"shared\", \"host-helper\"]\nresolver = \"3\"\n",
+        ).unwrap();
+        for (name, version, dependencies) in [
+            ("shared", "1.0.0", ""),
+            ("selected", "0.1.0", "[dependencies]\nshared = { path = \"../shared\", version = \"1.0\" }\n"),
+            ("unrelated", "0.1.0", "[dependencies]\nshared = { path = \"../shared\", version = \"=1.0.0\" }\n"),
+            ("host-helper", "0.1.0", "[dependencies]\nshared = { path = \"../shared\", version = \"=1.0.0\" }\n"),
+        ] {
+            let directory = root.join(name);
+            fs::create_dir_all(directory.join("src")).unwrap();
+            fs::write(directory.join("src/lib.rs"), "").unwrap();
+            fs::write(
+                directory.join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\nedition = \"2024\"\n{dependencies}"),
+            ).unwrap();
+        }
+        let generate_lock = || {
+            let output = toolchain::cargo_command()
+                .arg("generate-lockfile")
+                .arg("--offline")
+                .arg("--manifest-path")
+                .arg(root.join("Cargo.toml"))
+                .current_dir(&root)
+                .output()
+                .expect("generate local workspace lockfile");
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        };
+        generate_lock();
+        let mismatches = [LockMismatch {
+            name: "shared".to_owned(),
+            locked_version: "1.0.0".to_owned(),
+            overlay_version: "1.1.0".to_owned(),
+        }];
+        let selected = root.join("selected");
+        let selected_manifest = selected.join("Cargo.toml");
+        let report = source_overlay_version_alignment(&selected, &selected_manifest, &mismatches).unwrap();
+        assert!(report.incompatible.is_empty());
+        assert_eq!(report.compatible_edges, 1);
+
+        let unrelated = root.join("unrelated");
+        let report = source_overlay_version_alignment(&unrelated, &unrelated.join("Cargo.toml"), &mismatches).unwrap();
+        assert_eq!(report.incompatible.len(), 1);
+        assert_eq!(report.incompatible[0].parent_name, "unrelated");
+
+        // Host-side dependencies remain part of the selected package's audit.
+        let mut manifest = fs::read_to_string(&selected_manifest).unwrap();
+        manifest.push_str("\n[build-dependencies]\nhost-helper = { path = \"../host-helper\" }\n");
+        fs::write(&selected_manifest, manifest).unwrap();
+        generate_lock();
+        let report = source_overlay_version_alignment(&selected, &selected_manifest, &mismatches).unwrap();
+        assert_eq!(report.incompatible.len(), 1);
+        assert_eq!(report.incompatible[0].parent_name, "host-helper");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn staged_standalone_lock_is_a_private_copy_even_when_source_is_a_symlink() {

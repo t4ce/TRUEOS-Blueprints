@@ -155,7 +155,7 @@ termion = "4"
 termwiz = "0.23"
 thiserror = { version = "2.0.12", default-features = false }
 time = { version = "0.3.37", default-features = false }
-tokio = { version = "=1.52.3", default-features = false, features = ["full"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["full"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["tls12"] }
 tokio-stream = "0.1"
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }
@@ -262,11 +262,9 @@ rustix = { path = "vendor/rustix-1.1.4-trueos" }
 rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }
 signal-hook-mio = { path = "vendor/signal-hook-mio-0.2.5-trueos" }
 socket2 = { path = "vendor/socket2-0.6.3" }
-tokio = { path = "vendor/tokio-1.52.3" }
-tokio-macros = { path = "vendor/tokio-macros-2.7.0" }
+tokio = { path = "vendor/tokio-1.54.1" }
 tokio-rustls = { path = "vendor/tokio-rustls-0.26.4" }
 tokio-tungstenite = { path = "vendor/tokio-tungstenite-0.29.0" }
-tokio-util = { path = "vendor/tokio-util-0.7.18" }
 tower = { path = "vendor/tower-0.5.3" }
 tower-http = { path = "vendor/tower-http-0.6.9" }
 tower-layer = { path = "vendor/tower-layer-0.3.3" }

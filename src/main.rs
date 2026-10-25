@@ -148,11 +148,9 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("socket2", "socket2-0.6.3"),
     ("sqlx-sqlite", "sqlx-sqlite-0.9.0"),
     ("starlark", "starlark-0.14.2-trueos"),
-    ("tokio", "tokio-1.52.3"),
-    ("tokio-macros", "tokio-macros-2.7.0"),
+    ("tokio", "tokio-1.54.1"),
     ("tokio-rustls", "tokio-rustls-0.26.4"),
     ("tokio-tungstenite", "tokio-tungstenite-0.29.0"),
-    ("tokio-util", "tokio-util-0.7.18"),
     ("tower", "tower-0.5.3"),
     ("tower-http", "tower-http-0.6.9"),
     ("tower-layer", "tower-layer-0.3.3"),
@@ -2957,7 +2955,7 @@ fn patch_futures_timer_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     append_if_missing(
         &crate_dir.join("Cargo.toml"),
         "dependencies.trueos-tokio",
-        "\n[target.\"cfg(any(target_os = \\\"trueos\\\", target_os = \\\"zkvm\\\"))\".dependencies.trueos-tokio]\npackage = \"tokio\"\nversion = \"=1.52.3\"\ndefault-features = false\nfeatures = [\"rt\", \"time\"]\n",
+        "\n[target.\"cfg(any(target_os = \\\"trueos\\\", target_os = \\\"zkvm\\\"))\".dependencies.trueos-tokio]\npackage = \"tokio\"\nversion = \"=1.54.1\"\ndefault-features = false\nfeatures = [\"rt\", \"time\"]\n",
     )?;
     fs::write(crate_dir.join("src/trueos.rs"), FUTURES_TIMER_TRUEOS_RS).map_err(io_string)
 }
@@ -3463,10 +3461,7 @@ fn staged_manifest_for_overlay(
 /// resolution; re-resolving from nothing can drop upstream pins (including
 /// versions that were yanked after the upstream lock was written).
 fn seed_staged_lockfile(app_dir: &Path, staged_app_dir: &Path) -> Result<(), String> {
-    let lock_root = app_workspace_manifest(app_dir)
-        .map(|(root, _)| root)
-        .unwrap_or_else(|| app_dir.to_path_buf());
-    let source = lock_root.join("Cargo.lock");
+    let source = app_lockfile(app_dir);
     if !source.is_file() {
         return Ok(());
     }
@@ -3482,6 +3477,13 @@ fn seed_staged_lockfile(app_dir: &Path, staged_app_dir: &Path) -> Result<(), Str
         format!("failed to seed staged lockfile from {}: {error}", source.display())
     })?;
     Ok(())
+}
+
+fn app_lockfile(app_dir: &Path) -> PathBuf {
+    app_workspace_manifest(app_dir)
+        .map(|(root, _)| root)
+        .unwrap_or_else(|| app_dir.to_path_buf())
+        .join("Cargo.lock")
 }
 
 /// Staging copies only the application tree. Resolve dependency paths against
@@ -4157,6 +4159,42 @@ fn source_overlay_version_alignment(
         packages_by_id.insert(package.id.clone(), package);
     }
 
+    // Cargo metadata includes every workspace member, even when the packer
+    // requested one member's manifest. Only that package's dependency closure
+    // constrains its staged build; another app can legitimately pin a different
+    // version. Keep all dependency kinds here, including host/build edges.
+    let requested_manifest = fs::canonicalize(manifest_path).map_err(io_string)?;
+    let root_id = metadata
+        .packages
+        .iter()
+        .find(|package| {
+            fs::canonicalize(&package.manifest_path).ok().as_deref()
+                == Some(requested_manifest.as_path())
+        })
+        .map(|package| package.id.clone())
+        .or_else(|| resolve.root.clone())
+        .ok_or_else(|| {
+            format!(
+                "cargo metadata has no selected package for {}",
+                manifest_path.display()
+            )
+        })?;
+    let nodes_by_id = resolve
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let mut reachable = BTreeSet::new();
+    let mut pending = vec![root_id];
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id.clone()) {
+            continue;
+        }
+        if let Some(node) = nodes_by_id.get(id.as_str()) {
+            pending.extend(node.deps.iter().map(|dependency| dependency.pkg.clone()));
+        }
+    }
+
     let mut overlay_targets = BTreeMap::new();
     for mismatch in lock_mismatches {
         let target_key = (mismatch.name.clone(), mismatch.locked_version.clone());
@@ -4195,6 +4233,9 @@ fn source_overlay_version_alignment(
     let mut incompatible = Vec::new();
 
     for node in resolve.nodes {
+        if !reachable.contains(&node.id) {
+            continue;
+        }
         let Some(parent_package) = packages_by_id.get(&node.id) else {
             continue;
         };
@@ -4950,7 +4991,7 @@ fn source_overlay_lock_mismatches(
     app_dir: &Path,
     source_overlay: &[CratePatch],
 ) -> Result<Vec<LockMismatch>, String> {
-    let lock_path = app_dir.join("Cargo.lock");
+    let lock_path = app_lockfile(app_dir);
     if !lock_path.is_file() {
         return Ok(Vec::new());
     }
@@ -5828,13 +5869,13 @@ fn materialized_workspace_dependency(
         "serde_yaml" => "serde_yaml = \"0.9\"".to_string(),
         "tempfile" => "tempfile = \"3\"".to_string(),
         "tokio" => format!(
-            "tokio = {{ path = {}, version = \"=1.52.3\", default-features = false, features = [\"full\"] }}",
+            "tokio = {{ path = {}, version = \"=1.54.1\", default-features = false, features = [\"full\"] }}",
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
                     work_dir,
                     "tokio",
-                    &blueprint_root.join("vendor/tokio-1.52.3"),
+                    &blueprint_root.join("vendor/tokio-1.54.1"),
                 )
                 .display()
                 .to_string(),

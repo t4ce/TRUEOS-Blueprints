@@ -26,7 +26,7 @@ path = "src/lib.rs"
 
 [dependencies]
 v = { path = "../crates/trueos-v" }
-tokio = { version = "=1.52.3", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std", "fs"], optional = true }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std", "fs"], optional = true }
 mio = { version = "=1.2.0", default-features = false, features = ["os-poll", "net"], optional = true }
 socket2 = { version = "=0.6.3", default-features = false, optional = true }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"], optional = true }

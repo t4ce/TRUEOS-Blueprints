@@ -2,15 +2,9 @@
 //!
 //! [`File`]: File
 
-<<<<<<< /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.52.3/src/fs/file.rs
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::fs::asyncify;
-use crate::fs::OpenOptions;
-||||||| /tmp/trueos-kernel-crate-audit/sources/tokio-1.52.3/src/fs/file.rs
-use crate::fs::{asyncify, OpenOptions};
-=======
-use crate::fs::{asyncify, FileTimes, OpenOptions};
->>>>>>> /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.54.1/src/fs/file.rs
+use crate::fs::{FileTimes, OpenOptions};
 use crate::io::blocking::{Buf, DEFAULT_MAX_BUF_SIZE};
 use crate::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use crate::sync::Mutex;
@@ -630,6 +624,10 @@ impl File {
 
     /// Changes the timestamps on the underlying file.
     ///
+    /// Native TRUEOSFS files return [`io::ErrorKind::Unsupported`] because the
+    /// filesystem broker does not expose a timestamp setter. Files converted
+    /// from `std::fs::File` preserve the standard descriptor's behavior.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the user lacks permission to change
@@ -651,13 +649,19 @@ impl File {
     /// # }
     /// ```
     pub async fn set_times(&self, times: FileTimes) -> io::Result<()> {
-        // Wait for in-flight reads/writes like `sync_all` does, so they
-        // cannot complete after us and overwrite the timestamps.
-        self.inner.lock().await.complete_inflight().await;
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        return self.std.set_times(times.into_std());
 
-        let std = self.std.clone();
-        let std_times = times.into_std();
-        asyncify(move || std.set_times(std_times)).await
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            // Wait for in-flight reads/writes like `sync_all` does, so they
+            // cannot complete after us and overwrite the timestamps.
+            self.inner.lock().await.complete_inflight().await;
+
+            let std = self.std.clone();
+            let std_times = times.into_std();
+            asyncify(move || std.set_times(std_times)).await
+        }
     }
 
     /// Changes the modification timestamp on the underlying file.
@@ -1107,20 +1111,14 @@ impl fmt::Debug for File {
     }
 }
 
-<<<<<<< /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.52.3/src/fs/file.rs
 #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-||||||| /tmp/trueos-kernel-crate-audit/sources/tokio-1.52.3/src/fs/file.rs
-#[cfg(unix)]
-=======
-#[cfg(unix)]
 impl From<std::os::fd::OwnedFd> for File {
     fn from(fd: std::os::fd::OwnedFd) -> Self {
         Self::from_std(StdFile::from(fd))
     }
 }
 
-#[cfg(unix)]
->>>>>>> /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.54.1/src/fs/file.rs
+#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
 impl std::os::unix::io::AsRawFd for File {
     fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
         self.std.as_raw_fd()

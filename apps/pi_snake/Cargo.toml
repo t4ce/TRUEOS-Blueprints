@@ -25,7 +25,7 @@ trueos = { path = "../../api", features = ["tokio-net-probe"] }
 mio = { path = "../../vendor/mio-1.2.0" }
 rustix = { path = "../../vendor/rustix-1.1.4-trueos" }
 socket2 = { path = "../../vendor/socket2-0.6.3" }
-tokio = { path = "../../vendor/tokio-1.52.3" }
+tokio = { path = "../../vendor/tokio-1.54.1" }
 
 [profile.dev]
 codegen-units = 1

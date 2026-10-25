@@ -1,6 +1,5 @@
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::fs::asyncify;
-use alloc::borrow::ToOwned;
 
 use crate::io;
 use crate::path::Path;
@@ -25,17 +24,14 @@ use crate::path::Path;
 /// # }
 /// ```
 pub async fn try_exists(path: impl AsRef<Path>) -> io::Result<bool> {
-<<<<<<< /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.52.3/src/fs/try_exists.rs
-    let path = path.as_ref().to_owned();
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    return crate::fs::trueos::try_exists(&path).await;
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-||||||| /tmp/trueos-kernel-crate-audit/sources/tokio-1.52.3/src/fs/try_exists.rs
-    let path = path.as_ref().to_owned();
-=======
-    let path = path.as_ref();
+    return crate::fs::trueos::try_exists(path.as_ref()).await;
 
-    #[cfg(all(
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        let path = path.as_ref();
+
+        #[cfg(all(
         tokio_unstable,
         feature = "io-uring",
         feature = "rt",
@@ -51,20 +47,21 @@ pub async fn try_exists(path: impl AsRef<Path>) -> io::Result<bool> {
         // https://blog.rust-lang.org/2025/12/05/Updating-musl-1.2.5/
         any(target_env = "gnu", target_os = "android")
     ))]
-    {
-        if let Ok(handle) = crate::runtime::Handle::try_current() {
-            if let Some(driver_handle) = handle.inner.driver().io.as_ref() {
-                if driver_handle
-                    .check_and_init(io_uring::opcode::Statx::CODE)
-                    .await?
-                {
-                    return try_exists_uring(path).await;
+        {
+            if let Ok(handle) = crate::runtime::Handle::try_current() {
+                if let Some(driver_handle) = handle.inner.driver().io.as_ref() {
+                    if driver_handle
+                        .check_and_init(io_uring::opcode::Statx::CODE)
+                        .await?
+                    {
+                        return try_exists_uring(path).await;
+                    }
                 }
             }
         }
-    }
 
-    try_exists_spawn_blocking(path).await
+        try_exists_spawn_blocking(path).await
+    }
 }
 
 cfg_io_uring! {
@@ -92,11 +89,11 @@ cfg_io_uring! {
     }
 }
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 async fn try_exists_spawn_blocking(path: &Path) -> io::Result<bool> {
     let path = path.to_owned();
     // FIXME: When MSRV is 1.81, change this to
     // std::fs::exists() to be consistent with
     // all other tokio::fs operations
->>>>>>> /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.54.1/src/fs/try_exists.rs
     asyncify(move || path.try_exists()).await
 }

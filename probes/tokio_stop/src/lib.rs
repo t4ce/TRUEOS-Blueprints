@@ -23,6 +23,16 @@ fn log(message: std::fmt::Arguments<'_>) {
 }
 
 pub fn run_mode(mode: &str) {
+    let artifact_sha256 = std::env::var("TRUEOS_APP_SHA256")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    let instance = std::env::var("TRUEOS_APP_INSTANCE")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    let archive = std::env::var("TRUEOS_APP_ARCHIVE")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_stop: identity artifact_sha256={artifact_sha256} instance={instance} archive={archive}"),
+    );
     if let Err(stage) = run(mode) {
         log(format_args!("tokio_stop: FAIL stage={stage}"));
     }

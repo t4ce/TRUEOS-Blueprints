@@ -59,3 +59,17 @@ accepting the call. Missing paths still return their normal I/O error. Future
 read/write authorization belongs in filesystem I/O against the caller's keys.
 The expanded probe checks both handle forms and path permission copying without
 changing contents, file identity, or committed revision.
+
+## Tokio 1.54 timestamp setters
+
+The probe checks `File::set_times` and `File::set_modified` on a native Tokio
+snapshot handle. Both must return `ErrorKind::Unsupported`; the native setter
+must not manufacture an OS errno or change contents, file identity, or committed
+revision. This makes the absence of a writable timestamp CABI explicit.
+
+For a descriptor-backed `File::from_std` on TRUEOS, the probe compares the Tokio
+setter's error kind and raw OS errno to a direct `std::fs::File::set_times` call.
+The current kernel `futimens` shim returns ENOSYS. Matching the raw errno verifies
+that the original descriptor reaches std's backend instead of the snapshot
+fallback. The PASS report records `timestamp_boundary` and
+`descriptor_timestamp_forwarding` alongside the existing bridge checks.

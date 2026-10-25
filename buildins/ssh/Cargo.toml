@@ -12,7 +12,7 @@ path = "src/main.rs"
 anyhow = "1.0"
 rand = "0.10"
 russh = { version = "=0.62.4", default-features = false, features = ["ring"] }
-tokio = { version = "=1.52.3", default-features = false, features = ["full"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["full"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos = { path = "../../api" }

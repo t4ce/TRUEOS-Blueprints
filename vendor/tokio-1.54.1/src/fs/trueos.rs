@@ -1021,6 +1021,19 @@ impl TrueosFile {
         })
     }
 
+    pub(crate) fn set_times(&self, times: std::fs::FileTimes) -> io::Result<()> {
+        #[cfg(target_os = "trueos")]
+        if let Some(file) = self.std_file.as_ref() {
+            return file.set_times(times);
+        }
+
+        let _ = times;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "TRUEOSFS does not expose writable file timestamps",
+        ))
+    }
+
     pub(crate) fn set_permissions(&self, perm: Permissions) -> io::Result<()> {
         #[cfg(target_os = "trueos")]
         {

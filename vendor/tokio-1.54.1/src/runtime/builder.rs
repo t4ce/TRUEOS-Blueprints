@@ -359,23 +359,17 @@ impl Builder {
 
             metrics_poll_count_histogram: HistogramBuilder::default(),
 
-<<<<<<< /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.52.3/src/runtime/builder.rs
-            // TRUEOS workers are stackful continuations on shared cooperative
-            // carriers. A synchronous scoped CPU caller can park without
-            // returning from its Tokio task poll. Keep spawned children in the
-            // stealable queue so another worker can run them while it is parked.
-            disable_lifo_slot: cfg!(target_os = "trueos"),
-||||||| /tmp/trueos-kernel-crate-audit/sources/tokio-1.52.3/src/runtime/builder.rs
-            disable_lifo_slot: false,
-=======
             track_task_schedule_latency: false,
 
             metrics_schedule_latency_histogram_enabled: false,
 
             metrics_schedule_latency_histogram: HistogramBuilder::default(),
 
-            disable_lifo_slot: false,
->>>>>>> /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.54.1/src/runtime/builder.rs
+            // TRUEOS workers are stackful continuations on shared cooperative
+            // carriers. A synchronous scoped CPU caller can park without
+            // returning from its Tokio task poll. Keep spawned children in the
+            // stealable queue so another worker can run them while it is parked.
+            disable_lifo_slot: cfg!(target_os = "trueos"),
 
             timer_flavor: TimerFlavor::Traditional,
 

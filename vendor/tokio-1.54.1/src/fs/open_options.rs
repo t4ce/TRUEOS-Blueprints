@@ -554,7 +554,6 @@ impl OpenOptions {
         let path = path.to_owned();
         let opts = opts.clone();
 
-<<<<<<< /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.52.3/src/fs/open_options.rs
         #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
         {
             let std = opts.open(path)?;
@@ -563,15 +562,8 @@ impl OpenOptions {
 
         #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         {
-        let std = asyncify(move || opts.open(path)).await?;
-        Ok(File::from_std(std))
+            Ok(asyncify(move || opts.open(path)).await?.into())
         }
-||||||| /tmp/trueos-kernel-crate-audit/sources/tokio-1.52.3/src/fs/open_options.rs
-        let std = asyncify(move || opts.open(path)).await?;
-        Ok(File::from_std(std))
-=======
-        Ok(asyncify(move || opts.open(path)).await?.into())
->>>>>>> /home/t4ce/Repos/TRUEOS-Blueprints/vendor/tokio-1.54.1/src/fs/open_options.rs
     }
 
     #[cfg(windows)]

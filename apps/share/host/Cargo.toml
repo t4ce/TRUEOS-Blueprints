@@ -24,7 +24,7 @@ bytes = "1"
 dav-server = { version = "=0.11.0", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 hyper = { version = "=1.10.0", default-features = false, features = ["server", "http1"] }
-tokio = { version = "=1.52.3", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "sync"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "sync"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

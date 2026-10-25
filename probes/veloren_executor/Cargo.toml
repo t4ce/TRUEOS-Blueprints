@@ -14,7 +14,7 @@ cooperative-worldgen = []
 
 [dependencies]
 trueos = { path = "../../api" }
-tokio = { version = "=1.52.3", default-features = false, features = ["rt-multi-thread", "time", "sync", "net"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "time", "sync", "net"] }
 tokio-parallel = { package = "veloren-tokio-parallel", path = "../../../veloren/common/tokio-parallel" }
 specs = { path = "../../../veloren/vendor/specs" }
 

@@ -14,7 +14,7 @@ codex-exec-server = { path = "../../../codex/codex-rs/exec-server" }
 codex-transport = { path = "../../../codex/codex-rs/transport" }
 futures = "0.3"
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", rev = "4048ac40e958fb1a7d614617a2ae8d26666ee2fa", version = "=3.5.1", default-features = false, features = ["client"] }
-tokio = { version = "=1.52.3", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "=1.54.1", features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
 

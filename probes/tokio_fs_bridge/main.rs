@@ -125,6 +125,47 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         after_permissions.permissions(),
     ).await.unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+
+    // Tokio 1.54 exposes timestamp setters. Native snapshot handles must report
+    // the broker's missing capability rather than claiming a successful write.
+    phase("timestamp_boundary").await;
+    let before_timestamps = tokio::fs::metadata(MEMORY).await?;
+    let timestamp = std::time::SystemTime::UNIX_EPOCH
+        + std::time::Duration::from_secs(1_700_000_000);
+    let snapshot = tokio::fs::File::open(MEMORY).await?;
+    let error = snapshot.set_times(
+        tokio::fs::FileTimes::new().set_accessed(timestamp).set_modified(timestamp),
+    ).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    assert_eq!(error.raw_os_error(), None);
+    let error = snapshot.set_modified(timestamp).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    drop(snapshot);
+
+    #[cfg(target_os = "trueos")]
+    {
+        // Descriptor-backed files retain std's result, including its OS errno.
+        // The current futimens shim returns ENOSYS. Comparing the standard call
+        // avoids mistaking the native snapshot's constructed error for routing.
+        phase("descriptor_timestamp_forwarding").await;
+        let standard = std::fs::File::open(MEMORY)?;
+        let expected = standard.set_times(
+            std::fs::FileTimes::new().set_modified(timestamp),
+        ).unwrap_err();
+        assert!(expected.raw_os_error().is_some());
+        let descriptor = tokio::fs::File::from_std(standard);
+        let actual = descriptor.set_times(
+            tokio::fs::FileTimes::new().set_modified(timestamp),
+        ).await.unwrap_err();
+        assert_eq!(actual.kind(), expected.kind());
+        assert_eq!(actual.raw_os_error(), expected.raw_os_error());
+        drop(descriptor);
+    }
+
+    let after_timestamps = tokio::fs::metadata(MEMORY).await?;
+    assert_eq!(before_timestamps.file_id(), after_timestamps.file_id());
+    assert_eq!(before_timestamps.revision(), after_timestamps.revision());
+    assert_eq!(tokio::fs::read(MEMORY).await?, b"recreated");
     Ok(())
 }
 async fn phase(stage: &str) {
@@ -133,6 +174,16 @@ async fn phase(stage: &str) {
         .await;
 }
 fn main() {
+    let artifact_sha256 = std::env::var("TRUEOS_APP_SHA256")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    let instance = std::env::var("TRUEOS_APP_INSTANCE")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    let archive = std::env::var("TRUEOS_APP_ARCHIVE")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    trueos::logl::log(
+        trueos::logl::level::INFO,
+        format_args!("tokio_fs_bridge: identity artifact_sha256={artifact_sha256} instance={instance} archive={archive}"),
+    );
     let _ = trueos::async_fs::block_on(trueos::async_fs::write_file(
         b"/common/tokio-fs-bridge-report.json",
         br#"{"result":"START"}"#,
@@ -142,9 +193,23 @@ fn main() {
         .build()
         .unwrap();
     let result = tokio::task::LocalSet::new().block_on(&rt, run());
+    let artifact_sha256_report = if artifact_sha256.len() == 64
+        && artifact_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        artifact_sha256.as_str()
+    } else {
+        "unavailable"
+    };
+    let instance_report = if !instance.is_empty()
+        && instance.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+    {
+        instance.as_str()
+    } else {
+        "unavailable"
+    };
     let report = match result {
-        Ok(()) => String::from(
-            "{\"result\":\"PASS\",\"cursor\":true,\"append\":true,\"read_only\":true,\"owned_blocking_io\":true,\"metadata_identity\":true,\"std_tokio_identity\":true,\"same_length_revision\":true,\"permission_copy\":true}",
+        Ok(()) => format!(
+            "{{\"result\":\"PASS\",\"cursor\":true,\"append\":true,\"read_only\":true,\"owned_blocking_io\":true,\"metadata_identity\":true,\"std_tokio_identity\":true,\"same_length_revision\":true,\"permission_copy\":true,\"timestamp_boundary\":true,\"descriptor_timestamp_forwarding\":true,\"artifact_sha256\":\"{artifact_sha256_report}\",\"instance\":\"{instance_report}\"}}",
         ),
         Err(e) => format!("FAIL {e}"),
     };

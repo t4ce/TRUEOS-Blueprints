@@ -247,7 +247,7 @@ features = [
 ]
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies.tokio]
-version = "=1.52.3"
+version = "=1.54.1"
 default-features = false
 features = ["io-util"]
 

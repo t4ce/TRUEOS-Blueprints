@@ -906,7 +906,8 @@ optional = true
 version = "0.2.11"
 
 [dependencies.tokio-macros]
-version = "~2.7.0"
+# Keep the shared Blueprint macro dependency on the validated upstream release.
+version = "~2.7.2"
 optional = true
 
 [dev-dependencies.async-stream]

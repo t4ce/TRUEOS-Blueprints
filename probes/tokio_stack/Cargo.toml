@@ -14,8 +14,8 @@ trueos-blueprint = ["trueos/tracing"]
 [dependencies]
 bytes = { version = "=1.11.1", default-features = false }
 prost = "=0.14.4"
-tokio = { version = "=1.52.3", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
-tokio-stream = { version = "=0.1.17", default-features = false, features = ["net"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
+tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
 tonic = { version = "=0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
 tonic-prost = { version = "=0.14.6", default-features = false }
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }

@@ -35,6 +35,16 @@ enum Event {
 }
 
 fn main() {
+    let artifact_sha256 = std::env::var("TRUEOS_APP_SHA256")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    let instance = std::env::var("TRUEOS_APP_INSTANCE")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    let archive = std::env::var("TRUEOS_APP_ARCHIVE")
+        .unwrap_or_else(|_| String::from("unavailable"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_mrt: identity artifact_sha256={artifact_sha256} instance={instance} archive={archive}"),
+    );
     logl::log(
         level::INFO,
         format_args!("tokio_mrt: start std-and-multi-thread"),
