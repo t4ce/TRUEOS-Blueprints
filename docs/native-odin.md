@@ -3,14 +3,17 @@
 From this repository, build and publish the current sibling odin-son compiler:
 
 ```sh
-ODIN=/home/t4ce/Programmme/odin/odin cargo bp odin-son
+cargo bp odin-son
 ```
 
 `cargo bp odin-son` invokes `../odin-son/trueos/build.sh`, copies the resulting
 native Blueprint to `dist/odin-son.bp`, and uses the existing single-app
 publication path and SHA-256 filename. Set `TRUEOS_ODIN_SON_DIR` to select a
-different source checkout. `ODIN` selects the installed upstream compiler;
-otherwise the native build looks for `odin` on `PATH`. No Rust wrapper is built.
+different source checkout. `ODIN` explicitly selects the installed upstream
+compiler and an invalid override fails with an error. Otherwise the builder
+looks for `odin` on `PATH`, in `ODIN_SDK_ROOT`/`ODIN_ROOT`, and in common user
+installation directories, including `~/Programmme/odin`. It prints the compiler
+selected for the build. No Rust wrapper is built.
 
 In the current Shell3, submit `§§odin-son` and Enter to fetch and launch the
 published package. An already installed AppDB package also launches by exact
