@@ -11,7 +11,7 @@
     "pi_snake",
     "games",
     "gboi",
-    { "name": "rbgb", "path": "apps/RbGB" },
+    "rbgb",
     "tredb",
     "hello_world",
     "potatomin",

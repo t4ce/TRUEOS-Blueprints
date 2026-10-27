@@ -5,7 +5,7 @@
 	path = apps/superseedr
 	url = https://github.com/t4ce/superseedr
 [submodule "apps/RbGB"]
-	path = apps/RbGB
+	path = apps/rbgb
 	url = https://github.com/t4ce/RbGB.git
 [submodule "vendor/microgames"]
 	path = vendor/microgames
