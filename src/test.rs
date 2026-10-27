@@ -327,11 +327,11 @@ mod external_path_overlay_tests {
         fs::create_dir_all(&work_dir).unwrap();
         fs::write(
             root.join("Cargo.toml"),
-            "[workspace]\nmembers = [\"app\", \"crates/helper\"]\nresolver = \"2\"\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\n\n[workspace.dependencies]\nhelper = { path = \"crates/helper\" }\n",
+            "[workspace]\nmembers = [\"app\", \"crates/helper\"]\nresolver = \"2\"\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\n\n[workspace.dependencies]\nhelper = { features = [\"inherited\", \"shared\"], path = \"crates/helper\", default-features = false }\n",
         )
         .unwrap();
         let app_manifest = app.join("Cargo.toml");
-        let source = "[package]\nname = \"external-app\"\nversion.workspace = true\nedition.workspace = true\nrust-version.workspace = true\n\n[dependencies]\nhelper.workspace = true\n";
+        let source = "[package]\nname = \"external-app\"\nversion.workspace = true\nedition.workspace = true\nrust-version.workspace = true\n\n[dependencies]\nhelper = { workspace = true, features = [\"shared\", \"requested\"] } # caller feature request\n";
         fs::write(&app_manifest, source).unwrap();
         fs::write(&staged, source).unwrap();
         fs::write(
@@ -341,7 +341,7 @@ mod external_path_overlay_tests {
         .unwrap();
         fs::write(
             helper.join("Cargo.toml"),
-            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = [\"unwanted\"]\nunwanted = []\ninherited = []\nrequested = []\nshared = []\n",
         )
         .unwrap();
         fs::write(helper.join("src/lib.rs"), "pub fn value() {}\n").unwrap();
@@ -353,10 +353,6 @@ mod external_path_overlay_tests {
         let staged_text = fs::read_to_string(&staged).unwrap();
         assert!(staged_text.contains("edition = \"2024\""));
         assert!(staged_text.contains("rust-version = \"1.85\""));
-        assert!(staged_text.contains(&format!(
-            "helper = {{ path = \"{}\" }}",
-            fs::canonicalize(&helper).unwrap().display()
-        )));
         assert!(!staged_text.contains("edition.workspace"));
         assert!(!staged_text.contains("rust-version.workspace"));
 
@@ -381,7 +377,29 @@ mod external_path_overlay_tests {
                 .iter()
                 .any(|package| package["name"] == "external-app")
         );
-        assert!(packages.iter().any(|package| package["name"] == "helper"));
+        let helper_package = packages
+            .iter()
+            .find(|package| package["name"] == "helper")
+            .expect("helper package in staged dependency graph");
+        assert_eq!(
+            helper_package["manifest_path"].as_str().unwrap(),
+            fs::canonicalize(helper.join("Cargo.toml"))
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        let helper_node = metadata["resolve"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["id"] == helper_package["id"])
+            .expect("resolved helper dependency node");
+        // Workspace options and caller features must survive staging without
+        // silently enabling the helper's default feature set.
+        assert_eq!(
+            helper_node["features"],
+            serde_json::json!(["inherited", "requested", "shared"])
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -137,6 +137,16 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("quinn-udp", "quinn-udp-0.5.14"),
     ("rama-dns", "rama-dns-0.3.0-alpha.4-trueos"),
     ("rama-tls-rustls", "rama-tls-rustls-0.3.0-alpha.4-rustcrypto"),
+    // Keep the facade, widgets and optional backends on one source identity.
+    // A patch selects the source without enabling an app's unused backends.
+    ("ratatui", "ratatui/ratatui"),
+    ("ratatui-core", "ratatui/ratatui-core"),
+    ("ratatui-crossterm", "ratatui/ratatui-crossterm"),
+    ("ratatui-macros", "ratatui/ratatui-macros"),
+    ("ratatui-termina", "ratatui/ratatui-termina"),
+    ("ratatui-termion", "ratatui/ratatui-termion"),
+    ("ratatui-termwiz", "ratatui/ratatui-termwiz"),
+    ("ratatui-widgets", "ratatui/ratatui-widgets"),
     ("rayon", "rayon"),
     ("rayon-core", "rayon/rayon-core"),
     ("rustix", "rustix-1.1.4-trueos"),
@@ -5419,6 +5429,7 @@ fn materialize_staged_workspace_dependencies(
                 source_overlay,
                 &dep_name,
             )?;
+            dependency = merge_workspace_dependency_features(&dependency, line);
             if workspace_dependency_is_optional(line) {
                 dependency = optional_dependency_line(&dependency);
             }
@@ -5739,6 +5750,46 @@ fn optional_dependency_line(line: &str) -> String {
     out
 }
 
+fn merge_workspace_dependency_features(dependency: &str, declaration: &str) -> String {
+    let declaration = declaration.split('#').next().unwrap_or("");
+    let Some((_, requested)) = declaration.split_once('=') else {
+        return dependency.to_owned();
+    };
+    let Some(requested) = inline_table_field(requested, "features") else {
+        return dependency.to_owned();
+    };
+    let Some((name, value)) = dependency.split_once('=') else {
+        return dependency.to_owned();
+    };
+    let inherited = inline_table_field(value, "features");
+    let mut features = inherited.map(parse_string_array).unwrap_or_default();
+    for feature in parse_string_array(requested) {
+        push_feature(&mut features, &feature);
+    }
+    let features = format!(
+        "[{}]",
+        features
+            .iter()
+            .map(|feature| toml_string(feature))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    if let Some(inherited) = inherited {
+        let offset = dependency.len() - value.len() + value.find(inherited).unwrap();
+        let mut merged = dependency.to_owned();
+        merged.replace_range(offset..offset + inherited.len(), &features);
+        return merged;
+    }
+    let value = value.trim();
+    if let Some(table) = value.strip_suffix('}') {
+        return format!(
+            "{name}= {}, features = {features} }}",
+            table.trim_end().trim_end_matches(',')
+        );
+    }
+    format!("{name}= {{ version = {value}, features = {features} }}")
+}
+
 fn materialized_workspace_dependency(
     app_dir: &Path,
     blueprint_root: &Path,
@@ -6024,11 +6075,12 @@ fn materialize_app_workspace_dependency(
     value: &str,
     workspace_root: &Path,
 ) -> String {
+    let line = format!("{dep_name} = {value}");
     if let Some(path) = inline_table_path(value) {
         let path = resolve_manifest_path(workspace_root, &path);
-        return path_dependency_line(dep_name, &path);
+        return dependency_with_rewritten_path(&line, dep_name, &path).unwrap_or(line);
     }
-    format!("{dep_name} = {value}")
+    line
 }
 
 fn path_dependency_line(dep_name: &str, path: &Path) -> String {
@@ -6216,14 +6268,44 @@ fn inline_table_path(value: &str) -> Option<String> {
 }
 
 fn inline_table_string(value: &str, field: &str) -> Option<String> {
+    toml_string_value(inline_table_field(value, field)?)
+}
+
+fn inline_table_field<'a>(value: &'a str, field: &str) -> Option<&'a str> {
     let table = value
         .trim()
         .strip_prefix('{')
         .and_then(|value| value.strip_suffix('}'))?;
-    for item in table.split(',') {
-        let (key, value) = item.split_once('=')?;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    for item in table.split(|ch: char| {
+        if escaped {
+            escaped = false;
+            return false;
+        }
+        if let Some(delimiter) = quote {
+            if ch == '\\' && delimiter == '"' {
+                escaped = true;
+            } else if ch == delimiter {
+                quote = None;
+            }
+            return false;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' | '{' => depth += 1,
+            ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return true,
+            _ => {}
+        }
+        false
+    }) {
+        let Some((key, value)) = item.split_once('=') else {
+            continue;
+        };
         if key.trim() == field {
-            return toml_string_value(value.trim());
+            return Some(value.trim());
         }
     }
     None
