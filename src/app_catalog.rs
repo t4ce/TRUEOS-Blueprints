@@ -853,29 +853,8 @@ rustc-payload-dependencies = ["trueos", "itoa"]
         fs::create_dir_all(&fixture_root).unwrap();
         let root = fixture_root.as_path();
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for catalog in [PackageCatalog::Apps, PackageCatalog::Probes] {
-            fs::copy(
-                checkout.join(catalog.registry_file()),
-                root.join(catalog.registry_file()),
-            )
-            .unwrap();
-            for app in registered_app_specs(root, catalog).unwrap() {
-                assert!(
-                    app.dir.starts_with(root),
-                    "catalog fixture must use a relative path"
-                );
-                fs::create_dir_all(&app.dir).unwrap();
-                fs::write(
-                    app.dir.join("Cargo.toml"),
-                    format!("[package]\nname = {:?}\nversion = \"0.1.0\"\n", app.name),
-                )
-                .unwrap();
-            }
-        }
-        let apps = registered_app_specs(root, PackageCatalog::Apps).unwrap();
-        let probes = package_app_specs(root, PackageCatalog::Probes).unwrap();
-
-        for probe_name in [
+        fs::copy(checkout.join("apps.json"), root.join("apps.json")).unwrap();
+        let probe_names = [
             "condvar",
             "cross",
             "framework_stack",
@@ -893,7 +872,30 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             "tokio_stack",
             "unix_api_probe",
             "wls",
-        ] {
+        ];
+        fs::write(
+            root.join("probes.json"),
+            serde_json::json!({ "probes": probe_names }).to_string(),
+        )
+        .unwrap();
+        for catalog in [PackageCatalog::Apps, PackageCatalog::Probes] {
+            for app in registered_app_specs(root, catalog).unwrap() {
+                assert!(
+                    app.dir.starts_with(root),
+                    "catalog fixture must use a relative path"
+                );
+                fs::create_dir_all(&app.dir).unwrap();
+                fs::write(
+                    app.dir.join("Cargo.toml"),
+                    format!("[package]\nname = {:?}\nversion = \"0.1.0\"\n", app.name),
+                )
+                .unwrap();
+            }
+        }
+        let apps = registered_app_specs(root, PackageCatalog::Apps).unwrap();
+        let probes = package_app_specs(root, PackageCatalog::Probes).unwrap();
+
+        for probe_name in probe_names {
             assert!(apps.iter().all(|app| app.name != probe_name));
             let probe = probes
                 .iter()
