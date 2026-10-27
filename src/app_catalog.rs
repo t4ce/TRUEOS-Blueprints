@@ -109,9 +109,9 @@ pub(crate) fn package_app_specs(
 ) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
     for app in registered_app_specs(app_dir, package_catalog)? {
-        if app.optional && !app.dir.join("Cargo.toml").is_file() {
+        if app.optional {
             println!(
-                "trueos-blueprint: skipping unavailable optional {}: {} ({})",
+                "trueos-blueprint: skipping optional {}: {} ({})",
                 package_catalog.item_label(),
                 app.name,
                 app.dir.display()
@@ -374,6 +374,36 @@ pub(crate) fn package_blueprint_rustc_tier(
         };
     }
     Ok(None)
+}
+
+/// Native compilers may reuse a separately prepared sysroot. Embedding remains
+/// the default so existing compiler packages keep their self-contained inputs.
+pub(crate) fn package_blueprint_rustc_embed_sysroot(manifest_path: &Path) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        if let Some(("rustc-embed-sysroot", value)) =
+            trimmed.split_once('=').map(|(key, value)| (key.trim(), value.trim()))
+        {
+            return match value {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                _ => Err(format!(
+                    "bad rustc-embed-sysroot value in {}; expected true or false",
+                    manifest_path.display()
+                )),
+            };
+        }
+    }
+    Ok(true)
 }
 
 pub(crate) fn package_blueprint_rustc_payload_dependencies(
@@ -665,6 +695,22 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn optional_apps_are_skipped_by_default_but_can_be_selected() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = env::temp_dir().join(format!("trueos-blueprint-optional-{nonce}"));
+        fs::create_dir_all(root.join("apps/cubes")).unwrap();
+        fs::write(root.join("apps.json"), r#"{"apps":[{"name":"cubes","optional":true}]}"#).unwrap();
+        fs::write(root.join("apps/cubes/Cargo.toml"), "[package]\nname = \"cubes\"\nversion = \"0.1.0\"\n").unwrap();
+
+        assert!(package_app_specs(&root, PackageCatalog::Apps).unwrap().is_empty());
+        assert!(package_app_spec(&root, "cubes", PackageCatalog::Apps).unwrap().is_some());
+        fs::remove_file(root.join("apps/cubes/Cargo.toml")).unwrap();
+        assert!(package_app_specs(&root, PackageCatalog::Apps).unwrap().is_empty());
+        assert!(package_app_spec(&root, "cubes", PackageCatalog::Apps).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn resolves_pumpkin_workspace_package_and_legacy_lookup() {
         let root = Path::new("/workspace/Pumpkin");
         assert_eq!(
@@ -791,6 +837,23 @@ filesystem-independent = true
         let path = temporary_manifest("entry-abi", "argv-v2");
         let error = package_blueprint_argv_entry_v1(&path).unwrap_err();
         assert!(error.contains("expected legacy or argv-v1"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn external_rustc_sysroot_requires_explicit_boolean_opt_out() {
+        let path = temporary_manifest("rustc-embed-sysroot", "invalid");
+        for (metadata, expected) in [
+            ("", true),
+            ("[package.metadata.other]\nrustc-embed-sysroot = false\n", true),
+            ("[package.metadata.trueos-blueprint]\nrustc-embed-sysroot = true\n", true),
+            ("[package.metadata.trueos-blueprint]\nrustc-embed-sysroot = false # external inputs\n", false),
+        ] {
+            fs::write(&path, format!("[package]\nname = \"probe\"\n{metadata}")).unwrap();
+            assert_eq!(package_blueprint_rustc_embed_sysroot(&path).unwrap(), expected);
+        }
+        fs::write(&path, "[package.metadata.trueos-blueprint]\nrustc-embed-sysroot = \"false\"\n").unwrap();
+        assert!(package_blueprint_rustc_embed_sysroot(&path).is_err());
         fs::remove_file(path).unwrap();
     }
 

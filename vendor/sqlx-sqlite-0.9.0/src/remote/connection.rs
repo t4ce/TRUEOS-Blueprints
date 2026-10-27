@@ -451,7 +451,7 @@ async fn ensure_service(client: &reqwest::Client, endpoint: &str, deadline: Inst
         return Err(Error::Protocol("invalid SQLite instance name".into()));
     }
     trueos::vshell::launch_with_destination(
-        "appstore",
+        "apps",
         &format!("launch --headless sqlite -- instance {instance}\n"),
         trueos::vshell::LaunchDestination::Headless,
     )

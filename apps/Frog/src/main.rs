@@ -33,24 +33,18 @@ fn keep_report_open() {
 
 fn print_snapshot(snapshot: &weather::WeatherSnapshot) {
     println!(
-        "Frog weather: {}, {} ({:.4}, {:.4})",
+        "{}, {} ({:.4}, {:.4}), Today is {}",
         snapshot.location.name,
         snapshot.location.country,
         snapshot.location.lat,
-        snapshot.location.lon
+        snapshot.location.lon,
+        snapshot.local_datetime
     );
-    println!("source: {}", snapshot.source);
-    if let Some(current) = snapshot.current.as_ref() {
-        println!(
-            "now: {}C, feels {}C, {}, humidity {}%, wind {} km/h",
-            current.temp_c, current.feels_c, current.summary, current.humidity, current.wind_kmh
-        );
-    }
+    println!();
     for day in &snapshot.days {
+        println!("{}: {}", day.weekday, day.summary);
         println!(
-            "{}: {} — day {}C, feels {}C, range {}..{}C, night {}C, rain {}%, humidity {}%, wind {} km/h {}, UV {}",
-            day.weekday,
-            day.summary,
+            "day {}C, feels {}C, range {}..{}C, night {}C, rain {}%, humidity {}%, wind {} km/h {}, UV {}",
             day.temp_day_c,
             day.feels_day_c,
             day.temp_min_c,
@@ -62,7 +56,15 @@ fn print_snapshot(snapshot: &weather::WeatherSnapshot) {
             day.wind_dir,
             day.uvi
         );
+        println!();
     }
+    if let Some(current) = snapshot.current.as_ref() {
+        println!(
+            "now: {}C, feels {}C, {}, humidity {}%, wind {} km/h",
+            current.temp_c, current.feels_c, current.summary, current.humidity, current.wind_kmh
+        );
+    }
+
     if !snapshot.note.is_empty() {
         println!("note: {}", snapshot.note);
     }

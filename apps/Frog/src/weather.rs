@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -9,7 +9,7 @@ const DAILY_ROW_COUNT: usize = 8;
 #[derive(Clone, Debug)]
 pub struct WeatherSnapshot {
     pub location: Location,
-    pub source: String,
+    pub local_datetime: String,
     pub current: Option<CurrentWeather>,
     pub days: Vec<ForecastDay>,
     pub note: String,
@@ -71,12 +71,7 @@ pub async fn load_weather_snapshot(coordinates: (f64, f64)) -> Result<WeatherSna
     let response = trueos_weather::oc3::decode_onecall_raw_safe(raw_weather.as_str())
         .map_err(|_| anyhow!("decode OpenWeather onecall response"))?;
 
-    Ok(build_snapshot(
-        location,
-        response,
-        String::from("live OpenWeather 3.0 onecall metric/de"),
-        note,
-    ))
+    Ok(build_snapshot(location, response, note))
 }
 
 fn fallback_location(coordinates: (f64, f64)) -> Location {
@@ -136,9 +131,19 @@ fn parse_reverse_geo(raw: &str, coordinates: (f64, f64)) -> Option<Location> {
 fn build_snapshot(
     location: Location,
     response: trueos_weather::OpenWeatherResponse,
-    source: String,
     note: String,
 ) -> WeatherSnapshot {
+    let unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_else(|_| {
+            response
+                .current
+                .as_ref()
+                .map(|current| current.dt)
+                .unwrap_or(0)
+        });
+    let local_datetime = format_local_datetime(unix, response.timezone_offset, &response.timezone);
     let current = response.current.as_ref().map(|current| {
         let weather = current.weather.first();
         CurrentWeather {
@@ -188,11 +193,34 @@ fn build_snapshot(
 
     WeatherSnapshot {
         location,
-        source,
+        local_datetime,
         current,
         days,
         note,
     }
+}
+
+// Convert Unix days to the proleptic Gregorian calendar without a host timezone dependency.
+fn format_local_datetime(unix: u64, offset: i32, timezone: &str) -> String {
+    let local = unix as i64 + i64::from(offset);
+    let days = local.div_euclid(86_400);
+    let seconds = local.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} ({timezone})",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
 }
 
 fn weekday_abbrev(unix: u64) -> &'static str {
@@ -228,6 +256,22 @@ fn ms_to_kmh(value: f64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_datetime_handles_offsets_and_calendar_boundaries() {
+        assert_eq!(
+            format_local_datetime(0, -3600, "Test"),
+            "1969-12-31 23:00:00 (Test)"
+        );
+        assert_eq!(
+            format_local_datetime(951_782_400, 3600, "Europe/Berlin"),
+            "2000-02-29 01:00:00 (Europe/Berlin)"
+        );
+        assert_eq!(
+            format_local_datetime(1_793_145_600, 3600, "Europe/Berlin"),
+            "2026-10-28 01:00:00 (Europe/Berlin)"
+        );
+    }
+
     #[test]
     fn forecast_keeps_clicked_point_instead_of_nearest_city_coordinates() {
         let point = (13.8278, 51.4713);

@@ -30,7 +30,7 @@ use app_catalog::{
     package_blueprint_build_env_paths, package_blueprint_profile,
     package_blueprint_replicatable,
     package_blueprint_stack_capture,
-    package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier,
+    package_blueprint_rustc_embed_sysroot, package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier,
     package_blueprint_trueosfs_scope, package_name, push_app_or_trueos_feature,
 };
 use artifact::{
@@ -528,6 +528,7 @@ fn build_one_target_to_in_lane(
     } else {
         None
     };
+    let rustc_embed_sysroot = package_blueprint_rustc_embed_sysroot(manifest_path)?;
     if rustc_tier.is_some() || package_blueprint_argv_entry_v1(manifest_path)? {
         capability_flags |= BLUEPRINT_CAP_ARGV_ENTRY_V1;
     }
@@ -811,7 +812,7 @@ fn build_one_target_to_in_lane(
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
     }
-    let (rustc_payload, rustc_sysroot_metadata) = if rustc_tier.is_some() {
+    let (rustc_payload, rustc_sysroot_metadata) = if rustc_tier.is_some() && rustc_embed_sysroot {
         let requested = package_blueprint_rustc_payload_dependencies(&cargo_manifest_path)?;
         if requested.is_empty() {
             (
@@ -971,7 +972,7 @@ fn build_one_target_to_in_lane(
     run_command(&mut objcopy, "objcopy")?;
 
     let packaged_elf = match rustc_tier {
-        Some(tier) => {
+        Some(tier) if rustc_embed_sysroot => {
             let asset_elf = work_dir.join("module.assets.o");
             let assets = rustc_sysroot_asset_entries(
                 tier,
@@ -987,7 +988,7 @@ fn build_one_target_to_in_lane(
             );
             attach_trueos_asset_bundle(&stripped, &asset_elf, &assets)?
         }
-        None => stripped.clone(),
+        _ => stripped.clone(),
     };
 
     let out = output_dir.join(format!("{output_name}.bp"));
