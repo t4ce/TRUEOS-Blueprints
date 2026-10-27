@@ -1,9 +1,0 @@
-{
-  "package_sha256": "4d765030b27eaeb240459ceeb083b8ab03e5a50a7435f1a3d7ffd0f56c7bf31d",
-  "native_tls_verified": false,
-  "reported_raw_probe_result": "1/10; wrong-root error is not certificate-validation proof",
-  "observed_setenv_joker": true,
-  "missing_ca_env_observations": 10,
-  "root_cause_proven": "unresolved setenv import returns zero without mutation; normal transport CA environment absent",
-  "remaining_tls_diagnosis": "not established until real environment mutation and CA loading are verified"
-}

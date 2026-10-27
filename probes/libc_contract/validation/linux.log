@@ -1,7 +1,0 @@
-   Compiling libc_contract v0.1.0 (/home/t4ce/Repos/TRUEOS-Blueprints/probes/libc_contract)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
-     Running `target/x86_64-unknown-linux-gnu/debug/libc_contract`
-libc_contract: PASS case=classification elapsed_ms=0 errno=0
-libc_contract: PASS case=relative_filesystem elapsed_ms=0 errno=0
-libc_contract: PASS case=capacity_output_contract elapsed_ms=0 errno=0
-libc_contract: PASS case=all elapsed_ms=0 errno=0

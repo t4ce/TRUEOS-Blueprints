@@ -1,4 +1,0 @@
-libc_contract: PASS case=classification elapsed_ms=0 errno=0
-libc_contract: PASS case=relative_filesystem elapsed_ms=29 errno=0
-libc_contract: PASS case=capacity_output_contract elapsed_ms=30 errno=0
-libc_contract: PASS case=all elapsed_ms=33 errno=0

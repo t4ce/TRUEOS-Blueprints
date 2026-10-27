@@ -1,7 +1,0 @@
-{
-  "iso_sha256": "1130dc8b79ac05999afc9c86611912c0948455a08b2c26ce04524d7d7368d6ec",
-  "source_iso": "/home/t4ce/Repos/TRUEOS/bld/codex-native-runtime-final/trueos.iso",
-  "package_sha256": "a6eb684a0d82b9dd441eb7c9ef1cb94fe16dc197eb400faf241c4935d56bc633",
-  "result": "multi_thread_1 and multi_thread_4 pass; current_thread quiet JavaScript watchdog fails after3 cells while direct/no-JS controls pass",
-  "full_elf_sha256": "c707df199aeae1efa9ce0ecd05632289e5539cc3447f409589d3eeb20ff91166"
-}
