@@ -45,7 +45,6 @@ exclude = [
     "vendor/ratatui/ratatui-termion",
     "vendor/ratatui/ratatui-termwiz",
     "probes/sqlx_client",
-    "buildins/hull",
     "apps/prismq/crates/prism-q",
     "crates",
     "crates/*"

@@ -17,9 +17,7 @@ TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp share
 ```
 
 This produces `dist/share.bp` without publishing or launching it. The app is
-registered as a built-in in `buildins.json`, with its sources in `apps/share`.
-The default TRUEOS startup manifest launches it headlessly from the embedded
-AppDB on cold boot, without fetching it from the online app catalog.
+registered in `apps.json`, with its sources in `apps/share`.
 It uses the normal VMX Blueprint execution path, without a guest Linux system.
 The root is created when the server starts. Files live in TRUEOSFS independently
 of the server process.

@@ -10,3 +10,6 @@
 [submodule "vendor/microgames"]
 	path = vendor/microgames
 	url = https://github.com/t4ce/MicroGames.git
+[submodule "apps/rebsky"]
+	path = apps/rebsky
+	url = https://github.com/t4ce/rebels-in-the-sky.git

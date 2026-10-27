@@ -902,18 +902,9 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             assert_eq!(probe.dir, root.join("probes").join(probe_name));
         }
 
-        for buildin_name in [
-            "commander",
-            "ssh",
-            "img",
-            "os",
-            "backup",
-            "termdir",
-            "edit",
-            "hull",
-        ] {
-            let buildin = apps.iter().find(|app| app.name == buildin_name).unwrap();
-            assert_eq!(buildin.dir, root.join("buildins").join(buildin_name));
+        for app_name in ["calculator", "bios", "rebsky", "share", "reticulum", "tantivy"] {
+            let app = apps.iter().find(|app| app.name == app_name).unwrap();
+            assert_eq!(app.dir, root.join("apps").join(app_name));
         }
 
         let picasso_example =

@@ -1,15 +1,12 @@
 {
   "apps": [
-    { "name": "codex-cli", "path": "../codex/codex-rs/cli", "optional": true },
-    { "name": "hull", "path": "buildins/hull" },
-    { "name": "rebsky", "path": "../rebels-in-the-sky" },
-    "badc",
+    { "name": "codex-cli", "path": "../codex/codex-rs/cli" },
+    "rebsky",
     "calculator",
     "bios",
     "dobby",
     "websys",
     "share",
-    "gridpape",
     "ratatest",
     "pi_snake",
     "games",
@@ -18,60 +15,10 @@
     "tredb",
     "hello_world",
     "potatomin",
-    "wgpu-hello-compute",
     "hello_world_replicatable",
-    {
-      "name": "img",
-      "path": "buildins/img"
-    },
-    {
-      "name": "hyper",
-      "path": "buildins/hyper"
-    },
-    {
-      "name": "backup",
-      "path": "buildins/backup"
-    },
-    {
-      "name": "os",
-      "path": "buildins/os"
-    },
-    "image-viewer",
     "japan",
     "lumen",
     "ipp-printer",
-    {
-      "name": "termdir",
-      "path": "buildins/termdir"
-    },
-    {
-      "name": "edit",
-      "path": "buildins/edit"
-    },
-    {
-      "name": "trueos-picasso-example",
-      "path": "../TRUEOS-Picasso-Example"
-    },
-    {
-      "name": "boat",
-      "path": "../boat"
-    },
-    {
-      "name": "cubes",
-      "path": "../Cubes"
-    },
-    {
-      "name": "window-decorations",
-      "path": "../WindowDecorations"
-    },
-    {
-      "name": "potato-stamps",
-      "path": "../PotatoStamps"
-    },
-    {
-      "name": "QuadTexture",
-      "path": "../QuadTexture"
-    },
     "esp32_stt",
     "flight_controller_sim",
     "prismq",
@@ -85,12 +32,46 @@
     "maxpix",
     "Player",
     "skybox",
-    {
-      "name": "ssh",
-      "path": "buildins/ssh"
-    },
     "swarm",
     "cubesrv",
+    "superseedr",
+    "reticulum",
+    "tantivy",
+    "webmail",
+    {
+      "name": "rustc-min",
+      "path": "../TRUEOS-Rust-Toolchain-nightly-2026-07-10/apps/rustc-min"
+    },
+    {
+      "name": "wgpu-hello-compute",
+      "path": "apps/wgpu-hello-compute",
+      "optional": true
+    },
+    {
+      "name": "trueos-picasso-example",
+      "path": "../TRUEOS-Picasso-Example",
+      "optional": true
+    },
+    {
+      "name": "boat",
+      "path": "../boat",
+      "optional": true
+    },
+    {
+      "name": "cubes",
+      "path": "../Cubes",
+      "optional": true
+    },
+    {
+      "name": "potato-stamps",
+      "path": "../PotatoStamps",
+      "optional": true
+    },
+    {
+      "name": "QuadTexture",
+      "path": "../QuadTexture",
+      "optional": true
+    },
     {
       "name": "velory",
       "path": "../Velory",
@@ -100,20 +81,6 @@
       "name": "voxy",
       "path": "../voxy",
       "optional": true
-    },
-    "superseedr",
-    "reticulum",
-    "tantivy",
-    "webmail",
-    {
-      "name": "commander",
-      "path": "buildins/commander"
-    },
-    {
-      "name": "rustc-min",
-      "path": "../TRUEOS-Rust-Toolchain-nightly-2026-07-10/apps/rustc-min",
-      "optional": true
-    },
-    { "name": "appstore", "path": "buildins/appstore" }
+    }
   ]
 }

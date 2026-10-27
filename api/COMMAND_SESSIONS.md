@@ -43,7 +43,7 @@ sessions do not borrow that lease or type commands into the visible Codex consol
 | Interface | Status | Consumers |
 | --- | --- | --- |
 | `Shell2Frontend`, frontend constants, raw Shell2 write, and five ABI imports | Removed; no application consumers; kernel implementations are retired stubs | None |
-| Terminal lease and surface snapshot | Preserved | Builtins: backup, appstore, os, commander, termdir, edit. Apps: solara, RbGB, pi_snake, qjs, lumen, badc |
+| Terminal lease and surface snapshot | Preserved | Apps: solara, RbGB, pi_snake, qjs, lumen |
 | `shell2_print_line` compatibility name | Preserved | Generic printing and qjs reexport |
 | `vcabi` | Preserved | Blueprint API allocation, randomness, tunnels, and other low-level services |
 
