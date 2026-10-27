@@ -430,7 +430,7 @@ mod tests {
         let app_rmeta = deps_dir.join("libapplication-4444444444444444.rmeta");
         let stale_object_rmeta =
             Path::new("/tmp/other-target/deps/libobject-0000000000000000.rmeta");
-        let vendor_libc_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/libc-0.2.186");
+        let vendor_libc_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../TRUEOS-Buildins/vendor/libc-0.2.186");
         let vendor_libc = vendor_libc_root.join("src/lib.rs");
         let vendor_libc_package_id =
             format!("path+file://{}#libc@0.2.186", vendor_libc_root.display());

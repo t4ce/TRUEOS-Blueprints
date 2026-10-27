@@ -197,7 +197,7 @@ disallowed_methods = "deny"
 
 [dependencies.reqwest]
 version = "=0.13.3"
-path = "../reqwest-0.13.3"
+path = "../../../TRUEOS-Buildins/vendor/reqwest-0.13.3"
 default-features = false
 
 [dependencies.serde_json]

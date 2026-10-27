@@ -8,7 +8,7 @@ The Blueprint patch touches only:
   apps/lumen/Cargo.toml
   apps/lumen/src/main.rs
 
-It is independent of the Mio RegistrationMode patch in vendor/mio-1.2.0 and can
+It is independent of the Mio RegistrationMode patch in ../TRUEOS/vendor/mio-1.2.0 and can
 be applied after that patch.
 
 Apply TRUEOS:

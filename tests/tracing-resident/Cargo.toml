@@ -12,9 +12,9 @@ tracing-appender = "0.2.5"
 log = "0.4"
 
 [patch.crates-io]
-tracing = { path = "../../vendor/tracing-0.1.44" }
-tracing-core = { path = "../../vendor/tracing-core-0.1.36" }
-tracing-attributes = { path = "../../vendor/tracing-attributes-0.1.31" }
+tracing = { path = "../../../TRUEOS-Buildins/vendor/tracing-0.1.44" }
+tracing-core = { path = "../../../TRUEOS-Buildins/vendor/tracing-core-0.1.36" }
+tracing-attributes = { path = "../../../TRUEOS-Buildins/vendor/tracing-attributes-0.1.31" }
 tracing-subscriber = { path = "../../vendor/tracing-subscriber-0.3.23" }
 tracing-appender = { path = "../../vendor/tracing-appender-0.2.5" }
 tracing-log = { path = "../../vendor/tracing-log-0.2.0" }

@@ -14,7 +14,7 @@ def main():
         package = Path(folder) / "sqlx-sqlite"
         shutil.copytree(vendor, package)
         manifest = (package / "Cargo.toml").read_text()
-        manifest = manifest.replace('path = "../reqwest-0.13.3"', f'path = "{ROOT / "vendor/reqwest-0.13.3"}"')
+        manifest = manifest.replace('path = "../../../TRUEOS-Buildins/vendor/reqwest-0.13.3"', f'path = "{ROOT / "../TRUEOS-Buildins/vendor/reqwest-0.13.3"}"')
         manifest = manifest.replace('path = "../../api"', f'path = "{ROOT / "api"}"')
         (package / "Cargo.toml").write_text(manifest + "\n[workspace]\n")
         subprocess.run([

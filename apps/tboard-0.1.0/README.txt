@@ -18,10 +18,10 @@ Place the project in the usual app tree and run:
 The default Cargo.toml expects the TrueOS app layout:
 
     ../../api
-    ../../vendor/crossterm-0.29.0-trueos
-    ../../vendor/mio-1.2.0
-    ../../vendor/rustix-1.1.4-trueos
-    ../../vendor/signal-hook-mio-0.2.5-trueos
+    ../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos
+    ../../../TRUEOS/vendor/mio-1.2.0
+    ../../../TRUEOS-Buildins/vendor/rustix-1.1.4-trueos
+    ../../../TRUEOS-Buildins/vendor/signal-hook-mio-0.2.5-trueos
 
 Launch directives
 -----------------

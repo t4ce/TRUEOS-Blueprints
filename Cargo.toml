@@ -8,21 +8,14 @@ members = [
     ".",
     "api",
     "apps/dobby",
-    "probes/condvar",
-    "probes/cross",
     "apps/websys",
     "apps/share",
-    "probes/framework_stack",
     "apps/gridpape",
     "apps/ratatest",
-    "apps/games",
-    "apps/RbGB",
     "apps/gboi",
     "apps/hello_world",
     "apps/potatomin",
     "apps/hello_world_replicatable",
-    "buildins/img",
-    "buildins/hyper",
     "apps/image-viewer",
     "apps/japan",
     "apps/lumen",
@@ -32,34 +25,13 @@ members = [
     "apps/monaco",
     "apps/sqlite",
     "apps/prismq",
-    "probes/posix_file_world_probe",
-    "probes/posix_fd_probe",
-    "probes/panick",
     "apps/PlotTwist",
     "apps/Player",
     "apps/shadertoy",
-    "probes/unix_api_probe",
-    "probes/redb_probe",
-    "probes/rusqlite_probe",
-    "probes/sqlite_client",
-    "probes/redb_multirt",
-    "probes/reqwest_blocking",
-    "probes/signal_probe",
     "apps/skybox",
-    "buildins/ssh",
     "apps/swarm",
     "apps/cubesrv",
-    "probes/test_some_crates",
-    "probes/tokio_fs",
-    "probes/tokio_fs_bridge",
-    "probes/tokio_mrt",
-    "probes/tokio_net",
-    "probes/network_contract",
-    "probes/file_replace_contract",
-    "probes/tokio_rt",
-    "probes/tokio_stack",
     "apps/webmail",
-    "probes/wls",
 ]
 exclude = [
     "probes/alloc_probe",
@@ -230,43 +202,43 @@ axum-core = { path = "vendor/axum-core-0.5.6" }
 base64 = { path = "vendor/base64-0.22.1" }
 bytes = { path = "vendor/bytes-1.11.1" }
 crossbeam-deque = { path = "vendor/crossbeam-deque-0.8.6" }
-crossbeam-utils = { path = "vendor/crossbeam-utils-0.8.21" }
-crossterm = { path = "vendor/crossterm-0.29.0-trueos" }
+crossbeam-utils = { path = "../TRUEOS/vendor/crossbeam-utils-0.8.21" }
+crossterm = { path = "../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos" }
 getrandom = { path = "vendor/getrandom-0.2.17" }
 getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }
-getrandom_04 = { package = "getrandom", path = "vendor/getrandom-0.4.2" }
+getrandom_04 = { package = "getrandom", path = "../TRUEOS/vendor/getrandom-0.4.3" }
 h2 = { path = "vendor/h2-0.4.14" }
 hickory-net = { path = "vendor/hickory-net-0.26.3" }
 hickory-proto = { path = "vendor/hickory-proto-0.26.3" }
 hickory-resolver = { path = "vendor/hickory-resolver-0.26.3" }
 if-watch = { path = "vendor/if-watch-3.2.2" }
-http = { path = "vendor/http-1.4.0" }
-http-body = { path = "vendor/http-body-1.0.1" }
-http-body-util = { path = "vendor/http-body-util-0.1.3" }
-httpdate = { path = "vendor/httpdate-1.0.3" }
-hyper = { path = "vendor/hyper-1.10.0" }
-hyper-rustls = { path = "vendor/hyper-rustls-0.27.9" }
-hyper-util = { path = "vendor/hyper-util-0.1.20" }
+http = { path = "../TRUEOS/vendor/http-1.4.0" }
+http-body = { path = "../TRUEOS/vendor/http-body-1.0.1" }
+http-body-util = { path = "../TRUEOS-Buildins/vendor/http-body-util-0.1.3" }
+httpdate = { path = "../TRUEOS/vendor/httpdate-1.0.3" }
+hyper = { path = "../TRUEOS/vendor/hyper-1.10.0" }
+hyper-rustls = { path = "../TRUEOS-Buildins/vendor/hyper-rustls-0.27.9" }
+hyper-util = { path = "../TRUEOS-Buildins/vendor/hyper-util-0.1.20" }
 matchit = { path = "vendor/matchit-0.8.4" }
 mime = { path = "vendor/mime-0.3.17" }
-mio = { path = "vendor/mio-1.2.0" }
+mio = { path = "../TRUEOS/vendor/mio-1.2.0" }
 quinn = { path = "vendor/quinn-0.11.9" }
 quinn-proto = { path = "vendor/quinn-proto-0.11.14" }
 quinn-udp = { path = "vendor/quinn-udp-0.5.14" }
-reqwest = { path = "vendor/reqwest-0.13.3" }
-ring = { path = "vendor/ring-0.17.14" }
-russh-cryptovec = { path = "vendor/russh-cryptovec-0.62.0" }
+reqwest = { path = "../TRUEOS-Buildins/vendor/reqwest-0.13.3" }
+ring = { path = "../TRUEOS/vendor/ring-0.17.14" }
+russh-cryptovec = { path = "../TRUEOS-Buildins/vendor/russh-cryptovec-0.62.0" }
 rayon = { path = "vendor/rayon" }
 rayon-core = { path = "vendor/rayon/rayon-core" }
-rustix = { path = "vendor/rustix-1.1.4-trueos" }
-rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }
-signal-hook-mio = { path = "vendor/signal-hook-mio-0.2.5-trueos" }
-socket2 = { path = "vendor/socket2-0.6.3" }
-tokio = { path = "vendor/tokio-1.54.1" }
-tokio-rustls = { path = "vendor/tokio-rustls-0.26.4" }
+rustix = { path = "../TRUEOS-Buildins/vendor/rustix-1.1.4-trueos" }
+rustls-rustcrypto = { path = "../TRUEOS/vendor/rustls-rustcrypto-0.0.2-alpha" }
+signal-hook-mio = { path = "../TRUEOS-Buildins/vendor/signal-hook-mio-0.2.5-trueos" }
+socket2 = { path = "../TRUEOS-Buildins/vendor/socket2-0.6.3" }
+tokio = { path = "../TRUEOS-Buildins/vendor/tokio-1.54.1" }
+tokio-rustls = { path = "../TRUEOS-Buildins/vendor/tokio-rustls-0.26.4" }
 tokio-tungstenite = { path = "vendor/tokio-tungstenite-0.29.0" }
-tower = { path = "vendor/tower-0.5.3" }
-tower-http = { path = "vendor/tower-http-0.6.9" }
+tower = { path = "../TRUEOS-Buildins/vendor/tower-0.5.3" }
+tower-http = { path = "../TRUEOS-Buildins/vendor/tower-http-0.6.9" }
 tower-layer = { path = "vendor/tower-layer-0.3.3" }
 tower-service = { path = "vendor/tower-service-0.3.3" }
-want = { path = "vendor/want-0.3.1" }
+want = { path = "../TRUEOS/vendor/want-0.3.1" }

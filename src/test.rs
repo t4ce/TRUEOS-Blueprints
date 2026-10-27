@@ -1025,7 +1025,7 @@ mod terminal_platform_vendor_tests {
     use super::*;
 
     #[test]
-    fn terminal_stack_is_owned_by_the_blueprint_platform_vendor() {
+    fn terminal_stack_uses_the_pinned_shared_vendor() {
         for (package, vendor_dir) in [
             ("crossterm", "crossterm-0.29.0-trueos"),
             ("rustix", "rustix-1.1.4-trueos"),
@@ -1033,9 +1033,7 @@ mod terminal_platform_vendor_tests {
         ] {
             assert!(BLUEPRINT_VENDOR_PATCHES.contains(&(package, vendor_dir)));
             assert!(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("vendor")
-                    .join(vendor_dir)
+                blueprint_vendor_path(Path::new(env!("CARGO_MANIFEST_DIR")), vendor_dir)
                     .join("Cargo.toml")
                     .is_file()
             );
@@ -1072,12 +1070,14 @@ mod terminal_platform_vendor_tests {
 
     #[test]
     fn terminal_platform_forks_use_persistent_mio_eventflow() {
-        let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor");
-        let crossterm =
-            fs::read_to_string(vendor.join("crossterm-0.29.0-trueos/src/event/source/unix/mio.rs"))
-                .unwrap();
-        let signal_hook =
-            fs::read_to_string(vendor.join("signal-hook-mio-0.2.5-trueos/src/lib.rs")).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let crossterm = fs::read_to_string(
+            blueprint_vendor_path(root, "crossterm-0.29.0-trueos")
+                .join("src/event/source/unix/mio.rs"),
+        ).unwrap();
+        let signal_hook = fs::read_to_string(
+            blueprint_vendor_path(root, "signal-hook-mio-0.2.5-trueos").join("src/lib.rs"),
+        ).unwrap();
 
         assert_eq!(crossterm, CROSSTERM_TRUEOS_MIO_SOURCE);
         assert!(crossterm.contains("trueos_set_nonblocking(tty_raw_fd)?;"));
@@ -1097,5 +1097,46 @@ mod terminal_platform_vendor_tests {
         assert!(!crossterm.contains("mio::io"));
         assert!(signal_hook.contains("type Error = MioIoError;"));
         assert!(!signal_hook.contains("mio::io"));
+    }
+}
+
+#[cfg(test)]
+mod shared_vendor_tests {
+    use super::*;
+
+    #[test]
+    fn shared_vendor_sources_exist_and_have_no_local_duplicates() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (name, relative) in SHARED_VENDOR_PATHS {
+            assert!(
+                root.join(relative).join("Cargo.toml").is_file(),
+                "missing {relative}"
+            );
+            assert!(!root.join("vendor").join(name).exists(), "duplicate {name}");
+            assert_eq!(
+                find_blueprint_vendor_dir(&root.join("apps/Frog"), name),
+                Some(root.join(relative)),
+            );
+        }
+    }
+
+    #[test]
+    fn absent_shared_source_does_not_select_a_local_copy() {
+        let fixture =
+            env::temp_dir().join(format!("blueprint-shared-vendor-{}", std::process::id()));
+        reset_dir(&fixture).unwrap();
+        let root = fixture.join("TRUEOS-Blueprints");
+        fs::create_dir_all(root.join("vendor/mio-1.2.0")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"trueos-blueprint\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("apps.json"), "{}").unwrap();
+        let selected = find_blueprint_vendor_dir(&root, "mio-1.2.0").unwrap();
+        assert_eq!(selected, root.join("../TRUEOS/vendor/mio-1.2.0"));
+        assert!(!selected.is_dir());
+        assert!(add_blueprint_vendor_patches(&root, &mut Vec::new()).is_err());
+        fs::remove_dir_all(fixture).unwrap();
     }
 }

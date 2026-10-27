@@ -9,14 +9,14 @@ fn read(root: &Path, relative: &str) -> String {
 #[test]
 fn trueos_mio_uses_the_unix_poll_selector_contract() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sys = read(root, "vendor/mio-1.2.0/src/sys/mod.rs");
-    let unix = read(root, "vendor/mio-1.2.0/src/sys/unix/mod.rs");
-    let poll = read(root, "vendor/mio-1.2.0/src/sys/unix/selector/poll.rs");
+    let sys = read(root, "../TRUEOS/vendor/mio-1.2.0/src/sys/mod.rs");
+    let unix = read(root, "../TRUEOS/vendor/mio-1.2.0/src/sys/unix/mod.rs");
+    let poll = read(root, "../TRUEOS/vendor/mio-1.2.0/src/sys/unix/selector/poll.rs");
 
     assert!(
-        sys.contains("#[cfg(any(\n    unix,\n    target_os = \"hermit\"")
-            && !sys.contains("mod trueos;"),
-        "TRUEOS must stay on Mio's Unix selector instead of a second native reactor"
+        sys.contains("all(unix, not(all(any(target_os = \"trueos\", target_os = \"zkvm\"), not(feature = \"std-compat\"))))")
+            && sys.contains("pub use self::unix::*;"),
+        "the shared Mio crate must select the Unix backend for std-compat builds"
     );
     assert!(
         unix.contains("target_os = \"trueos\"")
@@ -34,7 +34,7 @@ fn trueos_mio_uses_the_unix_poll_selector_contract() {
         "raw SourceFd registrations and Mio-managed IoSource registrations need distinct rearm semantics"
     );
     assert!(
-        !root.join("vendor/mio-1.2.0/src/sys/trueos").exists(),
+        !root.join("../TRUEOS/vendor/mio-1.2.0/src/sys/trueos").exists(),
         "do not reintroduce a duplicate TRUEOS selector registry"
     );
 }

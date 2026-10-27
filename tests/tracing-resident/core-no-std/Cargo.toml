@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 [workspace]
 [dependencies]
-tracing-core = { path = "../../../vendor/tracing-core-0.1.36", default-features = false }
+tracing-core = { path = "../../../../TRUEOS-Buildins/vendor/tracing-core-0.1.36", default-features = false }

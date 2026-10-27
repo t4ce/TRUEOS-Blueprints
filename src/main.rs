@@ -2141,7 +2141,114 @@ fn find_trueos_kernel_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> 
     candidate.is_dir().then_some(candidate)
 }
 
+// These crates are owned by the sibling repositories. Missing sources are an
+// error; do not substitute a Blueprint-local or registry copy.
+const SHARED_VENDOR_PATHS: &[(&str, &str)] = &[
+    (
+        "crossbeam-utils-0.8.21",
+        "../TRUEOS/vendor/crossbeam-utils-0.8.21",
+    ),
+    (
+        "crossterm-0.29.0-trueos",
+        "../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos",
+    ),
+    ("getrandom-0.4.3", "../TRUEOS/vendor/getrandom-0.4.3"),
+    ("http-1.4.0", "../TRUEOS/vendor/http-1.4.0"),
+    ("http-body-1.0.1", "../TRUEOS/vendor/http-body-1.0.1"),
+    (
+        "http-body-util-0.1.3",
+        "../TRUEOS-Buildins/vendor/http-body-util-0.1.3",
+    ),
+    ("httpdate-1.0.3", "../TRUEOS/vendor/httpdate-1.0.3"),
+    ("hyper-1.10.0", "../TRUEOS/vendor/hyper-1.10.0"),
+    (
+        "hyper-rustls-0.27.9",
+        "../TRUEOS-Buildins/vendor/hyper-rustls-0.27.9",
+    ),
+    (
+        "hyper-util-0.1.20",
+        "../TRUEOS-Buildins/vendor/hyper-util-0.1.20",
+    ),
+    ("lazy_static-1.5.0", "../TRUEOS/vendor/lazy_static-1.5.0"),
+    ("libc-0.2.186", "../TRUEOS-Buildins/vendor/libc-0.2.186"),
+    ("mio-1.2.0", "../TRUEOS/vendor/mio-1.2.0"),
+    (
+        "raw-window-handle",
+        "../TRUEOS-Buildins/vendor/raw-window-handle",
+    ),
+    ("reqwest-0.13.3", "../TRUEOS-Buildins/vendor/reqwest-0.13.3"),
+    ("ring-0.17.14", "../TRUEOS/vendor/ring-0.17.14"),
+    (
+        "russh-cryptovec-0.62.0",
+        "../TRUEOS-Buildins/vendor/russh-cryptovec-0.62.0",
+    ),
+    (
+        "rustix-1.1.4-trueos",
+        "../TRUEOS-Buildins/vendor/rustix-1.1.4-trueos",
+    ),
+    (
+        "rustls-rustcrypto-0.0.2-alpha",
+        "../TRUEOS/vendor/rustls-rustcrypto-0.0.2-alpha",
+    ),
+    (
+        "signal-hook-mio-0.2.5-trueos",
+        "../TRUEOS-Buildins/vendor/signal-hook-mio-0.2.5-trueos",
+    ),
+    ("socket2-0.6.3", "../TRUEOS-Buildins/vendor/socket2-0.6.3"),
+    (
+        "symphonia-codec-aac-0.5.5-trueos",
+        "../TRUEOS/vendor/symphonia-codec-aac-0.5.5-trueos",
+    ),
+    (
+        "symphonia-core-0.5.5-trueos",
+        "../TRUEOS/vendor/symphonia-core-0.5.5-trueos",
+    ),
+    (
+        "taffy-0.15.0-trueos",
+        "../TRUEOS-Buildins/vendor/taffy-0.15.0-trueos",
+    ),
+    ("tokio-1.54.1", "../TRUEOS-Buildins/vendor/tokio-1.54.1"),
+    (
+        "tokio-rustls-0.26.4",
+        "../TRUEOS-Buildins/vendor/tokio-rustls-0.26.4",
+    ),
+    ("tower-0.5.3", "../TRUEOS-Buildins/vendor/tower-0.5.3"),
+    (
+        "tower-http-0.6.9",
+        "../TRUEOS-Buildins/vendor/tower-http-0.6.9",
+    ),
+    ("tracing-0.1.44", "../TRUEOS-Buildins/vendor/tracing-0.1.44"),
+    (
+        "tracing-attributes-0.1.31",
+        "../TRUEOS-Buildins/vendor/tracing-attributes-0.1.31",
+    ),
+    (
+        "tracing-core-0.1.36",
+        "../TRUEOS-Buildins/vendor/tracing-core-0.1.36",
+    ),
+    ("want-0.3.1", "../TRUEOS/vendor/want-0.3.1"),
+    ("winit", "../TRUEOS-Buildins/vendor/winit"),
+];
+
+fn blueprint_vendor_path(root: &Path, name: &str) -> PathBuf {
+    match SHARED_VENDOR_PATHS
+        .iter()
+        .find(|(vendor, _)| *vendor == name)
+    {
+        Some((_, relative)) => root.join(relative),
+        None => root.join("vendor").join(name),
+    }
+}
+
 fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
+    if SHARED_VENDOR_PATHS.iter().any(|(vendor, _)| *vendor == name) {
+        let root = blueprint_root(app_dir)
+            .or_else(current_blueprint_root)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        // Return the pinned path even when absent so Cargo/staging fails on
+        // that path instead of silently selecting another source.
+        return Some(blueprint_vendor_path(&root, name));
+    }
     for ancestor in app_dir.ancestors() {
         let candidate = ancestor.join("vendor").join(name);
         if candidate.is_dir() {
@@ -2173,7 +2280,7 @@ fn source_overlay_patches(
     ensure_overlay_registry_sources(app_dir, manifest_path, work_dir)?;
 
     // Crossterm 0.29, Rustix 1.1, and signal-hook-mio are checked-in
-    // Blueprint platform vendors. Crossterm 0.28 and Rustix 0.38 still need
+    // platform forks shared with TRUEOS and TRUEOS-Buildins. Crossterm 0.28 and Rustix 0.38 still need
     // isolated overlays because their ABI-compatible platform forks have not
     // been promoted yet.
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
@@ -2190,14 +2297,14 @@ fn source_overlay_patches(
     let uses_png = manifest_or_lock_mentions_crate(app_dir, manifest_path, "png")?;
     let uses_zune_jpeg = manifest_or_lock_mentions_crate(app_dir, manifest_path, "zune-jpeg")?;
 
-    add_blueprint_vendor_patches(app_dir, &mut out);
+    add_blueprint_vendor_patches(app_dir, &mut out)?;
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         add_trueos_image_codec_vendor_patches(app_dir, &mut out, uses_png, uses_zune_jpeg);
     }
 
     let libc_path = find_blueprint_vendor_dir(app_dir, TRUEOS_LIBC_VENDOR_DIR).ok_or_else(|| {
         format!(
-            "missing required TRUEOS libc overlay vendor/{TRUEOS_LIBC_VENDOR_DIR}; restore the complete TRUEOS-Blueprints checkout"
+            "missing required TRUEOS libc source {TRUEOS_LIBC_VENDOR_DIR}; check TRUEOS-Buildins/vendor"
         )
     })?;
     out.retain(|patch| patch.name != "libc");
@@ -2260,7 +2367,7 @@ fn source_overlay_patches(
         ));
     }
 
-    add_getrandom_source_overlays(app_dir, &mut out);
+    add_getrandom_source_overlays(app_dir, &mut out)?;
 
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "socket2")? {
         let socket2_0_5 = stage_socket2_trueos_overlay(work_dir, "0.5.10")?;
@@ -2463,24 +2570,28 @@ fn pinned_git_patch_path(
         .ok_or_else(|| format!("Git patch `{package}` has no checkout directory in cargo metadata"))
 }
 
-fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
+fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) -> Result<(), String> {
     for (name, vendor_dir) in BLUEPRINT_VENDOR_PATCHES {
         let Some(path) = find_blueprint_vendor_dir(app_dir, vendor_dir) else {
             continue;
         };
+        if !path.join("Cargo.toml").is_file() {
+            return Err(format!("missing required vendor crate {name}: {}", path.display()));
+        }
         patches.retain(|patch| patch.name != *name && patch.key != *name);
         patches.push(CratePatch::new(*name, path));
     }
+    Ok(())
 }
 
 fn add_tracing_vendor_patches(_app_dir: &Path, patches: &mut Vec<CratePatch>) -> Result<(), String> {
     for (name, vendor_dir) in TRACING_VENDOR_PATCHES {
         let path = current_blueprint_root()
             .or_else(|| blueprint_root_from_ancestors(Path::new(env!("CARGO_MANIFEST_DIR"))))
-            .map(|root| root.join("vendor").join(vendor_dir))
+            .map(|root| blueprint_vendor_path(&root, vendor_dir))
             .filter(|path| path.is_dir())
             .ok_or_else(|| {
-            format!("missing resident logging crate vendor/{vendor_dir}; restore TRUEOS-Blueprints")
+            format!("missing required resident logging crate {vendor_dir}; check its pinned vendor source")
         })?;
         patches.retain(|patch| patch.name != *name && patch.key != *name);
         patches.push(CratePatch::new(*name, path));
@@ -2511,22 +2622,26 @@ fn add_trueos_image_codec_vendor_patches(
     }
 }
 
-fn add_getrandom_source_overlays(app_dir: &Path, patches: &mut Vec<CratePatch>) {
+fn add_getrandom_source_overlays(app_dir: &Path, patches: &mut Vec<CratePatch>) -> Result<(), String> {
     patches.retain(|patch| patch.name != "getrandom");
     for (key, vendor_dir) in [
         ("getrandom", "getrandom-0.2.17"),
         ("getrandom_03", "getrandom-0.3.4"),
-        ("getrandom_04", "getrandom-0.4.2"),
+        ("getrandom_04", "getrandom-0.4.3"),
     ] {
         let Some(path) = find_vendor_dir(app_dir, vendor_dir) else {
             continue;
         };
+        if !path.join("Cargo.toml").is_file() {
+            return Err(format!("missing required getrandom source: {}", path.display()));
+        }
         patches.push(if key == "getrandom" {
             CratePatch::new("getrandom", path)
         } else {
             CratePatch::alias(key, "getrandom", path)
         });
     }
+    Ok(())
 }
 
 fn manifest_or_lock_mentions_crate(
@@ -3186,18 +3301,18 @@ fn patch_socket2_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
 }
 
 const CROSSTERM_TRUEOS_MIO_SOURCE: &str =
-    include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/mio.rs");
+    include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix/mio.rs");
 
 fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     // The shared Mio backend depends on the fork's parser and input-discard
     // interface. Stage that interface together for older Crossterm versions.
     for (relative, source) in [
         ("src/event/source/unix/mio.rs", CROSSTERM_TRUEOS_MIO_SOURCE),
-        ("src/event/source/unix/parser.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/parser.rs")),
-        ("src/event/source/unix/tty.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/tty.rs")),
-        ("src/event/source/unix.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix.rs")),
-        ("src/event/source.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source.rs")),
-        ("src/event/read.rs", include_str!("../vendor/crossterm-0.29.0-trueos/src/event/read.rs")),
+        ("src/event/source/unix/parser.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix/parser.rs")),
+        ("src/event/source/unix/tty.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix/tty.rs")),
+        ("src/event/source/unix.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix.rs")),
+        ("src/event/source.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source.rs")),
+        ("src/event/read.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/read.rs")),
     ] {
         fs::write(crate_dir.join(relative), source).map_err(io_string)?;
     }
@@ -3205,7 +3320,7 @@ fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     normalize_line_endings(&event_path)?;
     let event = fs::read_to_string(&event_path).map_err(io_string)?;
     if !event.contains("pub enum InputDiscardStatus") {
-        let shared_event = include_str!("../vendor/crossterm-0.29.0-trueos/src/event.rs")
+        let shared_event = include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event.rs")
             .replace("\r\n", "\n");
         let start = shared_event.find("/// Whether discarding buffered input")
             .ok_or_else(|| "missing shared Crossterm input-discard interface".to_string())?;
@@ -5787,7 +5902,7 @@ fn materialized_workspace_dependency(
                     source_overlay,
                     work_dir,
                     dep_name,
-                    &blueprint_root.join("vendor/http-body-util-0.1.3"),
+                    &blueprint_root.join("../TRUEOS-Buildins/vendor/http-body-util-0.1.3"),
                 ),
             )
         }
@@ -5798,7 +5913,7 @@ fn materialized_workspace_dependency(
                     source_overlay,
                     work_dir,
                     "hyper",
-                    &blueprint_root.join("vendor/hyper-1.10.0"),
+                    &blueprint_root.join("../TRUEOS/vendor/hyper-1.10.0"),
                 )
                 .display()
                 .to_string(),
@@ -5812,7 +5927,7 @@ fn materialized_workspace_dependency(
                         source_overlay,
                         work_dir,
                         "hyper-util",
-                        &blueprint_root.join("vendor/hyper-util-0.1.20"),
+                        &blueprint_root.join("../TRUEOS-Buildins/vendor/hyper-util-0.1.20"),
                     )
                     .display()
                     .to_string(),
@@ -5832,7 +5947,7 @@ fn materialized_workspace_dependency(
                     source_overlay,
                     work_dir,
                     "reqwest",
-                    &blueprint_root.join("vendor/reqwest-0.13.3"),
+                    &blueprint_root.join("../TRUEOS-Buildins/vendor/reqwest-0.13.3"),
                 )
                 .display()
                 .to_string(),
@@ -5850,7 +5965,7 @@ fn materialized_workspace_dependency(
                         source_overlay,
                         work_dir,
                         "rustls-rustcrypto",
-                        &blueprint_root.join("vendor/rustls-rustcrypto-0.0.2-alpha"),
+                        &blueprint_root.join("../TRUEOS/vendor/rustls-rustcrypto-0.0.2-alpha"),
                     )
                     .display()
                     .to_string(),
@@ -5875,7 +5990,7 @@ fn materialized_workspace_dependency(
                     source_overlay,
                     work_dir,
                     "tokio",
-                    &blueprint_root.join("vendor/tokio-1.54.1"),
+                    &blueprint_root.join("../TRUEOS-Buildins/vendor/tokio-1.54.1"),
                 )
                 .display()
                 .to_string(),
@@ -5889,7 +6004,7 @@ fn materialized_workspace_dependency(
                         source_overlay,
                         work_dir,
                         "tokio-rustls",
-                        &blueprint_root.join("vendor/tokio-rustls-0.26.4"),
+                        &blueprint_root.join("../TRUEOS-Buildins/vendor/tokio-rustls-0.26.4"),
                     )
                     .display()
                     .to_string(),
@@ -5903,7 +6018,7 @@ fn materialized_workspace_dependency(
                     source_overlay,
                     work_dir,
                     "tower",
-                    &blueprint_root.join("vendor/tower-0.5.3"),
+                    &blueprint_root.join("../TRUEOS-Buildins/vendor/tower-0.5.3"),
                 )
                 .display()
                 .to_string(),
