@@ -559,14 +559,13 @@ fn build_one_target_to_in_lane(
     let stack_capture = matches!(build_target, BuildTarget::Package)
         && package_blueprint_stack_capture(manifest_path)?;
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
-    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        ensure_rust_std_trueos_cfg_hooks()?;
-        let sdk =
-            blueprint_root(&app_dir).ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
-        std_backend::install(&sdk)?;
-        ensure_rust_std_trueos_hash_random()?;
-        ensure_rust_std_trueos_no_backtrace()?;
-    }
+    let std_sysroot = if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        let sdk = blueprint_root(app_dir)
+            .ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
+        Some(std_backend::prepare(&sdk)?)
+    } else {
+        None
+    };
 
     let output_name = match &build_target {
         BuildTarget::Package => {
@@ -593,7 +592,10 @@ fn build_one_target_to_in_lane(
         BuildFlavor::TokioStd => format!(
             "{}-{}",
             build_settings.flavor.cache_label(),
-            std_backend::cache_revision(&target_spec)?,
+            std_sysroot
+                .as_ref()
+                .ok_or("missing private std sysroot")?
+                .cache_revision(&target_spec)?,
         ),
         BuildFlavor::ThinNoStd => build_settings.flavor.cache_label().to_string(),
     };
@@ -614,8 +616,12 @@ fn build_one_target_to_in_lane(
 
     let source_overlay =
         source_overlay_patches(app_dir, manifest_path, &work_dir, &build_settings)?;
-    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        ensure_rust_src_libc_lock_matches_overlay(&source_overlay, &cargo_target_dir)?;
+    if let Some(sysroot) = &std_sysroot {
+        ensure_rust_src_libc_lock_matches_overlay(
+            &sysroot.sysroot,
+            &source_overlay,
+            &cargo_target_dir,
+        )?;
     }
     let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
     preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
@@ -631,6 +637,9 @@ fn build_one_target_to_in_lane(
     enforce_source_overlay_lock(&cargo_manifest_path, &source_overlay)?;
 
     let mut cargo = toolchain::cargo_command();
+    if let Some(sysroot) = &std_sysroot {
+        sysroot.configure_cargo(&mut cargo);
+    }
     if let Some(manifest_dir) = cargo_manifest_path.parent() {
         cargo.current_dir(manifest_dir);
     }
@@ -1625,10 +1634,8 @@ fn env_path(name: &str) -> Option<PathBuf> {
     }
 }
 
-fn pinned_rust_src_path(relative: &str) -> Result<PathBuf, String> {
-    Ok(toolchain::rust_sysroot()?
-        .join("lib/rustlib/src/rust/library")
-        .join(relative))
+fn pinned_rust_src_path(sysroot: &Path, relative: &str) -> Result<PathBuf, String> {
+    Ok(sysroot.join("lib/rustlib/src/rust/library").join(relative))
 }
 
 const TRUEOS_STD_RANDOM_BACKEND: &str = r#"//! TRUEOS kernel random source.
@@ -1658,8 +1665,13 @@ pub fn fill_bytes(bytes: &mut [u8]) {
 }
 "#;
 
-fn ensure_rust_src_file(relative: &str, contents: &str, label: &str) -> Result<(), String> {
-    let path = pinned_rust_src_path(relative)?;
+fn ensure_rust_src_file(
+    sysroot: &Path,
+    relative: &str,
+    contents: &str,
+    label: &str,
+) -> Result<(), String> {
+    let path = pinned_rust_src_path(sysroot, relative)?;
     match fs::read_to_string(&path) {
         Ok(source) if source == contents => return Ok(()),
         Ok(_) => {
@@ -1687,12 +1699,13 @@ fn ensure_rust_src_file(relative: &str, contents: &str, label: &str) -> Result<(
 }
 
 fn ensure_rust_src_replacement(
+    sysroot: &Path,
     relative: &str,
     needle: &str,
     replacement: &str,
     label: &str,
 ) -> Result<(), String> {
-    let path = pinned_rust_src_path(relative)?;
+    let path = pinned_rust_src_path(sysroot, relative)?;
     let source = fs::read_to_string(&path).map_err(|err| {
         format!(
             "failed to read Rust std source {}; install rust-src or check permissions: {err}",
@@ -1719,8 +1732,9 @@ fn ensure_rust_src_replacement(
     Ok(())
 }
 
-fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
+fn ensure_rust_std_trueos_cfg_hooks(sysroot: &Path) -> Result<(), String> {
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/fs/unix.rs",
         r#"    let mut entries = Vec::new();
     for name in listing.split(|byte| *byte == b'\n') {
@@ -1742,8 +1756,9 @@ fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
         ),
         "typed directory listing decoder",
     )?;
-    ensure_rust_std_trueos_file_lock_methods()?;
+    ensure_rust_std_trueos_file_lock_methods(sysroot)?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/fs/unix.rs",
         r#"#[cfg(target_os = "trueos")]
 pub fn rename(old: &CStr, new: &CStr) -> io::Result<()> {
@@ -1763,71 +1778,83 @@ pub fn rename(old: &CStr, new: &CStr) -> io::Result<()> {
         "metadata-only POSIX rename",
     )?;
     ensure_rust_src_file(
+        sysroot,
         "std/src/sys/random/trueos.rs",
         TRUEOS_STD_RANDOM_BACKEND,
         "random backend",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/os/mod.rs",
         "        #[cfg(target_os = \"linux\")]\n        pub mod linux;",
         "        #[cfg(any(target_os = \"linux\", target_os = \"trueos\"))]\n        pub mod linux;",
         "os::linux module",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/os/mod.rs",
         "#[cfg(any(target_os = \"linux\", target_os = \"android\", target_os = \"cygwin\", doc))]\nmod net;",
         "#[cfg(any(target_os = \"linux\", target_os = \"trueos\", target_os = \"android\", target_os = \"cygwin\", doc))]\nmod net;",
         "os::net module",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/os/unix/mod.rs",
         "    #[cfg(target_os = \"linux\")]\n    pub use crate::os::linux::*;",
         "    #[cfg(any(target_os = \"linux\", target_os = \"trueos\"))]\n    pub use crate::os::linux::*;",
         "Unix platform alias",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/os/linux/mod.rs",
         "pub mod fs;\npub mod net;\npub mod process;\npub mod raw;",
         "pub mod fs;\n#[cfg(not(target_os = \"trueos\"))]\npub mod net;\n#[cfg(not(target_os = \"trueos\"))]\npub mod process;\npub mod raw;",
         "Linux compatibility modules",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/random/mod.rs",
         "    target_os = \"trusty\" => {\n        mod trusty;\n        pub use trusty::fill_bytes;\n    }",
         "    target_os = \"trueos\" => {\n        mod trueos;\n        pub use trueos::fill_bytes;\n    }\n    target_os = \"trusty\" => {\n        mod trusty;\n        pub use trusty::fill_bytes;\n    }",
         "random backend selection",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/random/mod.rs",
         "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"trueos\",\n        target_os = \"xous\",",
         "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"xous\",",
         "unsupported random fallback exclusion",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/random/mod.rs",
         "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"android\",",
         "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"android\",",
         "generic HashMap random keys",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/args/unix.rs",
         "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"android\",",
         "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"android\",",
         "process arguments",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/paths/unix.rs",
         "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"cygwin\",",
         "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"cygwin\",",
         "current executable path",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/fs/unix.rs",
         "        target_os = \"l4re\",\n        target_os = \"linux\",\n        target_os = \"nto\",\n        target_os = \"qnx\",\n        target_os = \"redox\",",
         "        target_os = \"l4re\",\n        target_os = \"linux\",\n        target_os = \"trueos\",\n        target_os = \"nto\",\n        target_os = \"qnx\",\n        target_os = \"redox\",",
         "directory metadata",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/pal/unix/time.rs",
         "    pub fn now(clock: libc::clockid_t) -> Timespec {\n        use crate::mem::MaybeUninit;",
         r#"    pub fn now(clock: libc::clockid_t) -> Timespec {
@@ -1889,8 +1916,8 @@ fn patch_trueos_file_lock_methods(source: &str) -> Result<String, String> {
     Ok(patched)
 }
 
-fn ensure_rust_std_trueos_file_lock_methods() -> Result<(), String> {
-    let path = pinned_rust_src_path("std/src/sys/fs/unix.rs")?;
+fn ensure_rust_std_trueos_file_lock_methods(sysroot: &Path) -> Result<(), String> {
+    let path = pinned_rust_src_path(sysroot, "std/src/sys/fs/unix.rs")?;
     let source = fs::read_to_string(&path)
         .map_err(|err| format!("failed to read Rust std source {}: {err}", path.display()))?;
     let patched = patch_trueos_file_lock_methods(&source)?;
@@ -1946,6 +1973,7 @@ mod trueos_file_lock_tests {
 }
 
 fn ensure_rust_src_libc_lock_matches_overlay(
+    sysroot: &Path,
     source_overlay: &[CratePatch],
     cargo_target_dir: &Path,
 ) -> Result<(), String> {
@@ -1959,7 +1987,7 @@ fn ensure_rust_src_libc_lock_matches_overlay(
         ));
     };
 
-    let rust_src_lock = pinned_rust_src_path("Cargo.lock")?;
+    let rust_src_lock = pinned_rust_src_path(sysroot, "Cargo.lock")?;
     let locked = lock_packages(&rust_src_lock)?;
     let locked_version = locked
         .iter()
@@ -2031,8 +2059,8 @@ fn ensure_rust_src_libc_lock_matches_overlay(
     Ok(())
 }
 
-fn ensure_rust_std_trueos_hash_random() -> Result<(), String> {
-    let random_rs = pinned_rust_src_path("std/src/hash/random.rs")?;
+fn ensure_rust_std_trueos_hash_random(sysroot: &Path) -> Result<(), String> {
+    let random_rs = pinned_rust_src_path(sysroot, "std/src/hash/random.rs")?;
     let source = fs::read_to_string(&random_rs).map_err(|err| {
         format!(
             "failed to read Rust std hash random source {}; install rust-src or check permissions: {err}",
@@ -2097,8 +2125,9 @@ fn ensure_rust_std_trueos_hash_random() -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_rust_std_trueos_no_backtrace() -> Result<(), String> {
+fn ensure_rust_std_trueos_no_backtrace(sysroot: &Path) -> Result<(), String> {
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/backtrace.rs",
         r#"    pub(crate) fn print(&mut self, w: &mut dyn Write, format: PrintFmt) -> io::Result<()> {
         // There are issues currently linking libbacktrace into tests, and in"#,
@@ -2115,6 +2144,7 @@ fn ensure_rust_std_trueos_no_backtrace() -> Result<(), String> {
         "panic backtrace exclusion start",
     )?;
     ensure_rust_src_replacement(
+        sysroot,
         "std/src/sys/backtrace.rs",
         r#"        write!(w, "{}", DisplayBacktrace { format })
     }
@@ -2354,18 +2384,8 @@ fn source_overlay_patches(
         ));
     }
 
-    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        out.retain(|patch| patch.name != "hyper-util");
-        out.push(CratePatch::new(
-            "hyper-util",
-            stage_hyper_util_tokio_std_overlay(app_dir, work_dir)?,
-        ));
-        out.retain(|patch| patch.name != "tower");
-        out.push(CratePatch::new(
-            "tower",
-            stage_tower_tokio_std_overlay(app_dir, work_dir)?,
-        ));
-    }
+    // The shared Hyper-util and Tower forks already carry the std/Tokio
+    // adaptations. Use their pinned sources without staging a second patch.
 
     add_getrandom_source_overlays(app_dir, &mut out)?;
 
@@ -2920,30 +2940,6 @@ fn stage_tonic_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     Ok(staged)
 }
 
-fn stage_hyper_util_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
-    let source = find_vendor_dir(app_dir, "hyper-util-0.1.20")
-        .ok_or_else(|| "missing vendored hyper-util-0.1.20 source".to_string())?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("hyper-util-tokio-std-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_hyper_util_tokio_std_overlay(&staged)?;
-    Ok(staged)
-}
-
-fn stage_tower_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
-    let source = find_vendor_dir(app_dir, "tower-0.5.3")
-        .ok_or_else(|| "missing vendored tower-0.5.3 source".to_string())?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("tower-tokio-std-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_tower_tokio_std_overlay(&staged)?;
-    Ok(staged)
-}
-
 fn find_cargo_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
     let cargo_home = env::var_os("CARGO_HOME")
         .map(PathBuf::from)
@@ -3144,7 +3140,7 @@ fn patch_tonic_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
         &crate_dir.join("src/transport/channel/service/connection.rs"),
         "        let fut = self.inner.send_request(req);\n\n        Box::pin(async move { fut.await.map_err(Into::into).map(|res| res.map(Body::new)) })",
-        "        let mut inner = self.inner.clone();\n        let fut = inner.send_request(req);\n\n        Box::pin(async move { fut.await.map_err(Into::into).map(|res| res.map(Body::new)) })",
+        "        let mut inner = self.inner.clone();\n\n        Box::pin(async move { inner.send_request(req).await.map_err(Into::into).map(|res| res.map(Body::new)) })",
     )?;
     Ok(())
 }
@@ -3164,59 +3160,6 @@ fn patch_hyper_timeout_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         &crate_dir.join("src/stream.rs"),
         "use std::io;",
         "use hyper::io;",
-    )
-}
-
-fn patch_tower_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "#![cfg_attr(any(target_os = \"trueos\", target_os = \"zkvm\"), no_std)]",
-        "",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/buffer/worker.rs"),
-        "use std::sync::{Arc, Mutex};",
-        "use spin::Mutex;\nuse std::sync::Arc;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/buffer/worker.rs"),
-        "let mut inner = self.handle.inner.lock().unwrap();",
-        "let mut inner = self.handle.inner.lock();",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/buffer/worker.rs"),
-        ".lock()\n            .unwrap()\n            .as_ref()",
-        ".lock()\n            .as_ref()",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/load/peak_ewma.rs"),
-        "sync::{Arc, Mutex}",
-        "sync::Arc",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/load/peak_ewma.rs"),
-        "use tokio::time::Instant;",
-        "use spin::Mutex;\nuse tokio::time::Instant;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/load/peak_ewma.rs"),
-        "let mut rtt = self.rtt_estimate.lock().expect(\"peak ewma prior_estimate\");",
-        "let mut rtt = self.rtt_estimate.lock();",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/load/peak_ewma.rs"),
-        "        if let Ok(mut rtt) = self.rtt_estimate.lock() {\n            rtt.update(self.sent_at, recv_at, self.decay_ns);\n        }",
-        "        let mut rtt = self.rtt_estimate.lock();\n        rtt.update(self.sent_at, recv_at, self.decay_ns);",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/load/peak_ewma.rs"),
-        "    /// The default RTT estimate decays, so that new nodes are considered if the\n    /// default RTT is too high.",
-        "    // The default RTT estimate decays, so that new nodes are considered if the\n    // default RTT is too high.",
-    )?;
-    append_if_missing(
-        &crate_dir.join("Cargo.toml"),
-        "[dependencies.spin]",
-        "\n[dependencies.spin]\nversion = \"0.10.0\"\ndefault-features = false\nfeatures = [\"spin_mutex\"]\n",
     )
 }
 
@@ -3337,50 +3280,6 @@ fn normalize_line_endings(path: &Path) -> Result<(), String> {
     if original.contains("\r\n") {
         fs::write(path, original.replace("\r\n", "\n")).map_err(io_string)?;
     }
-    Ok(())
-}
-
-fn patch_hyper_util_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
-    replace_file_text(
-        &crate_dir.join("src/rt/tokio.rs"),
-        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<IoSlice<'buf>> {\n    bufs.iter().map(|buf| IoSlice::new(&**buf)).collect()\n}",
-        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<IoSlice<'buf>> {\n    bufs.iter().map(|buf| IoSlice::new(&**buf)).collect()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    let hyper_now = Instant::now();\n    let tokio_now = tokio::time::Instant::now();\n    if deadline >= hyper_now {\n        tokio_now + deadline.duration_since(hyper_now)\n    } else {\n        tokio_now - hyper_now.duration_since(deadline)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    deadline.into()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    let tokio_now = tokio::time::Instant::now();\n    let hyper_now = Instant::now();\n    if instant >= tokio_now {\n        hyper_now + (instant - tokio_now)\n    } else {\n        hyper_now - (tokio_now - instant)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    instant.into()\n}",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/rt/tokio.rs"),
-        "inner: tokio::time::sleep_until(deadline.into()),",
-        "inner: tokio::time::sleep_until(hyper_to_tokio_instant(deadline)),",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/rt/tokio.rs"),
-        "tokio::time::Instant::now().into()",
-        "tokio_to_hyper_instant(tokio::time::Instant::now())",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/rt/tokio.rs"),
-        "self.project().inner.as_mut().reset(deadline.into());",
-        "self.project().inner.as_mut().reset(hyper_to_tokio_instant(deadline));",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/client/legacy/pool.rs"),
-        "now.saturating_duration_since(entry.idle_at) > dur",
-        "now.duration_since(entry.idle_at) > dur",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/client/legacy/pool.rs"),
-        "now.saturating_duration_since(instant) > timeout",
-        "now.duration_since(instant) > timeout",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/client/legacy/connect/http.rs"),
-        "            socket.bind(&SocketAddr::new((*addr).into(), 0).into())?;",
-        "            socket\n                .bind(&SocketAddr::new((*addr).into(), 0).into())\n                .map_err(|_| io::Error::new(io::ErrorKind::AddrNotAvailable, \"socket bind failed\"))?;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/client/legacy/connect/http.rs"),
-        "                socket.bind(&any.into())?;",
-        "                socket\n                    .bind(&any.into())\n                    .map_err(|_| io::Error::new(io::ErrorKind::AddrNotAvailable, \"socket bind failed\"))?;",
-    )?;
     Ok(())
 }
 
@@ -5907,7 +5806,7 @@ fn materialized_workspace_dependency(
             )
         }
         "hyper" => format!(
-            "hyper = {{ path = {}, default-features = false, features = [\"client\", \"server\", \"http1\", \"std\"] }}",
+            "hyper = {{ path = {}, default-features = false, features = [\"client\", \"server\", \"http1\", \"std-compat\"] }}",
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,

@@ -53,9 +53,10 @@ square cursor; Space or Enter selects or plays. Pawn promotion automatically
 chooses a queen. Escape closes the frame. The first Minesweeper reveal is safe, and
 switching modes preserves each game.
 
+Initialize the library with `git submodule update --init vendor/microgames`.
 Build locally from the TRUEOS-Blueprints root with
 `TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp games`. The source depends on
-the sibling MicroGames and TRUEOS-Picasso repos and the pinned t4ce/gamie
+the `vendor/microgames` submodule, the sibling TRUEOS-Picasso repo, and the pinned t4ce/gamie
 crate's Minesweeper and Tic-Tac-Toe modules, the pinned Sudokitty core
 crate, and pinned cozy-chess.
 

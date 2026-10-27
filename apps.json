@@ -102,6 +102,8 @@
       "optional": true
     },
     "superseedr",
+    "reticulum",
+    "tantivy",
     "webmail",
     {
       "name": "commander",

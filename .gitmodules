@@ -7,3 +7,6 @@
 [submodule "apps/RbGB"]
 	path = apps/RbGB
 	url = https://github.com/t4ce/RbGB.git
+[submodule "vendor/microgames"]
+	path = vendor/microgames
+	url = https://github.com/t4ce/MicroGames.git

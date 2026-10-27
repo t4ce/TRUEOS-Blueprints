@@ -61,6 +61,14 @@ Reticulum-rs/
 cargo build --release
 ```
 
+### TRUEOS Blueprint
+
+From the TRUEOS-Blueprints root, run `cargo bp reticulum` to pack
+`dist/reticulum.bp`. The `trueos-blueprint` feature selects the existing
+TRUEOS dual TCP probe in `src/blueprint.rs`, including its logging and runtime
+setup. The library in `src/lib.rs` remains available to other crates. This probe
+is separate from the host `reticulum-daemon` CLI.
+
 ### Reticulum daemon
 
 #### Converting config from Python Reticulum

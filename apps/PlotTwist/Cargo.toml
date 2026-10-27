@@ -23,6 +23,6 @@ serde_json.workspace = true
 
 [target.'cfg(target_os = "trueos")'.dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json"] }
-hyper = { workspace = true, features = ["server", "http1"] }
+hyper = { workspace = true, features = ["std-compat", "server", "http1"] }
 tower.workspace = true
 trueos = { workspace = true, features = ["lifecycle-net"] }

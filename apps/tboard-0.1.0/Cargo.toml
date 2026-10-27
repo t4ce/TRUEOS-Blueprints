@@ -13,7 +13,7 @@ default = ["trueos"]
 trueos = ["dep:trueos"]
 
 [dependencies]
-crossterm = { path = "../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
+crossterm = { path = "../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events", "bracketed-paste"] }
 trueos = { path = "../../api", optional = true }
 
 [patch.crates-io]

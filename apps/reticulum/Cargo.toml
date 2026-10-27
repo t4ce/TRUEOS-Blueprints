@@ -40,8 +40,9 @@ sha2 = "0.10.8"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 
 # Async IO
+hyper = { version = "=1.10.0", default-features = false, features = ["std-compat"] }
 tokio = { version = "=1.54.1", features = ["full"] }
-tokio-stream = "=0.1.17"
+tokio-stream = "=0.1.19"
 tokio-util = "=0.7.20"
 
 rmp = "0.8.14"
@@ -52,13 +53,21 @@ log = "0.4.27"
 env_logger = "0.10"
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
-trueos = { path = "../../api" }
+trueos = { path = "../../api", optional = true }
 
 [features]
 default = ["alloc"]
+trueos-blueprint = ["alloc", "dep:trueos"]
 alloc = []
 fernet-aes128 = []
 python-tests = []
+
+[[bin]]
+name = "reticulum"
+path = "src/blueprint.rs"
+required-features = ["trueos-blueprint"]
+test = false
+bench = false
 
 [build-dependencies]
 protoc-bin-vendored = "=3.2.0"
