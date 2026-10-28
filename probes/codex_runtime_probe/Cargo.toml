@@ -1,0 +1,20 @@
+[package]
+name = "codex-runtime-probe"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+filesystem-independent = true
+stack-capture = true
+
+[dependencies]
+tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1", default-features = false, features = ["rt", "sync", "time"] }
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

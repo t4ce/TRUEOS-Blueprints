@@ -1,0 +1,59 @@
+Native TRUEOS runtime probe
+
+From this directory run:
+  bash build.sh
+
+This uses the existing Blueprint builder and writes
+TRUEOS-Blueprints/dist/codex-runtime-probe.bp. Publishing is explicitly disabled.
+The pinned toolchain and sibling TRUEOS-Buildins checkout are required.
+
+Run the built artifact on a kernel containing the thread placement CABI and
+the exact codex-runtime-probe archive classifier. Run one process at a time.
+The argv-v1 argument lists for comparison are:
+  ["single", "2"]
+  ["isolated", "1"]
+  ["isolated", "2"]
+  ["spread", "2"]
+
+These are launcher arguments, not Shell3 command lines. Shell3 currently
+recognizes exact app names and supplies no general argv. Launching the bare
+codex-runtime-probe name there runs the default single/2 baseline only.
+
+An existing SDK parent Blueprint can launch a fresh child Hull with arguments
+by calling trueos::child_hull::spawn_program from its Hull entry thread:
+  let handle = trueos::child_hull::spawn_program(
+      br#"{"program":"codex-runtime-probe","args":["isolated","2"],"env":{},"cwd":null}"#
+  )?;
+The program name resolves codex-runtime-probe.bp in AppDB; a program path
+containing '/' instead resolves that explicit Blueprint file. Read the child's
+stdout with trueos::child_hull::read and observe child_hull::status until
+STATUS_EXITED. Keep the parent alive while its child runs. The kernel launcher
+also accepts LaunchRequest.args for an in-kernel experiment caller.
+
+Modes and cap are parsed before configuration; configuration precedes every
+std thread and Tokio worker. Cap accepts 1..4. Baseline behavior stays single
+carrier. Each run joins all finite work and exits. There is no model, network,
+filesystem setup, deployment or reset in the probe.
+
+Markers begin "codex-runtime-probe v=1 stage=". Compare cpu_done's
+heartbeat_max_gap_us and heartbeat_during_busy over repeated hardware runs.
+The 50ms CPU closure is deliberately unyielding; the foreground heartbeat
+sleeps 5ms and runs for at least 125ms. Isolated placement should allow beats
+during CPU work. Record kernel thread-placement / codex-progress-job /
+codex-progress-timing lines to verify admitted carriers and roles.
+
+park_done should report notified=1 timed_out=0: its Condvar wait must free the
+carrier so the foreground notifier can run. blocking_done should report
+queued_before_release=1 and abort_returned_value=1: a parked synchronous job
+frees its carrier while still occupying the single Tokio blocking-pool slot,
+and abort does not cancel an already executing blocking closure.
+
+Host smoke checks (run Cargo from /tmp to avoid the Blueprint build-std config):
+  cd /tmp
+  cargo +nightly-2026-07-10 test --offline --manifest-path /absolute/path/to/TRUEOS-Blueprints/probes/codex_runtime_probe/Cargo.toml --target x86_64-unknown-linux-gnu
+  cargo +nightly-2026-07-10 run --offline --manifest-path /absolute/path/to/TRUEOS-Blueprints/probes/codex_runtime_probe/Cargo.toml --target x86_64-unknown-linux-gnu -- isolated 2
+
+Host output says backend=host-model placement_applied=0. This runs the actual
+vendored Tokio and finite probe logic using host OS threads. It cannot verify
+TRUEOS AP placement, kernel role propagation, interrupt delivery or hardware
+latency. A host single run is therefore not a TRUEOS single-carrier baseline.
