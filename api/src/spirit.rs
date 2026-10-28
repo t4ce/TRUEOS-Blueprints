@@ -1,8 +1,9 @@
 //! Generic Spirit presentation capabilities for Blueprints.
 //!
 //! These calls do not own an inference session. In particular,
-//! [`present_text_silent`] enters only Spirit's bounded visual response queue
-//! and never requests local text-to-voice generation.
+//! [`present_text_silent`] requests visual text without local text-to-voice
+//! generation. Kernels without a general text presenter return an error;
+//! Spirit's boot greeting is a separate use of the embedded Paper app.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -27,7 +28,8 @@ pub fn play_emotion(idea: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(idea.as_ptr(), idea.len()) })
 }
 
-/// Present display-safe UTF-8 without invoking a local inference or voice path.
+/// Request display-safe UTF-8 without invoking a local inference or voice path.
+/// Returns an error when the kernel's general text presenter is unavailable.
 pub fn present_text_silent(turn: u64, text: &str) -> Result<(), Error> {
     result(unsafe {
         v::bp_abi::trueos_cabi_spirit_text_present_silent(turn, text.as_ptr(), text.len())
