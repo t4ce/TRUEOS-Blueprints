@@ -31,6 +31,9 @@ pub mod vled {
 pub mod borrow;
 pub mod bp_abi;
 pub mod calculator_base;
+// One canonical contract shared by the native producer and kernel consumer.
+#[path = "../../../../TRUEOS/crates/trueos-v/src/spirit_agents.rs"]
+pub mod spirit_agents;
 pub mod child_hull;
 pub mod env;
 pub mod ffi;

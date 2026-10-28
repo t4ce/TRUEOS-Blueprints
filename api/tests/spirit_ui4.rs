@@ -40,6 +40,16 @@ fn reset() {
 }
 mod native {
     #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn trueos_cabi_spirit_agents_publish_v1(
+        ptr: *const u8,
+        len: usize,
+    ) -> i32 {
+        let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+        let snapshot = v::spirit_agents::decode(bytes).expect("validated snapshot wire bytes");
+        *crate::SNAPSHOT.lock().unwrap() = Some(snapshot);
+        crate::SNAPSHOT_ERROR.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn trueos_cabi_spirit_emotion_play(_: *const u8, _: usize) -> i32 {
         0
     }
@@ -123,6 +133,79 @@ mod native {
         crate::FIXTURE.lock().unwrap().key = key;
         0
     }
+}
+static SNAPSHOT: Mutex<Option<spirit::spirit_agents::AgentSnapshot>> = Mutex::new(None);
+static SNAPSHOT_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+#[test]
+fn agent_snapshot_keeps_lifecycle_attention_and_revision() {
+    use spirit::spirit_agents::*;
+    let _serial = SERIAL.lock().unwrap();
+    SNAPSHOT_ERROR.store(0, std::sync::atomic::Ordering::Relaxed);
+    let snapshot = AgentSnapshot {
+        version: SNAPSHOT_VERSION,
+        epoch: 3,
+        revision: 11,
+        complete: true,
+        connected: true,
+        agents: vec![AgentEntry {
+            id: "agent-1".into(),
+            parent_id: Some("root".into()),
+            name: Some("thought".into()),
+            role: None,
+            lifecycle: Some(AgentLifecycle::Running),
+            runtime: Some(AgentRuntime::Active),
+            waiting_approval: true,
+            waiting_input: false,
+            loaded: true,
+        }],
+    };
+    spirit::publish_agent_snapshot(&snapshot).unwrap();
+    assert_eq!(*SNAPSHOT.lock().unwrap(), Some(snapshot.clone()));
+    SNAPSHOT_ERROR.store(-9, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        spirit::publish_agent_snapshot(&snapshot),
+        Err(spirit::Error(-9))
+    );
+    SNAPSHOT_ERROR.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[test]
+fn invalid_agent_snapshot_never_enters_native_service() {
+    use spirit::spirit_agents::*;
+    let _serial = SERIAL.lock().unwrap();
+    *SNAPSHOT.lock().unwrap() = None;
+    let mut snapshot = AgentSnapshot {
+        version: SNAPSHOT_VERSION,
+        epoch: 0,
+        revision: 1,
+        complete: true,
+        connected: true,
+        agents: vec![],
+    };
+    assert_eq!(
+        spirit::publish_agent_snapshot(&snapshot),
+        Err(spirit::Error(-3))
+    );
+    snapshot.epoch = 1;
+    snapshot.agents = (0..=MAX_AGENTS)
+        .map(|index| AgentEntry {
+            id: format!("agent-{index}"),
+            parent_id: Some("root".into()),
+            name: None,
+            role: None,
+            lifecycle: Some(AgentLifecycle::Running),
+            runtime: None,
+            waiting_approval: false,
+            waiting_input: false,
+            loaded: true,
+        })
+        .collect();
+    assert_eq!(
+        spirit::publish_agent_snapshot(&snapshot),
+        Err(spirit::Error(-4))
+    );
+    assert!(SNAPSHOT.lock().unwrap().is_none());
 }
 #[test]
 fn generic_calls_keep_the_existing_wire_contract() {

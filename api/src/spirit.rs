@@ -13,6 +13,18 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+pub use v::spirit_agents;
+
+/// Publish existing subagent observations for Spirit's lightweight § markers.
+/// The sender is bound to its live Blueprint run by the native service.
+pub fn publish_agent_snapshot(snapshot: &spirit_agents::AgentSnapshot) -> Result<(), Error> {
+    let bytes = spirit_agents::encode(snapshot).map_err(|error| match error {
+        spirit_agents::SnapshotError::Invalid => Error(-3),
+        spirit_agents::SnapshotError::Capacity => Error(-4),
+    })?;
+    result(unsafe { v::bp_abi::trueos_cabi_spirit_agents_publish_v1(bytes.as_ptr(), bytes.len()) })
+}
+
 const MAX_UI4_WINDOWS_BYTES: usize = 32 * 1024;
 const MAX_UI4_METADATA_BYTES: usize = 4 * 1024;
 const MAX_UI4_PNG_BYTES: usize = 64 * 1024;
