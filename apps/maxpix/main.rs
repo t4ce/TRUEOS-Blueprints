@@ -5,7 +5,7 @@
 mod native {
     use maxpix::{
         PARTICLE_COUNT, POINTER_COUNT, PointerInput, SceneMode, camera, next_point_width_raw,
-        particle_mesh, scene_mesh,
+        particle_mesh, scene_mesh_at,
     };
     use trueos::{
         clock,
@@ -59,14 +59,15 @@ mod native {
         logl::log(
             logl::level::IMPORTANT,
             format_args!(
-                "maxpix: particles={} topology=POINT_LIST cpu-upload=scene-change motion=native-VS point=1px display-scale=1x camera=-10,-10,-10 pointers=4 input-contract=pointer-v1 mouse-x=speed mouse-y=angle wheel=fov-20..100deg key-1=point-size key-0=tornado key-2=quantum-trefoil key-3=quantum-hopf shader=unchanged",
+                "maxpix: particles={} topology=POINT_LIST cpu-upload=scene-change motion=native-VS point=1px display-scale=1x camera=-10,-10,-10 pointers=4 input-contract=pointer-v1 mouse-x=speed mouse-y=angle wheel=fov-20..100deg key-1=point-size key-0=tornado key-2=quantum-trefoil key-3=quantum-hopf key-4=fourier-bloom key-5=grover-beacon key-6=quantum-walk key-7=bell-weave-20q key-8=previous-stage key-9=next-stage shader=unchanged",
                 PARTICLE_COUNT
             ),
         );
         let started = clock::monotonic_millis();
         let mut scene_started = started;
         let mut mode = SceneMode::Tornado;
-        let mut pending_mode = None;
+        let mut scene_step = mode.default_step();
+        let mut pending_scene = None;
         let mut scene_camera = camera();
         let mut pointers = [PointerInput::default(); POINTER_COUNT];
         let mut sources: [Option<CursorSource>; POINTER_COUNT] = [None; POINTER_COUNT];
@@ -164,7 +165,22 @@ mod native {
                     && event.flags & KEYBOARD_OUTPUT_FLAG_PRESS != 0
                 {
                     if let Some(selected) = SceneMode::from_key(event.codepoint) {
-                        pending_mode = Some(selected);
+                        let step = if selected == mode {
+                            scene_step
+                        } else {
+                            selected.default_step()
+                        };
+                        pending_scene = Some((selected, step));
+                    } else if event.codepoint == u32::from(b'8')
+                        || event.codepoint == u32::from(b'9')
+                    {
+                        let (selected, step) = pending_scene.unwrap_or((mode, scene_step));
+                        let next = if event.codepoint == u32::from(b'8') {
+                            step.saturating_sub(1)
+                        } else {
+                            step.saturating_add(1).min(selected.max_step())
+                        };
+                        pending_scene = Some((selected, next));
                     } else if event.codepoint == u32::from(b'1') {
                         point_width_raw = next_point_width_raw(point_width_raw);
                         logl::log(
@@ -178,9 +194,12 @@ mod native {
                     }
                 }
             }
-            if let Some(selected) = pending_mode.take().filter(|selected| *selected != mode) {
+            if let Some((selected, step)) = pending_scene
+                .take()
+                .filter(|selected| *selected != (mode, scene_step))
+            {
                 let switch_started = clock::monotonic_millis();
-                match scene_mesh(selected, PARTICLE_COUNT) {
+                match scene_mesh_at(selected, PARTICLE_COUNT, step) {
                     Ok((vertices, indices)) => {
                         // Retained meshes snapshot their input buffers. Replace
                         // that snapshot after the preceding frame's GPU wait;
@@ -193,6 +212,7 @@ mod native {
                         }
                         mesh = create_mesh(device, vertex_buffer, index_buffer)?;
                         mode = selected;
+                        scene_step = step;
                         scene_started = clock::monotonic_millis();
                         input_tick = scene_started;
                         for pointer in &mut pointers {
@@ -203,11 +223,13 @@ mod native {
                         logl::log(
                             logl::level::IMPORTANT,
                             format_args!(
-                                "maxpix: scene={} particles={} prepare-ms={} prismq-qubits={} shader=unchanged",
+                                "maxpix: scene={} stage={}/{} particles={} prepare-ms={} prismq-qubits={} shader=unchanged",
                                 mode.name(),
+                                scene_step,
+                                mode.max_step(),
                                 PARTICLE_COUNT,
                                 scene_started.saturating_sub(switch_started),
-                                if mode == SceneMode::Tornado { 0 } else { 8 },
+                                mode.qubits(),
                             ),
                         );
                     }
@@ -313,7 +335,7 @@ mod native {
                 logl::log(
                     logl::level::IMPORTANT,
                     format_args!(
-                        "maxpix: fps={:.1} frames={} elapsed_ms={} particles={} extent={}x{} pointer-reports={} point-size={:.3}px scene={}",
+                        "maxpix: fps={:.1} frames={} elapsed_ms={} particles={} extent={}x{} pointer-reports={} point-size={:.3}px scene={} stage={}",
                         fps,
                         fps_frames,
                         elapsed_ms,
@@ -323,6 +345,7 @@ mod native {
                         pointer_reports,
                         point_width_raw as f32 / 8.0,
                         mode.name(),
+                        scene_step,
                     ),
                 );
                 fps_started = now;

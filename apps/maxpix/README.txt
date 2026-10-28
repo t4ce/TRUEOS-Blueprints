@@ -10,12 +10,44 @@ With the frame focused:
   1: cycle native point size (existing control)
   2: quantum-weighted (2,3) trefoil knot
   3: quantum-weighted Hopf fibers, linked circles projected from S^3 into R^3
+  4: Fourier bloom (8-qubit QFT, coherent spectral petals)
+  5: Grover beacon (8-qubit search, marked state 0xA5)
+  6: quantum walk (7 position qubits plus a coin)
+  7: Bell weave (20 qubits, two correlated 10-bit registers)
+  8 / 9: previous / next circuit stage in scenes 4..7
   Wheel up/down: zoom in/out by changing vertical FoV (20..100 degrees)
 
 FoV starts at 60 degrees and changes by 3 degrees per wheel step. Zoom works
 in every scene and persists across scene changes and window resizing. The
 camera stays at [-10,-10,-10], aimed at the origin; only its projection changes.
 Each wheel delta is applied once when received, including while frames are busy.
+
+Circuit stages (8/9 clamp at the endpoints; they do not wrap):
+  4: stages 0..15 change input rotations/phases before a genuine QFT. Four
+     coherent residue combs interfere into 16 frequency peaks. Each peak gets
+     an entire curled petal; its Born weight sets the particle population and
+     its relative complex phase shapes the curl. Starts at stage 0.
+  5: stages 0..12 select the number of Grover oracle/diffusion iterations.
+     Starts at 6. Three central orbits represent the marked state 0xA5; outer
+     rails represent all other states. Go back to 0, then advance to 12 to
+     watch probability concentrate in the beacon (over 99% at iteration 12).
+  6: stages 0..32 select steps of a symmetric coined Hadamard walk on a cycle
+     of 128 sites. Starts at 16. Each occupied site/coin outcome gets a loop;
+     probability sets its population. Alternating dark sites are genuine walk
+     parity, not missing geometry. The site axis scales to the current walk's
+     reach so each stage stays framed; this is not a fixed spatial ruler.
+  7: stages 0..15 change local rotations and phases while preserving exact
+     A=B correlations between two 10-bit registers. Starts at 0. The actual
+     20-qubit state has 1,048,576 complex amplitudes (16 MiB working state),
+     with only 1024 supported outcomes exported. Their matching low-bit
+     addresses project onto 32 braided channels. This is a view of register
+     correlations; it does not draw a physical connection between qubits.
+
+Changing to a different scene selects its default stage. Repeating the same
+scene key keeps its stage. Circuit stages are logged alongside preparation
+time and qubit count. The 20-qubit scene can take longer to prepare; it has
+the same 230,400-point GPU workload as every other scene once ready.
+Only relative phases affect geometry; a common global phase has no effect.
 
 Scenes 2/3 simulate an eight-qubit entangled interferometer on the CPU once per
 selection. Its 256 Born probabilities determine point populations along the
@@ -31,9 +63,10 @@ Offsets cancel the tornado at time zero; bounded shader time then adds small
 native motion without wrapping height. The existing instance quaternion turns
 the whole shape. No shader source, baked binary, ABI, or kernel changes, and
 no shader compiler/bakery setup is required. Cyan is still shader-constant.
-Retained GPU snapshots are released and recreated on selection; there are no
+Retained GPU snapshots are released and recreated on scene/stage selection; there are no
 per-frame vertex uploads, simulations, or accumulating scene allocations.
-PrismQ parallelism is disabled for this tiny workload. Because it uses std,
+PrismQ parallelism is disabled; simulations run on the calling thread only
+when selecting a scene/stage, never during animation. Because it uses std,
 Maxpix now builds with the existing TRUEOS std backend.
 
 The startup tornado is a rising, widening cloud.
@@ -64,7 +97,8 @@ update the viewport and camera aspect. Maxpix initially renders 1x1 native point
 a full-resolution streaming frame, presented at 1:1 without upscaling.
 
 Change PARTICLE_COUNT near the top of scene.rs to adjust the workload and rebuild.
-The new math geometry lives in quantum.rs; tornado.wgsl remains unchanged.
+Math geometry lives in quantum.rs and circuit preparation in circuits.rs;
+tornado.wgsl remains unchanged.
 Seeds occupy 24 bytes plus a 4-byte index per point. Only one retained instance
 is allocated.
 
@@ -80,8 +114,10 @@ Startup and the first four frames emit Important maxpix markers with
 particle count, time, extent, and completion timeline. Every four seconds an
 Important ShellIO log reports average FPS from GPU-completed, published frames.
 This includes frame pacing (the loop sleeps 16 ms) and surface backpressure.
-Host tests check probability normalization, particle populations, deterministic
-payloads, and animated geometry bounds; physical output needs a hardware run.
+Host tests check known Fourier spectra/phases, analytic Grover amplification,
+walk symmetry/parity, 20-qubit Bell correlations, particle populations,
+deterministic payloads, and animated geometry bounds. New scene rendering
+and hotkeys need a hardware run.
 
 Select the frame with the RDP/physical pointer, release the selection click,
 then move within its content to steer. Dragging the frame keeps the pointer's

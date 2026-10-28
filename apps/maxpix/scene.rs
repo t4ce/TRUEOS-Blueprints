@@ -4,8 +4,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 use trueos_picasso::cam::{Camera, Projection, Quaternion};
 
+mod circuits;
 mod quantum;
-pub use quantum::{SceneMode, scene_mesh};
+pub use quantum::{SceneMode, scene_mesh, scene_mesh_at};
 
 // CPU preparation and upload happen on scene selection, never per frame.
 // Each vertex is one native POINT_LIST stamp.
