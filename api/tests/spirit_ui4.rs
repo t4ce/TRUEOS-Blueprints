@@ -151,7 +151,8 @@ fn agent_snapshot_keeps_lifecycle_attention_and_revision() {
         agents: vec![AgentEntry {
             id: "agent-1".into(),
             parent_id: Some("root".into()),
-            name: Some("thought".into()),
+            name: Some("/root/thought".into()),
+            nickname: Some("Scout".into()),
             role: None,
             lifecycle: Some(AgentLifecycle::Running),
             runtime: Some(AgentRuntime::Active),
@@ -193,6 +194,7 @@ fn invalid_agent_snapshot_never_enters_native_service() {
             id: format!("agent-{index}"),
             parent_id: Some("root".into()),
             name: None,
+            nickname: None,
             role: None,
             lifecycle: Some(AgentLifecycle::Running),
             runtime: None,
@@ -201,6 +203,13 @@ fn invalid_agent_snapshot_never_enters_native_service() {
             loaded: true,
         })
         .collect();
+    assert_eq!(
+        spirit::publish_agent_snapshot(&snapshot),
+        Err(spirit::Error(-4))
+    );
+    assert!(SNAPSHOT.lock().unwrap().is_none());
+    snapshot.agents.truncate(1);
+    snapshot.agents[0].nickname = Some("x".repeat(MAX_LABEL_BYTES + 1));
     assert_eq!(
         spirit::publish_agent_snapshot(&snapshot),
         Err(spirit::Error(-4))
