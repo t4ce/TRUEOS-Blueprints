@@ -1,4 +1,4 @@
-use player_scope::ui::{PlaylistEntryData, TrackData, UiConfig};
+use player_scope::ui::{TrackData, UiConfig};
 
 const DEFAULT_FILE_PATH: &str = "aud.m4a";
 const NEXT_FILE_PATH: &str = "/apps/scope/tui/wide-demo.flac";
@@ -20,9 +20,9 @@ pub fn config() -> UiConfig {
         initial_loop_range: Some((0, 73)),
         logs: vec![
             "TUI demo is ready.".into(),
-            "Playback, recording, editing, and saving are visual only for now.".into(),
+            "playlist lists M4A files in /common/audio; arrows select, Enter plays.".into(),
         ],
-        playlist_entries: playlist_entries(500),
+        playlist_entries: Vec::new(),
     }
 }
 
@@ -50,40 +50,4 @@ fn next_track() -> TrackData {
         channels: "stereo".into(),
         size: "18.04 MB".into(),
     }
-}
-
-fn playlist_entries(count: usize) -> Vec<PlaylistEntryData> {
-    (1..=count)
-        .map(|index| {
-            let ext = match index % 5 {
-                0 => "flac",
-                1 => "m4a",
-                2 => "mp3",
-                3 => "wav",
-                _ => "ogg",
-            };
-            let kind = match ext {
-                "flac" | "wav" => "lossless",
-                "m4a" => "aac",
-                "mp3" => "mpeg",
-                _ => "vorbis",
-            };
-            let seconds = 95 + ((index * 17) % 260) as u64;
-            let mb = 2.4 + ((index * 37) % 160) as f32 / 10.0;
-
-            PlaylistEntryData {
-                icon: "♪".into(),
-                name: format!("folder-track-{index:03}.{ext}"),
-                kind: kind.into(),
-                duration: fmt_time(seconds),
-                size: format!("{mb:.1} MB"),
-            }
-        })
-        .collect()
-}
-
-fn fmt_time(seconds: u64) -> String {
-    let minutes = seconds / 60;
-    let seconds = seconds % 60;
-    format!("{minutes:02}:{seconds:02}")
 }

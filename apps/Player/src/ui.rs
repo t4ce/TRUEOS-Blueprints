@@ -139,7 +139,7 @@ pub struct TrackData {
     pub size: String,
 }
 
-/// One row in the playlist demo table.
+/// One row in a playlist table.
 #[derive(Debug, Clone)]
 pub struct PlaylistEntryData {
     pub icon: String,
@@ -210,14 +210,6 @@ struct App {
     last_progress_tick: Instant,
     exit: Option<UiExit>,
     transport_hitbox: StateCell<Option<Rect>>,
-    default_file_path: String,
-    next_file_path: String,
-    default_track: Track,
-    next_track: Track,
-    default_progress_secs: u64,
-    next_progress_secs: u64,
-    default_duration_secs: u64,
-    next_duration_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -230,7 +222,6 @@ impl App {
     fn new(config: UiConfig) -> Self {
         let now = Instant::now();
         let default_track: Track = config.default_track.into();
-        let next_track: Track = config.next_track.into();
         let shell_response = config.ready_response.clone();
         Self {
             input: String::new(),
@@ -254,11 +245,7 @@ impl App {
             recording: false,
             playlist_visible: false,
             playlist_scroll: 0,
-            playlist_entries: config
-                .playlist_entries
-                .into_iter()
-                .map(Into::into)
-                .collect(),
+            playlist_entries: shared_audio_playlist().unwrap_or_default(),
             scope_mode: None,
             scope_phase: 0.0,
             started_at: now,
@@ -269,14 +256,6 @@ impl App {
             last_progress_tick: now,
             exit: None,
             transport_hitbox: StateCell::new(None),
-            default_file_path: config.default_file_path,
-            next_file_path: config.next_file_path,
-            default_track,
-            next_track,
-            default_progress_secs: config.initial_progress_secs,
-            next_progress_secs: config.next_progress_secs,
-            default_duration_secs: config.default_duration_secs,
-            next_duration_secs: config.next_duration_secs,
         }
     }
 
@@ -390,6 +369,9 @@ impl App {
             KeyCode::Esc => {
                 self.input.clear();
                 self.cursor = 0;
+            }
+            KeyCode::Enter if self.playlist_visible && self.input.is_empty() => {
+                self.play_playlist_selection();
             }
             KeyCode::Enter => self.submit(),
             KeyCode::Backspace => self.backspace(),
@@ -860,12 +842,17 @@ impl App {
                     Cell::from(entry.duration.as_str()),
                     Cell::from(entry.size.as_str()),
                 ])
+                .style(if scroll + idx == self.playlist_scroll {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default()
+                })
             })
             .collect::<Vec<_>>();
 
         let block = Block::default()
             .title(format!(
-                "─Playlist  /apps/scope/tui/folder  {} entries ─",
+                "─Playlist  /common/audio  {} entries  ↑↓ select · Enter play ─",
                 self.playlist_entries.len()
             ))
             .title_style(block_title_style())
@@ -1389,23 +1376,26 @@ impl App {
     }
 
     fn next_track(&mut self) {
-        self.playback.clear();
-        self.track = self.next_track.clone();
-        self.file_path.clone_from(&self.next_file_path);
-        self.progress_secs = self.next_progress_secs;
-        self.duration_secs = self.next_duration_secs;
-        self.labels = default_labels(self.next_duration_secs);
-        self.respond("next: loaded demo metadata only");
+        self.scroll_playlist(1);
+        self.play_playlist_selection();
     }
 
     fn prev_track(&mut self) {
-        self.playback.clear();
-        self.track = self.default_track.clone();
-        self.file_path.clone_from(&self.default_file_path);
-        self.progress_secs = self.default_progress_secs;
-        self.duration_secs = self.default_duration_secs;
-        self.labels = default_labels(self.default_duration_secs);
-        self.respond("prev: restored first demo metadata");
+        self.scroll_playlist(-1);
+        self.play_playlist_selection();
+    }
+
+    fn play_playlist_selection(&mut self) {
+        let Some(entry) = self.playlist_entries.get(self.playlist_scroll) else {
+            self.respond("playlist: no M4A files in /common/audio; use playlist to refresh");
+            return;
+        };
+        let path = format!("/common/audio/{}", entry.name);
+        if let Err(err) = self.load_path(path) {
+            self.respond(err);
+            return;
+        }
+        self.play_loaded();
     }
 
     fn load_path(&mut self, path: String) -> std::result::Result<(), String> {
@@ -1758,10 +1748,18 @@ impl control::ControlEventHandler for App {
     fn on_playlist(&mut self, _event: &control::ParsedCommand) {
         self.playlist_visible = true;
         self.scope_mode = None;
-        self.respond(format!(
-            "playlist: showing folder demo with {} entries",
-            self.playlist_entries.len()
-        ));
+        self.playlist_scroll = 0;
+        self.playlist_entries.clear();
+        match shared_audio_playlist() {
+            Ok(entries) => {
+                self.playlist_entries = entries;
+                self.respond(format!(
+                    "playlist: {} M4A files in /common/audio; arrows select, Enter plays",
+                    self.playlist_entries.len()
+                ));
+            }
+            Err(err) => self.respond(format!("playlist: {err}")),
+        }
     }
 
     fn on_playlist_top(&mut self, _event: &control::ParsedCommand) {
@@ -1806,7 +1804,7 @@ impl control::ControlEventHandler for App {
 
     fn on_help(&mut self, _event: &control::ParsedCommand) {
         self.respond(
-            "commands: load <path> | play [path] | pause/stop | next | prev | goto <time> | volume [0-100] | mute | unmute | playlist/list (demo) | help | quit | terminate; root file: play /aud.m4a",
+            "commands: load <path> | play [path] | pause/stop | next | prev | goto <time> | volume [0-100] | mute | unmute | playlist/list (/common/audio) | help | quit | terminate; playlist: arrows select, Enter plays",
         );
     }
 }
@@ -2161,4 +2159,35 @@ fn signed(value: i16) -> String {
     } else {
         value.to_string()
     }
+}
+
+/// TRUEOSFS stores the inferred content identity; select by that identity,
+/// rather than trusting a filename suffix or reading every file to sniff it.
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn shared_audio_playlist() -> std::result::Result<Vec<PlaylistEntry>, String> {
+    use trueos::async_fs::{self, ContentTypeId, NodeKind};
+    let listing = async_fs::block_on(async_fs::list_dir_typed(b"/common/audio"))
+        .map_err(|code| format!("cannot list /common/audio (filesystem error {code})"))?;
+    if listing.truncated {
+        return Err("/common/audio listing was truncated; refusing an incomplete playlist".into());
+    }
+    let mut entries: Vec<_> = listing
+        .entries
+        .into_iter()
+        .filter(|entry| entry.kind == NodeKind::File && entry.content_type == ContentTypeId::M4A)
+        .map(|entry| PlaylistEntry {
+            icon: "♪".into(),
+            name: entry.name,
+            kind: "M4A".into(),
+            duration: "—".into(),
+            size: "—".into(),
+        })
+        .collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(entries)
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn shared_audio_playlist() -> std::result::Result<Vec<PlaylistEntry>, String> {
+    Err("the shared audio playlist requires TRUEOSFS".into())
 }

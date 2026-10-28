@@ -1,7 +1,8 @@
 Maxpix
 
 230,400 native Intel POINT_LIST particles, seeded and uploaded at startup and
-when changing scenes. The original baked native vertex shader is unchanged.
+when changing scenes or circuit stages. The original baked native vertex shader
+is unchanged.
 Maxpix embeds the same PrismQ simulator library used by apps/prismq; the web
 designer/server does not need to run.
 
@@ -63,8 +64,9 @@ Offsets cancel the tornado at time zero; bounded shader time then adds small
 native motion without wrapping height. The existing instance quaternion turns
 the whole shape. No shader source, baked binary, ABI, or kernel changes, and
 no shader compiler/bakery setup is required. Cyan is still shader-constant.
-Retained GPU snapshots are released and recreated on scene/stage selection; there are no
-per-frame vertex uploads, simulations, or accumulating scene allocations.
+Retained GPU snapshots are released and recreated on scene/stage selection;
+there are no per-frame vertex uploads, simulations, or accumulating scene
+allocations.
 PrismQ parallelism is disabled; simulations run on the calling thread only
 when selecting a scene/stage, never during animation. Because it uses std,
 Maxpix now builds with the existing TRUEOS std backend.

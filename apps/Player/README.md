@@ -38,3 +38,17 @@ inspection:
 ```sh
 cargo doc --no-deps --document-private-items
 ```
+
+## Shared audio playlist
+
+Place M4A/AAC audio in `/common/audio` at the root of TRUEOSFS. Run `playlist`
+(or `list`) to refresh the folder, use Up/Down or PageUp/PageDown to select a
+track, and press Enter with an empty command line to load and play it. `next`
+and `prev` play adjacent playlist entries. The folder is also read at startup.
+
+The blueprint uses the async TRUEOSFS typed directory-list ABI and selects
+regular files whose stored `infer::ContentTypeId` is `M4A`, regardless of their
+filename extension. Subdirectories are not scanned. Missing folders and listing
+errors are shown when opening the playlist. Playlist rows leave durations and sizes unknown; the loaded track panel shows
+them after decoding. M4A container identity does not guarantee a supported
+AAC stream; decoder errors are reported by playback.
