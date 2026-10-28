@@ -1,10 +1,11 @@
-#![no_std]
 // trueos-blueprint: features=["ui4-scene"]
+// PrismQ uses std; the Blueprint builder supplies TRUEOS's std backend.
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod native {
     use maxpix::{
-        PARTICLE_COUNT, POINTER_COUNT, PointerInput, camera, next_point_width_raw, particle_mesh,
+        PARTICLE_COUNT, POINTER_COUNT, PointerInput, SceneMode, camera, next_point_width_raw,
+        particle_mesh, scene_mesh,
     };
     use trueos::{
         clock,
@@ -12,11 +13,26 @@ mod native {
         logl,
         ui4_scene::{CursorSource, Damage, Error as UiError, Frame},
         vgpu::{
-            self, Capabilities, Device, QueueClass, RetainedFrameSubmit, RetainedMeshDescriptor,
-            RetainedTransformSeed,
+            self, Buffer, Capabilities, Device, QueueClass, RetainedFrameSubmit, RetainedMesh,
+            RetainedMeshDescriptor, RetainedTransformSeed,
         },
         vsys,
     };
+    use trueos_picasso::cam::Projection;
+
+    fn create_mesh(device: Device, vertices: Buffer, indices: Buffer) -> Result<RetainedMesh, i32> {
+        device.create_retained_mesh(
+            vertices,
+            indices,
+            RetainedMeshDescriptor {
+                vertex_count: PARTICLE_COUNT,
+                index_count: PARTICLE_COUNT,
+                vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_MAXPIX_TORNADO,
+                topology: vgpu::PRIMITIVE_TOPOLOGY_POINT_LIST,
+                ..RetainedMeshDescriptor::default()
+            },
+        )
+    }
 
     pub fn run() -> Result<(), i32> {
         let (mut width, mut height) = (800, 600);
@@ -37,27 +53,21 @@ mod native {
         {
             return Err(vgpu::ERR_IO);
         }
-        let mesh = device.create_retained_mesh(
-            vertex_buffer,
-            index_buffer,
-            RetainedMeshDescriptor {
-                vertex_count: PARTICLE_COUNT,
-                index_count: PARTICLE_COUNT,
-                vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_MAXPIX_TORNADO,
-                topology: vgpu::PRIMITIVE_TOPOLOGY_POINT_LIST,
-                ..RetainedMeshDescriptor::default()
-            },
-        )?;
+        let mut mesh = create_mesh(device, vertex_buffer, index_buffer)?;
         drop(vertices);
         drop(indices);
         logl::log(
             logl::level::IMPORTANT,
             format_args!(
-                "maxpix: particles={} topology=POINT_LIST cpu-upload=once motion=native-VS point=1px display-scale=1x camera=-10,-10,-10 pointers=4 input-contract=pointer-v1 mouse-x=speed mouse-y=angle key-1=point-size",
+                "maxpix: particles={} topology=POINT_LIST cpu-upload=scene-change motion=native-VS point=1px display-scale=1x camera=-10,-10,-10 pointers=4 input-contract=pointer-v1 mouse-x=speed mouse-y=angle wheel=fov-20..100deg key-1=point-size key-0=tornado key-2=quantum-trefoil key-3=quantum-hopf shader=unchanged",
                 PARTICLE_COUNT
             ),
         );
         let started = clock::monotonic_millis();
+        let mut scene_started = started;
+        let mut mode = SceneMode::Tornado;
+        let mut pending_mode = None;
+        let mut scene_camera = camera();
         let mut pointers = [PointerInput::default(); POINTER_COUNT];
         let mut sources: [Option<CursorSource>; POINTER_COUNT] = [None; POINTER_COUNT];
         let mut input_tick = started;
@@ -108,6 +118,23 @@ mod native {
                         event.buttons_released,
                         event.wheel,
                     );
+                    // Apply each routed wheel delta once, even if surface
+                    // backpressure delays publication. Projection travels in
+                    // the existing camera block; no geometry/shader update.
+                    if event.wheel != 0
+                        && let Projection::Perspective { yfov, .. } = &mut scene_camera.projection
+                    {
+                        *yfov = (*yfov - f32::from(event.wheel) * 3.0_f32.to_radians())
+                            .clamp(20.0_f32.to_radians(), 100.0_f32.to_radians());
+                        logl::log(
+                            logl::level::IMPORTANT,
+                            format_args!(
+                                "maxpix: fov={:.1}deg wheel={}",
+                                yfov.to_degrees(),
+                                event.wheel
+                            ),
+                        );
+                    }
                     pointer_reports += 1;
                     if new_source || pointer_reports % 120 == 0 {
                         logl::log(
@@ -134,18 +161,66 @@ mod native {
             while let Some(event) = frame.take_keyboard_event().map_err(|_| vgpu::ERR_IO)? {
                 // Printable digits arrive as TEXT, not as named KEY events.
                 if event.kind == KEYBOARD_OUTPUT_KIND_TEXT
-                    && event.codepoint == u32::from(b'1')
                     && event.flags & KEYBOARD_OUTPUT_FLAG_PRESS != 0
                 {
-                    point_width_raw = next_point_width_raw(point_width_raw);
-                    logl::log(
-                        logl::level::IMPORTANT,
-                        format_args!(
-                            "maxpix: point-size={:.3}px native-u8.3={} key=1",
-                            point_width_raw as f32 / 8.0,
-                            point_width_raw
-                        ),
-                    );
+                    if let Some(selected) = SceneMode::from_key(event.codepoint) {
+                        pending_mode = Some(selected);
+                    } else if event.codepoint == u32::from(b'1') {
+                        point_width_raw = next_point_width_raw(point_width_raw);
+                        logl::log(
+                            logl::level::IMPORTANT,
+                            format_args!(
+                                "maxpix: point-size={:.3}px native-u8.3={} key=1",
+                                point_width_raw as f32 / 8.0,
+                                point_width_raw
+                            ),
+                        );
+                    }
+                }
+            }
+            if let Some(selected) = pending_mode.take().filter(|selected| *selected != mode) {
+                let switch_started = clock::monotonic_millis();
+                match scene_mesh(selected, PARTICLE_COUNT) {
+                    Ok((vertices, indices)) => {
+                        // Retained meshes snapshot their input buffers. Replace
+                        // that snapshot after the preceding frame's GPU wait;
+                        // overwriting only the source would leave the old scene.
+                        // Every mode uses the same sequential index buffer.
+                        drop(indices);
+                        device.destroy_retained_mesh(mesh)?;
+                        if device.write_buffer(vertex_buffer, 0, &vertices)? != vertices.len() {
+                            return Err(vgpu::ERR_IO);
+                        }
+                        mesh = create_mesh(device, vertex_buffer, index_buffer)?;
+                        mode = selected;
+                        scene_started = clock::monotonic_millis();
+                        input_tick = scene_started;
+                        for pointer in &mut pointers {
+                            pointer.phase = 0.0;
+                        }
+                        fps_started = scene_started;
+                        fps_frames = 0;
+                        logl::log(
+                            logl::level::IMPORTANT,
+                            format_args!(
+                                "maxpix: scene={} particles={} prepare-ms={} prismq-qubits={} shader=unchanged",
+                                mode.name(),
+                                PARTICLE_COUNT,
+                                scene_started.saturating_sub(switch_started),
+                                if mode == SceneMode::Tornado { 0 } else { 8 },
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        logl::log(
+                            logl::level::ERROR,
+                            format_args!(
+                                "maxpix: scene={} preparation failed: {}",
+                                selected.name(),
+                                error
+                            ),
+                        );
+                    }
                 }
             }
             match frame.begin_gpu_frame() {
@@ -157,14 +232,30 @@ mod native {
                 Err(_) => return Err(vgpu::ERR_IO),
             }
             let surface = device.acquire_ui4_surface(frame.window_id())?;
-            let mut view = camera().retained(width, height, [0.0; 16]);
-            view.jitter_frame[2] = (clock::monotonic_millis() - started) as f32 * 0.001;
+            let mut view = scene_camera.retained(width, height, [0.0; 16]);
+            let elapsed = (clock::monotonic_millis() - scene_started) as f32 * 0.001;
+            view.jitter_frame[2] = mode.shader_time(elapsed);
             // Dedicated Maxpix native raster control, validated by the kernel.
             view.jitter_frame[3] = point_width_raw as f32;
+            let mut motion_seconds = 0.0;
+            let mut steering = 0.0;
+            let mut active_pointers = 0;
             for (slot, pointer) in pointers.iter().enumerate() {
-                let (state, buttons) = pointer.pack();
+                let (mut state, buttons) = pointer.pack();
+                state[2] = mode.shader_time(pointer.phase);
                 view.inverse_view_projection[slot * 4..slot * 4 + 4].copy_from_slice(&state);
                 view.previous_view_projection[slot * 4..slot * 4 + 4].copy_from_slice(&buttons);
+                if pointer.active {
+                    motion_seconds += pointer.phase;
+                    steering += (pointer.position[1] - 0.5) * core::f32::consts::TAU;
+                    active_pointers += 1;
+                }
+            }
+            if active_pointers > 0 {
+                motion_seconds /= active_pointers as f32;
+                steering /= active_pointers as f32;
+            } else {
+                motion_seconds = elapsed;
             }
             let mut submit = RetainedFrameSubmit {
                 camera: view,
@@ -174,8 +265,12 @@ mod native {
             };
             submit.seeds[0] = RetainedTransformSeed {
                 scale: [1.0; 3],
-                rotation: [0.0, 0.0, 0.0, 1.0],
-                local_radius: 7.1,
+                rotation: mode.rotation(motion_seconds, steering),
+                local_radius: if mode == SceneMode::Tornado {
+                    7.1
+                } else {
+                    10.0
+                },
                 ..RetainedTransformSeed::default()
             };
             let point = device.submit_retained_frame(
@@ -218,7 +313,7 @@ mod native {
                 logl::log(
                     logl::level::IMPORTANT,
                     format_args!(
-                        "maxpix: fps={:.1} frames={} elapsed_ms={} particles={} extent={}x{} pointer-reports={} point-size={:.3}px",
+                        "maxpix: fps={:.1} frames={} elapsed_ms={} particles={} extent={}x{} pointer-reports={} point-size={:.3}px scene={}",
                         fps,
                         fps_frames,
                         elapsed_ms,
@@ -226,7 +321,8 @@ mod native {
                         width,
                         height,
                         pointer_reports,
-                        point_width_raw as f32 / 8.0
+                        point_width_raw as f32 / 8.0,
+                        mode.name(),
                     ),
                 );
                 fps_started = now;

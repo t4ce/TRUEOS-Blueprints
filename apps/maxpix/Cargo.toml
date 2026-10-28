@@ -14,10 +14,12 @@ name = "maxpix"
 path = "main.rs"
 
 [dependencies]
+libm = "0.2"
+prism-q = { path = "../prismq/crates/prism-q", default-features = false }
 trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
-trueos = { path = "../../api", features = ["ui4-scene", "default-panic-handler"] }
+trueos = { path = "../../api", features = ["ui4-scene"] }
 trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }
 
 [lints.rust]
