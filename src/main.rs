@@ -5,18 +5,20 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread;
 
 mod abi_guard;
 mod app_catalog;
 mod artifact;
+mod build_cache;
 mod build_plan;
+mod cache_inputs;
 mod cargo_output;
 mod cli;
 mod native_fold;
 mod native_odin;
 mod publish;
 mod stack_capture;
+mod staging;
 mod std_backend;
 mod toolchain;
 
@@ -74,8 +76,6 @@ impl CratePatch {
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const BLUEPRINT_CATALOG_ROOT_ENV: &str = "TRUEOS_BLUEPRINT_CATALOG_ROOT";
-const BULK_FANOUT_ENV: &str = "TRUEOS_BLUEPRINT_FANOUT";
-const DEFAULT_BULK_FANOUT: usize = 1;
 // `rustc-min` packages an archived Rust compiler. Keep it available as an
 // explicit named build, but never bootstrap it as part of ordinary `cargo bp`.
 const BULK_EXCLUDED_APP_NAMES: &[&str] = &["rustc-min"];
@@ -195,12 +195,6 @@ enum BulkBuildTask {
     Package(app_catalog::PackageAppSpec),
 }
 
-#[derive(Clone, Copy)]
-struct BuildLane {
-    index: usize,
-    count: usize,
-}
-
 fn main() {
     if let Err(err) = run() {
         eprintln!("trueos-blueprint: {err}");
@@ -262,16 +256,19 @@ fn run() -> Result<(), String> {
                 })
                 .chain(package_apps.into_iter().map(BulkBuildTask::Package))
                 .collect::<Vec<_>>();
-            let built_blueprints = if package_catalog == PackageCatalog::Apps {
-                build_bulk_apps(&app_dir, &manifest_path, tasks, cargo_profile)?
-            } else {
-                tasks
-                    .into_iter()
-                    .map(|task| {
-                        build_bulk_task(&app_dir, &manifest_path, task, cargo_profile, None)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            };
+            // Walk the catalog through the ordinary single-target build path.
+            // Finish each app before starting the next, sharing the normal cache.
+            let mut built_blueprints = Vec::with_capacity(tasks.len());
+            let task_count = tasks.len();
+            for (index, task) in tasks.into_iter().enumerate() {
+                println!("trueos-blueprint: building item {}/{task_count}", index + 1);
+                built_blueprints.push(build_bulk_task(
+                    &app_dir,
+                    &manifest_path,
+                    task,
+                    cargo_profile,
+                )?);
+            }
 
             publish_blueprint_files(&built_blueprints, package_catalog)?;
             return Ok(());
@@ -347,128 +344,36 @@ fn run() -> Result<(), String> {
     }
 }
 
-fn build_bulk_apps(
-    app_dir: &Path,
-    manifest_path: &Path,
-    tasks: Vec<BulkBuildTask>,
-    cargo_profile: CargoProfile,
-) -> Result<Vec<PathBuf>, String> {
-    let task_count = tasks.len();
-    let lane_count = bulk_fanout(tasks.len())?;
-    if lane_count == 1 {
-        return tasks
-            .into_iter()
-            .map(|task| build_bulk_task(app_dir, manifest_path, task, cargo_profile, None))
-            .collect();
-    }
-
-    println!(
-        "trueos-blueprint: bulk app build fanout: {lane_count} lanes (set {BULK_FANOUT_ENV}=1 to disable)"
-    );
-    let mut lanes = (0..lane_count).map(|_| Vec::new()).collect::<Vec<_>>();
-    for (task_index, task) in tasks.into_iter().enumerate() {
-        lanes[task_index % lane_count].push((task_index, task));
-    }
-
-    let app_dir = app_dir.to_path_buf();
-    let manifest_path = manifest_path.to_path_buf();
-    let mut handles = Vec::with_capacity(lane_count);
-    for (lane_index, tasks) in lanes.into_iter().enumerate() {
-        let app_dir = app_dir.clone();
-        let manifest_path = manifest_path.clone();
-        let lane = BuildLane {
-            index: lane_index,
-            count: lane_count,
-        };
-        handles.push(
-            thread::Builder::new()
-                .name(format!("trueos-bp-lane-{}", lane_index + 1))
-                .spawn(move || {
-                    tasks
-                        .into_iter()
-                        .map(|(task_index, task)| {
-                            build_bulk_task(
-                                &app_dir,
-                                &manifest_path,
-                                task,
-                                cargo_profile,
-                                Some(lane),
-                            )
-                            .map(|output| (task_index, output))
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .map_err(|err| format!("failed to start bulk build lane: {err}"))?,
-        );
-    }
-
-    let mut ordered = vec![None; task_count];
-    for handle in handles {
-        let lane_outputs = handle
-            .join()
-            .map_err(|_| "bulk build lane panicked".to_string())??;
-        for (task_index, output) in lane_outputs {
-            if task_index >= ordered.len() {
-                return Err("bulk build returned an invalid task index".to_string());
-            }
-            ordered[task_index] = Some(output);
-        }
-    }
-    ordered
-        .into_iter()
-        .map(|output| {
-            output.ok_or_else(|| "bulk build produced an incomplete result set".to_string())
-        })
-        .collect()
-}
-
 fn build_bulk_task(
     app_dir: &Path,
     manifest_path: &Path,
     task: BulkBuildTask,
     cargo_profile: CargoProfile,
-    lane: Option<BuildLane>,
 ) -> Result<PathBuf, String> {
     match task {
         BulkBuildTask::Example {
             name,
             required_features,
-        } => build_one_target_to_in_lane(
+        } => build_one_target_to(
             app_dir,
             manifest_path,
             BuildTarget::Example(name),
             &required_features,
             &app_dir.join("dist"),
             cargo_profile,
-            lane,
         ),
         BulkBuildTask::Package(package_app) => {
             println!("trueos-blueprint: package app: {}", package_app.name);
-            build_one_target_to_in_lane(
+            build_one_target_to(
                 &package_app.dir,
                 &package_app.manifest_path,
                 BuildTarget::Package,
                 &[],
                 &app_dir.join("dist"),
                 cargo_profile,
-                lane,
             )
         }
     }
-}
-
-fn bulk_fanout(task_count: usize) -> Result<usize, String> {
-    let requested = match env::var(BULK_FANOUT_ENV) {
-        Ok(value) => value
-            .parse::<usize>()
-            .map_err(|_| format!("{BULK_FANOUT_ENV} must be a positive integer, got `{value}`"))?,
-        Err(env::VarError::NotPresent) => DEFAULT_BULK_FANOUT,
-        Err(err) => return Err(format!("failed to read {BULK_FANOUT_ENV}: {err}")),
-    };
-    if requested == 0 {
-        return Err(format!("{BULK_FANOUT_ENV} must be at least 1"));
-    }
-    Ok(requested.min(task_count).max(1))
 }
 
 fn build_one_target(
@@ -495,26 +400,6 @@ fn build_one_target_to(
     required_features: &[String],
     output_dir: &Path,
     cargo_profile: CargoProfile,
-) -> Result<PathBuf, String> {
-    build_one_target_to_in_lane(
-        app_dir,
-        manifest_path,
-        build_target,
-        required_features,
-        output_dir,
-        cargo_profile,
-        None,
-    )
-}
-
-fn build_one_target_to_in_lane(
-    app_dir: &Path,
-    manifest_path: &Path,
-    build_target: BuildTarget,
-    required_features: &[String],
-    output_dir: &Path,
-    cargo_profile: CargoProfile,
-    lane: Option<BuildLane>,
 ) -> Result<PathBuf, String> {
     let mut capability_flags = if matches!(build_target, BuildTarget::Package)
         && package_blueprint_replicatable(manifest_path)?
@@ -550,13 +435,6 @@ fn build_one_target_to_in_lane(
     let stack_capture = matches!(build_target, BuildTarget::Package)
         && package_blueprint_stack_capture(manifest_path)?;
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
-    let std_sysroot = if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        let sdk = blueprint_root(app_dir)
-            .ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
-        Some(std_backend::prepare(&sdk)?)
-    } else {
-        None
-    };
 
     let output_name = match &build_target {
         BuildTarget::Package => {
@@ -565,20 +443,66 @@ fn build_one_target_to_in_lane(
         BuildTarget::Example(name) => name.clone(),
     };
 
+    let out = output_dir.join(format!("{output_name}.bp"));
+    let target_input = default_target_spec(app_dir)?;
     let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
-    let target_spec = cargo_target_spec_path(&default_target_spec(&app_dir)?, &packer_target_dir)?;
+    let cache_key = serde_json::json!({
+        "manifest": manifest_path,
+        "output": out,
+        "profile": cargo_profile.label(),
+        "example": match &build_target { BuildTarget::Example(name) => Some(name), _ => None },
+        "features": required_features,
+        "target": target_input,
+    })
+    .to_string();
+    fs::create_dir_all(&packer_target_dir).map_err(io_string)?;
+    let build_lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(packer_target_dir.join(format!(
+            "{}.build.lock",
+            sanitize_path_component(&output_name)
+        )))
+        .map_err(io_string)?;
+    build_lock.lock().map_err(io_string)?;
+    let mut build_cache = cache_inputs::base(app_dir, manifest_path, &target_input)
+        .and_then(|roots| {
+            build_cache::BuildCache::new(
+                packer_target_dir
+                    .join("build-cache")
+                    .join(format!("{}.json", sanitize_path_component(&output_name))),
+                cache_key,
+                roots,
+                cache_inputs::environment(),
+            )
+        })
+        .map_err(|error| eprintln!("trueos-blueprint: cache unavailable: {error}"))
+        .ok();
+    if cache_action(&mut build_cache, |cache| cache.is_fresh()).unwrap_or(false) {
+        println!("trueos-blueprint: up to date: {}", out.display());
+        return Ok(out);
+    }
+    cache_action(&mut build_cache, |cache| {
+        cache.invalidate()?;
+        cache.watch(Vec::new())
+    });
+
+    let std_sysroot = if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        let sdk =
+            blueprint_root(app_dir).ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
+        Some(std_backend::prepare(&sdk)?)
+    } else {
+        None
+    };
+
+    let target_spec = cargo_target_spec_path(&target_input, &packer_target_dir)?;
     let target_name = target_spec
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
     let cargo_cache_root = cargo_cache_root(&app_dir, &packer_target_dir);
-    let cargo_cache_root = match lane {
-        Some(lane) => cargo_cache_root
-            .join("bulk-lanes")
-            .join(format!("lane-{}", lane.index + 1)),
-        None => cargo_cache_root,
-    };
     let cache_label = match build_settings.flavor {
         BuildFlavor::TokioStd => format!(
             "{}-{}",
@@ -603,7 +527,7 @@ fn build_one_target_to_in_lane(
     let deps_dir = target_dir.join("deps");
 
     let work_dir = workdir(app_dir, &packer_target_dir, &output_name)?;
-    reset_dir(&work_dir)?;
+    let staging = staging::StagingGuard::new(&work_dir)?;
 
     let source_overlay =
         source_overlay_patches(app_dir, manifest_path, &work_dir, &build_settings)?;
@@ -625,7 +549,25 @@ fn build_one_target_to_in_lane(
         &lock_mismatches,
     )?
     .unwrap_or_else(|| manifest_path.to_path_buf());
-    enforce_source_overlay_lock(&cargo_manifest_path, &source_overlay)?;
+    let metadata = enforce_source_overlay_lock(&cargo_manifest_path, &source_overlay)?;
+    staging.finish()?;
+    let dependencies = cache_inputs::Dependencies::from_metadata(
+        &metadata,
+        &cargo_manifest_path,
+        app_dir,
+        &work_dir,
+    )
+    .map_err(|error| eprintln!("trueos-blueprint: cache unavailable: {error}"))
+    .ok();
+    if let Some(dependencies) = dependencies.as_ref() {
+        let mut roots = dependencies.roots();
+        if let Some(sysroot) = &std_sysroot {
+            roots.push(sysroot.sysroot.join("lib/rustlib/src/rust/library"));
+        }
+        cache_action(&mut build_cache, |cache| cache.watch(roots));
+    } else {
+        build_cache = None;
+    }
 
     let mut cargo = toolchain::cargo_command();
     if let Some(sysroot) = &std_sysroot {
@@ -660,16 +602,7 @@ fn build_one_target_to_in_lane(
     }
     push_source_overlay_configs(&mut cargo, &source_overlay);
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
-    if let Some(lane) = lane {
-        // Each lane owns a target-cache shard, so Cargo does not serialize on
-        // its target-directory lock. Divide the host budget across the lanes
-        // to avoid four Cargo instances each scheduling every CPU.
-        let jobs = thread::available_parallelism()
-            .map(|parallelism| parallelism.get().div_ceil(lane.count))
-            .unwrap_or(1)
-            .max(1);
-        cargo.arg("--jobs").arg(jobs.to_string());
-    } else if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
+    if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
         // Keep Cargo from oversubscribing the host while rustc parallelizes
         // Pumpkin's unusually large crate frontend.
         cargo.arg("--jobs").arg("2");
@@ -679,7 +612,9 @@ fn build_one_target_to_in_lane(
     push_trueos_cc_flags(&mut cargo);
     if stack_capture {
         stack_capture::configure_cargo(&mut cargo, cargo_profile);
-        println!("trueos-blueprint: diagnostic stack capture enabled (full DWARF, frame pointers, retained sidecars)");
+        println!(
+            "trueos-blueprint: diagnostic stack capture enabled (full DWARF, frame pointers, retained sidecars)"
+        );
     }
     // SQLite's optional sort workers create POSIX pthreads directly, which
     // Blueprint loaders reject. Keep SQLite mutex/thread safety enabled and
@@ -765,9 +700,13 @@ fn build_one_target_to_in_lane(
         cargo.arg("--features").arg(extra_features.join(","));
     }
     match cargo_profile {
-        CargoProfile::Dev => {},
-        CargoProfile::Release => { cargo.arg("--release"); },
-        CargoProfile::Bringup => { cargo.arg("--profile").arg("bringup"); },
+        CargoProfile::Dev => {}
+        CargoProfile::Release => {
+            cargo.arg("--release");
+        }
+        CargoProfile::Bringup => {
+            cargo.arg("--profile").arg("bringup");
+        }
     }
 
     match &build_target {
@@ -790,7 +729,11 @@ fn build_one_target_to_in_lane(
     // features, patches and build-std graph. Plan once; cached artifact names
     // cannot establish a dependency's current package/source identity.
     let native_fold_plan = if output_name == "codex" {
-        Some(native_fold::capture_plan(&cargo, &work_dir, "codex_network_proxy")?)
+        Some(native_fold::capture_plan(
+            &cargo,
+            &work_dir,
+            "codex_network_proxy",
+        )?)
     } else {
         if stack_capture {
             native_fold::capture_unit_graph(&cargo, &work_dir)?;
@@ -807,7 +750,7 @@ fn build_one_target_to_in_lane(
         "trueos-blueprint: cargo artifact cache: {}",
         cargo_target_dir.display()
     );
-    let cargo_artifacts = run_cargo_rustc_command(&mut cargo, "cargo rustc", &deps_dir)?;
+    let mut cargo_artifacts = run_cargo_rustc_command(&mut cargo, "cargo rustc", &deps_dir)?;
 
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
@@ -837,6 +780,15 @@ fn build_one_target_to_in_lane(
                 cargo_profile,
                 &source_overlay,
             )?;
+            cargo_artifacts
+                .input_files
+                .extend(isolated.artifacts.input_files.iter().cloned());
+            cargo_artifacts
+                .build_script_outputs
+                .extend(isolated.artifacts.build_script_outputs.iter().cloned());
+            cargo_artifacts
+                .package_manifests
+                .extend(isolated.artifacts.package_manifests.clone());
             let isolated_metadata = cargo_metadata_for_rustc_payload(
                 &isolated.manifest_path,
                 &target_spec,
@@ -966,9 +918,12 @@ fn build_one_target_to_in_lane(
     let entry_hint_hex = entry_hint_hex(&linked);
 
     let mut objcopy = tool_command(&["llvm-objcopy", "rust-objcopy", "objcopy"])?;
-    objcopy.arg("--strip-debug")
-        .arg("--set-section-flags").arg(".trueos.shaders=readonly")
-        .arg(&linked).arg(&stripped);
+    objcopy
+        .arg("--strip-debug")
+        .arg("--set-section-flags")
+        .arg(".trueos.shaders=readonly")
+        .arg(&linked)
+        .arg(&stripped);
     run_command(&mut objcopy, "objcopy")?;
 
     let packaged_elf = match rustc_tier {
@@ -991,14 +946,48 @@ fn build_one_target_to_in_lane(
         _ => stripped.clone(),
     };
 
-    let out = output_dir.join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
     write_blueprint(&out, &packaged_elf, &entry_hint_hex, capability_flags)?;
     if stack_capture {
         stack_capture::retain_sidecars(&out, &linked, &packaged_elf, cargo_profile)?;
     }
+    if let (Some(cache), Some(dependencies)) = (build_cache.as_mut(), dependencies.as_ref()) {
+        let mut outputs = vec![out.clone()];
+        if stack_capture {
+            outputs.extend([
+                out.with_extension("debug.o"),
+                out.with_extension("packed.o"),
+                out.with_extension("debug.json"),
+            ]);
+        }
+        match dependencies
+            .extra_inputs(&cargo_artifacts, &cargo_target_dir)
+            .and_then(|inputs| cache.record(outputs, inputs))
+        {
+            Ok(true) => {}
+            Ok(false) => println!(
+                "trueos-blueprint: inputs changed during build; next invocation will recheck"
+            ),
+            Err(error) => eprintln!("trueos-blueprint: cache not recorded: {error}"),
+        }
+    }
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(out)
+}
+
+// Caching is optional; an unreadable stamp/input must fall back to the build.
+fn cache_action<T>(
+    cache: &mut Option<build_cache::BuildCache>,
+    action: impl FnOnce(&mut build_cache::BuildCache) -> Result<T, String>,
+) -> Option<T> {
+    match cache.as_mut().map(action)? {
+        Ok(value) => Some(value),
+        Err(error) => {
+            eprintln!("trueos-blueprint: cache unavailable: {error}");
+            *cache = None;
+            None
+        }
+    }
 }
 
 fn rustc_tier_label(tier: RustcTier) -> &'static str {
@@ -1335,11 +1324,7 @@ fn staged_lock_overlay_aligned(
 fn enforce_source_overlay_lock(
     staged_manifest: &Path,
     staged_source_overlay: &[CratePatch],
-) -> Result<(), String> {
-    if staged_source_overlay.is_empty() {
-        return Ok(());
-    }
-
+) -> Result<CargoMetadata, String> {
     let mut resolve = toolchain::cargo_command();
     resolve
         .arg("metadata")
@@ -1348,7 +1333,7 @@ fn enforce_source_overlay_lock(
         .arg("--manifest-path")
         .arg(staged_manifest);
     push_source_overlay_configs(&mut resolve, staged_source_overlay);
-    let output = resolve
+    let mut output = resolve
         .output()
         .map_err(|err| format!("cargo metadata failed to start: {err}"))?;
     let notes = write_filtered_cargo_output("cargo metadata", &[], &output.stderr)?;
@@ -1431,7 +1416,19 @@ fn enforce_source_overlay_lock(
     }
 
     if violations.is_empty() {
-        Ok(())
+        if !forced.is_empty() {
+            output = resolve.output().map_err(io_string)?;
+            let notes = write_filtered_cargo_output("cargo metadata", &[], &output.stderr)?;
+            print_cargo_output_notes("cargo metadata", &notes);
+            if !output.status.success() {
+                return Err(format!(
+                    "cargo metadata failed with status {}",
+                    output.status
+                ));
+            }
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("invalid resolved Cargo metadata: {error}"))
     } else {
         Err(format!(
             "source overlay lock guard failed; refusing to build with bypassed pins: {}",
@@ -1561,7 +1558,9 @@ fn cargo_target_spec_path(target_spec: &Path, packer_target_dir: &Path) -> Resul
 
     let staged = packer_target_dir.join("x86_64-unknown-trueos.json");
     fs::create_dir_all(packer_target_dir).map_err(io_string)?;
-    fs::copy(target_spec, &staged).map_err(io_string)?;
+    if fs::read(&staged).ok() != Some(fs::read(target_spec).map_err(io_string)?) {
+        fs::copy(target_spec, &staged).map_err(io_string)?;
+    }
     Ok(staged)
 }
 

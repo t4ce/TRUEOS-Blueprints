@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,6 +30,22 @@ pub(crate) struct CargoBuildArtifacts {
     /// Target archives emitted or reused by this invocation. The `.rlink`
     /// intersects this inventory when assigning native ownership folds.
     pub(crate) target_archives: Vec<CargoNativeArchiveArtifact>,
+    /// Source and include files recorded in dep-info for the artifacts in
+    /// this invocation, including host tools and procedural macros.
+    pub(crate) input_files: Vec<PathBuf>,
+    /// Build script stdout belonging to scripts executed or reused by this
+    /// invocation. The package identity resolves relative rerun-if-changed
+    /// paths against that package's manifest directory.
+    pub(crate) build_script_outputs: Vec<CargoBuildScriptOutput>,
+    /// Exact manifests for all packages whose targets Cargo built or reused,
+    /// including build-std packages absent from the app's metadata graph.
+    pub(crate) package_manifests: BTreeMap<String, PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CargoBuildScriptOutput {
+    pub(crate) package_id: String,
+    pub(crate) path: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -59,6 +75,10 @@ struct CargoJsonMessage {
     filenames: Vec<String>,
     #[serde(default)]
     message: Option<CargoJsonDiagnostic>,
+    #[serde(default)]
+    out_dir: Option<String>,
+    #[serde(default)]
+    manifest_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -152,7 +172,16 @@ pub(crate) fn run_cargo_rustc_command(
         .output()
         .map_err(|err| format!("{label} failed to start: {err}"))?;
 
-    let (artifacts, rendered_stdout) = parse_cargo_rustc_stdout(&output.stdout, deps_dir);
+    let (mut artifacts, rendered_stdout) = parse_cargo_rustc_stdout(&output.stdout, deps_dir);
+    // Cargo's dep-info paths are relative to the command's working directory
+    // when rustc did not emit absolute paths. Preserve that identity before
+    // the caller starts working with the cached input set.
+    let process_dir = std::env::current_dir().map_err(io_string)?;
+    let current_dir = cmd
+        .get_current_dir()
+        .map(|path| process_dir.join(path))
+        .unwrap_or(process_dir);
+    resolve_artifact_paths(&mut artifacts, &current_dir);
 
     io::stdout()
         .write_all(rendered_stdout.as_bytes())
@@ -167,11 +196,32 @@ pub(crate) fn run_cargo_rustc_command(
     }
 }
 
+fn resolve_artifact_paths(artifacts: &mut CargoBuildArtifacts, current_dir: &Path) {
+    for path in artifacts
+        .input_files
+        .iter_mut()
+        .chain(artifacts.package_manifests.values_mut())
+        .chain(
+            artifacts
+                .build_script_outputs
+                .iter_mut()
+                .map(|script| &mut script.path),
+        )
+    {
+        if path.is_relative() {
+            *path = current_dir.join(&*path);
+        }
+    }
+    artifacts.input_files.sort();
+    artifacts.input_files.dedup();
+}
+
 fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifacts, String) {
     let mut artifacts = CargoBuildArtifacts::default();
     let mut sysroot_candidates = Vec::new();
     let mut target_metadata_candidates = Vec::new();
     let mut target_archive_candidates = Vec::new();
+    let mut dep_info_paths = HashMap::new();
     let mut saw_build_std_anchor = false;
     let mut rendered_stdout = String::new();
 
@@ -179,6 +229,34 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
         match serde_json::from_str::<CargoJsonMessage>(line) {
             Ok(message) => match message.reason.as_str() {
                 "compiler-artifact" => {
+                    if let Some((package_id, manifest_path)) = message
+                        .package_id
+                        .as_ref()
+                        .zip(message.manifest_path.as_ref())
+                    {
+                        artifacts
+                            .package_manifests
+                            .insert(package_id.clone(), PathBuf::from(manifest_path));
+                    }
+                    let package_dir = message
+                        .manifest_path
+                        .as_deref()
+                        .and_then(|manifest| Path::new(manifest).parent());
+                    // Use only dep-info associated with authenticated Cargo
+                    // artifacts. A persistent deps directory also contains
+                    // stale graphs and must never be scanned for inputs.
+                    for filename in &message.filenames {
+                        for dep_info_path in artifact_dep_info_paths(Path::new(filename)) {
+                            dep_info_paths
+                                .insert(dep_info_path, package_dir.map(Path::to_path_buf));
+                        }
+                    }
+                    if let Some(target) = &message.target {
+                        artifacts.input_files.push(resolve_dep_info_input(
+                            PathBuf::from(&target.src_path),
+                            package_dir,
+                        ));
+                    }
                     let target_artifact_in_deps = message.filenames.iter().any(|filename| {
                         let path = Path::new(filename);
                         path.parent().is_some_and(|parent| parent == deps_dir)
@@ -246,6 +324,16 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
                         }
                     }
                 }
+                "build-script-executed" => {
+                    if let Some((package_id, out_dir)) = message.package_id.zip(message.out_dir) {
+                        if let Some(parent) = Path::new(&out_dir).parent() {
+                            artifacts.build_script_outputs.push(CargoBuildScriptOutput {
+                                package_id,
+                                path: parent.join("output"),
+                            });
+                        }
+                    }
+                }
                 _ => {}
             },
             Err(_) => {
@@ -281,7 +369,105 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
     target_archive_candidates.dedup();
     artifacts.target_archives = target_archive_candidates;
 
+    for (dep_info_path, package_dir) in dep_info_paths {
+        if let Ok(dep_info) = std::fs::read_to_string(dep_info_path) {
+            artifacts.input_files.extend(
+                parse_rustc_dep_info(&dep_info)
+                    .into_iter()
+                    .map(|path| resolve_dep_info_input(path, package_dir.as_deref())),
+            );
+        }
+    }
+    artifacts.input_files.sort();
+    artifacts.input_files.dedup();
+    artifacts.build_script_outputs.sort_by(|left, right| {
+        left.package_id
+            .cmp(&right.package_id)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    artifacts.build_script_outputs.dedup();
+
     (artifacts, rendered_stdout)
+}
+
+fn resolve_dep_info_input(path: PathBuf, package_dir: Option<&Path>) -> PathBuf {
+    match package_dir {
+        Some(package_dir) if path.is_relative() => package_dir.join(path),
+        _ => path,
+    }
+}
+
+fn artifact_dep_info_paths(artifact: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![artifact.with_extension("d")];
+    // Cargo names library artifacts libfoo-HASH.rlib/rmeta/so, but rustc
+    // writes their dependency files as foo-HASH.d. Binaries and build script
+    // executables retain their complete stem.
+    if let Some(stem) = artifact.file_stem().and_then(|stem| stem.to_str()) {
+        if let Some(crate_stem) = stem.strip_prefix("lib") {
+            paths.push(artifact.with_file_name(format!("{crate_stem}.d")));
+        }
+    }
+    paths
+}
+
+/// Read the prerequisite side of rustc's Make-style dependency rules.
+///
+/// Empty target rules and rustc's env-dep comments are deliberately ignored.
+/// Escaped whitespace, comments, colons, backslashes, dollar signs, and line
+/// continuations retain the original input filenames.
+fn parse_rustc_dep_info(dep_info: &str) -> Vec<PathBuf> {
+    let dep_info = dep_info.replace("\\\r\n", " ").replace("\\\n", " ");
+    let mut paths = Vec::new();
+    for line in dep_info.lines() {
+        let mut escaped = false;
+        let mut separator = None;
+        let mut chars = line.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '#' {
+                break;
+            } else if ch == ':' && chars.peek().is_none_or(|(_, next)| next.is_whitespace()) {
+                separator = Some(index + 1);
+                break;
+            }
+        }
+        let Some(separator) = separator else {
+            continue;
+        };
+        let mut path = String::new();
+        let mut chars = line[separator..].chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        path.push(next);
+                    } else {
+                        path.push('\\');
+                    }
+                }
+                '$' if chars.peek() == Some(&'$') => {
+                    chars.next();
+                    path.push('$');
+                }
+                '#' => break,
+                ch if ch.is_whitespace() => {
+                    if !path.is_empty() {
+                        paths.push(PathBuf::from(std::mem::take(&mut path)));
+                    }
+                }
+                ch => path.push(ch),
+            }
+        }
+        if !path.is_empty() {
+            paths.push(PathBuf::from(path));
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 fn is_sysroot_closure_crate(crate_name: &str) -> bool {
@@ -419,6 +605,136 @@ mod tests {
     }
 
     #[test]
+    fn dep_info_reads_external_includes_and_make_escaped_paths() {
+        let inputs = parse_rustc_dep_info(concat!(
+            "# env-dep:IGNORED=not-a-filename\n",
+            "target/app.d target/libapp.rlib: src/lib.rs ../outside/schema.json \\\n",
+            "  assets/a\\ b.txt assets/hash\\#mark.txt assets/co\\:lon.txt ",
+            "assets/dollar$$sign.txt assets/back\\\\slash.txt\n",
+            "src/lib.rs:\n",
+            "target/libapp.rmeta: src/lib.rs # comments are not inputs\n",
+        ));
+        assert_eq!(
+            inputs,
+            vec![
+                PathBuf::from("../outside/schema.json"),
+                PathBuf::from("assets/a b.txt"),
+                PathBuf::from("assets/back\\slash.txt"),
+                PathBuf::from("assets/co:lon.txt"),
+                PathBuf::from("assets/dollar$sign.txt"),
+                PathBuf::from("assets/hash#mark.txt"),
+                PathBuf::from("src/lib.rs"),
+            ]
+        );
+    }
+
+    #[test]
+    fn collects_only_current_artifact_dep_info_and_build_script_outputs() {
+        static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let temp = std::env::temp_dir().join(format!(
+            "trueos-blueprint-cargo-inputs-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let deps_dir = temp.join("target/deps");
+        let host_dir = temp.join("host/deps");
+        std::fs::create_dir_all(&deps_dir).unwrap();
+        std::fs::create_dir_all(&host_dir).unwrap();
+        let rmeta = deps_dir.join("libapp-current.rmeta");
+        let proc_macro = host_dir.join("libderive-current.so");
+        std::fs::write(
+            deps_dir.join("app-current.d"),
+            "app.rmeta: src/lib.rs ../external/include.json\n",
+        )
+        .unwrap();
+        std::fs::write(
+            deps_dir.join("app-stale.d"),
+            "app.rmeta: /stale/should-not-be-included.rs\n",
+        )
+        .unwrap();
+        std::fs::write(
+            host_dir.join("derive-current.d"),
+            "derive.so: /host/proc-macro/src/lib.rs\n",
+        )
+        .unwrap();
+        let script_out_dir = temp.join("target/build/app-current/out");
+        let script = json!({
+            "reason": "build-script-executed",
+            "package_id": "path+file:///app#0.1.0",
+            "out_dir": script_out_dir.to_str().unwrap(),
+        });
+        let package_dir = Path::new("/packages/app");
+        let mut app = cargo_artifact(
+            "path+file:///app#0.1.0",
+            "app",
+            "src/lib.rs",
+            &[rmeta.to_str().unwrap()],
+        );
+        app["manifest_path"] = json!(package_dir.join("Cargo.toml"));
+        let stdout = cargo_stdout(&[
+            app,
+            cargo_artifact(
+                "path+file:///derive#0.1.0",
+                "derive",
+                "/host/proc-macro/src/lib.rs",
+                &[proc_macro.to_str().unwrap()],
+            ),
+            script.clone(),
+            script,
+        ]);
+        let (artifacts, rendered) = parse_cargo_rustc_stdout(&stdout, &deps_dir);
+        assert!(rendered.is_empty());
+        assert_eq!(
+            artifacts.input_files,
+            vec![
+                PathBuf::from("/host/proc-macro/src/lib.rs"),
+                package_dir.join("../external/include.json"),
+                package_dir.join("src/lib.rs"),
+            ]
+        );
+        assert_eq!(
+            artifacts.build_script_outputs,
+            vec![CargoBuildScriptOutput {
+                package_id: "path+file:///app#0.1.0".to_string(),
+                path: script_out_dir.parent().unwrap().join("output"),
+            }]
+        );
+        assert_eq!(
+            artifacts.package_manifests,
+            BTreeMap::from([(
+                "path+file:///app#0.1.0".to_string(),
+                package_dir.join("Cargo.toml"),
+            )])
+        );
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn resolves_relative_package_manifests_against_cargo_working_directory() {
+        let mut artifact = cargo_artifact(
+            "path+file:///package#0.1.0",
+            "package",
+            "src/lib.rs",
+            &["/target/libpackage.rmeta"],
+        );
+        artifact["manifest_path"] = json!("package/Cargo.toml");
+        let (mut artifacts, _) =
+            parse_cargo_rustc_stdout(&cargo_stdout(&[artifact]), Path::new("/target"));
+        resolve_artifact_paths(&mut artifacts, Path::new("/cargo-cwd"));
+        assert_eq!(
+            artifacts
+                .package_manifests
+                .get("path+file:///package#0.1.0"),
+            Some(&PathBuf::from("/cargo-cwd/package/Cargo.toml"))
+        );
+        assert_eq!(
+            artifacts.input_files,
+            vec![PathBuf::from("/cargo-cwd/package/src/lib.rs")]
+        );
+    }
+
+    #[test]
     fn collects_sorted_deduplicated_current_invocation_sysroot_metadata() {
         let deps_dir = Path::new("/tmp/trueos-target/x86_64-unknown-trueos/release/deps");
         let object_rmeta = deps_dir.join("libobject-3333333333333333.rmeta");
@@ -430,7 +746,8 @@ mod tests {
         let app_rmeta = deps_dir.join("libapplication-4444444444444444.rmeta");
         let stale_object_rmeta =
             Path::new("/tmp/other-target/deps/libobject-0000000000000000.rmeta");
-        let vendor_libc_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../TRUEOS-Buildins/vendor/libc-0.2.186");
+        let vendor_libc_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../TRUEOS-Buildins/vendor/libc-0.2.186");
         let vendor_libc = vendor_libc_root.join("src/lib.rs");
         let vendor_libc_package_id =
             format!("path+file://{}#libc@0.2.186", vendor_libc_root.display());
