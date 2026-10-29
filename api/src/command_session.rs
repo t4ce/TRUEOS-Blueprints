@@ -1,7 +1,8 @@
 //! Backend-neutral command sessions for Shell3 and Blueprint launches.
 //!
-//! Native launch scripts, including Tab mode selection, are passed unchanged to
-//! a dedicated Shell3 session. There is no executable/argv or Unix shell context.
+//! Captured sessions accept native command lines without terminal presentation;
+//! explicit terminal sessions retain Shell3's keyboard and mode controls.
+//! There is no executable/argv or Unix shell context.
 //! Each returned transport owns a separate session lifetime;
 //! its controls must never address a reused slot by its numeric ID alone.
 //! This contract does not claim that the retired Shell2 frontend implements it.
@@ -142,7 +143,9 @@ mod kernel {
     }
     impl Backend for KernelBackend {
         fn open(&self, launch: Launch) -> Result<Box<dyn Transport>, Error> {
-            let size = launch.terminal.unwrap_or(Geometry { rows: 24, cols: 80 });
+            // The v1 ABI reserves (0, 0) for captured command I/O. Do not
+            // silently turn an absent terminal into an interactive 80x24 view.
+            let size = launch.terminal.unwrap_or(Geometry { rows: 0, cols: 0 });
             let id = unsafe {
                 vcabi::trueos_cabi_shell3_session_open_v1(
                     launch.script.as_ptr(),
