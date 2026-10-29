@@ -1,0 +1,20 @@
+[package]
+name = "spirit-labels-probe"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+filesystem-independent = true
+stack-capture = true
+
+[dependencies]
+trueos = { path = "../../api", features = ["spirit"] }
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

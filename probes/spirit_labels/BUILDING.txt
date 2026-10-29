@@ -1,0 +1,24 @@
+Spirit nickname ingress/render probe
+
+Build locally with publishing disabled:
+  bash build.sh
+
+Output:
+  TRUEOS-Blueprints/dist/spirit-labels-probe.bp
+
+This finite Blueprint calls the production SDK's snapshot publisher. Its single
+subagent has task path /probe/check and explicit nickname Probe. The expected
+visual is §Probe, with a black running prefix for two seconds, a blue stationary
+approval prefix for two seconds, and a green completed prefix for two seconds.
+It then publishes connected=false with an empty complete snapshot and exits.
+The nickname remains neutral. The existing live Codex producer is a separate
+owner; this program neither changes nor controls its agents.
+
+Every stage prints the exact encoded JSON, wire version, revision and native
+return code to stdout. A successful run has rc=0 for running, approval, completed
+and disconnect, then accepted=true cleaned=true. If a stage fails, the program
+skips remaining holds and still attempts explicit disconnect cleanup.
+
+Running it requires a kernel exporting trueos_cabi_spirit_agents_publish_v1.
+No network, model, filesystem setup, input injection, deployment or reset is
+performed by the probe. Build success alone does not demonstrate live rendering.
