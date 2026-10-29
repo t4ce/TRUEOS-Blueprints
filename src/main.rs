@@ -954,11 +954,13 @@ fn build_one_target_to(
     // available and refuse to package a register-layout mismatch.
     abi_guard::verify_before_pack(blueprint_root(app_dir).as_deref(), &linked)?;
 
-    let entry_hint_hex = entry_hint_hex(&linked);
-
     let mut objcopy = tool_command(&["llvm-objcopy", "rust-objcopy", "objcopy"])?;
     objcopy
         .arg("--strip-debug")
+        // LTO can retain compiler-only inputs in relocatable objects, including
+        // compiler_builtins. Match builtin packaging and keep native relocations.
+        .arg("--remove-section=.llvmbc")
+        .arg("--remove-section=.llvmcmd")
         .arg("--set-section-flags")
         .arg(".trueos.shaders=readonly")
         .arg(&linked)
@@ -990,6 +992,7 @@ fn build_one_target_to(
         .as_ref()
         .map(|_| codex_artifact::verify(&packaged_elf))
         .transpose()?;
+    let entry_hint_hex = entry_hint_hex(&packaged_elf);
     write_blueprint(&out, &packaged_elf, &entry_hint_hex, capability_flags)?;
     let codex_receipt = if let (Some(sdk), Some(sources), Some(verification)) =
         (codex_workload_sdk.as_ref(), codex_workload_sources, codex_verification)

@@ -141,6 +141,7 @@ pub(crate) fn package_app_spec(
 
 fn package_app_lookup_name(app_name: &str) -> &str {
     match app_name {
+        "codex" => "codex-cli",
         "ferrumc" => "pumpkin",
         _ => app_name,
     }
