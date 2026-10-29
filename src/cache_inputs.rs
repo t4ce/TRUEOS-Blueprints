@@ -7,12 +7,21 @@ use std::{
 };
 
 pub(crate) fn environment() -> String {
-    let mut variables = env::vars_os()
+    environment_hash(env::vars_os())
+}
+
+fn environment_hash(
+    variables: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> String {
+    let mut variables = variables
         .filter(|(key, _)| {
             let key = key.to_string_lossy();
+            // systemd assigns a fresh identifier for every build-safe scope.
+            // It identifies the launch, rather than a compiler/script input.
             !matches!(
                 key.as_ref(),
                 "PWD" | "OLDPWD" | "SHLVL" | "_" | "CARGO_MAKEFLAGS" | "MAKEFLAGS" | "MFLAGS"
+                | "INVOCATION_ID"
             ) && !(key.starts_with("TRUEOS_BLUEPRINT_") && key.contains("PUBLISH"))
         })
         .collect::<Vec<_>>();
@@ -386,6 +395,24 @@ fn absolute(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn systemd_launch_ids_do_not_invalidate_unchanged_build_environments() {
+        let digest = |invocation: &str, cc: &str, custom: &str| {
+            environment_hash(
+                [
+                    ("INVOCATION_ID".into(), invocation.into()),
+                    ("CC".into(), cc.into()),
+                    ("CUSTOM_BUILD_INPUT".into(), custom.into()),
+                ]
+                .into_iter(),
+            )
+        };
+        let baseline = digest("first-scope", "clang", "first-input");
+        assert_eq!(baseline, digest("second-scope", "clang", "first-input"));
+        assert_ne!(baseline, digest("first-scope", "gcc", "first-input"));
+        assert_ne!(baseline, digest("first-scope", "clang", "changed-input"));
+    }
 
     struct Fixture(PathBuf);
 

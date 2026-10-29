@@ -146,25 +146,40 @@ impl BuildCache {
 
     pub(crate) fn is_fresh(&mut self) -> Result<bool, String> {
         let Some(previous) = &self.previous else {
+            println!("trueos-blueprint: cache miss: no previous success");
             return Ok(false);
         };
-        if previous.key_hash != self.key_hash
-            || previous.environment_hash != self.environment_hash
-            || previous.outputs.is_empty()
-        {
+        if previous.key_hash != self.key_hash {
+            println!("trueos-blueprint: cache miss: build selection changed");
+            return Ok(false);
+        }
+        if previous.environment_hash != self.environment_hash {
+            println!("trueos-blueprint: cache miss: build environment changed");
+            return Ok(false);
+        }
+        if previous.outputs.is_empty() {
+            println!("trueos-blueprint: cache miss: no recorded outputs");
             return Ok(false);
         }
         let snapshot = snapshot(&self.roots, &self.memo)?;
         let fresh_inputs = snapshot.stable && snapshot.digest == previous.input_digest;
         self.memo = snapshot.entries;
         if !fresh_inputs {
+            let reason = if snapshot.stable {
+                "source inputs changed"
+            } else {
+                "inputs changed during scan"
+            };
+            println!("trueos-blueprint: cache miss: {reason}");
             return Ok(false);
         }
         for output in &previous.outputs {
             let Some(current) = read_output(&output.path, Some(output))? else {
+                println!("trueos-blueprint: cache miss: output missing or changed during scan");
                 return Ok(false);
             };
             if current.digest != output.digest {
+                println!("trueos-blueprint: cache miss: output content changed");
                 return Ok(false);
             }
         }

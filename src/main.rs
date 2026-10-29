@@ -14,6 +14,8 @@ mod build_plan;
 mod cache_inputs;
 mod cargo_output;
 mod cli;
+mod codex_artifact;
+mod codex_workload;
 mod native_fold;
 mod native_odin;
 mod publish;
@@ -444,6 +446,16 @@ fn build_one_target_to(
     };
 
     let out = output_dir.join(format!("{output_name}.bp"));
+    let codex_workload_sdk = if matches!(build_target, BuildTarget::Package)
+        && package_name(manifest_path)? == "codex-cli"
+    {
+        Some(
+            blueprint_root(app_dir)
+                .ok_or("Codex workload guard requires a Blueprint SDK checkout")?,
+        )
+    } else {
+        None
+    };
     let target_input = default_target_spec(app_dir)?;
     let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
     let cache_key = serde_json::json!({
@@ -480,8 +492,15 @@ fn build_one_target_to(
         .map_err(|error| eprintln!("trueos-blueprint: cache unavailable: {error}"))
         .ok();
     if cache_action(&mut build_cache, |cache| cache.is_fresh()).unwrap_or(false) {
-        println!("trueos-blueprint: up to date: {}", out.display());
-        return Ok(out);
+        let workload = codex_workload_sdk
+            .as_ref()
+            .map(|sdk| codex_workload::verify_cached(&out, app_dir, sdk));
+        if let Some(Err(error)) = workload {
+            println!("trueos-blueprint: Codex workload receipt requires rebuild: {error}");
+        } else {
+            println!("trueos-blueprint: up to date: {}", out.display());
+            return Ok(out);
+        }
     }
     cache_action(&mut build_cache, |cache| {
         cache.invalidate()?;
@@ -540,6 +559,10 @@ fn build_one_target_to(
     }
     let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
     preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
+    let codex_cli_before_staging = codex_workload_sdk
+        .as_ref()
+        .map(|_| codex_workload::snapshot_cli(app_dir))
+        .transpose()?;
     let cargo_manifest_path = staged_manifest_for_overlay(
         app_dir,
         manifest_path,
@@ -550,6 +573,19 @@ fn build_one_target_to(
     )?
     .unwrap_or_else(|| manifest_path.to_path_buf());
     let metadata = enforce_source_overlay_lock(&cargo_manifest_path, &source_overlay)?;
+    let codex_workload_sources = if let (Some(sdk), Some(cli_before_staging)) =
+        (codex_workload_sdk.as_ref(), codex_cli_before_staging.as_ref())
+    {
+        Some(codex_workload::from_metadata(
+            app_dir,
+            sdk,
+            &cargo_manifest_path,
+            &metadata,
+            cli_before_staging,
+        )?)
+    } else {
+        None
+    };
     staging.finish()?;
     let dependencies = cache_inputs::Dependencies::from_metadata(
         &metadata,
@@ -751,6 +787,9 @@ fn build_one_target_to(
         cargo_target_dir.display()
     );
     let mut cargo_artifacts = run_cargo_rustc_command(&mut cargo, "cargo rustc", &deps_dir)?;
+    if let Some(sources) = &codex_workload_sources {
+        sources.verify_compiled(&cargo_artifacts)?;
+    }
 
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
@@ -947,12 +986,26 @@ fn build_one_target_to(
     };
 
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
+    let codex_verification = codex_workload_sources
+        .as_ref()
+        .map(|_| codex_artifact::verify(&packaged_elf))
+        .transpose()?;
     write_blueprint(&out, &packaged_elf, &entry_hint_hex, capability_flags)?;
+    let codex_receipt = if let (Some(sdk), Some(sources), Some(verification)) =
+        (codex_workload_sdk.as_ref(), codex_workload_sources, codex_verification)
+    {
+        Some(codex_workload::write_receipt(
+            &out, app_dir, sdk, sources, verification,
+        )?)
+    } else {
+        None
+    };
     if stack_capture {
         stack_capture::retain_sidecars(&out, &linked, &packaged_elf, cargo_profile)?;
     }
     if let (Some(cache), Some(dependencies)) = (build_cache.as_mut(), dependencies.as_ref()) {
         let mut outputs = vec![out.clone()];
+        outputs.extend(codex_receipt);
         if stack_capture {
             outputs.extend([
                 out.with_extension("debug.o"),

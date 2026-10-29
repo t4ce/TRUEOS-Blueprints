@@ -148,7 +148,14 @@ fn package_app_lookup_name(app_name: &str) -> &str {
 
 fn package_app_spec_required(app: &RegisteredAppSpec) -> Result<PackageAppSpec, String> {
     let app_name = app.name.as_str();
-    let dir = app.dir.clone();
+    // Cargo reports canonical source paths. Normalize named apps at the same
+    // boundary as directory-mode builds, before deriving staging/cache paths.
+    let dir = fs::canonicalize(&app.dir).map_err(|error| {
+        format!(
+            "failed to resolve registered app `{app_name}` at {}: {error}",
+            app.dir.display()
+        )
+    })?;
     let mut manifest_path = dir.join("Cargo.toml");
     if !manifest_path.is_file() {
         return Err(format!(
@@ -727,6 +734,53 @@ mod tests {
     }
 
     #[test]
+    fn named_external_apps_keep_cargo_metadata_and_cache_paths_identical() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = env::temp_dir().join(format!("trueos-blueprint-external-cache-{nonce}"));
+        let sdk = fixture.join("TRUEOS-Blueprints");
+        let app = fixture.join("codex/codex-rs/cli");
+        fs::create_dir_all(&sdk).unwrap();
+        fs::create_dir_all(&app).unwrap();
+        fs::write(
+            sdk.join("apps.json"),
+            r#"{"apps":[{"name":"codex-cli","path":"../codex/codex-rs/cli"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            app.join("Cargo.toml"),
+            "[package]\nname = \"codex-cli\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+        let selected = package_app_spec(&sdk, "codex-cli", PackageCatalog::Apps)
+            .unwrap()
+            .unwrap();
+        let work = selected.dir.join("target/work");
+        let staged = work.join("source-overlay-app/Cargo.toml");
+        fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        fs::copy(&selected.manifest_path, &staged).unwrap();
+        // Cargo emits canonical source identities even when its caller used
+        // a catalog path containing ../ to reach another checkout.
+        let metadata: crate::CargoMetadata = serde_json::from_value(serde_json::json!({
+            "packages": [{
+                "id": "cli", "name": "codex-cli", "version": "1.0.0",
+                "manifest_path": fs::canonicalize(&staged).unwrap(), "dependencies": []
+            }],
+            "resolve": {"root": "cli", "nodes": [{"id": "cli", "deps": []}]}
+        }))
+        .unwrap();
+        let inputs = crate::cache_inputs::Dependencies::from_metadata(
+            &metadata, &staged, &selected.dir, &work,
+        )
+        .unwrap();
+        assert!(inputs.roots().contains(&fs::canonicalize(app).unwrap()));
+        assert!(!inputs.roots().iter().any(|path| path.starts_with(&work)));
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
     fn manifest_has_dependency_sees_target_dependencies() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -977,7 +1031,10 @@ rustc-payload-dependencies = ["trueos", "itoa"]
                 .unwrap()
                 .unwrap();
         assert_eq!(picasso_example.name, "trueos-picasso-example");
-        assert_eq!(picasso_example.dir, root.join("../TRUEOS-Picasso-Example"));
+        assert_eq!(
+            picasso_example.dir,
+            fs::canonicalize(root.join("../TRUEOS-Picasso-Example")).unwrap()
+        );
         assert!(
             package_app_spec(root, "picasso", PackageCatalog::Apps)
                 .unwrap()
