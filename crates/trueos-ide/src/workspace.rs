@@ -267,7 +267,11 @@ pub fn valid_source_path(path: &str) -> bool {
 }
 
 pub fn read_result(request: &BuildRequest) -> io::Result<BuildArtifact> {
-    let length = fs::metadata(&request.result_path)?.len();
+    let length = fs::metadata(&request.result_path)
+        .map_err(|error| io::Error::new(error.kind(), format!(
+            "Compiler exited without an accessible build result at {}: {error}. Compilation did not complete; check the compiler output for a crash or I/O failure.",
+            request.result_path,
+        )))?.len();
     if length > MAX_WIRE_BYTES as u64 {
         return Err(invalid("compiler result exceeds 64 KiB"));
     }
