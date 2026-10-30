@@ -41,6 +41,7 @@ pub use v::vusb as usb;
 
 pub mod clipboard;
 pub mod terminal_style;
+pub mod terminal_ui4;
 pub mod command_session;
 
 /// Keyboard events translated by the kernel's shared HID input broker.

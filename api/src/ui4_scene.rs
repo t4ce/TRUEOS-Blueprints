@@ -38,6 +38,12 @@ pub fn display_fade(window_id: u32, amount: f32) -> Result<(), Error> {
 pub const MAX_COLLAPSE_IMAGE_SIZE: u32 = 256;
 
 impl Frame {
+    /// Collapse an opted-in frame, preserving its producer and logical extent.
+    pub fn collapse(&mut self) -> Result<(), Error> {
+        let rc = unsafe { v::bp_abi::trueos_cabi_ui4_scene_collapse_v1(self.window_id()) };
+        crate::ui4_solara_text::status(rc)
+    }
+
     /// Enable the standard collapse/restore menu and click-to-restore behavior.
     /// Copies tightly packed straight-alpha RGBA8, at its exact size (up to
     /// 256x256). Call again to update the icon. No menu or input pump is needed;
