@@ -1,6 +1,7 @@
 //! Versioned editor actions carried by the native IDE routing endpoint.
 //! The broker routes these payloads; Edit owns their meaning and source state.
 
+use alloc::{string::{String, ToString}, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
@@ -12,6 +13,30 @@ pub const POLL: &str = "vFile:ide/poll";
 pub const REPLY: &str = "vFile:ide/reply";
 pub const CANCEL: &str = "vFile:ide/cancel";
 pub const UNREGISTER: &str = "vFile:ide/unregister";
+
+/// One-shot Codex startup directive. The endpoint identifies an Edit owner
+/// incarnation, so a closed or switched workspace cannot silently be replaced.
+pub fn codex_start_script(endpoint: u64) -> Result<String, String> {
+    if endpoint == 0 { return Err("IDE endpoint must be nonzero".into()); }
+    Ok(format!("ide-endpoint {endpoint}\n"))
+}
+
+pub fn codex_start_endpoint(script: &str) -> Result<Option<u64>, String> {
+    let mut endpoint = None;
+    for line in script.lines() {
+        let Some(value) = line.strip_prefix("ide-endpoint ") else {
+            if line == "ide-endpoint" { return Err("ide-endpoint requires a value".into()); }
+            continue;
+        };
+        if endpoint.is_some() || value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("Expected one numeric ide-endpoint directive".into());
+        }
+        let id = value.parse::<u64>().map_err(|_| "Invalid IDE endpoint")?;
+        if id == 0 { return Err("IDE endpoint must be nonzero".into()); }
+        endpoint = Some(id);
+    }
+    Ok(endpoint)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Registration {
@@ -204,4 +229,22 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String>
         return Err("IDE message exceeds 64 KiB".into());
     }
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    #[test]
+    fn codex_startup_keeps_the_exact_workspace_endpoint() {
+        assert_eq!(codex_start_endpoint(&codex_start_script(42).unwrap()).unwrap(), Some(42));
+        assert_eq!(codex_start_endpoint("fs-scope trueosfs\nide-endpoint 18446744073709551615\n").unwrap(), Some(u64::MAX));
+        assert_eq!(codex_start_endpoint("# ordinary Codex launch\n").unwrap(), None);
+        assert!(codex_start_script(0).is_err());
+        for script in ["ide-endpoint", "ide-endpoint ", "ide-endpoint 0", "ide-endpoint -1",
+            "ide-endpoint 1x", "ide-endpoint 1 2", "ide-endpoint 18446744073709551616",
+            "ide-endpoint 1\nide-endpoint 2\n", "ide-endpoint 1\0"] {
+            assert!(codex_start_endpoint(script).is_err(), "{script:?}");
+        }
+    }
 }

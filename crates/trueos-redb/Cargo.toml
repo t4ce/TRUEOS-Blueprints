@@ -9,4 +9,4 @@ default = []
 std = ["redb/std"]
 
 [dependencies]
-redb = { version = "=4.2.0", default-features = false, features = ["experimental-api-5"] }
+redb = { version = "4.2.0", default-features = false, features = ["experimental-api-5"] }

@@ -1,8 +1,10 @@
 //! Immutable source revisions, persisted in a crash-safe redb store.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use alloc::{borrow::ToOwned, collections::{BTreeMap, BTreeSet}, string::{String, ToString}, vec::Vec};
+use core::fmt;
+#[cfg(feature = "std")]
 use std::io;
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -30,6 +32,7 @@ const NEXT_REVISION: &str = "next_revision_id";
 
 #[derive(Debug)]
 pub enum SourceDbError {
+    #[cfg(feature = "std")]
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -55,6 +58,7 @@ pub enum SourceDbError {
 impl fmt::Display for SourceDbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(feature = "std")]
             Self::Io {
                 operation,
                 path,
@@ -81,9 +85,10 @@ impl fmt::Display for SourceDbError {
         }
     }
 }
-impl std::error::Error for SourceDbError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for SourceDbError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "std")]
             Self::Io { source, .. } => Some(source),
             Self::Json(e) => Some(e),
             _ => None,
@@ -95,9 +100,9 @@ impl From<serde_json::Error> for SourceDbError {
         Self::Json(e)
     }
 }
-pub type Result<T> = std::result::Result<T, SourceDbError>;
+pub type Result<T> = core::result::Result<T, SourceDbError>;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceFileInput {
     pub path: String,
     pub bytes: Vec<u8>,
@@ -119,7 +124,7 @@ impl SourceFileInput {
         }
     }
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceFile {
     pub path: String,
     pub bytes: Vec<u8>,
@@ -130,7 +135,7 @@ pub enum SourceOrigin {
     Local { label: Option<String> },
     Git { repository: String, commit: String },
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RevisionSummary {
     pub id: i64,
     pub project: String,
@@ -139,14 +144,14 @@ pub struct RevisionSummary {
     pub file_count: u64,
     pub source_bytes: u64,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProjectSummary {
     pub id: i64,
     pub name: String,
     pub revision_count: u64,
     pub latest_revision: Option<u64>,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LoadedSource {
     pub revision: RevisionSummary,
     pub files: Vec<SourceFile>,
@@ -199,20 +204,58 @@ struct FileLink {
 }
 
 pub struct SourceDatabase {
+    #[cfg(feature = "std")]
     path: PathBuf,
-    database: Database,
+    database: Backing,
+}
+
+enum Backing {
+    #[cfg(feature = "std")]
+    File(Database),
+    Image(trueos_redb::ImageDatabase),
+}
+impl core::ops::Deref for Backing {
+    type Target = Database;
+    fn deref(&self) -> &Database {
+        match self {
+            #[cfg(feature = "std")]
+            Self::File(database) => database,
+            Self::Image(image) => image.database(),
+        }
+    }
 }
 impl SourceDatabase {
+    #[cfg(feature = "std")]
     pub fn open_default() -> Result<Self> {
         Self::open(DEFAULT_DATABASE_PATH)
     }
+    #[cfg(feature = "std")]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let database = r(Database::create(&path))?;
-        let result = Self { path, database };
+        let result = Self { path, database: Backing::File(database) };
         result.initialize()?;
         Ok(result)
     }
+    /// The kernel supplies the one backend shared by all project owners.
+    pub fn from_image(bytes: &[u8]) -> Result<Self> {
+        let database = trueos_redb::ImageDatabase::open(bytes).map_err(SourceDbError::Redb)?;
+        let result = Self {
+            #[cfg(feature = "std")]
+            path: PathBuf::from(IDE_DATABASE_PATH),
+            database: Backing::Image(database),
+        };
+        result.initialize()?;
+        Ok(result)
+    }
+    pub fn into_image(self) -> Result<Vec<u8>> {
+        match self.database {
+            Backing::Image(image) => image.into_image().map_err(SourceDbError::Redb),
+            #[cfg(feature = "std")]
+            Backing::File(_) => Err(SourceDbError::Integrity("A file-backed store is not an owned image".into())),
+        }
+    }
+    #[cfg(feature = "std")]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -882,7 +925,7 @@ fn normalize_path(value: &str) -> Result<String> {
     }
     Ok(value.to_owned())
 }
-fn r<T, E: fmt::Display>(v: std::result::Result<T, E>) -> Result<T> {
+fn r<T, E: fmt::Display>(v: core::result::Result<T, E>) -> Result<T> {
     v.map_err(|e| SourceDbError::Redb(e.to_string()))
 }
 fn bad<T>(message: &str) -> Result<T> {

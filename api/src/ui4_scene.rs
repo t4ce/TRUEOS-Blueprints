@@ -75,3 +75,66 @@ pub fn physical_extent(width_mm: u32, height_mm: u32) -> Result<(u32, u32), Erro
     let extent = ((packed >> 32) as u32, packed as u32);
     if extent.0 == 0 || extent.1 == 0 { Err(Error::Ui4) } else { Ok(extent) }
 }
+
+/// Kernel-owned web-image completion metadata; image bytes stay in the kernel.
+pub use v::bp_abi::TrueosUi4HullImageInfoV1 as HullImageInfo;
+pub const HULL_IMAGE_PENDING: u32 = v::bp_abi::UI4_HULL_IMAGE_PENDING;
+pub const HULL_IMAGE_READY: u32 = v::bp_abi::UI4_HULL_IMAGE_READY;
+pub const HULL_IMAGE_FAILED: u32 = v::bp_abi::UI4_HULL_IMAGE_FAILED;
+
+/// Queue a canonical image URL for this foreground window and page generation.
+/// Pending/ready tickets remain owned until release or reset. Target dimensions
+/// bound the decode; poll for the actual retained sprite dimensions.
+pub fn hull_image_request(
+    window_id: u32,
+    url: &str,
+    cache_root: &str,
+    page_host: &str,
+    width: u32,
+    height: u32,
+    generation: u64,
+) -> Result<u32, Error> {
+    if window_id == 0 || url.is_empty() || url.len() > 8_192
+        || cache_root.is_empty() || cache_root.len() > 2_048
+        || page_host.is_empty() || page_host.len() > 253
+        || width == 0 || height == 0 || width > 4_096 || height > 4_096
+    {
+        return Err(Error::Invalid);
+    }
+    let ticket = unsafe {
+        v::bp_abi::trueos_cabi_ui4_hull_image_request_v1(
+            window_id, url.as_ptr(), url.len(), cache_root.as_ptr(), cache_root.len(),
+            page_host.as_ptr(), page_host.len(), width, height, generation,
+        )
+    };
+    if ticket > 0 { Ok(ticket as u32) }
+    else if ticket == 0 { Err(Error::InvalidState) }
+    else { crate::ui4_solara_text::status(ticket).map(|()| 0) }
+}
+
+/// Poll without acquiring a frame lease or waiting for fetch/decode. READY's
+/// sprite_id can be used directly in SpriteQuad until release/reset/close.
+pub fn hull_image_status(window_id: u32, ticket: u32) -> Result<HullImageInfo, Error> {
+    if window_id == 0 || ticket == 0 { return Err(Error::Invalid); }
+    let mut info = HullImageInfo::default();
+    crate::ui4_solara_text::status(unsafe {
+        v::bp_abi::trueos_cabi_ui4_hull_image_status_v1(window_id, ticket, &mut info)
+    })?;
+    Ok(info)
+}
+
+/// Cancel a pending ticket or retire its retained source after GPU completion.
+pub fn hull_image_release(window_id: u32, ticket: u32) -> Result<(), Error> {
+    if window_id == 0 || ticket == 0 { return Err(Error::Invalid); }
+    crate::ui4_solara_text::status(unsafe {
+        v::bp_abi::trueos_cabi_ui4_hull_image_release_v1(window_id, ticket)
+    })
+}
+
+/// Cancel all prior page requests/resources and select the next generation.
+pub fn hull_image_reset(window_id: u32, generation: u64) -> Result<(), Error> {
+    if window_id == 0 { return Err(Error::Invalid); }
+    crate::ui4_solara_text::status(unsafe {
+        v::bp_abi::trueos_cabi_ui4_hull_image_reset_v1(window_id, generation)
+    })
+}
