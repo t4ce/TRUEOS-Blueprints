@@ -170,10 +170,19 @@ pub struct ImportResult {
     pub revision: RevisionSummary,
 }
 
+/// Build settings saved with a project, independent of its source revisions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProjectBuildConfig {
+    pub compiler: crate::protocol::CompilerBackend,
+    pub entry: String,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Project {
     id: u64,
     next_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    build: Option<ProjectBuildConfig>,
 }
 #[derive(Serialize, Deserialize)]
 struct Revision {
@@ -386,6 +395,32 @@ impl SourceDatabase {
         r(write.commit())?;
         Ok(revision)
     }
+    pub fn project_build_config(&self, project: &str) -> Result<Option<ProjectBuildConfig>> {
+        let project = normalize_project(project)?;
+        let read = r(self.database.begin_read())?;
+        let projects = r(read.open_table(PROJECTS))?;
+        r(projects.get(project.as_str()))?
+            .map(|value| decode::<Project>(value.value()).map(|project| project.build))
+            .transpose().map(Option::flatten)
+    }
+
+    pub fn set_project_build_config(&mut self, project: &str, mut config: ProjectBuildConfig) -> Result<()> {
+        let project = normalize_project(project)?;
+        config.entry = normalize_path(&config.entry)?;
+        let write = r(self.database.begin_write())?;
+        {
+            let mut projects = r(write.open_table(PROJECTS))?;
+            let mut record: Project = r(projects.get(project.as_str()))?
+                .map(|value| decode(value.value())).transpose()?
+                .ok_or_else(|| SourceDbError::Integrity(String::from("project does not exist")))?;
+            record.build = Some(config);
+            let bytes = serde_json::to_vec(&record)?;
+            r(projects.insert(project.as_str(), bytes.as_slice()))?;
+        }
+        r(write.commit())?;
+        Ok(())
+    }
+
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
         let read = r(self.database.begin_read())?;
         let projects = r(read.open_table(PROJECTS))?;
@@ -625,6 +660,7 @@ impl SourceDatabase {
             None => Project {
                 id: self.next_id(write, NEXT_PROJECT, "project id")?,
                 next_revision: 1,
+                build: None,
             },
         };
         if p.next_revision == 0 {
@@ -978,6 +1014,36 @@ mod tests {
     fn blob_count(db: &SourceDatabase) -> u64 {
         let read = db.database.begin_read().unwrap();
         read.open_table(BLOBS).unwrap().len().unwrap()
+    }
+
+    #[test]
+    fn build_config_upgrades_legacy_project_record_without_new_source_revision() {
+        let t = Temp::new();
+        let mut db = SourceDatabase::open(t.path()).unwrap();
+        let revision = db.import_local("demo", None, vec![file("src/app.odin", b"package main\n")]).unwrap().revision;
+        // Schema-one records from before the IDE menu have no build field.
+        let write = db.database.begin_write().unwrap();
+        {
+            let mut projects = write.open_table(PROJECTS).unwrap();
+            let record: Project = decode(projects.get("demo").unwrap().unwrap().value()).unwrap();
+            let legacy = serde_json::to_vec(&serde_json::json!({ "id": record.id, "next_revision": record.next_revision })).unwrap();
+            projects.insert("demo", legacy.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        assert_eq!(db.project_build_config("demo").unwrap(), None);
+        let config = ProjectBuildConfig { compiler: crate::protocol::CompilerBackend::OdinSon, entry: "src/app.odin".into() };
+        db.set_project_build_config("demo", config.clone()).unwrap();
+        assert_eq!(db.get("demo", None).unwrap().unwrap().revision.id, revision.id);
+        assert!(db.set_project_build_config("demo", ProjectBuildConfig { entry: "../outside".into(), ..config.clone() }).is_err());
+        let saved = db.save_files("demo", revision.id, vec![file("src/app.odin", b"package main\n// edited\n")]).unwrap();
+        drop(db);
+        let mut db = SourceDatabase::open(t.path()).unwrap();
+        assert_eq!(db.project_build_config("demo").unwrap(), Some(config));
+        assert_eq!(db.get("demo", None).unwrap().unwrap().revision.id, saved.id);
+        db.verify().unwrap();
+        db.delete_project("demo").unwrap();
+        db.import_local("demo", None, vec![file("main.rs", b"fn main() {}")]).unwrap();
+        assert_eq!(db.project_build_config("demo").unwrap(), None);
     }
 
     #[test]

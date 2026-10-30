@@ -79,7 +79,8 @@ pub fn terminate(handle: Handle) -> Result<(), i32> {
 }
 
 /// Submit a JSON process-shaped launch request to a fresh VMX Blueprint.
-/// Fields: program, args, env, cwd. This does not launch the parent archive.
+/// Fields: program, args, env, cwd, optional script (one-shot `vFile:launch`).
+/// This does not launch the parent archive.
 pub fn spawn_program(request: &[u8]) -> Result<Handle, i32> {
     let mut handle = 0;
     let rc = unsafe { bp_abi::trueos_cabi_blueprint_child_spawn_program_v1(request.as_ptr(), request.len(), &mut handle) };
