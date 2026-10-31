@@ -16,3 +16,6 @@ pub use source_db::*;
 pub mod source_image;
 #[cfg(feature = "store-core")]
 pub mod store_protocol;
+
+#[cfg(feature = "api-reference")]
+pub mod api_reference;

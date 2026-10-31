@@ -1,0 +1,1303 @@
+API PRM trueos-blueprint-api/1/29471e0439cb238f
+Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+
+# Public C ABI data layouts
+Fields are in repr(C) order. This is not a packed serialization: honor native alignment, pointers, padding and array lengths. Raw-pointer mutability indicates direction; explicit lengths remain authoritative. Numeric byte offsets are not synthesized by rustdoc.
+
+## AudioEndpointCapabilitiesV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Versioned read-only host HDA playback endpoint snapshot.
+
+`ready == 0` is a successful unavailable result. The active stream stays
+fixed; advertised masks describe the selected DAC rather than requesting a
+format switch.
+struct AudioEndpointCapabilitiesV1 {
+  version: u16,
+  size: u16,
+  sample_rate_hz: u32,
+  dma_buffer_frames: u32,
+  queued_pcm_lane_frames: u32,
+  selected_dac_pcm_rates: u32,
+  selected_dac_stream_formats: u32,
+  controller_output_streams: u8,
+  active_channels: u8,
+  active_sample_bits: u8,
+  active_frame_bytes: u8,
+  ready: u8,
+  controller_addr64: u8,
+  output_path_count: u8,
+  selected_output_path_index: u8,
+  reserved1: u64,
+  reserved2: u64,
+}
+Declaration: crates/trueos-v/src/vaudio.rs:23
+
+## BufferInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct BufferInfo {
+  bytes: u64,
+  usage: u32,
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:165
+
+## DeviceDiagnostics
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct DeviceDiagnostics {
+  copied_upload_bytes: u64,
+  flushed_vvideo_bytes: u64,
+  mapping_digest: u64,
+  vvideo_buffers: u32,
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:132
+
+## DeviceInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct DeviceInfo {
+  capabilities: u64,
+  epoch: u64,
+  memory_used: u64,
+  memory_quota: u64,
+  buffer_count: u32,
+  queue_count: u32,
+  flags: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:119
+
+## GamepadControlCommand
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct GamepadControlCommand {
+  opcode: u8,
+  easing: u8,
+  flags: u8,
+  reserved0: u8,
+  duration_ms: u32,
+  buttons_set: u32,
+  buttons_clear: u32,
+  left_x: i16,
+  left_y: i16,
+  right_x: i16,
+  right_y: i16,
+  left_trigger: u16,
+  right_trigger: u16,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1869
+
+## GamepadControlDeviceInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct GamepadControlDeviceInfo {
+  handle: u64,
+  slot_id: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1861
+
+## GamepadControlSnapshot
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct GamepadControlSnapshot {
+  slot_id: u32,
+  sequence: u32,
+  buttons_down: u32,
+  reserved0: u32,
+  left_x: i16,
+  left_y: i16,
+  right_x: i16,
+  right_y: i16,
+  left_trigger: u16,
+  right_trigger: u16,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1887
+
+## IndexedBatchDraw
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+One indexed range in a single-target, single-pipeline render-pass batch.
+struct IndexedBatchDraw {
+  index_count: u32,
+  first_index: u32,
+  base_vertex: i32,
+  rgba8_srgb: u32,
+  // Linear fragment color encoded to the target's RGBA8 sRGB bytes.
+}
+Declaration: crates/trueos-v/src/vgpu.rs:321
+
+## IndexedBatchDrawV2
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Versioned mixed-topology draw. The original indexed-batch ABI remains
+triangle-list-only and unchanged.
+struct IndexedBatchDrawV2 {
+  index_count: u32,
+  first_index: u32,
+  base_vertex: i32,
+  rgba8_srgb: u32,
+  topology: u32,
+  reserved: u32,
+  // POINT_LIST-only integer point width in pixels. Zero selects the renderer default. This occupies the original reserved word so the V2 C ABI layout remains unchanged; all other topologies require zero.
+}
+Declaration: crates/trueos-v/src/vgpu.rs:350
+
+## IndexedDraw
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct IndexedDraw {
+  surface: u64,
+  pipeline: u64,
+  vertex_buffer: u64,
+  index_buffer: u64,
+  vertex_offset: u64,
+  index_offset: u64,
+  index_count: u32,
+  first_index: u32,
+  base_vertex: i32,
+  clear_rgba8_srgb: u32,
+  topology: u32,
+  // Zero preserves the legacy triangle list. Explicit triangle lists and native quad lists are supported; all other values are rejected. This occupies the former zero-reserved word without changing layout.
+  sampled_texture: u64,
+  // Optional buffer-backed tightly packed RGBA8 sampled texture.
+  texture_width: u32,
+  texture_height: u32,
+  texture_pitch: u32,
+  sampler_flags: u32,
+  texture_reserved: u32,
+  // INDEXED_DRAW_* flags. Zero keeps the original clear + depth-tested draw.
+}
+Declaration: crates/trueos-v/src/vgpu.rs:198
+
+## IndexedDrawBatch
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Bounded render-pass batch used by custom WGPU backends. All ranges share
+one surface, pipeline and vertex/index binding, matching ordinary repeated
+`draw_indexed` calls inside one WebGPU render pass.
+struct IndexedDrawBatch {
+  surface: u64,
+  pipeline: u64,
+  vertex_buffer: u64,
+  index_buffer: u64,
+  vertex_offset: u64,
+  index_offset: u64,
+  clear_rgba8_srgb: u32,
+  draw_count: u32,
+  draws: [IndexedBatchDraw; 16],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:334
+
+## IndexedDrawBatchV2
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct IndexedDrawBatchV2 {
+  surface: u64,
+  pipeline: u64,
+  vertex_buffer: u64,
+  index_buffer: u64,
+  vertex_offset: u64,
+  index_offset: u64,
+  clear_rgba8_srgb: u32,
+  draw_count: u32,
+  draws: [IndexedBatchDrawV2; 600],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:364
+
+## KeyboardControlCommand
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct KeyboardControlCommand {
+  opcode: u8,
+  flags: u8,
+  modifiers: u8,
+  reserved0: u8,
+  duration_ms: u32,
+  codepoint: u32,
+  key_code: u16,
+  reserved1: u16,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1848
+
+## KeyboardControlDeviceInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct KeyboardControlDeviceInfo {
+  handle: u64,
+  slot_id: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1840
+
+## MouseMotionCommand
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct MouseMotionCommand {
+  opcode: u8,
+  path: u8,
+  easing: u8,
+  flags: u8,
+  duration_ms: u32,
+  x: i32,
+  y: i32,
+  control1_x: i32,
+  control1_y: i32,
+  control2_x: i32,
+  control2_y: i32,
+  buttons_set: u32,
+  buttons_clear: u32,
+  wheel: i16,
+  reserved: u16,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1820
+
+## MouseMotionCursorInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct MouseMotionCursorInfo {
+  handle: u64,
+  slot_id: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1812
+
+## OffscreenIndexedBatchV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+One-shot native render into a tightly packed RGBA8 readback buffer.
+struct OffscreenIndexedBatchV1 {
+  output_buffer: u64,
+  width: u32,
+  height: u32,
+  batch: IndexedDrawBatchV2,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:707
+
+## RetainedCamera
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Camera block consumed verbatim by the retained native vertex shader.
+Matrices are column-major `mat4x4<f32>` values, matching WGSL and the
+Helio shader artifact.  Keeping it in the frame request lets retained
+model transforms remain object/world-space TRS instead of folding a
+camera projection into each object.
+struct RetainedCamera {
+  view: [f32; 16],
+  projection: [f32; 16],
+  view_projection: [f32; 16],
+  inverse_view_projection: [f32; 16],
+  position_near: [f32; 4],
+  forward_far: [f32; 4],
+  jitter_frame: [f32; 4],
+  previous_view_projection: [f32; 16],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:480
+
+## RetainedCubeDraw
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+A retained textured scene plus opaque baked cube instances in one depth pass.
+Cube seeds use the same RGB555 flags and uniform scale as V3 asset placement.
+struct RetainedCubeDraw {
+  mesh: u64,
+  seed_buffer: u64,
+  seed_offset: u64,
+  seed_count: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:617
+
+## RetainedDrawRange
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Index range within one resident mesh. All ranges share its material contract.
+struct RetainedDrawRange {
+  first_index: u32,
+  index_count: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:589
+
+## RetainedFrameSubmit
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct RetainedFrameSubmit {
+  surface: u64,
+  mesh: u64,
+  material: RetainedMaterial,
+  // Owner-scoped generation-checked vmedia material bundle. A POS_NORMAL_UV retained mesh requires the base-color slot; remaining glTF slots are optional but, when present, are validated together.
+  static_vertex_buffer: u64,
+  static_index_buffer: u64,
+  static_vertex_offset: u64,
+  static_index_offset: u64,
+  clear_rgba8_srgb: u32,
+  seed_count: u32,
+  static_draw_count: u32,
+  static_vertex_revision: u32,
+  // Caller-owned content token for `static_vertex_buffer`. Advance it after rewriting any static vertex payload so a retained mesh refreshes its resident copy in place. Indices and draw identity remain immutable.
+  camera: RetainedCamera,
+  // Live camera data for the native retained vertex shader.
+  seeds: [RetainedTransformSeed; 4],
+  static_draws: [IndexedBatchDrawV2; 3],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:507
+
+## RetainedFrameSubmitV2
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Versioned extension of the stable V1 retained frame. V2 requires a
+POS_NORMAL_UV_TANGENT mesh and supplies all factors through this extension;
+the legacy frame.material.emissive_factor must remain zero.
+struct RetainedFrameSubmitV2 {
+  frame: RetainedFrameSubmit,
+  material_parameters: RetainedMaterialParameters,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:581
+
+## RetainedFrameSubmitV3
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Scene with up to 8192 buffer-backed TRS seeds and four index ranges.
+Supports PBR, or the dedicated cube-patch v2 contract with default material
+parameters and exactly one full 44-index range.
+Inline frame seeds/count must be zero. The seed buffer contains tightly
+packed 64-byte RetainedTransformSeed rows and requires MAP_READ usage.
+Each seed's draw_group selects a range; flags[31:16] selects its contiguous
+group-local slot. Remaining range entries and reserved must be zero.
+Floats must be finite, scale/radius nonnegative, and the quaternion must
+have finite squared length greater than 1e-12 (the GPU normalizes it).
+struct RetainedFrameSubmitV3 {
+  frame: RetainedFrameSubmitV2,
+  seed_buffer: u64,
+  seed_offset: u64,
+  seed_count: u32,
+  draw_count: u32,
+  draws: [RetainedDrawRange; 4],
+  reserved: [u32; 2],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:604
+
+## RetainedFrameSubmitV4
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct RetainedFrameSubmitV4 {
+  frame: RetainedFrameSubmitV2,
+  cubes: RetainedCubeDraw,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:626
+
+## RetainedMaterial
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+One atomically validated retained material submission.
+
+Images remain individual owner-scoped vmedia resources so their lifetime
+can be reclaimed independently by the application. This descriptor is the
+render-time bundle: it keeps their roles and scalar emissive factor in one
+ABI value, and never negotiates map residency one texture at a time.
+struct RetainedMaterial {
+  textures: [u64; 5],
+  emissive_factor: [f32; 3],
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:499
+
+## RetainedMaterialParameters
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Scalar inputs for the retained opaque metallic-roughness material shader.
+Texture IDs remain in the nested frame's owner-scoped material bundle.
+DOUBLE_SIDED and NEAREST are accepted in flags; reserved must be zero.
+struct RetainedMaterialParameters {
+  base_color_factor: [f32; 4],
+  emissive_factor: [f32; 3],
+  normal_scale: f32,
+  metallic_factor: f32,
+  roughness_factor: f32,
+  occlusion_strength: f32,
+  alpha_cutoff: f32,
+  flags: u32,
+  reserved: [u32; 3],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:548
+
+## RetainedMeshDescriptor
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct RetainedMeshDescriptor {
+  vertex_buffer: u64,
+  index_buffer: u64,
+  vertex_offset: u64,
+  index_offset: u64,
+  vertex_count: u32,
+  index_count: u32,
+  vertex_layout: u32,
+  topology: u32,
+  // One of the `PRIMITIVE_TOPOLOGY_*` constants. A zero value is accepted as the pre-topology ABI's triangle-list default.
+}
+Declaration: crates/trueos-v/src/vgpu.rs:446
+
+## RetainedTexturedFrameV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Unlit, independently textured draw groups over one retained mesh. Each
+inline transform selects its matching range and texture; repeated IDs share
+a video frame without another decoder. Uses POS_NORMAL_UV (32-byte vertices).
+struct RetainedTexturedFrameV1 {
+  frame: RetainedFrameSubmit,
+  ranges: [RetainedDrawRange; 4],
+  textures: [u64; 4],
+}
+Declaration: crates/trueos-v/src/vgpu.rs:537
+
+## RetainedTransformSeed
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Exact compact input consumed by the authenticated retained-transform
+artifact. Matrices, compaction, and indirect records remain GPU-authored.
+struct RetainedTransformSeed {
+  translation: [f32; 3],
+  scale: [f32; 3],
+  rotation: [f32; 4],
+  local_radius: f32,
+  previous_translation: [f32; 3],
+  draw_group: u32,
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:463
+
+## SurfaceInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct SurfaceInfo {
+  surface: u64,
+  bytes: u64,
+  width: u32,
+  height: u32,
+  pitch: u32,
+  format: u32,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:187
+
+## TimelinePoint
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TimelinePoint {
+  value: u64,
+  physical_serial: u64,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:633
+
+## TimelineStatus
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TimelineStatus {
+  submitted: u64,
+  completed: u64,
+  failures: u64,
+  last_physical_serial: u64,
+}
+Declaration: crates/trueos-v/src/vgpu.rs:640
+
+## TrueosArchiveReport
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Completion report for a kernel-owned asynchronous archive operation.
+
+The operation is complete only after the destination archive or extracted
+files have been committed to TRUEOSFS.
+struct TrueosArchiveReport {
+  input_bytes: u64,
+  output_bytes: u64,
+  file_count: u32,
+  reserved: u32,
+  // Progress percentage (0–100); use archive_status to determine completion.
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:38
+
+## TrueosCabiHeapStats
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosCabiHeapStats {
+  heap_start: usize,
+  heap_end: usize,
+  usable_total: usize,
+  free_bytes: usize,
+  largest_free_block: usize,
+  free_blocks: usize,
+  initialized: u32,
+  source: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:21
+
+## TrueosHidCursorEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidCursorEvent {
+  t_ms: u32,
+  seq: u32,
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  hid_kind: u8,
+  reserved0: u8,
+  reserved1: u16,
+  buttons_down: u32,
+  wheel: i16,
+  reserved2: u16,
+  x: f64,
+  y: f64,
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:2004
+
+## TrueosHidHutKeyboardState
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidHutKeyboardState {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  combo_id: u32,
+  modifiers: u8,
+  source_kind: u8,
+  virtual_device: u8,
+  source_tag_len: u8,
+  keys: [u8; 6],
+  ascii: [u8; 6],
+  key_down_bits: [u32; 8],
+  source_tag: [u8; 32],
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:2059
+
+## TrueosHidHutMouseState
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidHutMouseState {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  buttons_down: u32,
+  combo_id: u32,
+  source_kind: u8,
+  virtual_device: u8,
+  source_tag_len: u8,
+  reserved0: u8,
+  source_tag: [u8; 32],
+  x: f64,
+  y: f64,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:2023
+
+## TrueosHidHutTabletState
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidHutTabletState {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  x_raw: u16,
+  y_raw: u16,
+  buttons_down: u32,
+  report_id: u8,
+  source_kind: u8,
+  virtual_device: u8,
+  source_tag_len: u8,
+  combo_id: u32,
+  source_tag: [u8; 32],
+  x: f64,
+  y: f64,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:2040
+
+## TrueosHidKeyboardSample
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidKeyboardSample {
+  t_ms: u32,
+  seq: u32,
+  slot_id: u32,
+  modifiers: u8,
+  reserved0: u8,
+  reserved1: u16,
+  keys: [u8; 6],
+  ascii: [u8; 6],
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1941
+
+## TrueosHidMouseSample
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidMouseSample {
+  t_ms: u32,
+  seq: u32,
+  slot_id: u32,
+  buttons: u8,
+  dx: i8,
+  dy: i8,
+  wheel: i8,
+  flags: u8,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1928
+
+## TrueosHidTabletSample
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosHidTabletSample {
+  t_ms: u32,
+  seq: u32,
+  slot_id: u32,
+  buttons: u8,
+  report_id: u8,
+  flags: u8,
+  reserved0: u8,
+  x_raw: u16,
+  y_raw: u16,
+  x_norm_q15: u16,
+  y_norm_q15: u16,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1955
+
+## TrueosImageSourceInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosImageSourceInfo {
+  format: u32,
+  width: u32,
+  height: u32,
+  byte_len: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:186
+
+## TrueosInputCombo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosInputCombo {
+  combo_id: u32,
+  source_kind: u8,
+  source_tag_len: u8,
+  color_id: u8,
+  flags: u8,
+  source_tag: [u8; 32],
+  mouse_controller_id: u32,
+  mouse_slot_id: u32,
+  mouse_ep_target: u32,
+  keyboard_controller_id: u32,
+  keyboard_slot_id: u32,
+  keyboard_ep_target: u32,
+  tablet_controller_id: u32,
+  tablet_slot_id: u32,
+  tablet_ep_target: u32,
+  gamepad_controller_id: u32,
+  gamepad_slot_id: u32,
+  gamepad_ep_target: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:2076
+
+## TrueosKeyboardOutputEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosKeyboardOutputEvent {
+  t_ms: u32,
+  seq: u32,
+  device_seq: u32,
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  modifiers: u8,
+  kind: u8,
+  utf8_len: u8,
+  reserved0: u8,
+  key_code: u16,
+  reserved1: u16,
+  codepoint: u32,
+  utf8: [u8; 4],
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1971
+
+## TrueosLifecycleIdentity
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosLifecycleIdentity {
+  instance: [u8; 16],
+  lineage: [u8; 16],
+  generation: u64,
+  flags: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:57
+
+## TrueosLifecyclePreparePause
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosLifecyclePreparePause {
+  operation: u64,
+  deadline_ms: u64,
+  reason: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:48
+
+## TrueosLumenStatus
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosLumenStatus {
+  phase: u32,
+  error: i32,
+  position: u32,
+  reply_len: u32,
+  checkpoint_len: u64,
+  reply_tail: [u32; 2],
+  reply_tail_len: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:138
+
+## TrueosMidiInputEventV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Versioned USB-MIDI note edge exported to Blueprint-owned synthesis.
+struct TrueosMidiInputEventV1 {
+  seq: u64,
+  controller_id: u32,
+  slot_id: u32,
+  channel: u8,
+  note: u8,
+  velocity: u8,
+  gate: u8,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1992
+
+## TrueosMouseState
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosMouseState {
+  x: i32,
+  y: i32,
+  dx: i32,
+  dy: i32,
+  wheel: i32,
+  buttons: u32,
+  seq: u32,
+  slot_id: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1902
+
+## TrueosTabletEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosTabletEvent {
+  slot_id: u32,
+  buttons: u8,
+  report_id: u8,
+  x_raw: u16,
+  y_raw: u16,
+  x_norm_q15: u16,
+  y_norm_q15: u16,
+  flags: u8,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:1915
+
+## TrueosUi4ContextMenuEntry
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+One row of a frame-owned context menu. `enabled` is 0 for a greyed
+label which reports no action, non-zero for a selectable row.
+struct TrueosUi4ContextMenuEntry {
+  label_ptr: *const u8,
+  label_len: usize,
+  action_id: u32,
+  enabled: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:289
+
+## TrueosUi4ContextMenuEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Outcome of one context-menu invocation. `selected` is non-zero only when
+the user chose an enabled row, in which case `action_id` is that row's id.
+`reason` mirrors UI4's close reason: 0 selected, 1 dismissed, 2 replaced,
+3 owner released, 4 window closed.
+struct TrueosUi4ContextMenuEvent {
+  context: u64,
+  action_id: u32,
+  selected: u32,
+  reason: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:302
+
+## TrueosUi4ContextMenuEventV2
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Dynamic menu event: reason 5 requests entries; 0..=4 complete it.
+The serial and frame-local click coordinates are frozen for the invocation.
+struct TrueosUi4ContextMenuEventV2 {
+  serial: u64,
+  local_x: i32,
+  local_y: i32,
+  action_id: u32,
+  selected: u32,
+  reason: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:313
+
+## TrueosUi4CursorImageV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Version 1 owned RGBA8 cursor registration. Pixels are straight-alpha, top-down.
+IDs are frame-local 1..=16; dimensions 1..=64; hotspot lies inside the image.
+struct TrueosUi4CursorImageV1 {
+  id: u32,
+  width: u32,
+  height: u32,
+  hotspot_x: u32,
+  hotspot_y: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:336
+
+## TrueosUi4CursorSource
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4CursorSource {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  hid_kind: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:325
+
+## TrueosUi4CursorStep
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Frame-local presentation spacing for a UI4 software cursor. Advances use
+1/1024 pixel units so fractional glyph widths stay aligned.
+struct TrueosUi4CursorStep {
+  origin_x: u32,
+  origin_y: u32,
+  cell_width_subpx: u32,
+  cell_height_subpx: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:349
+
+## TrueosUi4FontCanvasRow
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4FontCanvasRow {
+  text_ptr: *const u8,
+  text_len: usize,
+  x: f32,
+  y: f32,
+  font_pixels: f32,
+  color_rgba: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:247
+
+## TrueosUi4FontMetricsV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4FontMetricsV1 {
+  version: u32,
+  font_id: u32,
+  flags: u32,
+  pixels: f32,
+  cell_advance: f32,
+  line_height: f32,
+  ascent: f32,
+  descent: f32,
+  underline_position: f32,
+  underline_thickness: f32,
+  strikeout_position: f32,
+  strikeout_thickness: f32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:525
+
+## TrueosUi4FontSpriteStatusV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Opaque asynchronous glyph-resource state. The ticket and all glyph cache
+keys remain Blueprint-owned; `sprite_id` is valid only while `state=READY`.
+struct TrueosUi4FontSpriteStatusV1 {
+  state: u32,
+  sprite_id: u32,
+  width: u32,
+  height: u32,
+  origin_x: i32,
+  origin_y: i32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:514
+
+## TrueosUi4HullImageInfoV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+State of a kernel-owned asynchronous web image. Pixels never cross this ABI.
+struct TrueosUi4HullImageInfoV1 {
+  state: u32,
+  sprite_id: u32,
+  // Retained UI4 SpriteQuad source, valid only when state is READY.
+  width: u32,
+  height: u32,
+  generation: u64,
+  error: i32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:4
+
+## TrueosUi4HullTextRunV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+One Hull microfont run in physical frame pixels. `advance_px` is the whole
+run's SVG textLength, or zero for the font's natural advance. RGBA is packed
+with `u32::from_le_bytes([r, g, b, a])`.
+struct TrueosUi4HullTextRunV1 {
+  text: *const u8,
+  text_len: usize,
+  x: f32,
+  baseline_y: f32,
+  size_px: f32,
+  advance_px: f32,
+  rgba: u32,
+  column_offset: u32,
+  // Prior Unicode scalar columns for a split natural-advance run.
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:172
+
+## TrueosUi4InputRouteState
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4InputRouteState {
+  cursor_controller_id: u32,
+  cursor_slot_id: u32,
+  cursor_ep_target: u32,
+  cursor_hid_kind: u32,
+  combo_id: u32,
+  color_rgba: u32,
+  flags: u32,
+  keyboard_controller_id: u32,
+  keyboard_slot_id: u32,
+  keyboard_ep_target: u32,
+  keyboard_modifiers: u8,
+  keyboard_source_kind: u8,
+  virtual_keyboard: u8,
+  reserved0: u8,
+  keys: [u8; 6],
+  ascii: [u8; 6],
+  key_down_bits: [u32; 8],
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:400
+
+## TrueosUi4KeyboardState
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4KeyboardState {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  combo_id: u32,
+  modifiers: u8,
+  source_kind: u8,
+  virtual_keyboard: u8,
+  reserved0: u8,
+  keys: [u8; 6],
+  ascii: [u8; 6],
+  key_down_bits: [u32; 8],
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:379
+
+## TrueosUi4PanEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4PanEvent {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  hid_kind: u32,
+  phase: u32,
+  x: u32,
+  y: u32,
+  local_x: i32,
+  local_y: i32,
+  dx: i32,
+  dy: i32,
+  combo_id: u32,
+  vcursor: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:258
+
+## TrueosUi4ParticleCraftParamsV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4ParticleCraftParamsV1 {
+  version: u32,
+  flags: u32,
+  seed: u32,
+  active_count: u32,
+  dt_seconds: f32,
+  time_seconds: f32,
+  emitter_x: f32,
+  emitter_y: f32,
+  attractor_x: f32,
+  attractor_y: f32,
+  attraction: f32,
+  swirl: f32,
+  gravity_x: f32,
+  gravity_y: f32,
+  drag: f32,
+  intensity: f32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:444
+
+## TrueosUi4PointerEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4PointerEvent {
+  controller_id: u32,
+  slot_id: u32,
+  ep_target: u32,
+  hid_kind: u32,
+  x: u32,
+  y: u32,
+  local_x: i32,
+  local_y: i32,
+  dx: i32,
+  dy: i32,
+  wheel: i32,
+  buttons_down: u32,
+  buttons_pressed: u32,
+  buttons_released: u32,
+  combo_id: u32,
+  vcursor: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:358
+
+## TrueosUi4ResizeEvent
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+One final producer extent. UI4-owned presentation animation never appears
+as a stream of intermediate application resize events.
+struct TrueosUi4ResizeEvent {
+  old_width: u32,
+  old_height: u32,
+  width: u32,
+  height: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:278
+
+## TrueosUi4ShadertoyParamsV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4ShadertoyParamsV1 {
+  version: u32,
+  shader_id: u32,
+  frame: u32,
+  flags: u32,
+  time_seconds: f32,
+  delta_seconds: f32,
+  frame_rate: f32,
+  sample_rate: f32,
+  mouse_x: f32,
+  mouse_y: f32,
+  click_x: f32,
+  click_y: f32,
+  date_year: f32,
+  date_month: f32,
+  date_day: f32,
+  date_seconds: f32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:465
+
+## TrueosUi4Shell2FontScaleStep
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4Shell2FontScaleStep {
+  effective_pixels: u32,
+  native_tier_pixels: u32,
+  residual_milli: u32,
+  columns_at_1280: u32,
+  rows_at_720: u32,
+  cache_eligible: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:158
+
+## TrueosUi4SkyboxRenderParams
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4SkyboxRenderParams {
+  right_x: f32,
+  right_y: f32,
+  right_z: f32,
+  up_x: f32,
+  up_y: f32,
+  up_z: f32,
+  forward_x: f32,
+  forward_y: f32,
+  forward_z: f32,
+  aspect_tan_half_fov_y: f32,
+  tan_half_fov_y: f32,
+  rect_x: u32,
+  rect_y: u32,
+  rect_width: u32,
+  rect_height: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:424
+
+## TrueosUi4SolaraFontSize
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4SolaraFontSize {
+  native_scale: u32,
+  target_pixels: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:151
+
+## TrueosUi4SolaraSceneTextRow
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4SolaraSceneTextRow {
+  text_ptr: *const u8,
+  text_len: usize,
+  x: f32,
+  y: f32,
+  font_pixels: f32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:237
+
+## TrueosUi4SolaraTextRow
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4SolaraTextRow {
+  text_ptr: *const u8,
+  text_len: usize,
+  x: f32,
+  y: f32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:228
+
+## TrueosUi4SpriteQuad
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosUi4SpriteQuad {
+  sprite_id: u32,
+  c0_x: f32,
+  c0_y: f32,
+  c0_u: f32,
+  c0_v: f32,
+  c1_x: f32,
+  c1_y: f32,
+  c1_u: f32,
+  c1_v: f32,
+  c2_x: f32,
+  c2_y: f32,
+  c2_u: f32,
+  c2_v: f32,
+  c3_x: f32,
+  c3_y: f32,
+  c3_u: f32,
+  c3_v: f32,
+  color_rgba: u32,
+  flags: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:488
+
+## TrueosUi4WindowStateV1
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+Versioned UI4 state. Title is UTF-8 broker metadata, bounded to 120 bytes.
+struct TrueosUi4WindowStateV1 {
+  version: u32,
+  visible: u32,
+  hit_testable: u32,
+  opacity: u32,
+  focused: u32,
+  reserved: [u32; 3],
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:2102
+
+## TrueosVmediaImageInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosVmediaImageInfo {
+  width: u32,
+  height: u32,
+  stride_bytes: u32,
+  byte_len: u32,
+  source_format: u32,
+  pixel_format: u32,
+  backend: u32,
+  revision: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:195
+
+## TrueosVmediaRetainedTextureInfo
+repr: {"align": null, "int": null, "kind": "c", "packed": null}
+
+struct TrueosVmediaRetainedTextureInfo {
+  texture_id: u64,
+  width: u32,
+  height: u32,
+  stride_bytes: u32,
+  byte_len: u32,
+  source_format: u32,
+  pixel_format: u32,
+  backend: u32,
+  revision: u32,
+  residency: u32,
+  reserved: u32,
+}
+Declaration: crates/trueos-v/src/bp_abi.rs:210
+
+# Wire constants
+BLUEPRINT_CHILD_ERR_INVALID: i32 = -1i32
+BLUEPRINT_CHILD_ERR_NOT_FOUND: i32 = -2i32
+BLUEPRINT_CHILD_ERR_QUEUE_FULL: i32 = -3i32
+BLUEPRINT_CHILD_ERR_UNAVAILABLE: i32 = -4i32
+BLUEPRINT_CHILD_PARENT_HANDLE: u64 = 0u64 // Opaque endpoint value used by a hidden child Blueprint to address the parent that spawned it.  Nonzero endpoint handles are returned only to the parent by `trueos_cabi_blueprint_child_spawn_v1`.
+BLUEPRINT_CHILD_STATUS_EXITED: i32 = 4i32
+BLUEPRINT_CHILD_STATUS_RUNNING: i32 = 2i32
+BLUEPRINT_CHILD_STATUS_STARTING: i32 = 1i32
+BLUEPRINT_CHILD_STATUS_STOPPING: i32 = 3i32
+DOBBY_UI4_ERROR_BAD_INPUT: i32 = -3i32
+DOBBY_UI4_ERROR_BAD_STATE: i32 = -2i32
+DOBBY_UI4_ERROR_BUSY: i32 = -4i32
+DOBBY_UI4_ERROR_DENIED: i32 = -1i32
+DOBBY_UI4_ERROR_NOT_FOUND: i32 = -6i32
+DOBBY_UI4_ERROR_TRANSPORT: i32 = -7i32
+DOBBY_UI4_ERROR_UNAVAILABLE: i32 = -5i32
+DOBBY_UI4_KEY_ARROW_DOWN: u32 = 8u32
+DOBBY_UI4_KEY_ARROW_LEFT: u32 = 7u32
+DOBBY_UI4_KEY_ARROW_RIGHT: u32 = 6u32
+DOBBY_UI4_KEY_ARROW_UP: u32 = 9u32
+DOBBY_UI4_KEY_BACKSPACE: u32 = 3u32
+DOBBY_UI4_KEY_DELETE: u32 = 10u32
+DOBBY_UI4_KEY_END: u32 = 12u32
+DOBBY_UI4_KEY_ENTER: u32 = 1u32
+DOBBY_UI4_KEY_ESCAPE: u32 = 2u32
+DOBBY_UI4_KEY_HOME: u32 = 11u32
+DOBBY_UI4_KEY_PAGE_DOWN: u32 = 14u32
+DOBBY_UI4_KEY_PAGE_UP: u32 = 13u32
+DOBBY_UI4_KEY_SPACE: u32 = 5u32
+DOBBY_UI4_KEY_TAB: u32 = 4u32
+DOBBY_UI4_POINTER_ACTION_MASK: u32 = 65_535u32
+DOBBY_UI4_POINTER_BUTTON_LEFT: u32 = 1u32
+DOBBY_UI4_POINTER_BUTTON_MASK: u32 = 4_294_901_760u32
+DOBBY_UI4_POINTER_BUTTON_MIDDLE: u32 = 4u32
+DOBBY_UI4_POINTER_BUTTON_PRESS: u32 = 2u32
+DOBBY_UI4_POINTER_BUTTON_RELEASE: u32 = 3u32
+DOBBY_UI4_POINTER_BUTTON_RIGHT: u32 = 2u32
+DOBBY_UI4_POINTER_BUTTON_SHIFT: u32 = 16u32
+DOBBY_UI4_POINTER_CLICK_COUNT_DEFAULT: u32 = 1u32
+DOBBY_UI4_POINTER_CLICK_COUNT_MASK: u32 = 60u32
+DOBBY_UI4_POINTER_CLICK_COUNT_MAX: u32 = 10u32
+DOBBY_UI4_POINTER_CLICK_COUNT_SHIFT: u32 = 2u32
+DOBBY_UI4_POINTER_CLICK_DELAY_MASK: u32 = 65_472u32
+DOBBY_UI4_POINTER_CLICK_DELAY_MAX_MS: u32 = 1_000u32
+DOBBY_UI4_POINTER_CLICK_DELAY_MIN_MS: u32 = 100u32
+DOBBY_UI4_POINTER_CLICK_DELAY_SHIFT: u32 = 6u32
+DOBBY_UI4_POINTER_MOVE: u32 = 0u32
+DOBBY_UI4_POINTER_PRIMARY_CLICK: u32 = 1u32
+LOG_FLAG_QUERY_ENABLED: u32 = 2_147_483_648u32 // Query host filtering through the existing structured logging boundary.
+LOG_LEVEL_DEBUG: u32 = 4u32
+LOG_LEVEL_ERROR: u32 = 1u32
+LOG_LEVEL_IMPORTANT: u32 = 6u32
+LOG_LEVEL_INFO: u32 = 3u32
+LOG_LEVEL_ONCE: u32 = 7u32
+LOG_LEVEL_TRACE: u32 = 5u32
+LOG_LEVEL_WARN: u32 = 2u32
+LUMEN_PHASE_CHECKPOINTING: u32 = 5u32
+LUMEN_PHASE_CHECKPOINT_READY: u32 = 6u32
+LUMEN_PHASE_ERROR: u32 = 9u32
+LUMEN_PHASE_IDLE: u32 = 0u32
+LUMEN_PHASE_OPENING: u32 = 1u32
+LUMEN_PHASE_READY: u32 = 2u32
+LUMEN_PHASE_REPLY_READY: u32 = 4u32
+LUMEN_PHASE_RESTORE_UPLOAD: u32 = 7u32
+LUMEN_PHASE_RESTORING: u32 = 8u32
+LUMEN_PHASE_RUNNING: u32 = 3u32
+UI4_FRAME_ESCAPE_KEY_ACTION_CLOSE: u32 = 0u32 // Default UI4 behaviour: close the selected frame (and stop its Blueprint VM).  `DELIVER_TO_APPLICATION` reserves Escape for this frame only.
+UI4_FRAME_ESCAPE_KEY_ACTION_DELIVER_TO_APPLICATION: u32 = 1u32
+UI4_HULL_IMAGE_FAILED: u32 = 2u32
+UI4_HULL_IMAGE_PENDING: u32 = 0u32
+UI4_HULL_IMAGE_READY: u32 = 1u32
+UI4_INPUT_ROUTE_APP_FOCUS: u32 = 2u32
+UI4_INPUT_ROUTE_KEYBOARD_PRESENT: u32 = 8u32
+UI4_INPUT_ROUTE_SELECTED_FOR_WINDOW: u32 = 1u32
+UI4_INPUT_ROUTE_VCURSOR: u32 = 4u32

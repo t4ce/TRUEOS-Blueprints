@@ -1,0 +1,22 @@
+API PRM trueos-blueprint-api/1/29471e0439cb238f
+Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+
+# Start here
+TRUEOS application reference, generated from cargo rustdoc JSON. Read the index first and load only the needed topic. These files contain signatures, public data layouts, constants and usage contracts; no kernel implementations, Cargo dependencies or SDK source trees are included.
+C ABI declarations are callable from foreign languages through the Blueprint loader. Rust facade functions, macros, fmt::Arguments and traits are application-side code, not additional kernel symbols. A declaration is not runtime feature discovery: service readiness, enabled kernel features, ownership and Blueprint scope still apply.
+Target: x86-64, little endian, System V C calling convention. Rust usize/isize are 64-bit; Odin uintptr/int are 64-bit. Rust *const T/*mut T correspond to pointers with the documented direction, not Rust references or Rust slices. Byte buffers use explicit pointer plus length. Use types.prm for repr(C) field order and arrays; never infer wire encodings from a similarly named struct.
+For Odin SON: default packages have no core:fmt, core:os, vendor collections or reusable Rust libraries. Use project-local Odin modules and foreign C declarations. Formatting text/numbers is application work; the logging API accepts already formatted UTF-8. The compiler's own statically linked fmt does not become an application SDK.
+The IDE owns source revisions, compiler snapshots and launch. Use its compile/build-status/run operations. A TUI needs a terminal-attached launch (current shell or sh3); graphical UI4 demos can run headless. Platform API documentation is IDE context, independent of the selected compiler. No running-kernel compatibility is implied solely by this reference's version.
+Retired synchronous trueos_cabi_fs_* and trueos_cabi_trueosfs_* declarations are excluded. Use filesystem.prm. Signatures missing a semantic contract are discovery information only; do not invent return-code meanings or ownership rules. Human-reviewed contracts below supplement rustdoc, which cannot infer lifecycle requirements from signatures.
+
+# Topic lookup
+- logging.prm: 2 C ABI functions. trueos_cabi_log(level,target_ptr,target_len,message_ptr,message_len) sends one already formatted UTF-8 record to the host log router, separate from attached-terminal bytes.
+- terminal.prm: 13 C ABI functions. A foreground TUI starts by calling terminal_lease_current_v1(0,&epoch).
+- filesystem.prm: 30 C ABI functions. Use async operations scoped to the Blueprint filesystem identity.
+- lifecycle.prm: 27 C ABI functions. Check blueprint_stop_control_v1 using the same operation protocol as the native examples (initial registration 0, loop check 1).
+- memory.prm: 7 C ABI functions. Allocation, buffer ownership and cleanup remain explicit across the ABI.
+- graphics.prm: 118 C ABI functions. UI4 resources are owner-scoped.
+- services.prm: 163 C ABI functions. These are additional Blueprint service declarations.
+- types.prm: repr(C) field order, arrays, public ABI constants. No implementation bodies.
+- symbols.prm: searchable C symbol-to-topic index; consult when you know a function name.
+- manifest.json: version, source hashes, artifact hashes, counts, excluded retired declarations.

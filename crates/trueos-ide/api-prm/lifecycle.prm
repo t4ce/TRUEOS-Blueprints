@@ -1,0 +1,219 @@
+API PRM trueos-blueprint-api/1/29471e0439cb238f
+Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+
+
+# lifecycle
+
+Check blueprint_stop_control_v1 using the same operation protocol as the native examples (initial registration 0, loop check 1). On stop, release application-owned resources, restore terminal state if held, then call blueprint_shutdown with an explanatory byte string.
+
+blueprint_launch_script_v1 payload is app + NUL + script, optionally + NUL + destination. Omitted destination selects current shell; supported explicit destinations are sh3 and headless. The API reports launch admission, not proof the child completed successfully. Shared path-based launches and filesystem scope are enforced by the host.
+
+
+
+# C ABI declarations (Rust type notation)
+
+
+## trueos_cabi_blueprint_child_read_v1
+
+extern "C" fn trueos_cabi_blueprint_child_read_v1(handle: u64, out: *mut u8, cap: usize) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1771
+
+
+## trueos_cabi_blueprint_child_receive_v1
+
+extern "C" fn trueos_cabi_blueprint_child_receive_v1(handle: u64, out_ptr: *mut u8, out_cap: usize) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1777
+
+
+## trueos_cabi_blueprint_child_send_v1
+
+extern "C" fn trueos_cabi_blueprint_child_send_v1(handle: u64, data_ptr: *const u8, data_len: usize) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1772
+
+
+## trueos_cabi_blueprint_child_spawn_program_v1
+
+extern "C" fn trueos_cabi_blueprint_child_spawn_program_v1(request: *const u8, len: usize, out_handle: *mut u64) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1766
+
+
+## trueos_cabi_blueprint_child_spawn_v1
+
+extern "C" fn trueos_cabi_blueprint_child_spawn_v1(initial_ptr: *const u8, initial_len: usize, out_handle: *mut u64) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1761
+
+
+## trueos_cabi_blueprint_child_status_v1
+
+extern "C" fn trueos_cabi_blueprint_child_status_v1(handle: u64) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1782
+
+
+## trueos_cabi_blueprint_child_terminate_v1
+
+extern "C" fn trueos_cabi_blueprint_child_terminate_v1(handle: u64) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1783
+
+
+## trueos_cabi_blueprint_exit_reason
+
+extern "C" fn trueos_cabi_blueprint_exit_reason(data_ptr: *const u8, data_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1784
+
+
+## trueos_cabi_blueprint_launch_script_v1
+
+extern "C" fn trueos_cabi_blueprint_launch_script_v1(payload_ptr: *const u8, payload_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1754
+
+
+## trueos_cabi_blueprint_return_to_cli
+
+extern "C" fn trueos_cabi_blueprint_return_to_cli() -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1786
+
+
+## trueos_cabi_blueprint_shutdown
+
+extern "C" fn trueos_cabi_blueprint_shutdown(data_ptr: *const u8, data_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1785
+
+
+## trueos_cabi_blueprint_stop_control_v1
+
+extern "C" fn trueos_cabi_blueprint_stop_control_v1(operation: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1711
+
+Cooperative stop: operation 0 registers the sole cleanup owner;
+operation 1 returns 0 (running), 1 (stop requested), or -1 (invalid).
+Finish cleanup through trueos_cabi_blueprint_shutdown.
+
+
+## trueos_cabi_poll_once
+
+extern "C" fn trueos_cabi_poll_once() -> ();
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1037
+
+
+## trueos_cabi_sleep_ms
+
+extern "C" fn trueos_cabi_sleep_ms(ms: u64) -> ();
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1038
+
+
+## trueos_cabi_thread_available_parallelism
+
+extern "C" fn trueos_cabi_thread_available_parallelism() -> usize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1050
+
+
+## trueos_cabi_thread_configure_placement_v1
+
+extern "C" fn trueos_cabi_thread_configure_placement_v1(mode: u32, background_cap: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1053
+
+Opt-in per-launch experiment: 0 single, 1 foreground isolated, 2 spread;
+background_cap is 1..=4. Configure before admission; positive errno on failure.
+
+
+## trueos_cabi_thread_current_id
+
+extern "C" fn trueos_cabi_thread_current_id() -> usize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1039
+
+
+## trueos_cabi_thread_detach
+
+extern "C" fn trueos_cabi_thread_detach(handle: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1049
+
+
+## trueos_cabi_thread_join
+
+extern "C" fn trueos_cabi_thread_join(handle: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1048
+
+
+## trueos_cabi_thread_set_name
+
+extern "C" fn trueos_cabi_thread_set_name(name: *const core::ffi::c_char) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1061
+
+
+## trueos_cabi_thread_spawn
+
+extern "C" fn trueos_cabi_thread_spawn(stack: usize, start: unsafe extern "C" fn(*mut core::ffi::c_void) -> *mut core::ffi::c_void, arg: *mut core::ffi::c_void, out: *mut usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1042
+
+Create an independent stackful thread; zero reports successful admission.
+The returned handle must be consumed once by join or detach.
+
+
+## trueos_cabi_thread_swap_activity_v1
+
+extern "C" fn trueos_cabi_thread_swap_activity_v1(activity: u32) -> u32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1060
+
+Swap diagnostic activity: 0 unknown, 1 foreground, 2 scheduler, 3 blocking.
+Returns the old activity or MAX. Does not affect thread placement.
+
+
+## trueos_cabi_thread_swap_child_role_v1
+
+extern "C" fn trueos_cabi_thread_swap_child_role_v1(role: u32) -> u32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1057
+
+Swap the current logical continuation's child-admission hint: 0 general,
+1 foreground, 2 Tokio pool, 3 dedicated blocking. Returns old hint or MAX.
+Restore the returned hint in the same continuation; hints are not inherited.
+
+
+## trueos_cabi_wls_current_slot
+
+extern "C" fn trueos_cabi_wls_current_slot() -> u32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1062
+
+
+## trueos_time_monotonic_nanos
+
+extern "C" fn trueos_time_monotonic_nanos() -> u64;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1063
+
+
+## trueos_time_unix_nanos
+
+extern "C" fn trueos_time_unix_nanos() -> u64;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1065
+
+
+## trueos_time_unix_seconds
+
+extern "C" fn trueos_time_unix_seconds() -> u64;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1064

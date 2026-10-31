@@ -1,0 +1,225 @@
+API PRM trueos-blueprint-api/1/29471e0439cb238f
+Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+
+
+# filesystem
+
+Use async operations scoped to the Blueprint filesystem identity. A *_start call returns a positive operation ID or an error. async_fs_status(id):0 pending,1 ready,negative failure. While pending call poll_once (and optionally sleep_ms) so kernel services can progress.
+
+After ready, obtain result_len and copy with result_read(id,offset,out,cap), advancing by the returned byte count. Result layouts are operation-specific: typed metadata and directory data are not arbitrary Rust structs. Copy results before discard. Discard every operation exactly once, including failure paths.
+
+Writes use write_begin, offset-based write_chunk, then write_commit. Commit submission alone is not durable completion: poll status until ready before claiming success. Content types, checked identities and flags belong to their documented operation-specific contracts. Rust async_fs::block_on is a Rust helper around this protocol, not an exported C function.
+
+
+
+# C ABI declarations (Rust type notation)
+
+
+## trueos_cabi_archive_discard
+
+extern "C" fn trueos_cabi_archive_discard(id: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1211
+
+
+## trueos_cabi_archive_lz4_decode_start_v1
+
+extern "C" fn trueos_cabi_archive_lz4_decode_start_v1(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1201
+
+
+## trueos_cabi_archive_pack_many_start
+
+extern "C" fn trueos_cabi_archive_pack_many_start(sources_ptr: *const u8, sources_len: usize, archive_ptr: *const u8, archive_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1189
+
+
+## trueos_cabi_archive_pack_start
+
+extern "C" fn trueos_cabi_archive_pack_start(source_ptr: *const u8, source_len: usize, archive_ptr: *const u8, archive_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1183
+
+
+## trueos_cabi_archive_report
+
+extern "C" fn trueos_cabi_archive_report(id: u32, out: *mut TrueosArchiveReport) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1210
+
+
+## trueos_cabi_archive_result_len_v1
+
+extern "C" fn trueos_cabi_archive_result_len_v1(id: u32) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1202
+
+
+## trueos_cabi_archive_result_read_v1
+
+extern "C" fn trueos_cabi_archive_result_read_v1(id: u32, offset: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1203
+
+
+## trueos_cabi_archive_status
+
+extern "C" fn trueos_cabi_archive_status(id: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1209
+
+
+## trueos_cabi_archive_unpack_start
+
+extern "C" fn trueos_cabi_archive_unpack_start(archive_ptr: *const u8, archive_len: usize, destination_ptr: *const u8, destination_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1195
+
+
+## trueos_cabi_async_fs_checked_write_begin_v1
+
+extern "C" fn trueos_cabi_async_fs_checked_write_begin_v1(path_ptr: *const u8, path_len: usize, total_len: usize, content_type: u32, flags: u32, expected_sha256: *const u8) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1138
+
+
+## trueos_cabi_async_fs_create_dir_all_start
+
+extern "C" fn trueos_cabi_async_fs_create_dir_all_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1153
+
+
+## trueos_cabi_async_fs_discard
+
+extern "C" fn trueos_cabi_async_fs_discard(id: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1182
+
+
+## trueos_cabi_async_fs_list_dir_start
+
+extern "C" fn trueos_cabi_async_fs_list_dir_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1158
+
+
+## trueos_cabi_async_fs_list_mounts_start
+
+extern "C" fn trueos_cabi_async_fs_list_mounts_start() -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1166
+
+
+## trueos_cabi_async_fs_metadata_start_v2
+
+extern "C" fn trueos_cabi_async_fs_metadata_start_v2(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1154
+
+
+## trueos_cabi_async_fs_read_start
+
+extern "C" fn trueos_cabi_async_fs_read_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1126
+
+
+## trueos_cabi_async_fs_record_key_start
+
+extern "C" fn trueos_cabi_async_fs_record_key_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1157
+
+
+## trueos_cabi_async_fs_remove_start
+
+extern "C" fn trueos_cabi_async_fs_remove_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1167
+
+
+## trueos_cabi_async_fs_rename_start
+
+extern "C" fn trueos_cabi_async_fs_rename_start(source_ptr: *const u8, source_len: usize, destination_ptr: *const u8, destination_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1168
+
+
+## trueos_cabi_async_fs_result_len
+
+extern "C" fn trueos_cabi_async_fs_result_len(id: u32) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1175
+
+
+## trueos_cabi_async_fs_result_read
+
+extern "C" fn trueos_cabi_async_fs_result_read(id: u32, offset: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1176
+
+
+## trueos_cabi_async_fs_select_files_start_v1
+
+extern "C" fn trueos_cabi_async_fs_select_files_start_v1(path_ptr: *const u8, path_len: usize, content_type: u32, max_depth: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1160
+
+
+## trueos_cabi_async_fs_stat_start
+
+extern "C" fn trueos_cabi_async_fs_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1155
+
+
+## trueos_cabi_async_fs_status
+
+extern "C" fn trueos_cabi_async_fs_status(id: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1174
+
+
+## trueos_cabi_async_fs_typed_list_dir_start
+
+extern "C" fn trueos_cabi_async_fs_typed_list_dir_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1159
+
+
+## trueos_cabi_async_fs_typed_stat_start
+
+extern "C" fn trueos_cabi_async_fs_typed_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1156
+
+
+## trueos_cabi_async_fs_typed_write_begin
+
+extern "C" fn trueos_cabi_async_fs_typed_write_begin(path_ptr: *const u8, path_len: usize, total_len: usize, content_type: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1132
+
+
+## trueos_cabi_async_fs_write_begin
+
+extern "C" fn trueos_cabi_async_fs_write_begin(path_ptr: *const u8, path_len: usize, total_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1127
+
+
+## trueos_cabi_async_fs_write_chunk
+
+extern "C" fn trueos_cabi_async_fs_write_chunk(id: u32, offset: usize, data_ptr: *const u8, data_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1146
+
+
+## trueos_cabi_async_fs_write_commit
+
+extern "C" fn trueos_cabi_async_fs_write_commit(id: u32) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1152

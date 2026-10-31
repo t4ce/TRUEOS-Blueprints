@@ -1,0 +1,48 @@
+API PRM trueos-blueprint-api/1/29471e0439cb238f
+Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+
+
+# logging
+
+trueos_cabi_log(level,target_ptr,target_len,message_ptr,message_len) sends one already formatted UTF-8 record to the host log router, separate from attached-terminal bytes. No format string or Rust fmt::Arguments crosses this ABI. Level constants are listed below. Target must be nonempty and at most 256 bytes; message limit is 65536 bytes. Hull transport can truncate long messages to its payload capacity on a UTF-8 boundary. Return0 indicates accepted normal submission; negative indicates error, not necessarily delivery to every configured sink.
+
+LOG_FLAG_QUERY_ENABLED ORed into the level queries filtering with an empty message:1 enabled,0 disabled,negative unsupported/error. LOG_LEVEL_ONCE carries no stable guest callsite identity.
+
+trueos_cabi_write uses stream1 stdout and2 stderr, accepting already prepared bytes. Use terminal.prm for screen drawing. A small local Odin formatting module is needed for dynamic numbers, floats, padding or interpolation; logging does not provide that formatting.
+
+
+
+# C ABI declarations (Rust type notation)
+
+
+## trueos_cabi_log
+
+extern "C" fn trueos_cabi_log(level: u32, target_ptr: *const u8, target_len: usize, message_ptr: *const u8, message_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1067
+
+
+## trueos_cabi_write
+
+extern "C" fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize) -> ();
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1066
+
+
+# Logging wire constants
+
+LOG_FLAG_QUERY_ENABLED: u32 = 2_147_483_648u32
+
+LOG_LEVEL_DEBUG: u32 = 4u32
+
+LOG_LEVEL_ERROR: u32 = 1u32
+
+LOG_LEVEL_IMPORTANT: u32 = 6u32
+
+LOG_LEVEL_INFO: u32 = 3u32
+
+LOG_LEVEL_ONCE: u32 = 7u32
+
+LOG_LEVEL_TRACE: u32 = 5u32
+
+LOG_LEVEL_WARN: u32 = 2u32

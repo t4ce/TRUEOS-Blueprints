@@ -79,6 +79,8 @@ pub struct OwnerReply {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IdeRequest {
     Context {},
+    /// Read immutable platform documentation independently of project files.
+    ApiReference { topic: String },
     ReadFile {
         path: String,
     },
@@ -102,6 +104,7 @@ pub enum IdeRequest {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum IdeResponse {
     Context { context: WorkspaceContext },
+    ApiReference { reference: ApiReferenceDocument },
     File { file: FileContents },
     Saved { revision_id: i64 },
     Build { build: BuildState },
@@ -131,6 +134,44 @@ pub struct WorkspaceContext {
     pub open_files: Vec<String>,
     pub selected_text: String,
     pub build: BuildState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_reference: Option<PlatformApiContext>,
+}
+
+/// Compact API index included in IDE context; full topics are fetched on demand.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformApiContext {
+    pub api_id: String,
+    pub source_sha256: String,
+    pub index: String,
+    pub topics: Vec<PlatformApiTopic>,
+}
+
+impl PlatformApiContext {
+    /// Read-only platform reference metadata for an IDE context attachment.
+    pub fn render_summary(&self) -> String {
+        let mut text = format!("\n## TRUEOS platform API reference (read-only)\nAPI version: {}\nSource fingerprint: {}\nRetrieve a full topic with the IDE api_reference operation; documentation is independent of the project compiler and is not a runtime capability grant.\n\n{}\nAvailable topics:\n", self.api_id, self.source_sha256, self.index);
+        for topic in &self.topics {
+            text.push_str(&format!("- {}: {} ({} bytes)\n", topic.name, topic.title, topic.bytes));
+        }
+        text
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformApiTopic {
+    pub name: String,
+    pub title: String,
+    pub bytes: usize,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApiReferenceDocument {
+    pub api_id: String,
+    pub topic: String,
+    pub sha256: String,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -234,6 +275,17 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String>
 #[cfg(test)]
 mod launch_tests {
     use super::*;
+
+    #[test]
+    fn older_workspace_context_does_not_require_platform_reference() {
+        let context: WorkspaceContext = serde_json::from_str(r#"{
+            "project":"demo", "database":"projects.redb", "compiler":"odin_son",
+            "entry":"main.odin", "revision_id":1, "active_file":null,
+            "open_files":[], "selected_text":"", "build":{"state":"idle"}
+        }"#).unwrap();
+        assert!(context.api_reference.is_none());
+        assert!(!serde_json::to_string(&context).unwrap().contains("api_reference"));
+    }
 
     #[test]
     fn codex_startup_keeps_the_exact_workspace_endpoint() {

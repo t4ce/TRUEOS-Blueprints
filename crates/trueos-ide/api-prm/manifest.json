@@ -1,0 +1,720 @@
+{
+  "abi_sha256": "29471e0439cb238fbc317f9f4e9f269c95e89e2c380a71c572ecb6ce2dfb8449",
+  "api_id": "trueos-blueprint-api/1/29471e0439cb238f",
+  "counts": {
+    "constants": 75,
+    "excluded": 9,
+    "functions": 360,
+    "types": 77
+  },
+  "excluded_retired_declarations": [
+    "trueos_cabi_fs_read_file",
+    "trueos_cabi_fs_remove",
+    "trueos_cabi_fs_typed_list_dir",
+    "trueos_cabi_fs_typed_stat",
+    "trueos_cabi_fs_typed_write_begin",
+    "trueos_cabi_fs_write_abort",
+    "trueos_cabi_fs_write_begin",
+    "trueos_cabi_fs_write_chunk",
+    "trueos_cabi_fs_write_finish"
+  ],
+  "files": {
+    "filesystem.prm": {
+      "bytes": 6903,
+      "sha256": "335749f00b812baf2aac7e124e4f5f07f7a702661a596c14db7af1ed2d3947a2"
+    },
+    "graphics.prm": {
+      "bytes": 27147,
+      "sha256": "499e969b0960427acc339aecdfbbacba2b22efbc742a22ebc04c72b5743c426e"
+    },
+    "lifecycle.prm": {
+      "bytes": 6228,
+      "sha256": "f9d444cb406518bb2140f1a6eccb7395b3ff534e355f2b33970463f33fec6c8b"
+    },
+    "logging.prm": {
+      "bytes": 1852,
+      "sha256": "b3854cf94eea393e9ab3cb730c0c4117e8166a951ea88c1a0416dda3fb081203"
+    },
+    "memory.prm": {
+      "bytes": 1555,
+      "sha256": "e17e987d3cb0250abb0719bf528e1a80d047624cf78ce3050040ecd97c168cda"
+    },
+    "services.prm": {
+      "bytes": 31891,
+      "sha256": "dc27f4f254b981d3c218b1cacd29efd9577c7b556acf46920ea11d3bf18632f2"
+    },
+    "symbols.prm": {
+      "bytes": 18754,
+      "sha256": "d92911e3bf73eb52ceee6a7f0e9350040e2ea0cc1abbb803f4df680e619300fa"
+    },
+    "terminal.prm": {
+      "bytes": 4409,
+      "sha256": "32cd31c8582cbf86e466bbf9d88548ccf241bc28a16b5767f97b7a63b414d543"
+    },
+    "trueos-api.prm": {
+      "bytes": 3353,
+      "sha256": "245ad80503ba1f0661fb1085d79d3b3b4dab43d45b523e12fb1e8bbbd7c16486"
+    },
+    "types.prm": {
+      "bytes": 34724,
+      "sha256": "4a2ca8aeaf0ad3c4977af61a940ea2b4d9194181912bbf5bf6d234599b7b6ca8"
+    }
+  },
+  "format_version": 1,
+  "runtime_availability": "not probed; running kernel features, service readiness and Blueprint scope apply",
+  "rustdoc": {
+    "crate": "v",
+    "crate_version": "0.1.0",
+    "format_version": 60,
+    "target": {
+      "target_features": [
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "adx",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse2"
+          ],
+          "name": "aes",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-avx512",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-bf16",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-complex",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-fp8",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-fp16",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-int8",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-movrs",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "amx-tile"
+          ],
+          "name": "amx-tf32",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "amx-tile",
+          "unstable_feature_gate": "x86_amx_intrinsics"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "apxf",
+          "unstable_feature_gate": "apx_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse4.2"
+          ],
+          "name": "avx",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx"
+          ],
+          "name": "avx2",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512bf16",
+            "avx512bitalg",
+            "avx512bw",
+            "avx512cd",
+            "avx512dq",
+            "avx512f",
+            "avx512fp16",
+            "avx512ifma",
+            "avx512vbmi",
+            "avx512vbmi2",
+            "avx512vl",
+            "avx512vnni",
+            "avx512vpopcntdq"
+          ],
+          "name": "avx10.1",
+          "unstable_feature_gate": "avx10_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx10.1",
+            "avxvnni",
+            "avxvnniint8",
+            "avxvnniint16"
+          ],
+          "name": "avx10.2",
+          "unstable_feature_gate": "avx10_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512bw"
+          ],
+          "name": "avx512bf16",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512bw"
+          ],
+          "name": "avx512bitalg",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512bw",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512cd",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512dq",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2",
+            "fma",
+            "f16c"
+          ],
+          "name": "avx512f",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512bw"
+          ],
+          "name": "avx512fp16",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512ifma",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512bw"
+          ],
+          "name": "avx512vbmi",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512bw"
+          ],
+          "name": "avx512vbmi2",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512vl",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512vnni",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512vp2intersect",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx512f"
+          ],
+          "name": "avx512vpopcntdq",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "avxifma",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "avxneconvert",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "avxvnni",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "avxvnniint8",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "avxvnniint16",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "bmi1",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "bmi2",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "clflushopt",
+          "unstable_feature_gate": "clflushopt_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "cmpxchg16b",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "ermsb",
+          "unstable_feature_gate": "ermsb_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx"
+          ],
+          "name": "f16c",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx"
+          ],
+          "name": "fma",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx",
+            "sse4a"
+          ],
+          "name": "fma4",
+          "unstable_feature_gate": "fma4_target_feature"
+        },
+        {
+          "globally_enabled": true,
+          "implies_features": [],
+          "name": "fxsr",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse2"
+          ],
+          "name": "gfni",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse2"
+          ],
+          "name": "kl",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "lahfsahf",
+          "unstable_feature_gate": "lahfsahf_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "lzcnt",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "movbe",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "movrs",
+          "unstable_feature_gate": "movrs_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse2"
+          ],
+          "name": "pclmulqdq",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "popcnt",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "prfchw",
+          "unstable_feature_gate": "prfchw_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "rdrand",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "rdseed",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "rtm",
+          "unstable_feature_gate": "rtm_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse2"
+          ],
+          "name": "sha",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "sha512",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx"
+          ],
+          "name": "sm3",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2"
+          ],
+          "name": "sm4",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": true,
+          "implies_features": [],
+          "name": "sse",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": true,
+          "implies_features": [
+            "sse"
+          ],
+          "name": "sse2",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse2"
+          ],
+          "name": "sse3",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "ssse3"
+          ],
+          "name": "sse4.1",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse4.1"
+          ],
+          "name": "sse4.2",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse3"
+          ],
+          "name": "sse4a",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "sse3"
+          ],
+          "name": "ssse3",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "tbm",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx2",
+            "aes"
+          ],
+          "name": "vaes",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "avx",
+            "pclmulqdq"
+          ],
+          "name": "vpclmulqdq",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "kl"
+          ],
+          "name": "widekl",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": true,
+          "implies_features": [],
+          "name": "x87",
+          "unstable_feature_gate": "x87_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "fma4",
+            "avx",
+            "sse4a"
+          ],
+          "name": "xop",
+          "unstable_feature_gate": "xop_target_feature"
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [],
+          "name": "xsave",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "xsave"
+          ],
+          "name": "xsavec",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "xsave"
+          ],
+          "name": "xsaveopt",
+          "unstable_feature_gate": null
+        },
+        {
+          "globally_enabled": false,
+          "implies_features": [
+            "xsave"
+          ],
+          "name": "xsaves",
+          "unstable_feature_gate": null
+        }
+      ],
+      "triple": "x86_64-unknown-linux-gnu"
+    }
+  },
+  "scope": "public v::bp_abi C declarations and data layouts; not every Rust facade or libc export",
+  "source": {
+    "files": {
+      "Cargo.lock": "3d3967e921ce6942176a733acdbad989d9ad8aa529aa858731ae4dfc1652b84e",
+      "crates/trueos-v/Cargo.toml": "f9832472bc903ecff72fc94e12bbd4b5a25f2db839c921b204edd3a722dbacb0",
+      "crates/trueos-v/src/alsa_compat.rs": "40e09f104a1342234824a27d406441013fbaf08cf4b5a4e15168d2da4d93ba0a",
+      "crates/trueos-v/src/borrow.rs": "45dd92e1a88d00d3f62b1cc296bc5700651001f1215971314f2af589e0115492",
+      "crates/trueos-v/src/bp_abi.rs": "27d54f6e66b1f84979ec7809e5c23ded7b0bcbc7c26da831595f8480d6d1691c",
+      "crates/trueos-v/src/calculator_base.rs": "eed694bdf9639fb8468ec5e721022d4823ba11d0614748e4cda8f88a62c943a5",
+      "crates/trueos-v/src/collections.rs": "d1dda3e859c9c0cd3fdc381b492053a935ee798b5b81febc50fd08fdf6c7ab62",
+      "crates/trueos-v/src/content_identity.rs": "05fbc46b0132ea060325b9944d1db078917da69ad02a83ebde0b40b5a2a08632",
+      "crates/trueos-v/src/env.rs": "bf229eeebeede4280a2358213115c6ceb7870072f35ac40914a210ec1e64c894",
+      "crates/trueos-v/src/ffi.rs": "5e46402dedd9554a10b25464ade68031ca322e73a39c78908339ff1f7203eef1",
+      "crates/trueos-v/src/fmt.rs": "ccc4bd72ff76dec2cf8ae1f15254f41bdcd4f6a184a6c3954159f9c87cf0f7a7",
+      "crates/trueos-v/src/iter.rs": "03cd01afe0aec2440ef0a620aed2310252d2b013012f1c867e9c073926fa7448",
+      "crates/trueos-v/src/legacy_fs_abi.rs": "b8e58f487deef0866d68683b87663e03b1f81293fc12833c5a2b8c9faee98add",
+      "crates/trueos-v/src/lib.rs": "a7e31f8d8e40ae52e1bae76cb571132f12da71618c04416717e794db46a6558c",
+      "crates/trueos-v/src/spirit_agents.rs": "dd8b3605a00705c73df7e78d5ecc0f3f81f5ebe2b560156a801f968e08b5401c",
+      "crates/trueos-v/src/sync.rs": "3349e87bb53f298109bf67216c47874f703bc700388ac60a3dd160f731602b2c",
+      "crates/trueos-v/src/varchive.rs": "3eda046bf4355723bf1b7701ae8328aacca77eff65f8d99e78216cf361f917c0",
+      "crates/trueos-v/src/vaudio.rs": "3d103d2763aec7084260034113d2910a5d0ae6b445769e2a594c9164857fd09c",
+      "crates/trueos-v/src/vbios.rs": "5fb8b8c838fc7d98d567ff94e7a329141297602dec645c22b0cccf4894538bb2",
+      "crates/trueos-v/src/vcabi.rs": "99ad14d8f93da0ad4b3489f372b1de3ed815668713fa9e671851c4226da34a0f",
+      "crates/trueos-v/src/vclock.rs": "97b820935a6aa1ed1bcb88aec8928cb5cf66dbf8ec2ceec5d861430f9c42047b",
+      "crates/trueos-v/src/vdrag.rs": "987cd33abbdbbef3ed35f313c7d4786ba72b1028cb38b29574d393e014d3f491",
+      "crates/trueos-v/src/vfetch.rs": "33faf54e712f82f97d8f2546f0e54e4a51ad455ef7bdd307c9d67e40e2eb17b1",
+      "crates/trueos-v/src/vfs.rs": "16555ef6076ed833983a0d9c5ee79b090d042a08446da067dec0651fcf14f92a",
+      "crates/trueos-v/src/vfs_async.rs": "b3a1f4db5a5e38413807a2f760e8f304b9ab8de28e20b723f7a1dac322d6563b",
+      "crates/trueos-v/src/vgpu.rs": "2d6639fb1cd2dae4f12e5c8625c70a29551d126f9ef88649484d47618c60c23b",
+      "crates/trueos-v/src/vhttp_srv.rs": "8eb32193b53d2439267fa2f1d1fd9075fd8d934d492df5ed9a09c0e2a0f1561f",
+      "crates/trueos-v/src/vhttp_srv/tests.rs": "403aad3050e972deedc59ff393a232513068ff368fd9115baccd95ec2a915296",
+      "crates/trueos-v/src/vinput.rs": "5d795c7bf2d9562e9c1ba1dfdf30347cc2d93be09106e24bbc3c71bf57eda9ca",
+      "crates/trueos-v/src/vio.rs": "7ea71a0f06efb954f3a86e927c5df0f7f5f3cff6d8405fd0b1ded6b2194241ad",
+      "crates/trueos-v/src/vmail.rs": "53aab6368bb99291377452836a2591d30fb57413e93f727707a0a9687437a3df",
+      "crates/trueos-v/src/vmedia.rs": "39012998b30e55718e29f8bf6e1e7dd24c8ae4b50ead5e416432c9aa95b8c440",
+      "crates/trueos-v/src/vmedia_video.rs": "1821ccfc2259c577ce086db1c5242a349b707959ec47b7cad27e4c390726a547",
+      "crates/trueos-v/src/vnet.rs": "5e8d5e31aa298e016d772ef63355da7cdc88cc100b5d0839c0e04b4717d1814f",
+      "crates/trueos-v/src/vnetfs.rs": "a31a45c633045540ea20720b45d1fddf7cdfc49ab63cef6c5d97f6cd348361af",
+      "crates/trueos-v/src/vshell.rs": "78687c1dbd7c737738c1225de88f5acb9a4b39f4f297bb019367a353c3309085",
+      "crates/trueos-v/src/vsys.rs": "c8a50e1594b0d72a2714a13eed742370aaab4a19376ae3d3de163ccf4fbb430a",
+      "crates/trueos-v/src/worker_abi.rs": "9cd0061371b48bbfaa2095a2068997fe0907935cb28c3ec50925f7cd0132827d",
+      "src/hv/blueprint/prebind.rs": "b87d59449f0db7da915dac680c1349f76ac5395b302d0f4e41eac2997e0d7672",
+      "src/r/io/async_fs_cabi.rs": "e21311ec05d1e09e645a684aea96f2b8f8e82d92bd7a2628e0492c3a524894ab",
+      "src/r/io/fs_cabi.rs": "4a941d65e1ddb7df58e0b3aeb5aae48216d3c1737f396ee5bbc1fb88d9bf2e85",
+      "src/r/io/launch_request.rs": "e29e154449594223aeeb12cf39bdf5a4f7264f68ae2a221cfd9ababbfb9cd7e0",
+      "src/ui4/blueprint_ui4/native_compute_api.rs": "c4b9a560fa9a22f32909d404f26becc685633b798a80971c71102138e7df3313",
+      "tools/api-prm/usage.json": "40e737a5bc0063ed440306fa688eb9ba60c84d6a7f2248cc9ece9783f20b4b32",
+      "tools/build_api_prm.py": "54ea90feea2d9dcab56276d50ed6a7a8aa2498e7dc73a1de7e6364b3ca6efc4b"
+    },
+    "sha256": "ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe"
+  }
+}

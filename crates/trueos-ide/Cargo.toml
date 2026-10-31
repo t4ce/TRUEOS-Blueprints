@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = ["store"]
 store = ["store-core", "std"]
+api-reference = []
 store-core = ["dep:redb", "dep:sha2", "dep:trueos-redb"]
 std = ["serde/std", "serde_json/std", "redb?/std", "sha2?/std", "trueos-redb?/std"]
 

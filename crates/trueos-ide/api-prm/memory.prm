@@ -1,0 +1,60 @@
+API PRM trueos-blueprint-api/1/29471e0439cb238f
+Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+
+
+# memory
+
+Allocation, buffer ownership and cleanup remain explicit across the ABI. Pass live, properly aligned buffers of the specified size; never pass Rust Vec/String/fmt::Arguments layouts through a C function. Allocations returned by the TRUEOS allocator must use its matching realloc/free contract. Handles and guest pointers are not GPU virtual addresses.
+
+
+
+# C ABI declarations (Rust type notation)
+
+
+## sys_alloc_aligned
+
+extern "C" fn sys_alloc_aligned(size: usize, align: usize) -> *mut u8;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1078
+
+
+## trueos_cabi_alloc
+
+extern "C" fn trueos_cabi_alloc(size: usize) -> *mut u8;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1074
+
+
+## trueos_cabi_calloc
+
+extern "C" fn trueos_cabi_calloc(nmemb: usize, size: usize) -> *mut u8;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1075
+
+
+## trueos_cabi_free
+
+extern "C" fn trueos_cabi_free(ptr: *mut u8) -> ();
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1076
+
+
+## trueos_cabi_heap_stats
+
+extern "C" fn trueos_cabi_heap_stats(out: *mut TrueosCabiHeapStats) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1081
+
+
+## trueos_cabi_malloc_usable_size
+
+extern "C" fn trueos_cabi_malloc_usable_size(ptr: *const u8) -> usize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1080
+
+
+## trueos_cabi_realloc
+
+extern "C" fn trueos_cabi_realloc(ptr: *mut u8, size: usize) -> *mut u8;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1077
