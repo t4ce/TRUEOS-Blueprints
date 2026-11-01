@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/29471e0439cb238f
-Reference source fingerprint: ff27c3bf3d2a980e7e00fb7b38f35aaac3a57a928de729fc233998202c3367fe
+API PRM trueos-blueprint-api/1/80d1038cdfa1653b
+Reference source fingerprint: 5ff51d2c1a06b1a8da2885ab3c8907433a4f61c53860566d8f28837835ff4822
 
 # Start here
 TRUEOS application reference, generated from cargo rustdoc JSON. Read the index first and load only the needed topic. These files contain signatures, public data layouts, constants and usage contracts; no kernel implementations, Cargo dependencies or SDK source trees are included.
