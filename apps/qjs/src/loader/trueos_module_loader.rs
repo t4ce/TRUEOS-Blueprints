@@ -11,7 +11,7 @@ use crate as qjs;
 mod compiled;
 mod embedded;
 
-include!("../../../../../../../TRUEOS/src/r/cabi_codes.rs");
+include!(env!("TRUEOS_QJS_CABI_CODES"));
 
 #[inline]
 fn log_bytes(bytes: &[u8]) {

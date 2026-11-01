@@ -22,7 +22,7 @@ use crate::trueos_shims::{
     trueos_cabi_net_fetch_result, trueos_cabi_net_fetch_start, trueos_cabi_net_fetch_wait,
 };
 
-include!("../../../../../../TRUEOS/src/r/cabi_codes.rs");
+include!(env!("TRUEOS_QJS_CABI_CODES"));
 
 const ASYNC_FS_MAX_QUEUE: usize = 64;
 
