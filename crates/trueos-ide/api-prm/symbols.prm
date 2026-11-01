@@ -1,5 +1,5 @@
 API PRM trueos-blueprint-api/1/e9479a8fca720c77
-Reference source fingerprint: 1e3b7a61b77705e551db115d4bfb2ae8b0e036e7d5af471988d4b9efc916fb37
+Reference source fingerprint: 0db74920eaee7c151d63df2e6a27cf8fd46050b76bdf2ff47b4d89b4aca76364
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
