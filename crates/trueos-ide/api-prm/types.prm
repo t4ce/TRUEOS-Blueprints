@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/80d1038cdfa1653b
-Reference source fingerprint: 5ff51d2c1a06b1a8da2885ab3c8907433a4f61c53860566d8f28837835ff4822
+API PRM trueos-blueprint-api/1/e9479a8fca720c77
+Reference source fingerprint: 1e3b7a61b77705e551db115d4bfb2ae8b0e036e7d5af471988d4b9efc916fb37
 
 # Public C ABI data layouts
 Fields are in repr(C) order. This is not a packed serialization: honor native alignment, pointers, padding and array lengths. Raw-pointer mutability indicates direction; explicit lengths remain authoritative. Numeric byte offsets are not synthesized by rustdoc.
@@ -126,7 +126,7 @@ struct IndexedBatchDraw {
   rgba8_srgb: u32,
   // Linear fragment color encoded to the target's RGBA8 sRGB bytes.
 }
-Declaration: crates/trueos-v/src/vgpu.rs:326
+Declaration: crates/trueos-v/src/vgpu.rs:329
 
 ## IndexedBatchDrawV2
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -141,7 +141,7 @@ struct IndexedBatchDrawV2 {
   reserved: u32,
   // POINT_LIST integer pixel width in the low bits; zero selects default. The first draw may also set INDEXED_BATCH_V2_LOAD_COLOR for the batch. Other topologies require zero width. Wire layout is unchanged.
 }
-Declaration: crates/trueos-v/src/vgpu.rs:355
+Declaration: crates/trueos-v/src/vgpu.rs:358
 
 ## IndexedDraw
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -186,7 +186,7 @@ struct IndexedDrawBatch {
   draw_count: u32,
   draws: [IndexedBatchDraw; 16],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:339
+Declaration: crates/trueos-v/src/vgpu.rs:342
 
 ## IndexedDrawBatchV2
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -202,7 +202,7 @@ struct IndexedDrawBatchV2 {
   draw_count: u32,
   draws: [IndexedBatchDrawV2; 600],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:369
+Declaration: crates/trueos-v/src/vgpu.rs:372
 
 ## KeyboardControlCommand
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -270,7 +270,7 @@ struct OffscreenIndexedBatchV1 {
   height: u32,
   batch: IndexedDrawBatchV2,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:712
+Declaration: crates/trueos-v/src/vgpu.rs:715
 
 ## RetainedCamera
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -289,7 +289,7 @@ struct RetainedCamera {
   jitter_frame: [f32; 4],
   previous_view_projection: [f32; 16],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:485
+Declaration: crates/trueos-v/src/vgpu.rs:488
 
 ## RetainedCubeDraw
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -302,7 +302,7 @@ struct RetainedCubeDraw {
   seed_count: u32,
   reserved: u32,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:622
+Declaration: crates/trueos-v/src/vgpu.rs:625
 
 ## RetainedDrawRange
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -311,7 +311,7 @@ struct RetainedDrawRange {
   first_index: u32,
   index_count: u32,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:594
+Declaration: crates/trueos-v/src/vgpu.rs:597
 
 ## RetainedFrameSubmit
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -335,7 +335,7 @@ struct RetainedFrameSubmit {
   seeds: [RetainedTransformSeed; 4],
   static_draws: [IndexedBatchDrawV2; 3],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:512
+Declaration: crates/trueos-v/src/vgpu.rs:515
 
 ## RetainedFrameSubmitV2
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -346,7 +346,7 @@ struct RetainedFrameSubmitV2 {
   frame: RetainedFrameSubmit,
   material_parameters: RetainedMaterialParameters,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:586
+Declaration: crates/trueos-v/src/vgpu.rs:589
 
 ## RetainedFrameSubmitV3
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -368,7 +368,7 @@ struct RetainedFrameSubmitV3 {
   draws: [RetainedDrawRange; 4],
   reserved: [u32; 2],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:609
+Declaration: crates/trueos-v/src/vgpu.rs:612
 
 ## RetainedFrameSubmitV4
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -377,7 +377,7 @@ struct RetainedFrameSubmitV4 {
   frame: RetainedFrameSubmitV2,
   cubes: RetainedCubeDraw,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:631
+Declaration: crates/trueos-v/src/vgpu.rs:634
 
 ## RetainedMaterial
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -392,7 +392,7 @@ struct RetainedMaterial {
   emissive_factor: [f32; 3],
   reserved: u32,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:504
+Declaration: crates/trueos-v/src/vgpu.rs:507
 
 ## RetainedMaterialParameters
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -410,7 +410,7 @@ struct RetainedMaterialParameters {
   flags: u32,
   reserved: [u32; 3],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:553
+Declaration: crates/trueos-v/src/vgpu.rs:556
 
 ## RetainedMeshDescriptor
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -426,7 +426,7 @@ struct RetainedMeshDescriptor {
   topology: u32,
   // One of the `PRIMITIVE_TOPOLOGY_*` constants. A zero value is accepted as the pre-topology ABI's triangle-list default.
 }
-Declaration: crates/trueos-v/src/vgpu.rs:451
+Declaration: crates/trueos-v/src/vgpu.rs:454
 
 ## RetainedTexturedFrameV1
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -438,7 +438,7 @@ struct RetainedTexturedFrameV1 {
   ranges: [RetainedDrawRange; 4],
   textures: [u64; 4],
 }
-Declaration: crates/trueos-v/src/vgpu.rs:542
+Declaration: crates/trueos-v/src/vgpu.rs:545
 
 ## RetainedTransformSeed
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -453,7 +453,7 @@ struct RetainedTransformSeed {
   draw_group: u32,
   flags: u32,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:468
+Declaration: crates/trueos-v/src/vgpu.rs:471
 
 ## SurfaceInfo
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -475,7 +475,7 @@ struct TimelinePoint {
   value: u64,
   physical_serial: u64,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:638
+Declaration: crates/trueos-v/src/vgpu.rs:641
 
 ## TimelineStatus
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -486,7 +486,7 @@ struct TimelineStatus {
   failures: u64,
   last_physical_serial: u64,
 }
-Declaration: crates/trueos-v/src/vgpu.rs:645
+Declaration: crates/trueos-v/src/vgpu.rs:648
 
 ## TrueosArchiveReport
 repr: {"align": null, "int": null, "kind": "c", "packed": null}

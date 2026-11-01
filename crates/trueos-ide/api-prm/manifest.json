@@ -1,6 +1,6 @@
 {
-  "abi_sha256": "80d1038cdfa1653bb7f9f18422941e43f1c5929e6f7d87cdaeeca9f67bd4e5b8",
-  "api_id": "trueos-blueprint-api/1/80d1038cdfa1653b",
+  "abi_sha256": "e9479a8fca720c770efb27e8d4840503d7cd81a6b00e3864afb1becf3c7af942",
+  "api_id": "trueos-blueprint-api/1/e9479a8fca720c77",
   "counts": {
     "constants": 75,
     "excluded": 9,
@@ -21,43 +21,43 @@
   "files": {
     "filesystem.prm": {
       "bytes": 6903,
-      "sha256": "ee1acd06162650a06eadca7d49f13164dff45606f9b8b8ddf68e6ae1dc9b6487"
+      "sha256": "08490f66ccc32803cfc77a3909b2cf20adb63543dde25dc853d77780c369ff01"
     },
     "graphics.prm": {
       "bytes": 27147,
-      "sha256": "6137b93d1ee69c202c2554fa9818dc0bdc4438b1b37872349f3ac87db1eb5846"
+      "sha256": "a3af6a1550782644fcf8d1aacb9d620a93f798f623c23e82deae5b64bd1c8c13"
     },
     "lifecycle.prm": {
       "bytes": 6228,
-      "sha256": "20deafdac057cf6f20a235d9494c13a449081cc648b208fea055e19a60ed0e0d"
+      "sha256": "dda9d8bd5f306e3499765b36c805b5e94f7efdb6f7eb5eb03e6ce3b840913a03"
     },
     "logging.prm": {
       "bytes": 1852,
-      "sha256": "d78e28ad850b9ecc5842fe8477c73841e22109696efb34cb2b2fdc67e30b63eb"
+      "sha256": "257592a36695d75d2223b5b7f57f97c067ee9e6ac3231230030802a46fbf6ca7"
     },
     "memory.prm": {
       "bytes": 1555,
-      "sha256": "ad9961c727a725ae12fdecf62770832f7451e31245a95cb94eceb75efddb1833"
+      "sha256": "979083b2f521bfb31ee8a793ddb360587eb7baed2cf8770f1037d32edaea87a3"
     },
     "services.prm": {
       "bytes": 31891,
-      "sha256": "5742a324497c8911fd8164eba23d848abe7a0a256363f4a501183af017b24af1"
+      "sha256": "920e5ca48bd5cae67bf55d8bb59a2ea415c4b3c6babf9431c4743cc6b5b0b539"
     },
     "symbols.prm": {
       "bytes": 18754,
-      "sha256": "0d31c158baa9a7e6e97373f3ca34830ac826c99305eb03bb3a7b6474a5bbc7dd"
+      "sha256": "04c8594977b1d7b5b3ce9fb5e7417991a4d09419b119b73702e705631738a984"
     },
     "terminal.prm": {
       "bytes": 4409,
-      "sha256": "d6c1be8c0661150c0f8fb756893b767cab3626cc0a437c3f8500eab48f0b3b9c"
+      "sha256": "1e01ffe55cba5083813ca86cd079e89349f019b928229ade36ff9b5f41fe6da6"
     },
     "trueos-api.prm": {
       "bytes": 3353,
-      "sha256": "8eb007274620cbcc2c801e15e8c19998fffb3afa0d5e19f3fa6e239fe58a61d9"
+      "sha256": "ba550460d913fed0dd74d6c510e2498becd477de4129b3b0d24fb1d68289d7d5"
     },
     "types.prm": {
       "bytes": 34728,
-      "sha256": "f22bf5a5d5979adc5bd9f6b790d69d2174001865dd0de36d448a16ae07131509"
+      "sha256": "0ce25c664fa40ed2f196f67123f529118a024daed808ccc0dbea2d21ec0e84c4"
     }
   },
   "format_version": 1,
@@ -694,7 +694,7 @@
       "crates/trueos-v/src/vfetch.rs": "33faf54e712f82f97d8f2546f0e54e4a51ad455ef7bdd307c9d67e40e2eb17b1",
       "crates/trueos-v/src/vfs.rs": "16555ef6076ed833983a0d9c5ee79b090d042a08446da067dec0651fcf14f92a",
       "crates/trueos-v/src/vfs_async.rs": "b3a1f4db5a5e38413807a2f760e8f304b9ab8de28e20b723f7a1dac322d6563b",
-      "crates/trueos-v/src/vgpu.rs": "f08f00434f59a3c6bc02254e8739a65055d7bd525ac9ae07ced864c5a2066a9e",
+      "crates/trueos-v/src/vgpu.rs": "fb4dcd66392d241744ddf8ed2361313a9bb4cf077f8784de52095a7242d3738e",
       "crates/trueos-v/src/vhttp_srv.rs": "8eb32193b53d2439267fa2f1d1fd9075fd8d934d492df5ed9a09c0e2a0f1561f",
       "crates/trueos-v/src/vhttp_srv/tests.rs": "403aad3050e972deedc59ff393a232513068ff368fd9115baccd95ec2a915296",
       "crates/trueos-v/src/vinput.rs": "5d795c7bf2d9562e9c1ba1dfdf30347cc2d93be09106e24bbc3c71bf57eda9ca",
@@ -715,6 +715,6 @@
       "tools/api-prm/usage.json": "40e737a5bc0063ed440306fa688eb9ba60c84d6a7f2248cc9ece9783f20b4b32",
       "tools/build_api_prm.py": "54ea90feea2d9dcab56276d50ed6a7a8aa2498e7dc73a1de7e6364b3ca6efc4b"
     },
-    "sha256": "5ff51d2c1a06b1a8da2885ab3c8907433a4f61c53860566d8f28837835ff4822"
+    "sha256": "1e3b7a61b77705e551db115d4bfb2ae8b0e036e7d5af471988d4b9efc916fb37"
   }
 }
