@@ -1,0 +1,876 @@
+{
+  "browser": "Google Chrome for Testing 156.0.8078.80",
+  "headless": true,
+  "profile": "temporary, isolated; no user browser profile",
+  "fixture_tests": 32,
+  "findings": [
+    "Correct Chrome-like lifecycle ordering invokes more YouTube callbacks (4 to 7) but no extra connected nodes or text on any of the six captured sites.",
+    "Wikipedia search-input focus invokes one listener in both engines; one QuickJS-only connected node is a lazy synthetic artifact, not demonstrated page progress.",
+    "Repeating DOMContentLoaded in Chrome breaks YouTube because its first handler deletes the promise resolver.",
+    "The lab omits parsed initial HTML and page configuration that Chrome receives; lifecycle events do not supply that data.",
+    "crates.io has a usable live Chrome page despite failed controller capture; DeepSeek returns HTTP403 in Chrome too."
+  ],
+  "limitations": [
+    "Chrome parses full captured HTML; QuickJS directly evaluates admitted captured scripts against a synthetic DOM. Matching capture hashes verify snapshot provenance, not identical executed programs.",
+    "Synthetic events are untrusted. Chrome sequential event windows include possible scheduled work; idle controls are observational. QuickJS candidates each use a fresh runtime.",
+    "Raw text counts include SCRIPT/STYLE text and mean Unicode scalars, not rendered text. Chrome content-only counts are separately recorded.",
+    "Frozen Chrome blocks uncaptured resources and uses synthetic content-type/CORS response headers. Live Chrome is a separate reference."
+  ],
+  "sites": [
+    {
+      "site": "youtube",
+      "capture_snapshot_verified": true,
+      "quickjs_baseline": {
+        "api_calls": 661,
+        "allocated_nodes": 87,
+        "connected_nodes": 7,
+        "text_characters": 130,
+        "text_draw_calls": 0,
+        "text_draw_characters": 0,
+        "errors": 1,
+        "host_errors": 0,
+        "unhandled_rejections": 0,
+        "pending_timers": 0
+      },
+      "quickjs_cases": 16,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": false,
+        "connected_nodes": 4052,
+        "js_factory_roots": 792,
+        "baseline_errors": 0,
+        "synthetic_event_errors": [
+          {
+            "event": "observed-DOMContentLoaded-window",
+            "errors": [
+              "TypeError: window.ytAtN is not a function"
+            ]
+          }
+        ],
+        "source_scope": "full saved HTML including inline handlers + admitted external/module bodies",
+        "capture_sha256": "ca1b3a179a5e7d8ebdb97995fddbabf0dc7a02831979fde3f36d44b5b32d0f46"
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://www.youtube.com/",
+          "title": "YouTube",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "readystatechange": 6,
+          "DOMContentLoaded": 3,
+          "focus": 2,
+          "load": 10
+        }
+      },
+      "capture_hash_scope": "capture.json metadata and script/module sources; the separate initial HTML file is not part of this hash",
+      "executed_program_parity": "not-guaranteed; original HTML may execute inline handlers or capped inline scripts not run by QuickJS"
+    },
+    {
+      "site": "wikipedia",
+      "capture_snapshot_verified": true,
+      "quickjs_baseline": {
+        "api_calls": 923,
+        "allocated_nodes": 24,
+        "connected_nodes": 22,
+        "text_characters": 4,
+        "text_draw_calls": 0,
+        "text_draw_characters": 0,
+        "errors": 0,
+        "host_errors": 0,
+        "unhandled_rejections": 0,
+        "pending_timers": 0
+      },
+      "quickjs_cases": 10,
+      "quickjs_state_progress_events": [
+        {
+          "event": {
+            "name": "observed-focus-#searchInput",
+            "type": "focus",
+            "target": "#searchInput",
+            "evidence": {
+              "kind": "chrome-site-listener-registration",
+              "registration": {
+                "type": "focus",
+                "target": {
+                  "kind": "element",
+                  "tag": "INPUT",
+                  "id": "searchInput",
+                  "selector": "#searchInput"
+                },
+                "stage": "preload",
+                "time": 9.5
+              }
+            }
+          },
+          "quickjs_delta": {
+            "api_calls": 1094,
+            "allocated_nodes": 1,
+            "connected_nodes": 1,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0
+          },
+          "quickjs_listener_callbacks": 1,
+          "chrome_delta": {
+            "connected_nodes": 0,
+            "text_characters": 0,
+            "listener_callbacks": 1
+          },
+          "comparison_available": true,
+          "interpretation": "Synthetic state change is not proof of page progress."
+        }
+      ],
+      "chrome_captured": {
+        "unavailable": false,
+        "connected_nodes": 2768,
+        "js_factory_roots": 3,
+        "baseline_errors": 0,
+        "synthetic_event_errors": [],
+        "source_scope": "full saved HTML including inline handlers + admitted external/module bodies",
+        "capture_sha256": "2068001bd04c83f3c7dffa1b6cc2e57e4cf1be57f6c747320a46df0e31ca76e2"
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://www.wikipedia.org/",
+          "title": "Wikipedia",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "DOMContentLoaded": 5
+        }
+      },
+      "capture_hash_scope": "capture.json metadata and script/module sources; the separate initial HTML file is not part of this hash",
+      "executed_program_parity": "not-guaranteed; original HTML may execute inline handlers or capped inline scripts not run by QuickJS"
+    },
+    {
+      "site": "discord",
+      "capture_snapshot_verified": true,
+      "quickjs_baseline": {
+        "api_calls": 55,
+        "allocated_nodes": 4,
+        "connected_nodes": 3,
+        "text_characters": 0,
+        "text_draw_calls": 0,
+        "text_draw_characters": 0,
+        "errors": 0,
+        "host_errors": 0,
+        "unhandled_rejections": 0,
+        "pending_timers": 0
+      },
+      "quickjs_cases": 8,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": false,
+        "connected_nodes": 1045,
+        "js_factory_roots": 1,
+        "baseline_errors": 0,
+        "synthetic_event_errors": [],
+        "source_scope": "full saved HTML including inline handlers + admitted external/module bodies",
+        "capture_sha256": "78138ba1e5c7e3ac9dfc1e347f9d04dcd37690af075f88e9dfdf0e420f3ea2f5"
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://discord.com/app",
+          "title": "Discord",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "load": 74,
+          "DOMContentLoaded": 1,
+          "readystatechange": 12
+        }
+      },
+      "capture_hash_scope": "capture.json metadata and script/module sources; the separate initial HTML file is not part of this hash",
+      "executed_program_parity": "not-guaranteed; original HTML may execute inline handlers or capped inline scripts not run by QuickJS"
+    },
+    {
+      "site": "google",
+      "capture_snapshot_verified": true,
+      "quickjs_baseline": {
+        "api_calls": 114,
+        "allocated_nodes": 10,
+        "connected_nodes": 9,
+        "text_characters": 0,
+        "text_draw_calls": 0,
+        "text_draw_characters": 0,
+        "errors": 0,
+        "host_errors": 0,
+        "unhandled_rejections": 0,
+        "pending_timers": 0
+      },
+      "quickjs_cases": 7,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": false,
+        "connected_nodes": 114,
+        "js_factory_roots": 4,
+        "baseline_errors": 0,
+        "synthetic_event_errors": [],
+        "source_scope": "full saved HTML including inline handlers + admitted external/module bodies",
+        "capture_sha256": "87c2488a3c7be4bf39579378d545f23d5b22b6d41739bafe0a491a08a52a7a3d"
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://www.google.com/",
+          "title": "Google",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "load": 91,
+          "readystatechange": 4,
+          "focus": 4,
+          "blur": 3,
+          "DOMContentLoaded": 2,
+          "pageshow": 7
+        }
+      },
+      "capture_hash_scope": "capture.json metadata and script/module sources; the separate initial HTML file is not part of this hash",
+      "executed_program_parity": "not-guaranteed; original HTML may execute inline handlers or capped inline scripts not run by QuickJS"
+    },
+    {
+      "site": "crates",
+      "capture_snapshot_verified": false,
+      "quickjs_baseline": {
+        "api_calls": null,
+        "allocated_nodes": null,
+        "connected_nodes": null,
+        "text_characters": null,
+        "text_draw_calls": null,
+        "text_draw_characters": null,
+        "errors": null,
+        "host_errors": null,
+        "unhandled_rejections": null,
+        "pending_timers": null
+      },
+      "quickjs_cases": 0,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": true,
+        "connected_nodes": null,
+        "js_factory_roots": null,
+        "baseline_errors": null,
+        "synthetic_event_errors": [],
+        "source_scope": null,
+        "capture_sha256": null
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://crates.io/",
+          "title": "crates.io: Rust Package Registry",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "load": 4
+        }
+      },
+      "capture_hash_scope": null,
+      "executed_program_parity": "unavailable"
+    },
+    {
+      "site": "github",
+      "capture_snapshot_verified": true,
+      "quickjs_baseline": {
+        "api_calls": 64,
+        "allocated_nodes": 7,
+        "connected_nodes": 4,
+        "text_characters": 0,
+        "text_draw_calls": 0,
+        "text_draw_characters": 0,
+        "errors": 0,
+        "host_errors": 0,
+        "unhandled_rejections": 9,
+        "pending_timers": 0
+      },
+      "quickjs_cases": 7,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": false,
+        "connected_nodes": 2883,
+        "js_factory_roots": 274,
+        "baseline_errors": 0,
+        "synthetic_event_errors": [
+          {
+            "event": "hidden",
+            "errors": [
+              "ChunkLoadError: Loading chunk kq9 failed after 3 retries.",
+              "ChunkLoadError: Loading chunk u2l failed after 3 retries.",
+              "ChunkLoadError: Loading chunk 7gn failed after 3 retries.",
+              "ChunkLoadError: Loading chunk xy failed after 3 retries.",
+              "TypeError: Loading chunk el failed after 3 retries.",
+              "TypeError: Loading chunk el failed after 3 retries.",
+              "TypeError: Loading chunk eu failed after 3 retries.",
+              "TypeError: Loading chunk u23 failed after 3 retries.",
+              "TypeError: Loading chunk 5i failed after 3 retries.",
+              "TypeError: Loading chunk dg failed after 3 retries.",
+              "TypeError: Loading chunk jk2 failed after 3 retries.",
+              "TypeError: Loading chunk rpr failed after 3 retries.",
+              "TypeError: Loading chunk gw failed after 3 retries."
+            ]
+          }
+        ],
+        "source_scope": "full saved HTML including inline handlers + admitted external/module bodies",
+        "capture_sha256": "65a31c50a7234845476c593ab4c82a2abaf60670fee77a08464a7e3bc1261003"
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://github.com/",
+          "title": "GitHub \u00b7 Change is constant. GitHub keeps you ahead. \u00b7 GitHub \u00b7 GitHub",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "DOMContentLoaded": 1,
+          "load": 45,
+          "readystatechange": 1,
+          "pageshow": 6
+        }
+      },
+      "capture_hash_scope": "capture.json metadata and script/module sources; the separate initial HTML file is not part of this hash",
+      "executed_program_parity": "not-guaranteed; original HTML may execute inline handlers or capped inline scripts not run by QuickJS"
+    },
+    {
+      "site": "mail",
+      "capture_snapshot_verified": true,
+      "quickjs_baseline": {
+        "api_calls": 222,
+        "allocated_nodes": 14,
+        "connected_nodes": 10,
+        "text_characters": 0,
+        "text_draw_calls": 0,
+        "text_draw_characters": 0,
+        "errors": 1,
+        "host_errors": 0,
+        "unhandled_rejections": 2,
+        "pending_timers": 0
+      },
+      "quickjs_cases": 7,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": false,
+        "connected_nodes": 79,
+        "js_factory_roots": 4,
+        "baseline_errors": 0,
+        "synthetic_event_errors": [],
+        "source_scope": "full saved HTML including inline handlers + admitted external/module bodies",
+        "capture_sha256": "4d0e5ee57664a8eaa7287af9f1209e456a28b34ee5ccc9bd4577446db479d299"
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://www.mail.com/consentpage",
+          "title": "Consent mail.com",
+          "readyState": "complete"
+        },
+        "main_status": 200,
+        "baseline_errors": 0,
+        "observed_lifecycle": {
+          "readystatechange": 4
+        }
+      },
+      "capture_hash_scope": "capture.json metadata and script/module sources; the separate initial HTML file is not part of this hash",
+      "executed_program_parity": "not-guaranteed; original HTML may execute inline handlers or capped inline scripts not run by QuickJS"
+    },
+    {
+      "site": "deepseek",
+      "capture_snapshot_verified": false,
+      "quickjs_baseline": {
+        "api_calls": null,
+        "allocated_nodes": null,
+        "connected_nodes": null,
+        "text_characters": null,
+        "text_draw_calls": null,
+        "text_draw_characters": null,
+        "errors": null,
+        "host_errors": null,
+        "unhandled_rejections": null,
+        "pending_timers": null
+      },
+      "quickjs_cases": 0,
+      "quickjs_state_progress_events": [],
+      "chrome_captured": {
+        "unavailable": true,
+        "connected_nodes": null,
+        "js_factory_roots": null,
+        "baseline_errors": null,
+        "synthetic_event_errors": [],
+        "source_scope": null,
+        "capture_sha256": null
+      },
+      "chrome_live": {
+        "page": {
+          "url": "https://chat.deepseek.com/",
+          "title": "ERROR: The request could not be satisfied",
+          "readyState": "complete"
+        },
+        "main_status": 403,
+        "baseline_errors": 0,
+        "observed_lifecycle": {}
+      },
+      "capture_hash_scope": null,
+      "executed_program_parity": "unavailable"
+    }
+  ],
+  "lifecycle_experiment": {
+    "created_at": "2026-11-01T09:32:12.885584+00:00",
+    "experiment": "identical captured sources in fresh QuickJS runtimes; legacy lifecycle vs explicitly opt-in Chrome-like lifecycle approximation",
+    "default_mode": "legacy",
+    "chrome_like_limitations": [
+      "not a native Chrome execution",
+      "no complete browser task scheduling or HTML parser lifecycle",
+      "source capture and unsupported API limitations remain",
+      "state deltas do not establish website functionality"
+    ],
+    "results": [
+      {
+        "site": "youtube",
+        "source_identity_sha256": "f7b7d54bac9c30d79f46e13b2fb84f2a62b5d0899e712351e550335ce359bd57",
+        "capture_file_sha256": "ca1b3a179a5e7d8ebdb97995fddbabf0dc7a02831979fde3f36d44b5b32d0f46",
+        "scripts": 43,
+        "modules_captured": 0,
+        "capture_issues": [],
+        "modes": {
+          "legacy": {
+            "api_calls": 661,
+            "allocated_nodes": 87,
+            "connected_nodes": 7,
+            "text_characters": 130,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 1,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "legacy",
+            "listener_invocations": 4,
+            "script_errors": [
+              {
+                "phase": "script",
+                "error": "ReferenceError: 'Range' is not defined"
+              }
+            ],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 43
+          },
+          "chrome": {
+            "api_calls": 675,
+            "allocated_nodes": 87,
+            "connected_nodes": 7,
+            "text_characters": 130,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 1,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "chrome",
+            "listener_invocations": 7,
+            "script_errors": [
+              {
+                "phase": "script",
+                "error": "ReferenceError: 'Range' is not defined"
+              }
+            ],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 43
+          }
+        },
+        "delta_chrome_minus_legacy": {
+          "api_calls": 14,
+          "allocated_nodes": 0,
+          "connected_nodes": 0,
+          "text_characters": 0,
+          "text_draw_calls": 0,
+          "text_draw_characters": 0,
+          "errors": 0,
+          "host_errors": 0,
+          "unhandled_rejections": 0,
+          "pending_timers": 0,
+          "listener_invocations": 3
+        },
+        "node_or_text_progress": false
+      },
+      {
+        "site": "wikipedia",
+        "source_identity_sha256": "043f084080b9daba0dad8772558efb8e79896791a0e1ec7bf763d7babfc66820",
+        "capture_file_sha256": "2068001bd04c83f3c7dffa1b6cc2e57e4cf1be57f6c747320a46df0e31ca76e2",
+        "scripts": 4,
+        "modules_captured": 0,
+        "capture_issues": [],
+        "modes": {
+          "legacy": {
+            "api_calls": 923,
+            "allocated_nodes": 24,
+            "connected_nodes": 22,
+            "text_characters": 4,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "legacy",
+            "listener_invocations": 5,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 4
+          },
+          "chrome": {
+            "api_calls": 928,
+            "allocated_nodes": 24,
+            "connected_nodes": 22,
+            "text_characters": 4,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "chrome",
+            "listener_invocations": 5,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 4
+          }
+        },
+        "delta_chrome_minus_legacy": {
+          "api_calls": 5,
+          "allocated_nodes": 0,
+          "connected_nodes": 0,
+          "text_characters": 0,
+          "text_draw_calls": 0,
+          "text_draw_characters": 0,
+          "errors": 0,
+          "host_errors": 0,
+          "unhandled_rejections": 0,
+          "pending_timers": 0,
+          "listener_invocations": 0
+        },
+        "node_or_text_progress": false
+      },
+      {
+        "site": "discord",
+        "source_identity_sha256": "3169c92aaa7b3c0e0e200c2bcbf0aed230fbddeab2743bceae10d7941f1a4a53",
+        "capture_file_sha256": "78138ba1e5c7e3ac9dfc1e347f9d04dcd37690af075f88e9dfdf0e420f3ea2f5",
+        "scripts": 256,
+        "modules_captured": 0,
+        "capture_issues": [
+          {
+            "phase": "capture-limit",
+            "error": "more than 256 script tags"
+          }
+        ],
+        "modes": {
+          "legacy": {
+            "api_calls": 55,
+            "allocated_nodes": 4,
+            "connected_nodes": 3,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "legacy",
+            "listener_invocations": 0,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 256
+          },
+          "chrome": {
+            "api_calls": 60,
+            "allocated_nodes": 4,
+            "connected_nodes": 3,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "chrome",
+            "listener_invocations": 0,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 256
+          }
+        },
+        "delta_chrome_minus_legacy": {
+          "api_calls": 5,
+          "allocated_nodes": 0,
+          "connected_nodes": 0,
+          "text_characters": 0,
+          "text_draw_calls": 0,
+          "text_draw_characters": 0,
+          "errors": 0,
+          "host_errors": 0,
+          "unhandled_rejections": 0,
+          "pending_timers": 0,
+          "listener_invocations": 0
+        },
+        "node_or_text_progress": false
+      },
+      {
+        "site": "google",
+        "source_identity_sha256": "1cdc9b67908740588a41123d973717c2be093e6b5df405dd4a374c4969c19539",
+        "capture_file_sha256": "87c2488a3c7be4bf39579378d545f23d5b22b6d41739bafe0a491a08a52a7a3d",
+        "scripts": 10,
+        "modules_captured": 0,
+        "capture_issues": [],
+        "modes": {
+          "legacy": {
+            "api_calls": 114,
+            "allocated_nodes": 10,
+            "connected_nodes": 9,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "legacy",
+            "listener_invocations": 0,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 10
+          },
+          "chrome": {
+            "api_calls": 119,
+            "allocated_nodes": 10,
+            "connected_nodes": 9,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 0,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "chrome",
+            "listener_invocations": 0,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [],
+            "scripts_attempted": 10
+          }
+        },
+        "delta_chrome_minus_legacy": {
+          "api_calls": 5,
+          "allocated_nodes": 0,
+          "connected_nodes": 0,
+          "text_characters": 0,
+          "text_draw_calls": 0,
+          "text_draw_characters": 0,
+          "errors": 0,
+          "host_errors": 0,
+          "unhandled_rejections": 0,
+          "pending_timers": 0,
+          "listener_invocations": 0
+        },
+        "node_or_text_progress": false
+      },
+      {
+        "site": "github",
+        "source_identity_sha256": "fbf4186bad1ce600a6ffacfd296ca569eaf97efdac6249f34e7a567593342f53",
+        "capture_file_sha256": "65a31c50a7234845476c593ab4c82a2abaf60670fee77a08464a7e3bc1261003",
+        "scripts": 8,
+        "modules_captured": 70,
+        "capture_issues": [],
+        "modes": {
+          "legacy": {
+            "api_calls": 64,
+            "allocated_nodes": 7,
+            "connected_nodes": 4,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 9,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "legacy",
+            "listener_invocations": 0,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [
+              "Error: Client env was requested before it was loaded. This likely means you are attempting to use client env at the module level in SSR, which is not supported. Please move your client env usage into a function.",
+              "Error: Client env was requested before it was loaded. This likely means you are attempting to use client env at the module level in SSR, which is not supported. Please move your client env usage into a function.",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined"
+            ],
+            "scripts_attempted": 8
+          },
+          "chrome": {
+            "api_calls": 69,
+            "allocated_nodes": 7,
+            "connected_nodes": 4,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 0,
+            "host_errors": 0,
+            "unhandled_rejections": 9,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "chrome",
+            "listener_invocations": 0,
+            "script_errors": [],
+            "callback_errors": [],
+            "rejections": [
+              "Error: Client env was requested before it was loaded. This likely means you are attempting to use client env at the module level in SSR, which is not supported. Please move your client env usage into a function.",
+              "Error: Client env was requested before it was loaded. This likely means you are attempting to use client env at the module level in SSR, which is not supported. Please move your client env usage into a function.",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined",
+              "ReferenceError: 'URL' is not defined"
+            ],
+            "scripts_attempted": 8
+          }
+        },
+        "delta_chrome_minus_legacy": {
+          "api_calls": 5,
+          "allocated_nodes": 0,
+          "connected_nodes": 0,
+          "text_characters": 0,
+          "text_draw_calls": 0,
+          "text_draw_characters": 0,
+          "errors": 0,
+          "host_errors": 0,
+          "unhandled_rejections": 0,
+          "pending_timers": 0,
+          "listener_invocations": 0
+        },
+        "node_or_text_progress": false
+      },
+      {
+        "site": "mail",
+        "source_identity_sha256": "3dd59cd7976196dbe92bc8cf363ed673a59baf0f6ca236d59f8d7d2dc9879e89",
+        "capture_file_sha256": "4d0e5ee57664a8eaa7287af9f1209e456a28b34ee5ccc9bd4577446db479d299",
+        "scripts": 17,
+        "modules_captured": 5,
+        "capture_issues": [],
+        "modes": {
+          "legacy": {
+            "api_calls": 222,
+            "allocated_nodes": 14,
+            "connected_nodes": 10,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 1,
+            "host_errors": 0,
+            "unhandled_rejections": 2,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "legacy",
+            "listener_invocations": 3,
+            "script_errors": [
+              {
+                "phase": "script",
+                "error": "TypeError: cannot read property 'parentNode' of undefined"
+              }
+            ],
+            "callback_errors": [],
+            "rejections": [
+              "TypeError: cannot read property 'tenant' of undefined",
+              "TypeError: cannot read property 'tenant' of undefined"
+            ],
+            "scripts_attempted": 17
+          },
+          "chrome": {
+            "api_calls": 227,
+            "allocated_nodes": 14,
+            "connected_nodes": 10,
+            "text_characters": 0,
+            "text_draw_calls": 0,
+            "text_draw_characters": 0,
+            "errors": 1,
+            "host_errors": 0,
+            "unhandled_rejections": 2,
+            "pending_timers": 0,
+            "pending_jobs": false,
+            "deadline_exceeded": false,
+            "mode": "chrome",
+            "listener_invocations": 3,
+            "script_errors": [
+              {
+                "phase": "script",
+                "error": "TypeError: cannot read property 'parentNode' of undefined"
+              }
+            ],
+            "callback_errors": [],
+            "rejections": [
+              "TypeError: cannot read property 'tenant' of undefined",
+              "TypeError: cannot read property 'tenant' of undefined"
+            ],
+            "scripts_attempted": 17
+          }
+        },
+        "delta_chrome_minus_legacy": {
+          "api_calls": 5,
+          "allocated_nodes": 0,
+          "connected_nodes": 0,
+          "text_characters": 0,
+          "text_draw_calls": 0,
+          "text_draw_characters": 0,
+          "errors": 0,
+          "host_errors": 0,
+          "unhandled_rejections": 0,
+          "pending_timers": 0,
+          "listener_invocations": 0
+        },
+        "node_or_text_progress": false
+      }
+    ]
+  }
+}

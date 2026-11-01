@@ -1,6 +1,7 @@
 // Explicit initial host surface. Missing browser APIs remain missing.
 (() => {
-    const logs = [], timers = new Map();
+    const logs = [], timers = new Map(), hostErrors = [];
+    globalThis.__recordHostError = (phase,error) => { if(hostErrors.length<1000)hostErrors.push({phase,error:String(error)+'\n'+String(error?.stack || ''),api_trace:globalThis.__traceSnapshot?.()}); };
     let nextId = 1, droppedLogs = 0, virtualTime = 0;
     const stringify = value => { try { return typeof value === 'string' ? value : String(value); } catch { return '<unprintable>'; } };
     globalThis.console = Object.fromEntries(['log', 'info', 'debug', 'warn', 'error', 'trace', 'assert'].map(level => [level, (...args) => {
@@ -28,13 +29,20 @@
         const id = nextId++; timers.set(id, {callback, args, at: virtualTime + Math.max(0, Number(delay) || 0)}); return id;
     };
     globalThis.clearTimeout = id => timers.delete(id);
+    globalThis.setInterval = (callback, delay=0, ...args) => {
+        const id = setTimeout(callback, delay, ...args);
+        timers.get(id).interval = Math.max(1, Number(delay) || 0); return id;
+    };
+    globalThis.clearInterval = id => timers.delete(id);
     globalThis.queueMicrotask = callback => { if (typeof callback !== 'function') throw new TypeError('Expected function'); Promise.resolve().then(callback); };
     globalThis.__pumpTimers = limit => {
         // Virtual time: never wait on a website's real delays. Intervals are not implemented.
         for (let i = 0; i < limit && timers.size; i++) {
             const [id, timer] = [...timers].sort((a,b) => a[1].at - b[1].at || a[0] - b[0])[0];
-            timers.delete(id); virtualTime = timer.at; timer.callback(...timer.args);
+            timers.delete(id); virtualTime = timer.at;
+            if(timer.interval)timers.set(id,{...timer,at:virtualTime+timer.interval});
+            try { timer.callback(...timer.args); } catch(error) { __recordHostError('timer',error); }
         }
     };
-    globalThis.__hostReport = () => ({logs, droppedLogs, pendingTimers: timers.size, virtualTime, dom: globalThis.__domReport?.()});
+    globalThis.__hostReport = () => ({logs, droppedLogs, errors:hostErrors, pendingTimers: timers.size, virtualTime, dom: globalThis.__domReport?.(), api: globalThis.__traceSnapshot?.(), text: globalThis.__textReport?.()});
 })();
