@@ -1,0 +1,174 @@
+[
+  {
+    "site": "youtube",
+    "url": "https://www.youtube.com/",
+    "captured_at": "2026-11-01T08:39:43.539008+00:00",
+    "scripts": 42,
+    "summary": {
+      "execution": "incomplete",
+      "diagnostics": 2,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [
+      {
+        "phase": "script-fetch",
+        "url": "https://www.youtube.com/s/_/ytmainappweb/_/js/k=ytmainappweb.kevlar_base.en_US.1ZNBlpHFrRs.es5.O/am=AAAAAEAAAAIAKQE/d=1/rs=AGKMywH_lWygGEre2yyKg1n5t4iH7wFQJg/m=kevlar_base_module,kevlar_main_module,kevlar_base_sync_mod_chunk",
+        "error": "resource exceeds 4 MiB capture limit"
+      }
+    ],
+    "first_errors": [
+      "TypeError: not a function",
+      "TypeError: not a function"
+    ]
+  },
+  {
+    "site": "wikipedia",
+    "url": "https://www.wikipedia.org/",
+    "captured_at": "2026-11-01T08:39:49.880568+00:00",
+    "scripts": 4,
+    "summary": {
+      "execution": "diagnostics",
+      "diagnostics": 1,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [],
+    "first_errors": [
+      "TypeError: cannot read property 'match' of undefined"
+    ]
+  },
+  {
+    "site": "discord",
+    "url": "https://discord.com/app",
+    "captured_at": "2026-11-01T08:39:50.208354+00:00",
+    "scripts": 80,
+    "summary": {
+      "execution": "incomplete",
+      "diagnostics": 2,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [
+      {
+        "phase": "capture-limit",
+        "error": "more than 80 script tags"
+      }
+    ],
+    "first_errors": [
+      "Error: crypto.getRandomValues() not supported. See https://github.com/uuidjs/uuid#getrandomvalues-not-supported"
+    ]
+  },
+  {
+    "site": "google",
+    "url": "https://www.google.com/",
+    "captured_at": "2026-11-01T08:39:52.190148+00:00",
+    "scripts": 10,
+    "summary": {
+      "execution": "clean",
+      "diagnostics": 0,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [],
+    "first_errors": []
+  },
+  {
+    "site": "crates",
+    "url": "https://crates.io/",
+    "captured_at": "2026-11-01T08:39:52.458467+00:00",
+    "scripts": 0,
+    "summary": {
+      "execution": "incomplete",
+      "diagnostics": 0,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [
+      {
+        "phase": "page-fetch",
+        "error": "HTTP Error 404: Not Found"
+      }
+    ],
+    "first_errors": []
+  },
+  {
+    "site": "github",
+    "url": "https://github.com/",
+    "captured_at": "2026-11-01T08:39:52.704441+00:00",
+    "scripts": 8,
+    "summary": {
+      "execution": "diagnostics",
+      "diagnostics": 10,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [],
+    "first_errors": [
+      "ReferenceError: could not load module 'https://github.githubassets.com/assets/wp-runtime-9fdef86ce20073c8.js'",
+      "ReferenceError: could not load module 'https://github.githubassets.com/assets/wp-runtime-9fdef86ce20073c8.js'",
+      "ReferenceError: could not load module 'https://github.githubassets.com/assets/wp-runtime-9fdef86ce20073c8.js'"
+    ]
+  },
+  {
+    "site": "mail",
+    "url": "https://www.mail.com/",
+    "captured_at": "2026-11-01T08:39:53.420733+00:00",
+    "scripts": 17,
+    "summary": {
+      "execution": "diagnostics",
+      "diagnostics": 8,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [],
+    "first_errors": [
+      "ReferenceError: could not load module 'https://s.uicdn.com/mail-int/mailint/1.513.0/assets/_sn_/chunk-XUX4P2EP.js'",
+      "ReferenceError: could not load module 'https://s.uicdn.com/mail-int/mailint/1.513.0/assets/_sn_/chunk-DNF354HF.js'",
+      "ReferenceError: could not load module 'https://s.uicdn.com/mail-int/mailint/1.513.0/assets/_sn_/chunk-XPWVNREQ.js'"
+    ]
+  },
+  {
+    "site": "deepseek",
+    "url": "https://chat.deepseek.com/",
+    "captured_at": "2026-11-01T08:39:53.988743+00:00",
+    "scripts": 0,
+    "summary": {
+      "execution": "incomplete",
+      "diagnostics": 0,
+      "website_functionality": "not-validated",
+      "dom_mode": "lazy-synthetic",
+      "module_dependencies": "unsupported",
+      "dynamic_scripts": "unsupported",
+      "ordering": "HTML order; async/defer not modelled"
+    },
+    "capture_issues": [
+      {
+        "phase": "page-fetch",
+        "error": "HTTP Error 403: Forbidden"
+      }
+    ],
+    "first_errors": []
+  }
+]

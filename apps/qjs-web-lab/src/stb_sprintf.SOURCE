@@ -1,0 +1,9 @@
+Upstream: https://github.com/nothings/stb
+Commit: 2c980bb59875b0d32144a71867fbdebb2f77cd20
+File: stb_sprintf.h
+SHA256: e0b8c56e1084602290b9a17ef59f429b5293deb8cb9d8b0f20a14abc39b56520
+License: dual MIT/public domain, included verbatim at the end of the header.
+
+Used privately by native-engine, with engine-prefixed entry points. The regular
+qjs workbench feature keeps its existing compatibility path. Host native-engine
+tests use libc; tests/engine_stdio.c independently verifies the private formatter.
