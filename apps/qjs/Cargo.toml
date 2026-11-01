@@ -17,14 +17,10 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0"
 crossterm = { path = "../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos", default-features = false, features = ["bracketed-paste", "events"] }
-
 spin = "0.10.1"
 embassy-time-driver = { version = "0.2.2", default-features = false, optional = true }
 trueos-time = { path = "../../../TRUEOS/crates/trueos-executor/embassy-time", default-features = false, optional = true, features = ["tick-hz-1_000"] }
 libm = { version = "0.2", default-features = false, optional = true }
-# The runtime is linked into qjs.bp, so it must use the Blueprint SDK copy of
-# `v`; mixing this with the kernel workspace copy creates duplicate package
-# identities in the Blueprint lockfile.
 v = { path = "../../crates/trueos-v", default-features = false }
 trueos-locale = { path = "../../../TRUEOS/crates/trueos-locale", default-features = false, optional = true }
 lightningcss = { version = "1.0.0-alpha.70", default-features = false, optional = true }
@@ -40,13 +36,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"
 
 [features]
 default = ["trueos"]
-# Raw interpreter for std applications. Does not export workbench libc shims or
-# install filesystem/network bindings in the JavaScript context.
 native-engine = []
 lightningcss-native = ["dep:lightningcss"]
 kernel-code-model = []
-
-# TRUEOS-only helpers (kernel logging via trueos_cabi_write + Complex-backed module smoke).
 trueos = ["dep:trueos-locale", "dep:embassy-time-driver", "dep:trueos-time", "dep:libm"]
 
 [workspace]
