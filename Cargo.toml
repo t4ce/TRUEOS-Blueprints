@@ -11,6 +11,7 @@ members = [
     "apps/share",
     "apps/ratatest",
     "apps/gboi",
+    "apps/rbgb",
     "apps/hello_world",
     "apps/potatomin",
     "apps/hello_world_replicatable",

@@ -1,12 +1,14 @@
 [submodule "apps/tantivy"]
 	path = apps/tantivy
-	url = https://github.com/quickwit-oss/tantivy.git
+	url = https://github.com/t4ce/tantivy.git
+	branch = trueos-blueprint
 [submodule "apps/superseedr"]
 	path = apps/superseedr
 	url = https://github.com/t4ce/superseedr
 [submodule "apps/RbGB"]
 	path = apps/rbgb
 	url = https://github.com/t4ce/RbGB.git
+	branch = trueos-blueprint
 [submodule "vendor/microgames"]
 	path = vendor/microgames
 	url = https://github.com/t4ce/MicroGames.git

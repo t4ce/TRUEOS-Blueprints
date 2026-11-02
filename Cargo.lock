@@ -3108,6 +3108,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rbgb"
+version = "0.2.1"
+dependencies = [
+ "trueos",
+]
+
+[[package]]
 name = "read-fonts"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
