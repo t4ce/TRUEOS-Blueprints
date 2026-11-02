@@ -1,6 +1,5 @@
 {
   "apps": [
-    { "name": "trauma", "path": "../trauma" },
     { "name": "codex-cli", "path": "../codex/codex-rs/cli" },
     "rebsky",
     "calculator",
