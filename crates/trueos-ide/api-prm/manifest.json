@@ -1,11 +1,11 @@
 {
-  "abi_sha256": "e9479a8fca720c770efb27e8d4840503d7cd81a6b00e3864afb1becf3c7af942",
-  "api_id": "trueos-blueprint-api/1/e9479a8fca720c77",
+  "abi_sha256": "764cc51bd743f5c7e86186cdd0dddc361396c24c17bf45ecef64d09de7577bdf",
+  "api_id": "trueos-blueprint-api/1/764cc51bd743f5c7",
   "counts": {
     "constants": 75,
     "excluded": 9,
-    "functions": 360,
-    "types": 77
+    "functions": 361,
+    "types": 78
   },
   "excluded_retired_declarations": [
     "trueos_cabi_fs_read_file",
@@ -21,43 +21,43 @@
   "files": {
     "filesystem.prm": {
       "bytes": 6903,
-      "sha256": "d93c9d2dd3765ab2045a7f7cd994be6b9eb7b08138400843eee490b64ee6e6d2"
+      "sha256": "65d6a066f1e72694b30afe5b00f1d2815944205d168ab9c147f45b125fed8522"
     },
     "graphics.prm": {
-      "bytes": 27147,
-      "sha256": "a8cdb9dc1dad2d853a0b48fbf1dc772953f2f603a806cd147223f94c8bd405a7"
+      "bytes": 27376,
+      "sha256": "b8a3222a22300517a747c81b783ab95f83f3616bd35f656388ab6b4ddf56e173"
     },
     "lifecycle.prm": {
       "bytes": 6228,
-      "sha256": "0a0ec098fdc5702a7bb4fe3ed0e8c7b84786071ef88b944161c67741105644d3"
+      "sha256": "ab377d57137b7050376de1f82f5bdab991747ddd3a07c6863be2f9d37fd7f396"
     },
     "logging.prm": {
       "bytes": 1852,
-      "sha256": "e97bcf3400e415f5ff7bc0c28d54fad7a11f525ac5ca73987e0d58e97ce6bf21"
+      "sha256": "770ba963cd3052435d4dd6f62fe44e6680d02eebda2e3d9234946282b134ca96"
     },
     "memory.prm": {
       "bytes": 1555,
-      "sha256": "ad00e2e23129b4a3f84cea462f2b0c1490e3fd60100e7d242cad3a7112fb0d2c"
+      "sha256": "52391d579792ccdc71b071a2d7848c7c6d47fc0f3240772de3c45a92cdc26267"
     },
     "services.prm": {
       "bytes": 31891,
-      "sha256": "05d86549736ea5b9ef778c0a533e690cc0ad0844e611b627aa9b498e682f0198"
+      "sha256": "b76ffe6c0f4d7a850db16e284e4e2c4d63816123a9ea5c38301f89bb07adf87b"
     },
     "symbols.prm": {
-      "bytes": 18754,
-      "sha256": "8faa581b7f886ac912500269299b660383c2be8bdd6cd10eebc0b30c274b4351"
+      "bytes": 18810,
+      "sha256": "890b39460b0bb3837e7ae2f8417a27cca1772a4ccbdb8e49a37e007ff0cd004a"
     },
     "terminal.prm": {
       "bytes": 4409,
-      "sha256": "d1ad1eabf7748666f756ff9a9282c548a069afb8277d74c6be1cb71ebe0b88f7"
+      "sha256": "a1d996e2c493e7e367ce96809560d8f6ebf61893b46f4f33975cabea73060851"
     },
     "trueos-api.prm": {
       "bytes": 3353,
-      "sha256": "382694e22f36e91d2307ffeac8715dd11110f56f7bd6e765853b42af60bbf49d"
+      "sha256": "4950f8b57b6fb0357d8f3534a128770286b022ff0f71d237a35d4073dead0a15"
     },
     "types.prm": {
-      "bytes": 34728,
-      "sha256": "1f0044bd2d97d7f06641cb7a66a4e42e758b06d08904996800cbf2dec8a66230"
+      "bytes": 35266,
+      "sha256": "a8f519af16e59ac8029c82322336e90360f1cebf107d6b62cb24f5ac71e21d2c"
     }
   },
   "format_version": 1,
@@ -673,7 +673,7 @@
       "crates/trueos-v/Cargo.toml": "f9832472bc903ecff72fc94e12bbd4b5a25f2db839c921b204edd3a722dbacb0",
       "crates/trueos-v/src/alsa_compat.rs": "40e09f104a1342234824a27d406441013fbaf08cf4b5a4e15168d2da4d93ba0a",
       "crates/trueos-v/src/borrow.rs": "45dd92e1a88d00d3f62b1cc296bc5700651001f1215971314f2af589e0115492",
-      "crates/trueos-v/src/bp_abi.rs": "27d54f6e66b1f84979ec7809e5c23ded7b0bcbc7c26da831595f8480d6d1691c",
+      "crates/trueos-v/src/bp_abi.rs": "2fd0bee17836bea8f20ab83d3d12f426ac8218ef4ceea2e3f95558dd3b684162",
       "crates/trueos-v/src/calculator_base.rs": "eed694bdf9639fb8468ec5e721022d4823ba11d0614748e4cda8f88a62c943a5",
       "crates/trueos-v/src/collections.rs": "d1dda3e859c9c0cd3fdc381b492053a935ee798b5b81febc50fd08fdf6c7ab62",
       "crates/trueos-v/src/content_identity.rs": "05fbc46b0132ea060325b9944d1db078917da69ad02a83ebde0b40b5a2a08632",
@@ -715,6 +715,6 @@
       "tools/api-prm/usage.json": "40e737a5bc0063ed440306fa688eb9ba60c84d6a7f2248cc9ece9783f20b4b32",
       "tools/build_api_prm.py": "54ea90feea2d9dcab56276d50ed6a7a8aa2498e7dc73a1de7e6364b3ca6efc4b"
     },
-    "sha256": "72e6e9dafb8bd0cf3ef984eb30ba0d29e8b707102b125498d38a79e1d12a128f"
+    "sha256": "53b9d0190358ed6fbc5c826563e5fc9b8a02935d23cb18a38997f49504ca41da"
   }
 }

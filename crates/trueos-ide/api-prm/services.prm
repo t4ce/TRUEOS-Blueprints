@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/e9479a8fca720c77
-Reference source fingerprint: 72e6e9dafb8bd0cf3ef984eb30ba0d29e8b707102b125498d38a79e1d12a128f
+API PRM trueos-blueprint-api/1/764cc51bd743f5c7
+Reference source fingerprint: 53b9d0190358ed6fbc5c826563e5fc9b8a02935d23cb18a38997f49504ca41da
 
 
 # services
@@ -15,1138 +15,1138 @@ These are additional Blueprint service declarations. Consult attached rustdoc no
 
 extern "C" fn sys_rand(recv_buf: *mut u32, words: usize) -> ();
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1079
+Declaration: crates/trueos-v/src/bp_abi.rs:1092
 
 
 ## trueos_cabi_audio_buffer_frames
 
 extern "C" fn trueos_cabi_audio_buffer_frames(handle: u32) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1374
+Declaration: crates/trueos-v/src/bp_abi.rs:1387
 
 
 ## trueos_cabi_audio_close
 
 extern "C" fn trueos_cabi_audio_close(handle: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1356
+Declaration: crates/trueos-v/src/bp_abi.rs:1369
 
 
 ## trueos_cabi_audio_drain
 
 extern "C" fn trueos_cabi_audio_drain(handle: u32, timeout_ms: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1363
+Declaration: crates/trueos-v/src/bp_abi.rs:1376
 
 
 ## trueos_cabi_audio_drop
 
 extern "C" fn trueos_cabi_audio_drop(handle: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1358
+Declaration: crates/trueos-v/src/bp_abi.rs:1371
 
 
 ## trueos_cabi_audio_endpoint_caps_v1
 
 extern "C" fn trueos_cabi_audio_endpoint_caps_v1(out: *mut crate::vaudio::AudioEndpointCapabilitiesV1, out_size: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1376
+Declaration: crates/trueos-v/src/bp_abi.rs:1389
 
 
 ## trueos_cabi_audio_monitor_read_i16_since
 
 extern "C" fn trueos_cabi_audio_monitor_read_i16_since(cursor: u64, out_ptr: *mut i16, out_cap: usize, out_next_cursor: *mut u64) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1381
+Declaration: crates/trueos-v/src/bp_abi.rs:1394
 
 
 ## trueos_cabi_audio_monitor_start_cursor
 
 extern "C" fn trueos_cabi_audio_monitor_start_cursor(preroll_samples: usize) -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1380
+Declaration: crates/trueos-v/src/bp_abi.rs:1393
 
 
 ## trueos_cabi_audio_open_playback
 
 extern "C" fn trueos_cabi_audio_open_playback(format: u32, channels: u32, rate_hz: u32, out_handle: *mut u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1350
+Declaration: crates/trueos-v/src/bp_abi.rs:1363
 
 
 ## trueos_cabi_audio_paused
 
 extern "C" fn trueos_cabi_audio_paused(handle: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1360
+Declaration: crates/trueos-v/src/bp_abi.rs:1373
 
 
 ## trueos_cabi_audio_queued_frames
 
 extern "C" fn trueos_cabi_audio_queued_frames(handle: u32) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1373
+Declaration: crates/trueos-v/src/bp_abi.rs:1386
 
 
 ## trueos_cabi_audio_set_paused
 
 extern "C" fn trueos_cabi_audio_set_paused(handle: u32, paused: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1359
+Declaration: crates/trueos-v/src/bp_abi.rs:1372
 
 
 ## trueos_cabi_audio_set_volume_percent
 
 extern "C" fn trueos_cabi_audio_set_volume_percent(handle: u32, percent: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1361
+Declaration: crates/trueos-v/src/bp_abi.rs:1374
 
 
 ## trueos_cabi_audio_start
 
 extern "C" fn trueos_cabi_audio_start(handle: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1357
+Declaration: crates/trueos-v/src/bp_abi.rs:1370
 
 
 ## trueos_cabi_audio_state
 
 extern "C" fn trueos_cabi_audio_state(handle: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1375
+Declaration: crates/trueos-v/src/bp_abi.rs:1388
 
 
 ## trueos_cabi_audio_volume_percent
 
 extern "C" fn trueos_cabi_audio_volume_percent(handle: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1362
+Declaration: crates/trueos-v/src/bp_abi.rs:1375
 
 
 ## trueos_cabi_audio_write_i16_interleaved
 
 extern "C" fn trueos_cabi_audio_write_i16_interleaved(handle: u32, samples_ptr: *const i16, sample_count: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1364
+Declaration: crates/trueos-v/src/bp_abi.rs:1377
 
 
 ## trueos_cabi_audio_write_i16_stereo_48k
 
 extern "C" fn trueos_cabi_audio_write_i16_stereo_48k(samples_ptr: *const i16, sample_count: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1369
+Declaration: crates/trueos-v/src/bp_abi.rs:1382
 
 
 ## trueos_cabi_boot_timestamp_secs
 
 extern "C" fn trueos_cabi_boot_timestamp_secs() -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1088
+Declaration: crates/trueos-v/src/bp_abi.rs:1101
 
 
 ## trueos_cabi_calculator_evaluate
 
 extern "C" fn trueos_cabi_calculator_evaluate(operation: u32, arguments: *const f64, argument_count: usize, out_value: *mut f64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1082
+Declaration: crates/trueos-v/src/bp_abi.rs:1095
 
 
 ## trueos_cabi_clipboard_command_v1
 
 extern "C" fn trueos_cabi_clipboard_command_v1(window_id: u32, command: u32, kind: u32, input: *const u8, input_len: usize, output: *mut u8, output_cap: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:764
+Declaration: crates/trueos-v/src/bp_abi.rs:776
 
 
 ## trueos_cabi_dns_resolve_ipv4
 
 extern "C" fn trueos_cabi_dns_resolve_ipv4(host: *const u8, host_len: usize, out_octets: *mut u8) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1270
+Declaration: crates/trueos-v/src/bp_abi.rs:1283
 
 
 ## trueos_cabi_dobby_ui4_focus
 
 extern "C" fn trueos_cabi_dobby_ui4_focus(window_id: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:595
+Declaration: crates/trueos-v/src/bp_abi.rs:607
 
 
 ## trueos_cabi_dobby_ui4_key
 
 extern "C" fn trueos_cabi_dobby_ui4_key(key: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:605
+Declaration: crates/trueos-v/src/bp_abi.rs:617
 
 
 ## trueos_cabi_dobby_ui4_observe_metadata
 
 extern "C" fn trueos_cabi_dobby_ui4_observe_metadata(out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:597
+Declaration: crates/trueos-v/src/bp_abi.rs:609
 
 
 ## trueos_cabi_dobby_ui4_observe_prepare
 
 extern "C" fn trueos_cabi_dobby_ui4_observe_prepare() -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:596
+Declaration: crates/trueos-v/src/bp_abi.rs:608
 
 
 ## trueos_cabi_dobby_ui4_observe_read
 
 extern "C" fn trueos_cabi_dobby_ui4_observe_read(offset: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:598
+Declaration: crates/trueos-v/src/bp_abi.rs:610
 
 
 ## trueos_cabi_dobby_ui4_pointer
 
 extern "C" fn trueos_cabi_dobby_ui4_pointer(x: u16, y: u16, action: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:603
+Declaration: crates/trueos-v/src/bp_abi.rs:615
 
 
 ## trueos_cabi_dobby_ui4_type
 
 extern "C" fn trueos_cabi_dobby_ui4_type(text_ptr: *const u8, text_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:604
+Declaration: crates/trueos-v/src/bp_abi.rs:616
 
 
 ## trueos_cabi_dobby_ui4_windows
 
 extern "C" fn trueos_cabi_dobby_ui4_windows(out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:594
+Declaration: crates/trueos-v/src/bp_abi.rs:606
 
 
 ## trueos_cabi_env_arg
 
 extern "C" fn trueos_cabi_env_arg(index: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1701
+Declaration: crates/trueos-v/src/bp_abi.rs:1714
 
 
 ## trueos_cabi_env_args_count
 
 extern "C" fn trueos_cabi_env_args_count() -> usize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1700
+Declaration: crates/trueos-v/src/bp_abi.rs:1713
 
 
 ## trueos_cabi_env_var
 
 extern "C" fn trueos_cabi_env_var(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1702
+Declaration: crates/trueos-v/src/bp_abi.rs:1715
 
 
 ## trueos_cabi_gamepad_control_idle
 
 extern "C" fn trueos_cabi_gamepad_control_idle(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1612
+Declaration: crates/trueos-v/src/bp_abi.rs:1625
 
 
 ## trueos_cabi_gamepad_control_release
 
 extern "C" fn trueos_cabi_gamepad_control_release(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1602
+Declaration: crates/trueos-v/src/bp_abi.rs:1615
 
 
 ## trueos_cabi_gamepad_control_request
 
 extern "C" fn trueos_cabi_gamepad_control_request(label_ptr: *const u8, label_len: usize, out_gamepad: *mut GamepadControlDeviceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1597
+Declaration: crates/trueos-v/src/bp_abi.rs:1610
 
 
 ## trueos_cabi_gamepad_control_snapshot
 
 extern "C" fn trueos_cabi_gamepad_control_snapshot(handle: u64, out_snapshot: *mut GamepadControlSnapshot) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1613
+Declaration: crates/trueos-v/src/bp_abi.rs:1626
 
 
 ## trueos_cabi_gamepad_control_submit
 
 extern "C" fn trueos_cabi_gamepad_control_submit(handle: u64, command: *const GamepadControlCommand) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1603
+Declaration: crates/trueos-v/src/bp_abi.rs:1616
 
 
 ## trueos_cabi_gamepad_control_submit_json
 
 extern "C" fn trueos_cabi_gamepad_control_submit_json(handle: u64, json_ptr: *const u8, json_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1607
+Declaration: crates/trueos-v/src/bp_abi.rs:1620
 
 
 ## trueos_cabi_gridpaper_close
 
 extern "C" fn trueos_cabi_gridpaper_close() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:649
+Declaration: crates/trueos-v/src/bp_abi.rs:661
 
 
 ## trueos_cabi_gridpaper_close_instance
 
 extern "C" fn trueos_cabi_gridpaper_close_instance(instance_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:650
+Declaration: crates/trueos-v/src/bp_abi.rs:662
 
 
 ## trueos_cabi_gridpaper_print_request_take
 
 extern "C" fn trueos_cabi_gridpaper_print_request_take() -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:651
+Declaration: crates/trueos-v/src/bp_abi.rs:663
 
 
 ## trueos_cabi_gridpaper_print_request_take_instance
 
 extern "C" fn trueos_cabi_gridpaper_print_request_take_instance(instance_id: u32) -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:652
+Declaration: crates/trueos-v/src/bp_abi.rs:664
 
 
 ## trueos_cabi_gridpaper_snapshot_checkpoint
 
 extern "C" fn trueos_cabi_gridpaper_snapshot_checkpoint(out_ptr: *mut u8, out_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:620
+Declaration: crates/trueos-v/src/bp_abi.rs:632
 
 
 ## trueos_cabi_gridpaper_snapshot_checkpoint_instance
 
 extern "C" fn trueos_cabi_gridpaper_snapshot_checkpoint_instance(instance_id: u32, out_ptr: *mut u8, out_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:621
+Declaration: crates/trueos-v/src/bp_abi.rs:633
 
 
 ## trueos_cabi_gridpaper_snapshot_submit
 
 extern "C" fn trueos_cabi_gridpaper_snapshot_submit(generation: u64, scale_percent: u32, raw_ptr: *const u8, raw_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:607
+Declaration: crates/trueos-v/src/bp_abi.rs:619
 
 
 ## trueos_cabi_gridpaper_snapshot_submit_instance
 
 extern "C" fn trueos_cabi_gridpaper_snapshot_submit_instance(instance_id: u32, generation: u64, scale_percent: u32, raw_ptr: *const u8, raw_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:613
+Declaration: crates/trueos-v/src/bp_abi.rs:625
 
 
 ## trueos_cabi_gridpaper_snapshot_submit_instance_sized
 
 extern "C" fn trueos_cabi_gridpaper_snapshot_submit_instance_sized(instance_id: u32, generation: u64, scale_percent: u32, columns: u32, rows: u32, raw_ptr: *const u8, raw_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:634
+Declaration: crates/trueos-v/src/bp_abi.rs:646
 
 
 ## trueos_cabi_gridpaper_snapshot_submit_sized
 
 extern "C" fn trueos_cabi_gridpaper_snapshot_submit_sized(generation: u64, scale_percent: u32, columns: u32, rows: u32, raw_ptr: *const u8, raw_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:626
+Declaration: crates/trueos-v/src/bp_abi.rs:638
 
 
 ## trueos_cabi_gridpaper_text_animations_submit
 
 extern "C" fn trueos_cabi_gridpaper_text_animations_submit(raw_ptr: *const u8, raw_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:643
+Declaration: crates/trueos-v/src/bp_abi.rs:655
 
 
 ## trueos_cabi_gridpaper_text_animations_submit_instance
 
 extern "C" fn trueos_cabi_gridpaper_text_animations_submit_instance(instance_id: u32, raw_ptr: *const u8, raw_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:644
+Declaration: crates/trueos-v/src/bp_abi.rs:656
 
 
 ## trueos_cabi_hid_hut_read_keyboards
 
 extern "C" fn trueos_cabi_hid_hut_read_keyboards(out: *mut TrueosHidHutKeyboardState, out_cap: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1678
+Declaration: crates/trueos-v/src/bp_abi.rs:1691
 
 
 ## trueos_cabi_hid_hut_read_mice
 
 extern "C" fn trueos_cabi_hid_hut_read_mice(out: *mut TrueosHidHutMouseState, out_cap: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1675
+Declaration: crates/trueos-v/src/bp_abi.rs:1688
 
 
 ## trueos_cabi_hid_hut_read_tablets
 
 extern "C" fn trueos_cabi_hid_hut_read_tablets(out: *mut TrueosHidHutTabletState, out_cap: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1676
+Declaration: crates/trueos-v/src/bp_abi.rs:1689
 
 
 ## trueos_cabi_hid_keyboard_read
 
 extern "C" fn trueos_cabi_hid_keyboard_read(controller_id: u32, slot_id: u32, ep_target: u32, out: *mut TrueosHidKeyboardSample, out_cap: u32, out_dropped: *mut u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1651
+Declaration: crates/trueos-v/src/bp_abi.rs:1664
 
 
 ## trueos_cabi_hid_mouse_read
 
 extern "C" fn trueos_cabi_hid_mouse_read(controller_id: u32, slot_id: u32, ep_target: u32, out: *mut TrueosHidMouseSample, out_cap: u32, out_dropped: *mut u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1659
+Declaration: crates/trueos-v/src/bp_abi.rs:1672
 
 
 ## trueos_cabi_hid_tablet_read
 
 extern "C" fn trueos_cabi_hid_tablet_read(controller_id: u32, slot_id: u32, ep_target: u32, out: *mut TrueosHidTabletSample, out_cap: u32, out_dropped: *mut u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1667
+Declaration: crates/trueos-v/src/bp_abi.rs:1680
 
 
 ## trueos_cabi_image_source_info
 
 extern "C" fn trueos_cabi_image_source_info(name_ptr: *const u8, name_len: usize, out: *mut TrueosImageSourceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:697
+Declaration: crates/trueos-v/src/bp_abi.rs:709
 
 
 ## trueos_cabi_image_source_read
 
 extern "C" fn trueos_cabi_image_source_read(name_ptr: *const u8, name_len: usize, offset: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:702
+Declaration: crates/trueos-v/src/bp_abi.rs:714
 
 
 ## trueos_cabi_img_open_v1
 
 extern "C" fn trueos_cabi_img_open_v1(paths_ptr: *const u8, paths_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1758
+Declaration: crates/trueos-v/src/bp_abi.rs:1771
 
 
 ## trueos_cabi_input_combo_bind_gamepad
 
 extern "C" fn trueos_cabi_input_combo_bind_gamepad(combo_id: u32, controller_id: u32, slot_id: u32, ep_target: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1643
+Declaration: crates/trueos-v/src/bp_abi.rs:1656
 
 
 ## trueos_cabi_input_combo_bind_keyboard
 
 extern "C" fn trueos_cabi_input_combo_bind_keyboard(combo_id: u32, controller_id: u32, slot_id: u32, ep_target: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1631
+Declaration: crates/trueos-v/src/bp_abi.rs:1644
 
 
 ## trueos_cabi_input_combo_bind_mouse
 
 extern "C" fn trueos_cabi_input_combo_bind_mouse(combo_id: u32, controller_id: u32, slot_id: u32, ep_target: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1625
+Declaration: crates/trueos-v/src/bp_abi.rs:1638
 
 
 ## trueos_cabi_input_combo_bind_tablet
 
 extern "C" fn trueos_cabi_input_combo_bind_tablet(combo_id: u32, controller_id: u32, slot_id: u32, ep_target: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1637
+Declaration: crates/trueos-v/src/bp_abi.rs:1650
 
 
 ## trueos_cabi_input_combo_read
 
 extern "C" fn trueos_cabi_input_combo_read(out: *mut TrueosInputCombo, out_cap: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1650
+Declaration: crates/trueos-v/src/bp_abi.rs:1663
 
 
 ## trueos_cabi_input_combo_remove
 
 extern "C" fn trueos_cabi_input_combo_remove(combo_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1649
+Declaration: crates/trueos-v/src/bp_abi.rs:1662
 
 
 ## trueos_cabi_input_combo_request
 
 extern "C" fn trueos_cabi_input_combo_request(source_kind: u8, requested_color: i32, label_ptr: *const u8, label_len: usize, out_combo: *mut TrueosInputCombo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1617
+Declaration: crates/trueos-v/src/bp_abi.rs:1630
 
 
 ## trueos_cabi_input_combo_set_color
 
 extern "C" fn trueos_cabi_input_combo_set_color(combo_id: u32, color_id: u8) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1624
+Declaration: crates/trueos-v/src/bp_abi.rs:1637
 
 
 ## trueos_cabi_input_cursor_buttons
 
 extern "C" fn trueos_cabi_input_cursor_buttons(cursor_id: u32, out_buttons_down: *mut u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1545
+Declaration: crates/trueos-v/src/bp_abi.rs:1558
 
 
 ## trueos_cabi_input_cursor_pos
 
 extern "C" fn trueos_cabi_input_cursor_pos(cursor_id: u32, out_x: *mut i32, out_y: *mut i32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1544
+Declaration: crates/trueos-v/src/bp_abi.rs:1557
 
 
 ## trueos_cabi_input_midi_read_v1
 
 extern "C" fn trueos_cabi_input_midi_read_v1(read_seq: u64, out: *mut TrueosMidiInputEventV1, out_cap: u32, out_next_seq: *mut u64, out_dropped: *mut u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1690
+Declaration: crates/trueos-v/src/bp_abi.rs:1703
 
 
 ## trueos_cabi_input_pop_keyboard_output
 
 extern "C" fn trueos_cabi_input_pop_keyboard_output(out: *mut TrueosKeyboardOutputEvent) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1682
+Declaration: crates/trueos-v/src/bp_abi.rs:1695
 
 
 ## trueos_cabi_input_read_cursor_events_since
 
 extern "C" fn trueos_cabi_input_read_cursor_events_since(read_seq: u64, out: *mut TrueosHidCursorEvent, out_cap: u32, out_next_seq: *mut u64, out_dropped: *mut u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1546
+Declaration: crates/trueos-v/src/bp_abi.rs:1559
 
 
 ## trueos_cabi_input_read_keyboard_output_since
 
 extern "C" fn trueos_cabi_input_read_keyboard_output_since(read_seq: u64, out: *mut TrueosKeyboardOutputEvent, out_cap: u32, out_next_seq: *mut u64, out_dropped: *mut u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1683
+Declaration: crates/trueos-v/src/bp_abi.rs:1696
 
 
 ## trueos_cabi_input_write_cursor
 
 extern "C" fn trueos_cabi_input_write_cursor(slot_id: u32, x: i32, y: i32, buttons_down: u32, wheel: i32, flags: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1553
+Declaration: crates/trueos-v/src/bp_abi.rs:1566
 
 
 ## trueos_cabi_keyboard_control_idle
 
 extern "C" fn trueos_cabi_keyboard_control_idle(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1596
+Declaration: crates/trueos-v/src/bp_abi.rs:1609
 
 
 ## trueos_cabi_keyboard_control_release
 
 extern "C" fn trueos_cabi_keyboard_control_release(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1579
+Declaration: crates/trueos-v/src/bp_abi.rs:1592
 
 
 ## trueos_cabi_keyboard_control_request
 
 extern "C" fn trueos_cabi_keyboard_control_request(label_ptr: *const u8, label_len: usize, out_keyboard: *mut KeyboardControlDeviceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1574
+Declaration: crates/trueos-v/src/bp_abi.rs:1587
 
 
 ## trueos_cabi_keyboard_control_submit
 
 extern "C" fn trueos_cabi_keyboard_control_submit(handle: u64, command: *const KeyboardControlCommand) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1580
+Declaration: crates/trueos-v/src/bp_abi.rs:1593
 
 
 ## trueos_cabi_keyboard_control_submit_json
 
 extern "C" fn trueos_cabi_keyboard_control_submit_json(handle: u64, json_ptr: *const u8, json_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1591
+Declaration: crates/trueos-v/src/bp_abi.rs:1604
 
 
 ## trueos_cabi_keyboard_control_submit_text
 
 extern "C" fn trueos_cabi_keyboard_control_submit_text(handle: u64, text_ptr: *const u8, text_len: usize, interval_ms: u32, flags: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1584
+Declaration: crates/trueos-v/src/bp_abi.rs:1597
 
 
 ## trueos_cabi_lifecycle_checkpoint_restore
 
 extern "C" fn trueos_cabi_lifecycle_checkpoint_restore(out_ptr: *mut u8, out_cap: usize, out_version: *mut u64) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1720
+Declaration: crates/trueos-v/src/bp_abi.rs:1733
 
 
 ## trueos_cabi_lifecycle_identity
 
 extern "C" fn trueos_cabi_lifecycle_identity(out: *mut TrueosLifecycleIdentity) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1725
+Declaration: crates/trueos-v/src/bp_abi.rs:1738
 
 
 ## trueos_cabi_lifecycle_poll
 
 extern "C" fn trueos_cabi_lifecycle_poll(out: *mut TrueosLifecyclePreparePause) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1712
+Declaration: crates/trueos-v/src/bp_abi.rs:1725
 
 
 ## trueos_cabi_lifecycle_ready
 
 extern "C" fn trueos_cabi_lifecycle_ready(operation: u64, checkpoint_version: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1713
+Declaration: crates/trueos-v/src/bp_abi.rs:1726
 
 
 ## trueos_cabi_lifecycle_ready_with_checkpoint
 
 extern "C" fn trueos_cabi_lifecycle_ready_with_checkpoint(operation: u64, checkpoint_version: u64, checkpoint_ptr: *const u8, checkpoint_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1714
+Declaration: crates/trueos-v/src/bp_abi.rs:1727
 
 
 ## trueos_cabi_lumen_checkpoint_read
 
 extern "C" fn trueos_cabi_lumen_checkpoint_read(offset: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:568
+Declaration: crates/trueos-v/src/bp_abi.rs:580
 
 
 ## trueos_cabi_lumen_checkpoint_request
 
 extern "C" fn trueos_cabi_lumen_checkpoint_request() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:567
+Declaration: crates/trueos-v/src/bp_abi.rs:579
 
 
 ## trueos_cabi_lumen_close
 
 extern "C" fn trueos_cabi_lumen_close() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:580
+Declaration: crates/trueos-v/src/bp_abi.rs:592
 
 
 ## trueos_cabi_lumen_prompt_submit
 
 extern "C" fn trueos_cabi_lumen_prompt_submit(turn: u64, tail_ptr: *const u32, tail_len: usize, prompt_ptr: *const u8, prompt_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:542
+Declaration: crates/trueos-v/src/bp_abi.rs:554
 
 
 ## trueos_cabi_lumen_prompt_submit_with_no_argument_tool_v1
 
 extern "C" fn trueos_cabi_lumen_prompt_submit_with_no_argument_tool_v1(turn: u64, tail_ptr: *const u32, tail_len: usize, prompt_ptr: *const u8, prompt_len: usize, tool_name_ptr: *const u8, tool_name_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:549
+Declaration: crates/trueos-v/src/bp_abi.rs:561
 
 
 ## trueos_cabi_lumen_reply_read
 
 extern "C" fn trueos_cabi_lumen_reply_read(out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:566
+Declaration: crates/trueos-v/src/bp_abi.rs:578
 
 
 ## trueos_cabi_lumen_restore_begin
 
 extern "C" fn trueos_cabi_lumen_restore_begin(total_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:573
+Declaration: crates/trueos-v/src/bp_abi.rs:585
 
 
 ## trueos_cabi_lumen_restore_commit
 
 extern "C" fn trueos_cabi_lumen_restore_commit() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:579
+Declaration: crates/trueos-v/src/bp_abi.rs:591
 
 
 ## trueos_cabi_lumen_restore_write
 
 extern "C" fn trueos_cabi_lumen_restore_write(offset: usize, data_ptr: *const u8, data_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:574
+Declaration: crates/trueos-v/src/bp_abi.rs:586
 
 
 ## trueos_cabi_lumen_status
 
 extern "C" fn trueos_cabi_lumen_status(out: *mut TrueosLumenStatus) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:565
+Declaration: crates/trueos-v/src/bp_abi.rs:577
 
 
 ## trueos_cabi_lumen_template_open
 
 extern "C" fn trueos_cabi_lumen_template_open(system_ptr: *const u8, system_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:541
+Declaration: crates/trueos-v/src/bp_abi.rs:553
 
 
 ## trueos_cabi_lumen_tool_result_submit
 
 extern "C" fn trueos_cabi_lumen_tool_result_submit(turn: u64, tail_ptr: *const u32, tail_len: usize, result_ptr: *const u8, result_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:558
+Declaration: crates/trueos-v/src/bp_abi.rs:570
 
 
 ## trueos_cabi_mouse_motion_cursor_idle
 
 extern "C" fn trueos_cabi_mouse_motion_cursor_idle(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1573
+Declaration: crates/trueos-v/src/bp_abi.rs:1586
 
 
 ## trueos_cabi_mouse_motion_cursor_release
 
 extern "C" fn trueos_cabi_mouse_motion_cursor_release(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1566
+Declaration: crates/trueos-v/src/bp_abi.rs:1579
 
 
 ## trueos_cabi_mouse_motion_cursor_request
 
 extern "C" fn trueos_cabi_mouse_motion_cursor_request(label_ptr: *const u8, label_len: usize, out_cursor: *mut MouseMotionCursorInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1561
+Declaration: crates/trueos-v/src/bp_abi.rs:1574
 
 
 ## trueos_cabi_mouse_motion_submit
 
 extern "C" fn trueos_cabi_mouse_motion_submit(handle: u64, command: *const MouseMotionCommand) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1567
+Declaration: crates/trueos-v/src/bp_abi.rs:1580
 
 
 ## trueos_cabi_mouse_motion_submit_json
 
 extern "C" fn trueos_cabi_mouse_motion_submit_json(handle: u64, json_ptr: *const u8, json_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1568
+Declaration: crates/trueos-v/src/bp_abi.rs:1581
 
 
 ## trueos_cabi_mouse_poll
 
 extern "C" fn trueos_cabi_mouse_poll(out: *mut TrueosMouseState) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1697
+Declaration: crates/trueos-v/src/bp_abi.rs:1710
 
 
 ## trueos_cabi_net_fetch_bytes_discard
 
 extern "C" fn trueos_cabi_net_fetch_bytes_discard(op_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1267
+Declaration: crates/trueos-v/src/bp_abi.rs:1280
 
 
 ## trueos_cabi_net_fetch_bytes_read
 
 extern "C" fn trueos_cabi_net_fetch_bytes_read(op_id: u32, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1265
+Declaration: crates/trueos-v/src/bp_abi.rs:1278
 
 
 ## trueos_cabi_net_fetch_bytes_result_len
 
 extern "C" fn trueos_cabi_net_fetch_bytes_result_len(op_id: u32) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1264
+Declaration: crates/trueos-v/src/bp_abi.rs:1277
 
 
 ## trueos_cabi_net_fetch_bytes_start
 
 extern "C" fn trueos_cabi_net_fetch_bytes_start(url_ptr: *const u8, url_len: usize) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1220
+Declaration: crates/trueos-v/src/bp_abi.rs:1233
 
 
 ## trueos_cabi_net_fetch_bytes_start_happy_eyeballs
 
 extern "C" fn trueos_cabi_net_fetch_bytes_start_happy_eyeballs(url_ptr: *const u8, url_len: usize) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1221
+Declaration: crates/trueos-v/src/bp_abi.rs:1234
 
 
 ## trueos_cabi_net_fetch_bytes_wait
 
 extern "C" fn trueos_cabi_net_fetch_bytes_wait(op_id: u32, timeout_ms: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1269
+Declaration: crates/trueos-v/src/bp_abi.rs:1282
 
 
 ## trueos_cabi_net_fetch_discard
 
 extern "C" fn trueos_cabi_net_fetch_discard(op_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1266
+Declaration: crates/trueos-v/src/bp_abi.rs:1279
 
 
 ## trueos_cabi_net_fetch_post_json_bytes_start
 
 extern "C" fn trueos_cabi_net_fetch_post_json_bytes_start(url_ptr: *const u8, url_len: usize, body_ptr: *const u8, body_len: usize, bearer_ptr: *const u8, bearer_len: usize) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1246
+Declaration: crates/trueos-v/src/bp_abi.rs:1259
 
 
 ## trueos_cabi_net_fetch_post_json_bytes_start_with_timeout
 
 extern "C" fn trueos_cabi_net_fetch_post_json_bytes_start_with_timeout(url_ptr: *const u8, url_len: usize, body_ptr: *const u8, body_len: usize, bearer_ptr: *const u8, bearer_len: usize, timeout_ms: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1254
+Declaration: crates/trueos-v/src/bp_abi.rs:1267
 
 
 ## trueos_cabi_net_fetch_post_json_start
 
 extern "C" fn trueos_cabi_net_fetch_post_json_start(url_ptr: *const u8, url_len: usize, path_ptr: *const u8, path_len: usize, body_ptr: *const u8, body_len: usize, bearer_ptr: *const u8, bearer_len: usize) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1225
+Declaration: crates/trueos-v/src/bp_abi.rs:1238
 
 
 ## trueos_cabi_net_fetch_post_json_start_with_timeout
 
 extern "C" fn trueos_cabi_net_fetch_post_json_start_with_timeout(url_ptr: *const u8, url_len: usize, path_ptr: *const u8, path_len: usize, body_ptr: *const u8, body_len: usize, bearer_ptr: *const u8, bearer_len: usize, timeout_ms: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1235
+Declaration: crates/trueos-v/src/bp_abi.rs:1248
 
 
 ## trueos_cabi_net_fetch_result
 
 extern "C" fn trueos_cabi_net_fetch_result(op_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1263
+Declaration: crates/trueos-v/src/bp_abi.rs:1276
 
 
 ## trueos_cabi_net_fetch_start
 
 extern "C" fn trueos_cabi_net_fetch_start(url_ptr: *const u8, url_len: usize, path_ptr: *const u8, path_len: usize) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1213
+Declaration: crates/trueos-v/src/bp_abi.rs:1226
 
 
 ## trueos_cabi_net_fetch_wait
 
 extern "C" fn trueos_cabi_net_fetch_wait(op_id: u32, timeout_ms: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1268
+Declaration: crates/trueos-v/src/bp_abi.rs:1281
 
 
 ## trueos_cabi_net_prewarm_url_start
 
 extern "C" fn trueos_cabi_net_prewarm_url_start(url_ptr: *const u8, url_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1219
+Declaration: crates/trueos-v/src/bp_abi.rs:1232
 
 
 ## trueos_cabi_ntp_current_unix_seconds
 
 extern "C" fn trueos_cabi_ntp_current_unix_seconds() -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1806
+Declaration: crates/trueos-v/src/bp_abi.rs:1819
 
 
 ## trueos_cabi_ntp_kernel_date_day_month_year
 
 extern "C" fn trueos_cabi_ntp_kernel_date_day_month_year(out_ptr: *mut u8, out_cap: usize) -> usize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1807
+Declaration: crates/trueos-v/src/bp_abi.rs:1820
 
 
 ## trueos_cabi_qjs_mouse_pop
 
 extern "C" fn trueos_cabi_qjs_mouse_pop(out: *mut TrueosMouseState) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1698
+Declaration: crates/trueos-v/src/bp_abi.rs:1711
 
 
 ## trueos_cabi_shell3_window_v1
 
 extern "C" fn trueos_cabi_shell3_window_v1(x: i32, y: i32, width: u32, height: u32) -> i64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1753
+Declaration: crates/trueos-v/src/bp_abi.rs:1766
 
 
 ## trueos_cabi_smtp_configure_account
 
 extern "C" fn trueos_cabi_smtp_configure_account(user_ptr: *const u8, user_len: usize, pass_ptr: *const u8, pass_len: usize, from_ptr: *const u8, from_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1340
+Declaration: crates/trueos-v/src/bp_abi.rs:1353
 
 
 ## trueos_cabi_smtp_discard
 
 extern "C" fn trueos_cabi_smtp_discard(op_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1339
+Declaration: crates/trueos-v/src/bp_abi.rs:1352
 
 
 ## trueos_cabi_smtp_password_configured
 
 extern "C" fn trueos_cabi_smtp_password_configured() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1348
+Declaration: crates/trueos-v/src/bp_abi.rs:1361
 
 
 ## trueos_cabi_smtp_result
 
 extern "C" fn trueos_cabi_smtp_result(op_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1337
+Declaration: crates/trueos-v/src/bp_abi.rs:1350
 
 
 ## trueos_cabi_smtp_send_text_start
 
 extern "C" fn trueos_cabi_smtp_send_text_start(to_ptr: *const u8, to_len: usize, subject_ptr: *const u8, subject_len: usize, body_ptr: *const u8, body_len: usize, timeout_ms: u32) -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1328
+Declaration: crates/trueos-v/src/bp_abi.rs:1341
 
 
 ## trueos_cabi_smtp_wait
 
 extern "C" fn trueos_cabi_smtp_wait(op_id: u32, timeout_ms: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1338
+Declaration: crates/trueos-v/src/bp_abi.rs:1351
 
 
 ## trueos_cabi_socket_tcp_close
 
 extern "C" fn trueos_cabi_socket_tcp_close(socket_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1277
+Declaration: crates/trueos-v/src/bp_abi.rs:1290
 
 
 ## trueos_cabi_socket_tcp_connect_v4
 
 extern "C" fn trueos_cabi_socket_tcp_connect_v4(socket_id: u32, addr_be: u32, port_be: u16, nonblocking: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1279
+Declaration: crates/trueos-v/src/bp_abi.rs:1292
 
 
 ## trueos_cabi_socket_tcp_connect_v6
 
 extern "C" fn trueos_cabi_socket_tcp_connect_v6(socket_id: u32, addr_ptr: *const u8, port_be: u16, nonblocking: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1285
+Declaration: crates/trueos-v/src/bp_abi.rs:1298
 
 
 ## trueos_cabi_socket_tcp_open
 
 extern "C" fn trueos_cabi_socket_tcp_open(domain: i32, socket_type: i32, protocol: i32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1276
+Declaration: crates/trueos-v/src/bp_abi.rs:1289
 
 
 ## trueos_cabi_socket_tcp_peer_v4
 
 extern "C" fn trueos_cabi_socket_tcp_peer_v4(socket_id: u32, out_addr_be: *mut u32, out_port_be: *mut u16) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1317
+Declaration: crates/trueos-v/src/bp_abi.rs:1330
 
 
 ## trueos_cabi_socket_tcp_peer_v6
 
 extern "C" fn trueos_cabi_socket_tcp_peer_v6(socket_id: u32, out_addr_ptr: *mut u8, out_port_be: *mut u16) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1322
+Declaration: crates/trueos-v/src/bp_abi.rs:1335
 
 
 ## trueos_cabi_socket_tcp_poll_connect
 
 extern "C" fn trueos_cabi_socket_tcp_poll_connect(socket_id: u32, timeout_ms: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1291
+Declaration: crates/trueos-v/src/bp_abi.rs:1304
 
 
 ## trueos_cabi_socket_tcp_recv
 
 extern "C" fn trueos_cabi_socket_tcp_recv(socket_id: u32, out_ptr: *mut u8, out_cap: usize, flags: i32, nonblocking: u32, timeout_ms: u64) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1297
+Declaration: crates/trueos-v/src/bp_abi.rs:1310
 
 
 ## trueos_cabi_socket_tcp_send
 
 extern "C" fn trueos_cabi_socket_tcp_send(socket_id: u32, data_ptr: *const u8, data_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1292
+Declaration: crates/trueos-v/src/bp_abi.rs:1305
 
 
 ## trueos_cabi_socket_tcp_set_nonblocking
 
 extern "C" fn trueos_cabi_socket_tcp_set_nonblocking(socket_id: u32, nonblocking: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1278
+Declaration: crates/trueos-v/src/bp_abi.rs:1291
 
 
 ## trueos_cabi_socket_tcp_shutdown
 
 extern "C" fn trueos_cabi_socket_tcp_shutdown(socket_id: u32, how: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1305
+Declaration: crates/trueos-v/src/bp_abi.rs:1318
 
 
 ## trueos_cabi_socket_tcp_take_error
 
 extern "C" fn trueos_cabi_socket_tcp_take_error(socket_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1306
+Declaration: crates/trueos-v/src/bp_abi.rs:1319
 
 
 ## trueos_cabi_spirit_agents_publish_v1
 
 extern "C" fn trueos_cabi_spirit_agents_publish_v1(bytes: *const u8, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:593
+Declaration: crates/trueos-v/src/bp_abi.rs:605
 
 
 ## trueos_cabi_spirit_emotion_play
 
 extern "C" fn trueos_cabi_spirit_emotion_play(idea_ptr: *const u8, idea_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:581
+Declaration: crates/trueos-v/src/bp_abi.rs:593
 
 
 ## trueos_cabi_spirit_move
 
 extern "C" fn trueos_cabi_spirit_move(x_normalized: f32, y_normalized: f32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:592
+Declaration: crates/trueos-v/src/bp_abi.rs:604
 
 
 ## trueos_cabi_spirit_response_present
 
 extern "C" fn trueos_cabi_spirit_response_present(turn: u64, text_ptr: *const u8, text_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:582
+Declaration: crates/trueos-v/src/bp_abi.rs:594
 
 
 ## trueos_cabi_spirit_text_present_silent
 
 extern "C" fn trueos_cabi_spirit_text_present_silent(turn: u64, text_ptr: *const u8, text_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:587
+Declaration: crates/trueos-v/src/bp_abi.rs:599
 
 
 ## trueos_cabi_tun_close
 
 extern "C" fn trueos_cabi_tun_close(tun_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1314
+Declaration: crates/trueos-v/src/bp_abi.rs:1327
 
 
 ## trueos_cabi_tun_open
 
 extern "C" fn trueos_cabi_tun_open(ipv4_be: u32, ipv4_prefix_len: u32, ipv6_ptr: *const u8, ipv6_prefix_len: u32, mtu: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1307
+Declaration: crates/trueos-v/src/bp_abi.rs:1320
 
 
 ## trueos_cabi_tun_recv
 
 extern "C" fn trueos_cabi_tun_recv(tun_id: u32, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1316
+Declaration: crates/trueos-v/src/bp_abi.rs:1329
 
 
 ## trueos_cabi_tun_send
 
 extern "C" fn trueos_cabi_tun_send(tun_id: u32, data_ptr: *const u8, data_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1315
+Declaration: crates/trueos-v/src/bp_abi.rs:1328
 
 
 ## trueos_cabi_vid_open_v1
 
 extern "C" fn trueos_cabi_vid_open_v1(path_ptr: *const u8, path_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1759
+Declaration: crates/trueos-v/src/bp_abi.rs:1772
 
 
 ## trueos_cabi_vid_open_v2
 
 extern "C" fn trueos_cabi_vid_open_v2(path_ptr: *const u8, path_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1760
+Declaration: crates/trueos-v/src/bp_abi.rs:1773
 
 
 ## trueos_cabi_vmedia_image_decode_begin
 
 extern "C" fn trueos_cabi_vmedia_image_decode_begin(format: u32, total_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:709
+Declaration: crates/trueos-v/src/bp_abi.rs:721
 
 
 ## trueos_cabi_vmedia_image_decode_commit
 
 extern "C" fn trueos_cabi_vmedia_image_decode_commit(id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:716
+Declaration: crates/trueos-v/src/bp_abi.rs:728
 
 
 ## trueos_cabi_vmedia_image_decode_discard
 
 extern "C" fn trueos_cabi_vmedia_image_decode_discard(id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:725
+Declaration: crates/trueos-v/src/bp_abi.rs:737
 
 
 ## trueos_cabi_vmedia_image_decode_info
 
 extern "C" fn trueos_cabi_vmedia_image_decode_info(id: u32, out: *mut TrueosVmediaImageInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:718
+Declaration: crates/trueos-v/src/bp_abi.rs:730
 
 
 ## trueos_cabi_vmedia_image_decode_read
 
 extern "C" fn trueos_cabi_vmedia_image_decode_read(id: u32, offset: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:719
+Declaration: crates/trueos-v/src/bp_abi.rs:731
 
 
 ## trueos_cabi_vmedia_image_decode_status
 
 extern "C" fn trueos_cabi_vmedia_image_decode_status(id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:717
+Declaration: crates/trueos-v/src/bp_abi.rs:729
 
 
 ## trueos_cabi_vmedia_image_decode_write
 
 extern "C" fn trueos_cabi_vmedia_image_decode_write(id: u32, offset: usize, bytes_ptr: *const u8, bytes_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:710
+Declaration: crates/trueos-v/src/bp_abi.rs:722
 
 
 ## trueos_cabi_vmedia_texture_decode_begin
 
 extern "C" fn trueos_cabi_vmedia_texture_decode_begin(device: u64, format: u32, total_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:726
+Declaration: crates/trueos-v/src/bp_abi.rs:738
 
 
 ## trueos_cabi_vmedia_texture_decode_info
 
 extern "C" fn trueos_cabi_vmedia_texture_decode_info(id: u32, out: *mut TrueosVmediaRetainedTextureInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:731
+Declaration: crates/trueos-v/src/bp_abi.rs:743
 
 
 ## trueos_cabi_vmedia_texture_release
 
 extern "C" fn trueos_cabi_vmedia_texture_release(device: u64, texture_id: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:741
+Declaration: crates/trueos-v/src/bp_abi.rs:753
 
 
 ## trueos_cabi_vmedia_video_command_v1
 
 extern "C" fn trueos_cabi_vmedia_video_command_v1(command: u32, a: u64, b: u64, input: *const u8, input_len: usize, output: *mut u8, output_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:742
+Declaration: crates/trueos-v/src/bp_abi.rs:754

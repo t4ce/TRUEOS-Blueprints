@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/e9479a8fca720c77
-Reference source fingerprint: 72e6e9dafb8bd0cf3ef984eb30ba0d29e8b707102b125498d38a79e1d12a128f
+API PRM trueos-blueprint-api/1/764cc51bd743f5c7
+Reference source fingerprint: 53b9d0190358ed6fbc5c826563e5fc9b8a02935d23cb18a38997f49504ca41da
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
@@ -242,6 +242,7 @@ trueos_cabi_ui4_hull_image_request_v1 -> graphics.prm
 trueos_cabi_ui4_hull_image_reset_v1 -> graphics.prm
 trueos_cabi_ui4_hull_image_status_v1 -> graphics.prm
 trueos_cabi_ui4_hull_text_runs_v1 -> graphics.prm
+trueos_cabi_ui4_scene_button_regions_v1 -> graphics.prm
 trueos_cabi_ui4_scene_collapse_v1 -> graphics.prm
 trueos_cabi_ui4_scene_compute_frame_publish -> graphics.prm
 trueos_cabi_ui4_scene_display_fade_v1 -> graphics.prm
