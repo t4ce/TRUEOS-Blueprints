@@ -88,7 +88,7 @@ Frog's Matrix slot there. Frog does not need to be installed in AppDB.
 The launch retains full coordinate precision. Frog is disabled over the footer,
 outside the projected world, and while compact.
 The app registers its embedded 128x128 PNG once with Frame::enable_collapse.
-UI4 adds collapse/restore to the app menu and shows the image at its exact size,
+UI4 adds collapse/restore to the app menu and resamples the image to its standard 64x64 icon,
 with transparent pixels preserved. Click/release inside the tile restores the
 normal window; dragging does not restore. While compact, only restore is offered.
 The producer frame, map center/zoom, and logical extent remain intact. Background

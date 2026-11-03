@@ -34,7 +34,7 @@ pub fn display_fade(window_id: u32, amount: f32) -> Result<(), Error> {
         code => Err(Error::Unknown(code)) }
 }
 
-/// Maximum exact pixel extent for a kernel-owned compact window image.
+/// Maximum source pixel extent for a kernel-owned compact window image.
 pub const MAX_COLLAPSE_IMAGE_SIZE: u32 = 256;
 
 impl Frame {
@@ -45,8 +45,9 @@ impl Frame {
     }
 
     /// Enable the standard collapse/restore menu and click-to-restore behavior.
-    /// Copies tightly packed straight-alpha RGBA8, at its exact size (up to
-    /// 256x256). Call again to update the icon. No menu or input pump is needed;
+    /// Copies tightly packed straight-alpha RGBA8 (up to 256x256), resampled to
+    /// the standard 64x64 icon shared with terminal frames. Call again to update
+    /// the icon. No menu or input pump is needed;
     /// the producer's frame, layers, and logical extent remain intact.
     pub fn enable_collapse(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), Error> {
         if !(1..=MAX_COLLAPSE_IMAGE_SIZE).contains(&width)

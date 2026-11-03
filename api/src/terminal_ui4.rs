@@ -7,6 +7,7 @@
 
 /// Register tightly packed straight-alpha RGBA8 (1..=256 pixels per axis).
 /// The kernel copies the bytes; the caller may immediately release them.
+/// UI4 resamples the image to the standard 64x64 icon shared with scene frames.
 pub fn enable_collapse(width: u32, height: u32, rgba: &[u8]) -> Result<(), i32> {
     if !(1..=256).contains(&width)
         || !(1..=256).contains(&height)
