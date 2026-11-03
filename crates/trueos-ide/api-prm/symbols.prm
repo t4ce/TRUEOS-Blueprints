@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/8208b6124bc0915f
-Reference source fingerprint: cc76b9c1f987eaf1234989d8f86959538f5dcfea5fc0293da22b902b395ad342
+API PRM trueos-blueprint-api/1/20fba72c9d254262
+Reference source fingerprint: a8d0fc42c6a2bfa0567c57a89bba319a3c95489df217909eded9bb48adcafc24
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
@@ -155,6 +155,8 @@ trueos_cabi_lumen_status -> services.prm
 trueos_cabi_lumen_template_open -> services.prm
 trueos_cabi_lumen_tool_result_submit -> services.prm
 trueos_cabi_malloc_usable_size -> memory.prm
+trueos_cabi_matrix_compute_capacity_v1 -> services.prm
+trueos_cabi_matrix_compute_v1 -> services.prm
 trueos_cabi_mouse_motion_cursor_idle -> services.prm
 trueos_cabi_mouse_motion_cursor_release -> services.prm
 trueos_cabi_mouse_motion_cursor_request -> services.prm

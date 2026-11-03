@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/8208b6124bc0915f
-Reference source fingerprint: cc76b9c1f987eaf1234989d8f86959538f5dcfea5fc0293da22b902b395ad342
+API PRM trueos-blueprint-api/1/20fba72c9d254262
+Reference source fingerprint: a8d0fc42c6a2bfa0567c57a89bba319a3c95489df217909eded9bb48adcafc24
 
 
 # graphics
@@ -637,140 +637,140 @@ Declaration: crates/trueos-v/src/bp_abi.rs:686
 
 extern "C" fn trueos_cabi_vgpu_buffer_create(device: u64, bytes: usize, usage: u32, out_buffer: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1425
+Declaration: crates/trueos-v/src/bp_abi.rs:1436
 
 
 ## trueos_cabi_vgpu_buffer_destroy
 
 extern "C" fn trueos_cabi_vgpu_buffer_destroy(device: u64, buffer: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1431
+Declaration: crates/trueos-v/src/bp_abi.rs:1442
 
 
 ## trueos_cabi_vgpu_buffer_info
 
 extern "C" fn trueos_cabi_vgpu_buffer_info(device: u64, buffer: u64, out_info: *mut crate::vgpu::BufferInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1446
+Declaration: crates/trueos-v/src/bp_abi.rs:1457
 
 
 ## trueos_cabi_vgpu_buffer_read
 
 extern "C" fn trueos_cabi_vgpu_buffer_read(device: u64, buffer: u64, offset: usize, out: *mut u8, out_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1439
+Declaration: crates/trueos-v/src/bp_abi.rs:1450
 
 
 ## trueos_cabi_vgpu_buffer_write
 
 extern "C" fn trueos_cabi_vgpu_buffer_write(device: u64, buffer: u64, offset: usize, data: *const u8, data_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1432
+Declaration: crates/trueos-v/src/bp_abi.rs:1443
 
 
 ## trueos_cabi_vgpu_close
 
 extern "C" fn trueos_cabi_vgpu_close(device: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1418
+Declaration: crates/trueos-v/src/bp_abi.rs:1429
 
 
 ## trueos_cabi_vgpu_device_diagnostics
 
 extern "C" fn trueos_cabi_vgpu_device_diagnostics(device: u64, out: *mut crate::vgpu::DeviceDiagnostics) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1421
+Declaration: crates/trueos-v/src/bp_abi.rs:1432
 
 
 ## trueos_cabi_vgpu_device_info
 
 extern "C" fn trueos_cabi_vgpu_device_info(device: u64, out_info: *mut crate::vgpu::DeviceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1419
+Declaration: crates/trueos-v/src/bp_abi.rs:1430
 
 
 ## trueos_cabi_vgpu_offscreen_indexed_batch_v1
 
 extern "C" fn trueos_cabi_vgpu_offscreen_indexed_batch_v1(device: u64, queue: u64, request: *const crate::vgpu::OffscreenIndexedBatchV1, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1451
+Declaration: crates/trueos-v/src/bp_abi.rs:1462
 
 
 ## trueos_cabi_vgpu_open
 
 extern "C" fn trueos_cabi_vgpu_open(requested_caps: u64, out_device: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1409
+Declaration: crates/trueos-v/src/bp_abi.rs:1420
 
 
 ## trueos_cabi_vgpu_queue_create
 
 extern "C" fn trueos_cabi_vgpu_queue_create(device: u64, class: u32, out_queue: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1551
+Declaration: crates/trueos-v/src/bp_abi.rs:1562
 
 
 ## trueos_cabi_vgpu_queue_destroy
 
 extern "C" fn trueos_cabi_vgpu_queue_destroy(device: u64, queue: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1552
+Declaration: crates/trueos-v/src/bp_abi.rs:1563
 
 
 ## trueos_cabi_vgpu_render_pipeline_create
 
 extern "C" fn trueos_cabi_vgpu_render_pipeline_create(device: u64, shader: u64, vertex_stride: u32, position_offset: u32, out_pipeline: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1476
+Declaration: crates/trueos-v/src/bp_abi.rs:1487
 
 
 ## trueos_cabi_vgpu_render_pipeline_destroy
 
 extern "C" fn trueos_cabi_vgpu_render_pipeline_destroy(device: u64, pipeline: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1483
+Declaration: crates/trueos-v/src/bp_abi.rs:1494
 
 
 ## trueos_cabi_vgpu_retained_frame_submit
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmit, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1508
+Declaration: crates/trueos-v/src/bp_abi.rs:1519
 
 
 ## trueos_cabi_vgpu_retained_frame_submit_v2
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit_v2(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmitV2, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1514
+Declaration: crates/trueos-v/src/bp_abi.rs:1525
 
 
 ## trueos_cabi_vgpu_retained_frame_submit_v3
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit_v3(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmitV3, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1520
+Declaration: crates/trueos-v/src/bp_abi.rs:1531
 
 
 ## trueos_cabi_vgpu_retained_frame_submit_v4
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit_v4(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmitV4, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1526
+Declaration: crates/trueos-v/src/bp_abi.rs:1537
 
 
 ## trueos_cabi_vgpu_retained_mesh_create
 
 extern "C" fn trueos_cabi_vgpu_retained_mesh_create(device: u64, descriptor: *const crate::vgpu::RetainedMeshDescriptor, out_mesh: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1502
+Declaration: crates/trueos-v/src/bp_abi.rs:1513
 
 
 ## trueos_cabi_vgpu_retained_mesh_destroy
 
 extern "C" fn trueos_cabi_vgpu_retained_mesh_destroy(device: u64, mesh: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1507
+Declaration: crates/trueos-v/src/bp_abi.rs:1518
 
 
 ## trueos_cabi_vgpu_retained_textured_frame_v1
@@ -784,102 +784,102 @@ Declaration: crates/trueos-v/src/bp_abi.rs:753
 
 extern "C" fn trueos_cabi_vgpu_scalar_f32_v1(device: u64, code: u64, bytes: usize, a: f32, b: f32, out: *mut f32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1410
+Declaration: crates/trueos-v/src/bp_abi.rs:1421
 
 
 ## trueos_cabi_vgpu_shader_module_create
 
 extern "C" fn trueos_cabi_vgpu_shader_module_create(device: u64, package_digest: u64, out_shader: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1470
+Declaration: crates/trueos-v/src/bp_abi.rs:1481
 
 
 ## trueos_cabi_vgpu_shader_module_destroy
 
 extern "C" fn trueos_cabi_vgpu_shader_module_destroy(device: u64, shader: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1475
+Declaration: crates/trueos-v/src/bp_abi.rs:1486
 
 
 ## trueos_cabi_vgpu_submit_control_nop
 
 extern "C" fn trueos_cabi_vgpu_submit_control_nop(device: u64, queue: u64, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1553
+Declaration: crates/trueos-v/src/bp_abi.rs:1564
 
 
 ## trueos_cabi_vgpu_timeline
 
 extern "C" fn trueos_cabi_vgpu_timeline(device: u64, queue: u64, out_status: *mut crate::vgpu::TimelineStatus) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1558
+Declaration: crates/trueos-v/src/bp_abi.rs:1569
 
 
 ## trueos_cabi_vgpu_ui4_indexed_batch_submit
 
 extern "C" fn trueos_cabi_vgpu_ui4_indexed_batch_submit(device: u64, queue: u64, batch: *const crate::vgpu::IndexedDrawBatch, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1490
+Declaration: crates/trueos-v/src/bp_abi.rs:1501
 
 
 ## trueos_cabi_vgpu_ui4_indexed_batch_submit_v2
 
 extern "C" fn trueos_cabi_vgpu_ui4_indexed_batch_submit_v2(device: u64, queue: u64, batch: *const crate::vgpu::IndexedDrawBatchV2, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1496
+Declaration: crates/trueos-v/src/bp_abi.rs:1507
 
 
 ## trueos_cabi_vgpu_ui4_indexed_submit
 
 extern "C" fn trueos_cabi_vgpu_ui4_indexed_submit(device: u64, queue: u64, draw: *const crate::vgpu::IndexedDraw, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1484
+Declaration: crates/trueos-v/src/bp_abi.rs:1495
 
 
 ## trueos_cabi_vgpu_ui4_surface_acquire
 
 extern "C" fn trueos_cabi_vgpu_ui4_surface_acquire(device: u64, window_id: u32, out: *mut crate::vgpu::SurfaceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1457
+Declaration: crates/trueos-v/src/bp_abi.rs:1468
 
 
 ## trueos_cabi_vgpu_ui4_surface_clear_submit
 
 extern "C" fn trueos_cabi_vgpu_ui4_surface_clear_submit(device: u64, queue: u64, surface: u64, rgba8_srgb: u32, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1463
+Declaration: crates/trueos-v/src/bp_abi.rs:1474
 
 
 ## trueos_cabi_vgpu_ui4_surface_discard
 
 extern "C" fn trueos_cabi_vgpu_ui4_surface_discard(device: u64, surface: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1462
+Declaration: crates/trueos-v/src/bp_abi.rs:1473
 
 
 ## trueos_cabi_vgpu_vvideo_create
 
 extern "C" fn trueos_cabi_vgpu_vvideo_create(device: u64, guest_va: u64, bytes: usize, usage: u32, out_buffer: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1532
+Declaration: crates/trueos-v/src/bp_abi.rs:1543
 
 
 ## trueos_cabi_vgpu_vvideo_flush
 
 extern "C" fn trueos_cabi_vgpu_vvideo_flush(device: u64, buffer: u64, offset: usize, bytes: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1539
+Declaration: crates/trueos-v/src/bp_abi.rs:1550
 
 
 ## trueos_cabi_vgpu_vvideo_invalidate
 
 extern "C" fn trueos_cabi_vgpu_vvideo_invalidate(device: u64, buffer: u64, offset: usize, bytes: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1545
+Declaration: crates/trueos-v/src/bp_abi.rs:1556
 
 
 ## trueos_cabi_vgpu_wait
 
 extern "C" fn trueos_cabi_vgpu_wait(device: u64, queue: u64, value: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1563
+Declaration: crates/trueos-v/src/bp_abi.rs:1574
