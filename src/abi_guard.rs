@@ -280,12 +280,26 @@ fn parse_contract_file(path: &Path) -> Result<BTreeMap<String, FunctionContract>
 }
 
 fn parse_contracts(source: &str) -> Result<BTreeMap<String, FunctionContract>, String> {
-    const PREFIX: &str = "pub fn trueos_cabi_";
+    const PREFIXES: &[&str] = &[
+        "pub fn trueos_cabi_",
+        "pub safe fn trueos_cabi_",
+        "pub unsafe fn trueos_cabi_",
+    ];
     let mut contracts = BTreeMap::new();
     let mut cursor = 0usize;
-    while let Some(relative_start) = source[cursor..].find(PREFIX) {
-        let start = cursor + relative_start;
-        let name_start = start + "pub fn ".len();
+    while cursor < source.len() {
+        let Some((start, prefix)) = PREFIXES
+            .iter()
+            .filter_map(|prefix| {
+                source[cursor..]
+                    .find(prefix)
+                    .map(|offset| (cursor + offset, *prefix))
+            })
+            .min_by_key(|(start, _)| *start)
+        else {
+            break;
+        };
+        let name_start = start + prefix.len() - "trueos_cabi_".len();
         let open = source[name_start..]
             .find('(')
             .map(|offset| name_start + offset)
@@ -492,6 +506,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn safe_and_unsafe_import_qualifiers_keep_the_same_contract() {
+        let safe = parse_contracts(
+            r#"unsafe extern "C" {
+                pub safe fn trueos_cabi_probe(value: u32) -> i32;
+                pub unsafe fn trueos_cabi_unsafe_probe(value: *const u8) -> i32;
+            }"#,
+        )
+        .unwrap();
+        let ordinary = parse_contracts(
+            r#"unsafe extern "C" {
+                pub fn trueos_cabi_probe(other: u32) -> i32;
+                pub fn trueos_cabi_unsafe_probe(other: *const u8) -> i32;
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(safe["trueos_cabi_probe"], ordinary["trueos_cabi_probe"]);
+        assert_eq!(
+            safe["trueos_cabi_unsafe_probe"],
+            ordinary["trueos_cabi_unsafe_probe"]
+        );
+    }
+
+    #[test]
+    fn safe_import_signature_hash_changes_with_argument_type() {
+        let old = parse_contracts(
+            "unsafe extern \"C\" { pub safe fn trueos_cabi_probe(value: u64) -> i32; }",
+        )
+        .unwrap();
+        let changed = parse_contracts(
+            "unsafe extern \"C\" { pub safe fn trueos_cabi_probe(value: u32) -> i32; }",
+        )
+        .unwrap();
+        assert_ne!(old["trueos_cabi_probe"], changed["trueos_cabi_probe"]);
     }
 
     #[test]
