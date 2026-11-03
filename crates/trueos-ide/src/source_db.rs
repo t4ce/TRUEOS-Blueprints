@@ -178,7 +178,9 @@ pub struct ImportResult {
 /// Build settings saved with a project, independent of its source revisions.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProjectBuildConfig {
-    pub compiler: crate::protocol::CompilerBackend,
+    #[serde(default)]
+    pub kind: crate::protocol::ProjectKind,
+    pub compiler: Option<crate::protocol::CompilerBackend>,
     pub entry: String,
 }
 
@@ -450,6 +452,9 @@ impl SourceDatabase {
     pub fn set_project_build_config(&mut self, project: &str, mut config: ProjectBuildConfig) -> Result<()> {
         let project = normalize_project(project)?;
         config.entry = normalize_path(&config.entry)?;
+        if (config.kind == crate::protocol::ProjectKind::Native) != config.compiler.is_some() {
+            return Err(SourceDbError::Integrity("Native projects require a compiler; HTML projects use preview".into()));
+        }
         let write = r(self.database.begin_write())?;
         {
             let mut projects = r(write.open_table(PROJECTS))?;
@@ -1060,6 +1065,16 @@ mod tests {
     }
 
     #[test]
+    fn existing_native_project_settings_remain_readable() {
+        let config: ProjectBuildConfig = serde_json::from_str(r#"{"compiler":"odin_son","entry":"main.odin"}"#).unwrap();
+        assert_eq!(config.kind, crate::protocol::ProjectKind::Native);
+        assert_eq!(config.compiler, Some(crate::protocol::CompilerBackend::OdinSon));
+        let config: ProjectBuildConfig = serde_json::from_str(r#"{"kind":"html","compiler":null,"entry":"index.html"}"#).unwrap();
+        assert_eq!(config.kind, crate::protocol::ProjectKind::Html);
+        assert_eq!(config.compiler, None);
+    }
+
+    #[test]
     fn build_config_upgrades_legacy_project_record_without_new_source_revision() {
         let t = Temp::new();
         let mut db = SourceDatabase::open(t.path()).unwrap();
@@ -1074,7 +1089,7 @@ mod tests {
         }
         write.commit().unwrap();
         assert_eq!(db.project_build_config("demo").unwrap(), None);
-        let config = ProjectBuildConfig { compiler: crate::protocol::CompilerBackend::OdinSon, entry: "src/app.odin".into() };
+        let config = ProjectBuildConfig { kind: crate::protocol::ProjectKind::Native, compiler: Some(crate::protocol::CompilerBackend::OdinSon), entry: "src/app.odin".into() };
         db.set_project_build_config("demo", config.clone()).unwrap();
         assert_eq!(db.get("demo", None).unwrap().unwrap().revision.id, revision.id);
         assert!(db.set_project_build_config("demo", ProjectBuildConfig { entry: "../outside".into(), ..config.clone() }).is_err());

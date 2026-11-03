@@ -5,6 +5,7 @@
 extern crate alloc;
 
 pub mod protocol;
+pub mod html_preview;
 #[cfg(feature = "store")]
 pub mod workspace;
 

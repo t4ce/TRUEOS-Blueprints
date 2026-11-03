@@ -110,6 +110,7 @@ pub enum IdeResponse {
     Build { build: BuildState },
     Started { build_id: u64 },
     LaunchQueued { archive: String },
+    Preview { url: Option<String> },
     Cancelled {},
     Error { code: String, message: String },
 }
@@ -127,13 +128,17 @@ impl IdeResponse {
 pub struct WorkspaceContext {
     pub project: String,
     pub database: String,
-    pub compiler: CompilerBackend,
+    #[serde(default)]
+    pub kind: ProjectKind,
+    pub compiler: Option<CompilerBackend>,
     pub entry: String,
     pub revision_id: i64,
     pub active_file: Option<String>,
     pub open_files: Vec<String>,
     pub selected_text: String,
     pub build: BuildState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_reference: Option<PlatformApiContext>,
 }
@@ -211,6 +216,14 @@ pub enum BuildState {
 pub enum CompilerBackend {
     OdinSon,
     RustcMin,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectKind {
+    #[default]
+    Native,
+    Html,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
