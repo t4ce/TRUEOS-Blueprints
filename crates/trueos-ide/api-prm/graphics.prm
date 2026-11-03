@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/33bc97cc1192ae9d
-Reference source fingerprint: 818d54de7c015c647176ecb3791c43b02c8c9d5634b1fd07f89bc05de90ecf11
+API PRM trueos-blueprint-api/1/8208b6124bc0915f
+Reference source fingerprint: cc76b9c1f987eaf1234989d8f86959538f5dcfea5fc0293da22b902b395ad342
 
 
 # graphics
@@ -17,42 +17,42 @@ Odin SON uses the single intel_xelp backend. --gpu-xelp emits complete SIMD8 ker
 
 extern "C" fn trueos_cabi_ui4_context_menu_dynamic_v2(window_id: u32, serial: u64, entries: *const TrueosUi4ContextMenuEntry, entry_count: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:884
+Declaration: crates/trueos-v/src/bp_abi.rs:886
 
 
 ## trueos_cabi_ui4_context_menu_event_take
 
 extern "C" fn trueos_cabi_ui4_context_menu_event_take(window_id: u32, out: *mut TrueosUi4ContextMenuEvent) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:899
+Declaration: crates/trueos-v/src/bp_abi.rs:901
 
 
 ## trueos_cabi_ui4_context_menu_event_take_v2
 
 extern "C" fn trueos_cabi_ui4_context_menu_event_take_v2(window_id: u32, out: *mut TrueosUi4ContextMenuEventV2) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:890
+Declaration: crates/trueos-v/src/bp_abi.rs:892
 
 
 ## trueos_cabi_ui4_context_menu_register
 
 extern "C" fn trueos_cabi_ui4_context_menu_register(window_id: u32, entries: *const TrueosUi4ContextMenuEntry, entry_count: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:894
+Declaration: crates/trueos-v/src/bp_abi.rs:896
 
 
 ## trueos_cabi_ui4_display_close_v1
 
 extern "C" fn trueos_cabi_ui4_display_close_v1(connection: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:911
+Declaration: crates/trueos-v/src/bp_abi.rs:913
 
 
 ## trueos_cabi_ui4_display_open_v1
 
 extern "C" fn trueos_cabi_ui4_display_open_v1() -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:908
+Declaration: crates/trueos-v/src/bp_abi.rs:910
 
 Open an owner-scoped UI4 connection; zero indicates failure.
 
@@ -61,7 +61,7 @@ Open an owner-scoped UI4 connection; zero indicates failure.
 
 extern "C" fn trueos_cabi_ui4_display_retain_v1(connection: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:910
+Declaration: crates/trueos-v/src/bp_abi.rs:912
 
 Retain/release a live connection. Return zero on success, negative on error.
 
@@ -70,7 +70,7 @@ Retain/release a live connection. Return zero on success, negative on error.
 
 extern "C" fn trueos_cabi_ui4_display_validate_window_v1(connection: u64, window: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:913
+Declaration: crates/trueos-v/src/bp_abi.rs:915
 
 Validate that the live connection and scene window belong to the caller.
 
@@ -100,14 +100,14 @@ Declaration: crates/trueos-v/src/bp_abi.rs:851
 
 extern "C" fn trueos_cabi_ui4_hull_image_release_v1(window_id: u32, ticket: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:982
+Declaration: crates/trueos-v/src/bp_abi.rs:984
 
 
 ## trueos_cabi_ui4_hull_image_request_v1
 
 extern "C" fn trueos_cabi_ui4_hull_image_request_v1(window_id: u32, url: *const u8, url_len: usize, cache_root: *const u8, cache_root_len: usize, page_host: *const u8, page_host_len: usize, width: u32, height: u32, generation: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:965
+Declaration: crates/trueos-v/src/bp_abi.rs:967
 
 Queue an owner/window scoped image; positive result is the request ticket.
 
@@ -116,21 +116,21 @@ Queue an owner/window scoped image; positive result is the request ticket.
 
 extern "C" fn trueos_cabi_ui4_hull_image_reset_v1(window_id: u32, generation: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:983
+Declaration: crates/trueos-v/src/bp_abi.rs:985
 
 
 ## trueos_cabi_ui4_hull_image_status_v1
 
 extern "C" fn trueos_cabi_ui4_hull_image_status_v1(window_id: u32, ticket: u32, out: *mut TrueosUi4HullImageInfoV1) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:977
+Declaration: crates/trueos-v/src/bp_abi.rs:979
 
 
 ## trueos_cabi_ui4_hull_text_runs_v1
 
 extern "C" fn trueos_cabi_ui4_hull_text_runs_v1(window_id: u32, runs: *const TrueosUi4HullTextRunV1, run_count: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:985
+Declaration: crates/trueos-v/src/bp_abi.rs:987
 
 
 ## trueos_cabi_ui4_scene_button_regions_v1
@@ -239,7 +239,7 @@ Declaration: crates/trueos-v/src/bp_abi.rs:808
 
 extern "C" fn trueos_cabi_ui4_scene_frame_resize(window_id: u32, width: u32, height: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:936
+Declaration: crates/trueos-v/src/bp_abi.rs:938
 
 
 ## trueos_cabi_ui4_scene_frame_set_arc
@@ -290,7 +290,16 @@ Declaration: crates/trueos-v/src/bp_abi.rs:778
 
 extern "C" fn trueos_cabi_ui4_scene_frame_write_opaque_rgba8(window_id: u32, rgba_ptr: *const u8, rgba_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:937
+Declaration: crates/trueos-v/src/bp_abi.rs:939
+
+
+## trueos_cabi_ui4_scene_hover_regions_v1
+
+extern "C" fn trueos_cabi_ui4_scene_hover_regions_v1(window_id: u32, regions: *const TrueosUi4ButtonRegionV1, count: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:869
+
+Separate hover-only list; border_rgba supplies the ink color. Same geometry wire layout.
 
 
 ## trueos_cabi_ui4_scene_input_routes
@@ -304,14 +313,14 @@ Declaration: crates/trueos-v/src/bp_abi.rs:796
 
 extern "C" fn trueos_cabi_ui4_scene_keyboard_event_take(window_id: u32, out: *mut TrueosKeyboardOutputEvent) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:903
+Declaration: crates/trueos-v/src/bp_abi.rs:905
 
 
 ## trueos_cabi_ui4_scene_keyboard_event_take_v1
 
 extern "C" fn trueos_cabi_ui4_scene_keyboard_event_take_v1(window_id: u32, out: *mut TrueosKeyboardOutputEvent) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:932
+Declaration: crates/trueos-v/src/bp_abi.rs:934
 
 
 ## trueos_cabi_ui4_scene_keyboard_state
@@ -325,7 +334,7 @@ Declaration: crates/trueos-v/src/bp_abi.rs:792
 
 extern "C" fn trueos_cabi_ui4_scene_native_compute_dispatch_v1(window_id: u32, inputs: *const u32, registers: u32, out: *mut u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1034
+Declaration: crates/trueos-v/src/bp_abi.rs:1036
 
 Run one uploaded complete SIMD8 kernel with 1..=8 input registers; out holds 8 u32 lanes.
 
@@ -334,7 +343,7 @@ Run one uploaded complete SIMD8 kernel with 1..=8 input registers; out holds 8 u
 
 extern "C" fn trueos_cabi_ui4_scene_native_compute_fields_render_v1(window_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1054
+Declaration: crates/trueos-v/src/bp_abi.rs:1056
 
 The uploaded SIMD8 shader receives fields in r1..r6 and returns packed 24-bit RGB as f32.
 
@@ -343,7 +352,7 @@ The uploaded SIMD8 shader receives fields in r1..r6 and returns packed 24-bit RG
 
 extern "C" fn trueos_cabi_ui4_scene_native_compute_fields_upload_v1(window_id: u32, offset: u32, total: u32, bytes: *const u8, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1050
+Declaration: crates/trueos-v/src/bp_abi.rs:1052
 
 Six planar 192x144 f32 fields, uploaded in sequential chunks of at most 2048 bytes.
 
@@ -352,14 +361,14 @@ Six planar 192x144 f32 fields, uploaded in sequential chunks of at most 2048 byt
 
 extern "C" fn trueos_cabi_ui4_scene_native_compute_render_v1(window_id: u32, origin_x: f32, origin_y: f32, step_x: f32, step_y: f32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1037
+Declaration: crates/trueos-v/src/bp_abi.rs:1039
 
 
 ## trueos_cabi_ui4_scene_native_compute_render_v2
 
 extern "C" fn trueos_cabi_ui4_scene_native_compute_render_v2(window_id: u32, params: *const f32, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1045
+Declaration: crates/trueos-v/src/bp_abi.rs:1047
 
 Ten f32 values: origin.xy, positive step.xy, six scalar uniforms; len must be 40 bytes.
 
@@ -368,7 +377,7 @@ Ten f32 values: origin.xy, positive step.xy, six scalar uniforms; len must be 40
 
 extern "C" fn trueos_cabi_ui4_scene_native_compute_upload_v1(window_id: u32, offset: u32, code_len: u32, bytes: *const u8, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1026
+Declaration: crates/trueos-v/src/bp_abi.rs:1028
 
 Experimental Xe-LP arithmetic body or complete SIMD8 kernel; odin-native-gpgpu.
 
@@ -391,7 +400,7 @@ Declaration: crates/trueos-v/src/bp_abi.rs:771
 
 extern "C" fn trueos_cabi_ui4_scene_particle_craft_render(window_id: u32, params: *const TrueosUi4ParticleCraftParamsV1) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1008
+Declaration: crates/trueos-v/src/bp_abi.rs:1010
 
 
 ## trueos_cabi_ui4_scene_physical_extent_v1
@@ -405,7 +414,7 @@ Declaration: crates/trueos-v/src/bp_abi.rs:781
 
 extern "C" fn trueos_cabi_ui4_scene_pointer_event_take(window_id: u32, out: *mut TrueosUi4PointerEvent) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:880
+Declaration: crates/trueos-v/src/bp_abi.rs:882
 
 
 ## trueos_cabi_ui4_scene_register_cursor_image_v1
@@ -426,35 +435,35 @@ Declaration: crates/trueos-v/src/bp_abi.rs:773
 
 extern "C" fn trueos_cabi_ui4_scene_select_cursor_image_v1(window_id: u32, id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:868
+Declaration: crates/trueos-v/src/bp_abi.rs:870
 
 
 ## trueos_cabi_ui4_scene_set_center_snapped_mouse
 
 extern "C" fn trueos_cabi_ui4_scene_set_center_snapped_mouse(window_id: u32, enabled: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:879
+Declaration: crates/trueos-v/src/bp_abi.rs:881
 
 
 ## trueos_cabi_ui4_scene_set_cursor_icon
 
 extern "C" fn trueos_cabi_ui4_scene_set_cursor_icon(window_id: u32, source: *const TrueosUi4CursorSource, icon: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:870
+Declaration: crates/trueos-v/src/bp_abi.rs:872
 
 
 ## trueos_cabi_ui4_scene_set_cursor_step
 
 extern "C" fn trueos_cabi_ui4_scene_set_cursor_step(window_id: u32, step: *const TrueosUi4CursorStep) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:875
+Declaration: crates/trueos-v/src/bp_abi.rs:877
 
 
 ## trueos_cabi_ui4_scene_set_custom_cursor
 
 extern "C" fn trueos_cabi_ui4_scene_set_custom_cursor(window_id: u32, enabled: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:869
+Declaration: crates/trueos-v/src/bp_abi.rs:871
 
 
 ## trueos_cabi_ui4_scene_set_display_bottom_color
@@ -479,14 +488,14 @@ Program the shared primary display gamma LUT from a 3×256 RGB u16 ramp.
 
 extern "C" fn trueos_cabi_ui4_scene_shadertoy_render(window_id: u32, params: *const TrueosUi4ShadertoyParamsV1) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1021
+Declaration: crates/trueos-v/src/bp_abi.rs:1023
 
 
 ## trueos_cabi_ui4_scene_shadertoy_upload_v1
 
 extern "C" fn trueos_cabi_ui4_scene_shadertoy_upload_v1(window_id: u32, shader_id: u32, offset: u32, package_len: u32, bytes: *const u8, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1013
+Declaration: crates/trueos-v/src/bp_abi.rs:1015
 
 Bounded (1..=2048 bytes), ordered package upload; final chunk authenticates.
 
@@ -495,84 +504,84 @@ Bounded (1..=2048 bytes), ordered package upload; final chunk authenticates.
 
 extern "C" fn trueos_cabi_ui4_scene_skybox_register_kernel(window_id: u32, package_len: u32, offset: u32, bytes: *const u8, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:997
+Declaration: crates/trueos-v/src/bp_abi.rs:999
 
 
 ## trueos_cabi_ui4_scene_skybox_render_rgb565
 
 extern "C" fn trueos_cabi_ui4_scene_skybox_render_rgb565(window_id: u32, params: *const TrueosUi4SkyboxRenderParams) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1004
+Declaration: crates/trueos-v/src/bp_abi.rs:1006
 
 
 ## trueos_cabi_ui4_scene_skybox_upload_rgb565
 
 extern "C" fn trueos_cabi_ui4_scene_skybox_upload_rgb565(window_id: u32, width: u32, height: u32, data_ptr: *const u8, data_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:990
+Declaration: crates/trueos-v/src/bp_abi.rs:992
 
 
 ## trueos_cabi_ui4_scene_sprite_frame_begin
 
 extern "C" fn trueos_cabi_ui4_scene_sprite_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:950
+Declaration: crates/trueos-v/src/bp_abi.rs:952
 
 
 ## trueos_cabi_ui4_scene_sprite_frame_begin_region_v1
 
 extern "C" fn trueos_cabi_ui4_scene_sprite_frame_begin_region_v1(window_id: u32, x: u32, y: u32, width: u32, height: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:951
+Declaration: crates/trueos-v/src/bp_abi.rs:953
 
 
 ## trueos_cabi_ui4_scene_sprite_quads
 
 extern "C" fn trueos_cabi_ui4_scene_sprite_quads(window_id: u32, quads: *const TrueosUi4SpriteQuad, quad_count: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:959
+Declaration: crates/trueos-v/src/bp_abi.rs:961
 
 
 ## trueos_cabi_ui4_scene_sprite_upload_rgba8
 
 extern "C" fn trueos_cabi_ui4_scene_sprite_upload_rgba8(window_id: u32, sprite_id: u32, width: u32, height: u32, data_ptr: *const u8, data_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:942
+Declaration: crates/trueos-v/src/bp_abi.rs:944
 
 
 ## trueos_cabi_ui4_scene_visual_frame_begin
 
 extern "C" fn trueos_cabi_ui4_scene_visual_frame_begin(window_id: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:958
+Declaration: crates/trueos-v/src/bp_abi.rs:960
 
 
 ## trueos_cabi_ui4_scene_window_state_get_v1
 
 extern "C" fn trueos_cabi_ui4_scene_window_state_get_v1(window_id: u32, out: *mut TrueosUi4WindowStateV1) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:914
+Declaration: crates/trueos-v/src/bp_abi.rs:916
 
 
 ## trueos_cabi_ui4_scene_window_state_set_v1
 
 extern "C" fn trueos_cabi_ui4_scene_window_state_set_v1(window_id: u32, state: *const TrueosUi4WindowStateV1) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:918
+Declaration: crates/trueos-v/src/bp_abi.rs:920
 
 
 ## trueos_cabi_ui4_scene_window_title_get_v1
 
 extern "C" fn trueos_cabi_ui4_scene_window_title_get_v1(window_id: u32, out: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:922
+Declaration: crates/trueos-v/src/bp_abi.rs:924
 
 
 ## trueos_cabi_ui4_scene_window_title_set_v1
 
 extern "C" fn trueos_cabi_ui4_scene_window_title_set_v1(window_id: u32, bytes: *const u8, len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:927
+Declaration: crates/trueos-v/src/bp_abi.rs:929
 
 
 ## trueos_cabi_ui4_solara_frame_begin
@@ -628,140 +637,140 @@ Declaration: crates/trueos-v/src/bp_abi.rs:686
 
 extern "C" fn trueos_cabi_vgpu_buffer_create(device: u64, bytes: usize, usage: u32, out_buffer: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1423
+Declaration: crates/trueos-v/src/bp_abi.rs:1425
 
 
 ## trueos_cabi_vgpu_buffer_destroy
 
 extern "C" fn trueos_cabi_vgpu_buffer_destroy(device: u64, buffer: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1429
+Declaration: crates/trueos-v/src/bp_abi.rs:1431
 
 
 ## trueos_cabi_vgpu_buffer_info
 
 extern "C" fn trueos_cabi_vgpu_buffer_info(device: u64, buffer: u64, out_info: *mut crate::vgpu::BufferInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1444
+Declaration: crates/trueos-v/src/bp_abi.rs:1446
 
 
 ## trueos_cabi_vgpu_buffer_read
 
 extern "C" fn trueos_cabi_vgpu_buffer_read(device: u64, buffer: u64, offset: usize, out: *mut u8, out_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1437
+Declaration: crates/trueos-v/src/bp_abi.rs:1439
 
 
 ## trueos_cabi_vgpu_buffer_write
 
 extern "C" fn trueos_cabi_vgpu_buffer_write(device: u64, buffer: u64, offset: usize, data: *const u8, data_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1430
+Declaration: crates/trueos-v/src/bp_abi.rs:1432
 
 
 ## trueos_cabi_vgpu_close
 
 extern "C" fn trueos_cabi_vgpu_close(device: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1416
+Declaration: crates/trueos-v/src/bp_abi.rs:1418
 
 
 ## trueos_cabi_vgpu_device_diagnostics
 
 extern "C" fn trueos_cabi_vgpu_device_diagnostics(device: u64, out: *mut crate::vgpu::DeviceDiagnostics) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1419
+Declaration: crates/trueos-v/src/bp_abi.rs:1421
 
 
 ## trueos_cabi_vgpu_device_info
 
 extern "C" fn trueos_cabi_vgpu_device_info(device: u64, out_info: *mut crate::vgpu::DeviceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1417
+Declaration: crates/trueos-v/src/bp_abi.rs:1419
 
 
 ## trueos_cabi_vgpu_offscreen_indexed_batch_v1
 
 extern "C" fn trueos_cabi_vgpu_offscreen_indexed_batch_v1(device: u64, queue: u64, request: *const crate::vgpu::OffscreenIndexedBatchV1, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1449
+Declaration: crates/trueos-v/src/bp_abi.rs:1451
 
 
 ## trueos_cabi_vgpu_open
 
 extern "C" fn trueos_cabi_vgpu_open(requested_caps: u64, out_device: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1407
+Declaration: crates/trueos-v/src/bp_abi.rs:1409
 
 
 ## trueos_cabi_vgpu_queue_create
 
 extern "C" fn trueos_cabi_vgpu_queue_create(device: u64, class: u32, out_queue: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1549
+Declaration: crates/trueos-v/src/bp_abi.rs:1551
 
 
 ## trueos_cabi_vgpu_queue_destroy
 
 extern "C" fn trueos_cabi_vgpu_queue_destroy(device: u64, queue: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1550
+Declaration: crates/trueos-v/src/bp_abi.rs:1552
 
 
 ## trueos_cabi_vgpu_render_pipeline_create
 
 extern "C" fn trueos_cabi_vgpu_render_pipeline_create(device: u64, shader: u64, vertex_stride: u32, position_offset: u32, out_pipeline: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1474
+Declaration: crates/trueos-v/src/bp_abi.rs:1476
 
 
 ## trueos_cabi_vgpu_render_pipeline_destroy
 
 extern "C" fn trueos_cabi_vgpu_render_pipeline_destroy(device: u64, pipeline: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1481
+Declaration: crates/trueos-v/src/bp_abi.rs:1483
 
 
 ## trueos_cabi_vgpu_retained_frame_submit
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmit, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1506
+Declaration: crates/trueos-v/src/bp_abi.rs:1508
 
 
 ## trueos_cabi_vgpu_retained_frame_submit_v2
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit_v2(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmitV2, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1512
+Declaration: crates/trueos-v/src/bp_abi.rs:1514
 
 
 ## trueos_cabi_vgpu_retained_frame_submit_v3
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit_v3(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmitV3, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1518
+Declaration: crates/trueos-v/src/bp_abi.rs:1520
 
 
 ## trueos_cabi_vgpu_retained_frame_submit_v4
 
 extern "C" fn trueos_cabi_vgpu_retained_frame_submit_v4(device: u64, queue: u64, submit: *const crate::vgpu::RetainedFrameSubmitV4, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1524
+Declaration: crates/trueos-v/src/bp_abi.rs:1526
 
 
 ## trueos_cabi_vgpu_retained_mesh_create
 
 extern "C" fn trueos_cabi_vgpu_retained_mesh_create(device: u64, descriptor: *const crate::vgpu::RetainedMeshDescriptor, out_mesh: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1500
+Declaration: crates/trueos-v/src/bp_abi.rs:1502
 
 
 ## trueos_cabi_vgpu_retained_mesh_destroy
 
 extern "C" fn trueos_cabi_vgpu_retained_mesh_destroy(device: u64, mesh: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1505
+Declaration: crates/trueos-v/src/bp_abi.rs:1507
 
 
 ## trueos_cabi_vgpu_retained_textured_frame_v1
@@ -775,102 +784,102 @@ Declaration: crates/trueos-v/src/bp_abi.rs:753
 
 extern "C" fn trueos_cabi_vgpu_scalar_f32_v1(device: u64, code: u64, bytes: usize, a: f32, b: f32, out: *mut f32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1408
+Declaration: crates/trueos-v/src/bp_abi.rs:1410
 
 
 ## trueos_cabi_vgpu_shader_module_create
 
 extern "C" fn trueos_cabi_vgpu_shader_module_create(device: u64, package_digest: u64, out_shader: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1468
+Declaration: crates/trueos-v/src/bp_abi.rs:1470
 
 
 ## trueos_cabi_vgpu_shader_module_destroy
 
 extern "C" fn trueos_cabi_vgpu_shader_module_destroy(device: u64, shader: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1473
+Declaration: crates/trueos-v/src/bp_abi.rs:1475
 
 
 ## trueos_cabi_vgpu_submit_control_nop
 
 extern "C" fn trueos_cabi_vgpu_submit_control_nop(device: u64, queue: u64, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1551
+Declaration: crates/trueos-v/src/bp_abi.rs:1553
 
 
 ## trueos_cabi_vgpu_timeline
 
 extern "C" fn trueos_cabi_vgpu_timeline(device: u64, queue: u64, out_status: *mut crate::vgpu::TimelineStatus) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1556
+Declaration: crates/trueos-v/src/bp_abi.rs:1558
 
 
 ## trueos_cabi_vgpu_ui4_indexed_batch_submit
 
 extern "C" fn trueos_cabi_vgpu_ui4_indexed_batch_submit(device: u64, queue: u64, batch: *const crate::vgpu::IndexedDrawBatch, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1488
+Declaration: crates/trueos-v/src/bp_abi.rs:1490
 
 
 ## trueos_cabi_vgpu_ui4_indexed_batch_submit_v2
 
 extern "C" fn trueos_cabi_vgpu_ui4_indexed_batch_submit_v2(device: u64, queue: u64, batch: *const crate::vgpu::IndexedDrawBatchV2, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1494
+Declaration: crates/trueos-v/src/bp_abi.rs:1496
 
 
 ## trueos_cabi_vgpu_ui4_indexed_submit
 
 extern "C" fn trueos_cabi_vgpu_ui4_indexed_submit(device: u64, queue: u64, draw: *const crate::vgpu::IndexedDraw, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1482
+Declaration: crates/trueos-v/src/bp_abi.rs:1484
 
 
 ## trueos_cabi_vgpu_ui4_surface_acquire
 
 extern "C" fn trueos_cabi_vgpu_ui4_surface_acquire(device: u64, window_id: u32, out: *mut crate::vgpu::SurfaceInfo) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1455
+Declaration: crates/trueos-v/src/bp_abi.rs:1457
 
 
 ## trueos_cabi_vgpu_ui4_surface_clear_submit
 
 extern "C" fn trueos_cabi_vgpu_ui4_surface_clear_submit(device: u64, queue: u64, surface: u64, rgba8_srgb: u32, out_point: *mut crate::vgpu::TimelinePoint) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1461
+Declaration: crates/trueos-v/src/bp_abi.rs:1463
 
 
 ## trueos_cabi_vgpu_ui4_surface_discard
 
 extern "C" fn trueos_cabi_vgpu_ui4_surface_discard(device: u64, surface: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1460
+Declaration: crates/trueos-v/src/bp_abi.rs:1462
 
 
 ## trueos_cabi_vgpu_vvideo_create
 
 extern "C" fn trueos_cabi_vgpu_vvideo_create(device: u64, guest_va: u64, bytes: usize, usage: u32, out_buffer: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1530
+Declaration: crates/trueos-v/src/bp_abi.rs:1532
 
 
 ## trueos_cabi_vgpu_vvideo_flush
 
 extern "C" fn trueos_cabi_vgpu_vvideo_flush(device: u64, buffer: u64, offset: usize, bytes: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1537
+Declaration: crates/trueos-v/src/bp_abi.rs:1539
 
 
 ## trueos_cabi_vgpu_vvideo_invalidate
 
 extern "C" fn trueos_cabi_vgpu_vvideo_invalidate(device: u64, buffer: u64, offset: usize, bytes: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1543
+Declaration: crates/trueos-v/src/bp_abi.rs:1545
 
 
 ## trueos_cabi_vgpu_wait
 
 extern "C" fn trueos_cabi_vgpu_wait(device: u64, queue: u64, value: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1561
+Declaration: crates/trueos-v/src/bp_abi.rs:1563
