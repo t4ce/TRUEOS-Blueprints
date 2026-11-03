@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/764cc51bd743f5c7
-Reference source fingerprint: ce6444de40cd3c6effb08d9be6da23a53dd3e4e4a1cd9dac9f8981d7a3b1c12b
+API PRM trueos-blueprint-api/1/33bc97cc1192ae9d
+Reference source fingerprint: 818d54de7c015c647176ecb3791c43b02c8c9d5634b1fd07f89bc05de90ecf11
 
 
 # logging
@@ -19,14 +19,14 @@ trueos_cabi_write uses stream1 stdout and2 stderr, accepting already prepared by
 
 extern "C" fn trueos_cabi_log(level: u32, target_ptr: *const u8, target_len: usize, message_ptr: *const u8, message_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1080
+Declaration: crates/trueos-v/src/bp_abi.rs:1086
 
 
 ## trueos_cabi_write
 
 extern "C" fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize) -> ();
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1079
+Declaration: crates/trueos-v/src/bp_abi.rs:1085
 
 
 # Logging wire constants
