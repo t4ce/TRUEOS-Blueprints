@@ -9,28 +9,16 @@ use alloc::{boxed::Box, vec::Vec};
 pub enum Asset {
     Logo,
     IntelGraphics,
-    LiveUpdate0way,
-    LiveUpdateNoway,
-    LiveUpdateNway,
 }
 
 /// Complete directly embedded image inventory; excludes firmware and derived views.
-pub const EMBEDDED: [Asset; 5] = [
-    Asset::Logo,
-    Asset::IntelGraphics,
-    Asset::LiveUpdate0way,
-    Asset::LiveUpdateNoway,
-    Asset::LiveUpdateNway,
-];
+pub const EMBEDDED: [Asset; 2] = [Asset::Logo, Asset::IntelGraphics];
 
 impl Asset {
     pub const fn source(self) -> &'static str {
         match self {
             Self::Logo => "kernel:logo",
             Self::IntelGraphics => "kernel:intel-graphics",
-            Self::LiveUpdate0way => "kernel:live-update-0way",
-            Self::LiveUpdateNoway => "kernel:live-update-noway",
-            Self::LiveUpdateNway => "kernel:live-update-nway",
         }
     }
 }
