@@ -33,18 +33,22 @@ This Blueprint implements the cooperative lifecycle boundary. It polls for
 and returns from that call only after `Resume`. It then logs the host-issued
 instance/lineage identity and reacquires a conflict-safe listener.
 
-An ordinary launch keeps the baseline single-app writable root:
+An ordinary launch selects container 0 at the existing writable root:
 
 ```text
 apps/hello_world_replicatable
 ```
 
-An explicitly named additional instance, for example
-`start new hello_world_replicatable DualBoot_Test`, receives:
+An explicitly named additional host launch, for example `DualBoot_Test`,
+receives a fresh container at:
 
 ```text
-apps/hello_world_replicatable/dualboot_test--<instance-guid>
+apps/hello_world_replicatable_dualboot_test--<instance-guid>
 ```
+
+A host request `BlueprintInstanceRequest::container("1")` selects the stable
+container `apps/hello_world_replicatable_1`. AppDB supplies the same application
+code for every container; each container has its own files and access grants.
 
 The VM checkpoint owns in-memory `LogicalState`; the platform does not copy
 application files into another instance root. A Blueprint that wants files in a

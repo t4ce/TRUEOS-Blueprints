@@ -1,5 +1,5 @@
 API PRM trueos-blueprint-api/1/20fba72c9d254262
-Reference source fingerprint: a8d0fc42c6a2bfa0567c57a89bba319a3c95489df217909eded9bb48adcafc24
+Reference source fingerprint: 204e8073fc227e799e3985dffa92e11521f44e7959cd144fb9c8e13f198cf754
 
 # Public C ABI data layouts
 Fields are in repr(C) order. This is not a packed serialization: honor native alignment, pointers, padding and array lengths. Raw-pointer mutability indicates direction; explicit lengths remain authoritative. Numeric byte offsets are not synthesized by rustdoc.
