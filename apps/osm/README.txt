@@ -11,7 +11,12 @@ Host preview: run cargo run from apps/osm; output is osm-demo.png.
 OSM_CACHE_DIR selects a persistent writable directory (default osm-tile-cache).
 OSM_TILE_URL selects an HTTPS raster tile server base URL, using /z/x/y.png.
 Only current viewport tiles are fetched. Cache is retained for seven days.
-Keep it between launches. Failed tiles leave uncovered white areas and stderr errors.
+Keep it between launches. Failed tiles leave uncovered white areas while the
+loader retries with exponential backoff from one to thirty seconds. Retries
+continue without navigation and stop when a tile leaves the current demand.
+Hardware logs identify fetch request/status/body or PNG decode failures and
+the next retry delay. Invalid disk PNGs are evicted, and HTTP errors or invalid
+downloaded PNGs are never written to the cache.
 Decoded RGBA tiles also live in a session-only REDB ImageDatabase from the
 trueos-redb RAM helper. LRU eviction limits it to 128 tiles (32 MiB pixels plus
 REDB overhead). RAM hits skip file I/O and PNG decoding; entries expire no later
@@ -66,11 +71,17 @@ Retirement evidence is sampled at Important, so the normal log profile admits
 
 Validation:
   cargo test --offline --target x86_64-unknown-linux-gnu \
-    --manifest-path apps/osm/Cargo.toml
+    --manifest-path apps/osm/tests/host/Cargo.toml
+The host harness compiles the actual app and presenter sources with upstream
+reqwest/hyper and no TLS backend; network fixtures use HTTP on localhost.
+It avoids the kernel-only imports in patched hyper on Linux. Production builds
+continue using the app manifest and the patched TLS client.
 Includes a deliberately pending tile future on the same Tokio executor while
 pan/zoom and timers continue, stale
 completion rejection, latest-position tile painting, zoom scaling, resize,
-footer clipping and world wrap. Host preview still waits for its final PNG.
+footer clipping and world wrap. Retry regressions cover transient PNG recovery
+without navigation, obsolete retry cancellation, and corrupt/HTTP error bodies
+never being retained as tiles. Host preview still waits for its final PNG.
 On-OS validation: pan/zoom while tiles arrive, maximize/restore and pan farther
 than one screen; movement should precede tile fills and white borders stay opaque.
 

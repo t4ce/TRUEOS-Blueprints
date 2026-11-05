@@ -1,0 +1,27 @@
+[package]
+name = "osm-host-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "osm-host-tests"
+path = "../../main.rs"
+
+[[test]]
+name = "presenter_retry"
+path = "../presenter_retry.rs"
+
+[dependencies]
+anyhow = "1.0"
+# Host fixtures use HTTP on localhost. Production retains its patched TLS client.
+reqwest = { version = "=0.13.3", default-features = false }
+tokio = { version = "=1.54.1", features = ["rt", "net", "time", "sync"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+font8x8 = "0.3"
+trueos-redb = { path = "../../../../crates/trueos-redb", features = ["std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[workspace]

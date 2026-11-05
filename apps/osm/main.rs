@@ -131,6 +131,9 @@ impl Tiles {
                             return Ok(image);
                         }
                     }
+                    // A corrupt or incorrectly sized cache entry must not
+                    // survive failed downloads and poison every later retry.
+                    std::fs::remove_file(path).context("discard invalid cached tile PNG")?;
                 }
             }
         }
@@ -138,13 +141,17 @@ impl Tiles {
             .client
             .get(format!("{}/{z}/{x}/{y}.png", self.base))
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .context("fetch tile request")?
+            .error_for_status()
+            .context("fetch tile HTTP status")?
             .bytes()
-            .await?;
+            .await
+            .context("fetch tile body")?;
         ensure!(bytes.len() <= 2 * 1024 * 1024, "tile too large");
-        let image =
-            image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)?.to_rgba8();
+        let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .context("decode tile PNG")?
+            .to_rgba8();
         ensure!(
             image.dimensions() == (256, 256),
             "unexpected tile dimensions"
@@ -331,10 +338,18 @@ fn apply_completions(
                         *discarded += 1;
                     }
                 }
-                Err(error) => eprintln!(
-                    "tile {}/{}/{}: {error:#}",
-                    completion.key.z, completion.key.x, completion.key.y
-                ),
+                Err(error) => {
+                    trueos::logl::log(
+                        trueos::logl::level::ERROR,
+                        format_args!(
+                            "osm: tile {}/{}/{} failed retry_ms={} error={error:#}",
+                            completion.key.z,
+                            completion.key.x,
+                            completion.key.y,
+                            completion.retry_after.unwrap_or_default().as_millis(),
+                        ),
+                    );
+                }
             },
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => return Ok(dirty),
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
@@ -348,6 +363,74 @@ fn apply_completions(
 mod tests {
     use super::*;
     use image::Rgba;
+    #[test]
+    fn corrupt_disk_and_http_error_bodies_are_not_retained_as_tiles() {
+        use std::io::{Read, Write};
+        let cache = std::env::temp_dir().join(format!(
+            "trueos-osm-corrupt-cache-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&cache).unwrap();
+        let path = cache.join("2-1-1.png");
+        std::fs::write(&path, b"old corrupt PNG").unwrap();
+        let pixels = RgbaImage::from_pixel(256, 256, Rgba([1, 2, 3, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        pixels.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let png = png.into_inner();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for (status, body) in [
+                ("503 Service Unavailable", b"<html>busy</html>".as_slice()),
+                ("200 OK", b"<html>not PNG</html>".as_slice()),
+                ("200 OK", png.as_slice()),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let len = stream.read(&mut buffer).unwrap();
+                    assert_ne!(len, 0);
+                    request.extend_from_slice(&buffer[..len]);
+                }
+                assert!(request.starts_with(b"GET /2/1/1.png HTTP/1.1\r\n"));
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+        let mut tiles = Tiles {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap(),
+            cache: Some(cache.clone()),
+            ram: ram_cache::RamCache::new().unwrap(),
+            base,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime.block_on(tiles.tile(2, 1, 1)).unwrap_err();
+        assert!(format!("{error:#}").contains("fetch tile HTTP status"));
+        assert!(!path.exists());
+        let error = runtime.block_on(tiles.tile(2, 1, 1)).unwrap_err();
+        assert!(format!("{error:#}").contains("decode tile PNG"));
+        assert!(!path.exists());
+        assert_eq!(runtime.block_on(tiles.tile(2, 1, 1)).unwrap(), pixels);
+        assert_eq!(image::open(&path).unwrap().to_rgba8(), pixels);
+        server.join().unwrap();
+        std::fs::remove_dir_all(cache).unwrap();
+    }
+
     #[test]
     fn warmed_render_reuses_decoded_ram_tiles_after_disk_removal() {
         let path =
