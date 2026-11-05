@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/ac72af88560d035d
-Reference source fingerprint: 2aca25589123f785dfce9691987bffd620cc80b1d728b1cdd9a0cd53666cb19f
+API PRM trueos-blueprint-api/1/9c736482369b8dc9
+Reference source fingerprint: 8f6e18cf107162878f2af5e3d6a7fd6486afa960a389c21105063a047ea1efb3
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
@@ -164,6 +164,7 @@ trueos_cabi_mouse_motion_submit -> services.prm
 trueos_cabi_mouse_motion_submit_json -> services.prm
 trueos_cabi_mouse_poll -> services.prm
 trueos_cabi_net_fetch_bytes_discard -> services.prm
+trueos_cabi_net_fetch_bytes_final_url -> services.prm
 trueos_cabi_net_fetch_bytes_read -> services.prm
 trueos_cabi_net_fetch_bytes_result_len -> services.prm
 trueos_cabi_net_fetch_bytes_start -> services.prm
