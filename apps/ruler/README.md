@@ -39,6 +39,8 @@ The display's independent horizontal and vertical physical scales are applied
 after rotation, so the markings retain their distances even when the reported
 pixel density differs between axes. Length and radius are trimmed to the display
 bounds without stretching the scale.
+Docking centers the instrument inside the requested frame, leaving transparent
+margins instead of stretching its measurements.
 
 Generate a standalone SVG preview on the development host:
 

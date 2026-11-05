@@ -128,6 +128,16 @@ pub struct View {
 }
 
 impl View {
+    /// Accept a UI4 backing size without scaling the physical instrument.
+    pub fn with_canvas(self, width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            center: Point::new(width as f32 * 0.5, height as f32 * 0.5),
+            ..self
+        }
+    }
+
     pub fn project(&self, mm: Point) -> Point {
         let (sin, cos) = (libm::sinf(self.angle), libm::cosf(self.angle));
         Point::new(

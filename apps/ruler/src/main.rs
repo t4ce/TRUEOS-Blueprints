@@ -69,24 +69,46 @@ fn run() -> Result<(), Error> {
     );
 
     let mut gesture: Option<Gesture> = None;
+    let mut canvas = None;
+    let mut canvas_resize_pending = false;
     let mut dirty = true;
     let mut display_check = 0u32;
     loop {
         // No event handling or resize can acquire a second buffer while paint
         // is retrying publication of the current completed lease.
         if dirty {
-            let pivot = match gesture {
-                Some(drag) => drag.pivot,
-                None => screen_pivot(&frame, &view)?,
+            let pivot = if canvas_resize_pending {
+                // Position reports the broker's new logical target while its
+                // old pixels are still held for this exact resize request.
+                // Center the physical tool inside that target, without moving
+                // the OS-selected top-left to preserve the previous center.
+                let (x, y) = retry(|| frame.position())?;
+                let (width, height) = canvas.ok_or(Error::InvalidState)?;
+                Point::new(
+                    x as f32 + width as f32 * 0.5,
+                    y as f32 + height as f32 * 0.5,
+                )
+            } else {
+                match gesture {
+                    Some(drag) => drag.pivot,
+                    None => screen_pivot(&frame, &view)?,
+                }
             };
-            paint(&mut frame, &ruler, &mut view, pivot)?;
+            paint(&mut frame, &ruler, &mut view, pivot, canvas)?;
+            canvas_resize_pending = false;
             dirty = false;
         }
 
         match frame.take_resize_event() {
             Ok(Some(event)) => {
+                // A broker resize must be acknowledged at its exact extent.
+                // Keep this canvas for later edits; changing the physical span
+                // only changes the ruler drawn inside these transparent bounds.
+                canvas = Some((event.width, event.height));
+                canvas_resize_pending = true;
                 limits = bounded_extent((event.width.min(output.0), event.height.min(output.1)));
                 ruler.fit_limits(limits.0, limits.1);
+                gesture = None;
                 dirty = true;
             }
             Ok(None) | Err(Error::Busy) => {}
@@ -219,7 +241,10 @@ fn run() -> Result<(), Error> {
             if next_output != output || next_physical != physical {
                 output = next_output;
                 physical = next_physical;
-                limits = bounded_extent(output);
+                limits = bounded_extent(match canvas {
+                    Some((width, height)) => (width.min(output.0), height.min(output.1)),
+                    None => output,
+                });
                 ruler.refresh_metrics(physical_metrics(physical)?);
                 ruler.fit_limits(limits.0, limits.1);
                 gesture = None;
@@ -247,8 +272,17 @@ fn screen_pivot(frame: &Frame, view: &View) -> Result<Point, Error> {
     ))
 }
 
-fn paint(frame: &mut Frame, ruler: &Ruler, previous: &mut View, pivot: Point) -> Result<(), Error> {
-    let view = ruler.view();
+fn paint(
+    frame: &mut Frame,
+    ruler: &Ruler,
+    previous: &mut View,
+    pivot: Point,
+    canvas: Option<(u32, u32)>,
+) -> Result<(), Error> {
+    let view = match canvas {
+        Some((width, height)) => ruler.view().with_canvas(width, height),
+        None => ruler.view(),
+    };
     if view.width > MAX_WIDTH || view.height > MAX_HEIGHT {
         return Err(Error::Invalid);
     }

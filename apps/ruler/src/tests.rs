@@ -363,3 +363,33 @@ fn compact_high_dpi_desktop_still_respects_frame_limits() {
         }
     }
 }
+
+#[test]
+fn docked_canvas_accepts_exact_extent_without_stretching_physical_marks() {
+    let mut ruler = ruler();
+    ruler.set_angle(0.64, false);
+    let natural = ruler.view();
+    for (width, height) in [(1280, 720), (640, 480), (1000, 1000)] {
+        ruler.fit_limits(width, height);
+        let view = ruler.view().with_canvas(width, height);
+        assert_eq!((view.width, view.height), (width, height));
+        assert_eq!(
+            view.center,
+            Point::new(width as f32 * 0.5, height as f32 * 0.5)
+        );
+        assert_eq!(view.metrics, natural.metrics);
+        let labels = scale_labels(&ruler.scene(&view), &view, -1.0);
+        let zero = labels.iter().find(|(text, _)| text == "0").unwrap().1;
+        let one = labels.iter().find(|(text, _)| text == "1").unwrap().1;
+        near(one - zero, 10.0, 0.0001);
+        near(
+            physical_distance(
+                &view,
+                view.project(Point::new(0.0, 0.0)),
+                view.project(Point::new(25.4, 0.0)),
+            ),
+            25.4,
+            0.0001,
+        );
+    }
+}
