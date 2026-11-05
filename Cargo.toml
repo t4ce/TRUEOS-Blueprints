@@ -220,6 +220,7 @@ hyper-util = { path = "../TRUEOS-Buildins/vendor/hyper-util-0.1.20" }
 matchit = { path = "vendor/matchit-0.8.4" }
 mime = { path = "vendor/mime-0.3.17" }
 mio = { path = "../TRUEOS/vendor/mio-1.2.0" }
+parking_lot_core = { path = "../TRUEOS-Buildins/vendor/parking_lot_core-0.9.12" }
 quinn = { path = "vendor/quinn-0.11.9" }
 quinn-proto = { path = "vendor/quinn-proto-0.11.14" }
 quinn-udp = { path = "vendor/quinn-udp-0.5.14" }

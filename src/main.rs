@@ -134,6 +134,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("mime", "mime-0.3.17"),
     ("mio", "mio-1.2.0"),
     ("once_cell", "once_cell-1.21.4"),
+    ("parking_lot_core", "parking_lot_core-0.9.12"),
     ("quinn", "quinn-0.11.9"),
     ("quinn-proto", "quinn-proto-0.11.14"),
     ("quinn-udp", "quinn-udp-0.5.14"),
@@ -2237,6 +2238,10 @@ const SHARED_VENDOR_PATHS: &[(&str, &str)] = &[
     ("lazy_static-1.5.0", "../TRUEOS/vendor/lazy_static-1.5.0"),
     ("libc-0.2.186", "../TRUEOS-Buildins/vendor/libc-0.2.186"),
     ("mio-1.2.0", "../TRUEOS/vendor/mio-1.2.0"),
+    (
+        "parking_lot_core-0.9.12",
+        "../TRUEOS-Buildins/vendor/parking_lot_core-0.9.12",
+    ),
     (
         "raw-window-handle",
         "../TRUEOS-Buildins/vendor/raw-window-handle",
