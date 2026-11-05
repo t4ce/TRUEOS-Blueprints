@@ -3,6 +3,7 @@
     { "name": "codex-cli", "path": "../codex/codex-rs/cli" },
     "rebsky",
     "calculator",
+    "ruler",
     "bios",
     "websys",
     "share",

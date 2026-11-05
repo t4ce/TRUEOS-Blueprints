@@ -3224,6 +3224,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruler"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "trueos",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.40.1"
 source = "git+https://github.com/t4ce/rusqlite?rev=c5a9ada73515cd860f490f8bdd59f83acf5d8e3f#c5a9ada73515cd860f490f8bdd59f83acf5d8e3f"
