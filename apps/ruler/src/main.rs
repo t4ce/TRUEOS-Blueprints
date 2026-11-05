@@ -94,7 +94,14 @@ fn run() -> Result<(), Error> {
                     None => screen_pivot(&frame, &view)?,
                 }
             };
-            paint(&mut frame, &ruler, &mut view, pivot, canvas)?;
+            paint(
+                &mut frame,
+                &ruler,
+                &mut view,
+                pivot,
+                canvas,
+                canvas_resize_pending,
+            )?;
             canvas_resize_pending = false;
             dirty = false;
         }
@@ -110,6 +117,7 @@ fn run() -> Result<(), Error> {
                 ruler.fit_limits(limits.0, limits.1);
                 gesture = None;
                 dirty = true;
+                continue;
             }
             Ok(None) | Err(Error::Busy) => {}
             Err(error) => return Err(error),
@@ -278,6 +286,7 @@ fn paint(
     previous: &mut View,
     pivot: Point,
     canvas: Option<(u32, u32)>,
+    force_resize: bool,
 ) -> Result<(), Error> {
     let view = match canvas {
         Some((width, height)) => ruler.view().with_canvas(width, height),
@@ -286,7 +295,9 @@ fn paint(
     if view.width > MAX_WIDTH || view.height > MAX_HEIGHT {
         return Err(Error::Invalid);
     }
-    if (frame.width(), frame.height()) != (view.width, view.height) {
+    // A resize request can return to the current extent. Still stage a fresh
+    // replacement so the broker receives acknowledgement of that request.
+    if force_resize || (frame.width(), frame.height()) != (view.width, view.height) {
         retry(|| frame.resize(view.width, view.height))?;
     }
     let x = libm::roundf(pivot.x - view.center.x) as i32;
