@@ -19,6 +19,29 @@ const RANDFILE: &str = "openssl/crypto/rand/randfile.c";
 const COMMON_HEADER: &str = "openssl/include/internal/e_os.h";
 const BUILD_INFO: &str = "openssl/crypto/build.info";
 const COMPAT_SOURCE: &str = include_str!("openssl_trueos_compat.c");
+// These translation units do not include internal/e_os.h. Keep their original
+// crypto code intact while giving native utility calls the same real backend.
+const DIRECT_COMPAT: &[(&str, &str)] = &[
+    ("openssl/crypto/dh/dh_pmeth.c", "atoi("),
+    ("openssl/crypto/dsa/dsa_pmeth.c", "atoi("),
+    ("openssl/crypto/ec/ec_pmeth.c", "atoi("),
+    (
+        "openssl/crypto/err/err_blocks.c",
+        "#include \"err_local.h\"",
+    ),
+    ("openssl/crypto/err/err_save.c", "#include \"err_local.h\""),
+    ("openssl/crypto/evp/ctrl_params_translate.c", "atoi("),
+    ("openssl/crypto/o_time.c", "gmtime_r("),
+    ("openssl/crypto/rsa/rsa_pmeth.c", "atoi("),
+    ("openssl/crypto/ts/ts_conf.c", "atoi("),
+    (
+        "openssl/providers/implementations/signature/rsa_sig.c.in",
+        "atoi(",
+    ),
+    ("openssl/ssl/ssl_conf.c", "atoi("),
+];
+const DIRECT_COMPAT_INCLUDE: &str =
+    "#if defined(OPENSSL_SYS_TRUEOS)\n#include \"internal/trueos_compat.h\"\n#endif\n";
 const COMPAT_HEADER: &str = r#"/* Native utility calls use C-locale semantics, never libc Joker fallbacks. */
 #if defined(OPENSSL_SYS_TRUEOS)
 #ifndef OSSL_TRUEOS_COMPAT_H
@@ -51,6 +74,7 @@ int ossl_trueos_sscanf(const char *, const char *, ...);
 #undef gmtime_r
 #undef tolower
 #undef sscanf
+#undef atoi
 #define strcpy ossl_trueos_strcpy
 #define strdup ossl_trueos_strdup
 #define strncpy ossl_trueos_strncpy
@@ -61,6 +85,8 @@ int ossl_trueos_sscanf(const char *, const char *, ...);
 #define gmtime_r ossl_trueos_gmtime_r
 #define tolower ossl_trueos_tolower
 #define sscanf ossl_trueos_sscanf
+/* glibc's inline atoi captures its C23 strtol alias before macro remapping. */
+#define atoi(value) ((int)ossl_trueos_strtol((value), NULL, 10))
 #endif
 #endif
 "#;
@@ -174,7 +200,9 @@ pub(crate) fn stage(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
     let randfile = native_seed_file_errors(&read(RANDFILE)?)?;
     let header = read(COMMON_HEADER)?;
     let Some(header) = header.strip_suffix("\n#endif\n") else {
-        return Err(format!("missing original final include guard in {COMMON_HEADER}"));
+        return Err(format!(
+            "missing original final include guard in {COMMON_HEADER}"
+        ));
     };
     let header = format!("{header}\n#include \"internal/trueos_compat.h\"\n\n#endif\n");
     let build_info = replace_once(
@@ -183,6 +211,14 @@ pub(crate) fn stage(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
         "SOURCE[../libcrypto]=$CPUID_COMMON trueos_compat.c\n",
         BUILD_INFO,
     )?;
+    let mut direct_compat = Vec::with_capacity(DIRECT_COMPAT.len());
+    for &(file, expected_call) in DIRECT_COMPAT {
+        let original = read(file)?;
+        if !original.contains(expected_call) || original.contains("trueos_compat.h") {
+            return Err(format!("missing original native utility call in {file}"));
+        }
+        direct_compat.push((file, format!("{DIRECT_COMPAT_INCLUDE}{original}")));
+    }
     let staged = work_dir
         .join("source-overlay-crates")
         .join(format!("openssl-src-{RELEASE}-trueos"));
@@ -197,9 +233,16 @@ pub(crate) fn stage(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
         (RANDFILE, randfile),
         (COMMON_HEADER, header),
         (BUILD_INFO, build_info),
-        ("openssl/include/internal/trueos_compat.h", COMPAT_HEADER.to_owned()),
+        (
+            "openssl/include/internal/trueos_compat.h",
+            COMPAT_HEADER.to_owned(),
+        ),
         ("openssl/crypto/trueos_compat.c", COMPAT_SOURCE.to_owned()),
     ] {
+        std::fs::write(staged.join(file), contents)
+            .map_err(|error| format!("write {}: {error}", staged.join(file).display()))?;
+    }
+    for (file, contents) in direct_compat {
         std::fs::write(staged.join(file), contents)
             .map_err(|error| format!("write {}: {error}", staged.join(file).display()))?;
     }
@@ -244,8 +287,21 @@ mod tests {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let source = root.join("source");
-        for file in [BUILDER, THREADS, UID, DIRECTORY, GETENV, RANDFILE, COMMON_HEADER, BUILD_INFO] {
+        for file in [
+            BUILDER,
+            THREADS,
+            UID,
+            DIRECTORY,
+            GETENV,
+            RANDFILE,
+            COMMON_HEADER,
+            BUILD_INFO,
+        ] {
             fs::create_dir_all(source.join(file).parent().unwrap()).unwrap();
+        }
+        for &(file, call) in DIRECT_COMPAT {
+            fs::create_dir_all(source.join(file).parent().unwrap()).unwrap();
+            fs::write(source.join(file), format!("// original {call}\n")).unwrap();
         }
         fs::write(source.join("Cargo.toml"), format!("[package]\nname=\"openssl-src\"\nversion=\"{RELEASE}\"\n\n[features]\ndefault=[\"legacy\"]\nlegacy=[]\n")).unwrap();
         fs::write(
@@ -264,8 +320,16 @@ mod tests {
         )
         .unwrap();
         fs::write(source.join(RANDFILE), "int RAND_load_file(const char *file, long bytes) { return 1; }\nint RAND_write_file(const char *file) { return 1; }\nconst char *RAND_file_name(char *buf, size_t size) { return buf; }\n").unwrap();
-        fs::write(source.join(COMMON_HEADER), "#ifndef OSSL_E_OS_H\n#define OSSL_E_OS_H\n// original header\n#endif\n").unwrap();
-        fs::write(source.join(BUILD_INFO), "SOURCE[../libcrypto]=$CPUID_COMMON\n").unwrap();
+        fs::write(
+            source.join(COMMON_HEADER),
+            "#ifndef OSSL_E_OS_H\n#define OSSL_E_OS_H\n// original header\n#endif\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join(BUILD_INFO),
+            "SOURCE[../libcrypto]=$CPUID_COMMON\n",
+        )
+        .unwrap();
         fs::write(
             source.join(THREADS),
             format!("#include <assert.h>\n{RWLOCK}\n{ONCE}\n{COMPARE_ID}\n// retained\n"),
@@ -286,6 +350,15 @@ mod tests {
                 fs::read(source.join(file)).unwrap()
             );
         }
+        for &(file, _) in DIRECT_COMPAT {
+            assert_eq!(
+                fs::read_to_string(staged.join(file)).unwrap(),
+                format!(
+                    "{DIRECT_COMPAT_INCLUDE}{}",
+                    fs::read_to_string(source.join(file)).unwrap()
+                )
+            );
+        }
         let builder = fs::read_to_string(staged.join(BUILDER)).unwrap();
         assert_eq!(builder, format!("// before\n{NATIVE_TARGET}\n// after\n"));
         assert!(!builder.contains("no-threads\""));
@@ -295,8 +368,14 @@ mod tests {
         assert!(threads.contains(NATIVE_ONCE));
         assert!(threads.contains(NATIVE_COMPARE_ID));
         assert!(threads.contains(NATIVE_MUTEX));
-        assert_eq!(fs::read_to_string(staged.join("openssl/crypto/trueos_compat.c")).unwrap(), COMPAT_SOURCE);
-        assert_eq!(fs::read_to_string(staged.join("openssl/include/internal/trueos_compat.h")).unwrap(), COMPAT_HEADER);
+        assert_eq!(
+            fs::read_to_string(staged.join("openssl/crypto/trueos_compat.c")).unwrap(),
+            COMPAT_SOURCE
+        );
+        assert_eq!(
+            fs::read_to_string(staged.join("openssl/include/internal/trueos_compat.h")).unwrap(),
+            COMPAT_HEADER
+        );
         assert!(
             fs::read_to_string(source.join(THREADS))
                 .unwrap()
@@ -323,6 +402,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn native_once_initializes_once_and_publishes_to_concurrent_callers() {
         let (root, _) = fixture();
@@ -376,6 +456,47 @@ int main(void) {{
                 .status()
                 .unwrap()
                 .success()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_utilities_match_host_reference_and_reject_invalid_inputs() {
+        let (root, _) = fixture();
+        let source = root.join("compat.c");
+        let test = root.join("compat_test.c");
+        let executable = root.join("compat_test");
+        fs::write(&source, COMPAT_SOURCE).unwrap();
+        fs::write(&test, include_str!("openssl_trueos_compat_test.c")).unwrap();
+        let compile = std::process::Command::new("cc")
+            .args([
+                "-std=c11",
+                "-D_GNU_SOURCE",
+                "-DOPENSSL_SYS_TRUEOS",
+                "-fno-builtin",
+                "-fno-stack-protector",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+            ])
+            .arg(&source)
+            .arg(&test)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(
+            compile.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let result = std::process::Command::new(&executable).output().unwrap();
+        assert!(
+            result.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
         );
         fs::remove_dir_all(root).unwrap();
     }
