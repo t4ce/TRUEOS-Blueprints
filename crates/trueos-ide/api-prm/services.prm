@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/4de6d2794ad30328
-Reference source fingerprint: abd406e79c1d693f7aee6817b8e31a724e3731e602e6efacfd2e8e81d684e153
+API PRM trueos-blueprint-api/1/38528920dd3b965e
+Reference source fingerprint: 53f0969e8441189696a0d29075dbe6a850967ebe39f214c730cf611dc67fe889
 
 
 # services
@@ -235,6 +235,13 @@ extern "C" fn trueos_cabi_env_args_count() -> usize;
 Declaration: crates/trueos-v/src/bp_abi.rs:1739
 
 
+## trueos_cabi_env_current_dir
+
+extern "C" fn trueos_cabi_env_current_dir(out_ptr: *mut u8, out_cap: usize) -> isize;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:1770
+
+
 ## trueos_cabi_env_var
 
 extern "C" fn trueos_cabi_env_var(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
@@ -428,7 +435,7 @@ Declaration: crates/trueos-v/src/bp_abi.rs:720
 
 extern "C" fn trueos_cabi_img_open_v1(paths_ptr: *const u8, paths_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1797
+Declaration: crates/trueos-v/src/bp_abi.rs:1802
 
 
 ## trueos_cabi_input_combo_bind_gamepad
@@ -886,21 +893,21 @@ Declaration: crates/trueos-v/src/bp_abi.rs:1251
 
 extern "C" fn trueos_cabi_ntp_current_unix_seconds() -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1845
+Declaration: crates/trueos-v/src/bp_abi.rs:1850
 
 
 ## trueos_cabi_ntp_kernel_date_day_month_year
 
 extern "C" fn trueos_cabi_ntp_kernel_date_day_month_year(out_ptr: *mut u8, out_cap: usize) -> usize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1846
+Declaration: crates/trueos-v/src/bp_abi.rs:1851
 
 
 ## trueos_cabi_shell3_window_v1
 
 extern "C" fn trueos_cabi_shell3_window_v1(x: i32, y: i32, width: u32, height: u32) -> i64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1792
+Declaration: crates/trueos-v/src/bp_abi.rs:1797
 
 
 ## trueos_cabi_smtp_configure_account
@@ -1096,14 +1103,14 @@ Declaration: crates/trueos-v/src/bp_abi.rs:1355
 
 extern "C" fn trueos_cabi_vid_open_v1(path_ptr: *const u8, path_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1798
+Declaration: crates/trueos-v/src/bp_abi.rs:1803
 
 
 ## trueos_cabi_vid_open_v2
 
 extern "C" fn trueos_cabi_vid_open_v2(path_ptr: *const u8, path_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1799
+Declaration: crates/trueos-v/src/bp_abi.rs:1804
 
 
 ## trueos_cabi_vmedia_image_decode_begin

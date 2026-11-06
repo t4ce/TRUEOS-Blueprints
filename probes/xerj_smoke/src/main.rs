@@ -922,7 +922,75 @@ fn verify_persisted(engine: &mut OwnedChild, port: u16) -> io::Result<()> {
     )?)
 }
 
+#[cfg(target_os = "trueos")]
+fn crypto_roundtrip() -> Result<bool, openssl::error::ErrorStack> {
+    use openssl::{
+        asn1::Asn1Time,
+        ec::{EcGroup, EcKey},
+        hash::MessageDigest,
+        nid::Nid,
+        pkey::PKey,
+        sign::{Signer, Verifier},
+    };
+    let mut random = [0u8; 32];
+    openssl::rand::rand_bytes(&mut random)?;
+    if random.iter().all(|&byte| byte == 0) {
+        return Ok(false);
+    }
+    let digest = openssl::sha::sha256(b"abc");
+    let expected = [
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22,
+        0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00,
+        0x15, 0xad,
+    ];
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+    let key = PKey::from_ec_key(EcKey::generate(&group)?)?;
+    let mut signer = Signer::new(MessageDigest::sha256(), &key)?;
+    signer.update(b"TRUEOS native passkey crypto fixture")?;
+    let signature = signer.sign_to_vec()?;
+    let mut verifier = Verifier::new(MessageDigest::sha256(), &key)?;
+    verifier.update(b"TRUEOS native passkey crypto fixture")?;
+    let accepted = verifier.verify(&signature)?;
+    let mut verifier = Verifier::new(MessageDigest::sha256(), &key)?;
+    verifier.update(b"tampered TRUEOS native passkey crypto fixture")?;
+    let rejected = !verifier.verify(&signature)?;
+    let utc = Asn1Time::from_unix(1_234_567_890)?.to_string();
+    Ok(digest == expected && accepted && rejected && utc == "Feb 13 23:31:30 2009 GMT")
+}
+
+#[cfg(target_os = "trueos")]
+fn native_crypto() -> io::Result<()> {
+    // Concurrent callers exercise OpenSSL initialization, mutexes, native
+    // thread-local state, and the hardware entropy source. Print no key bytes.
+    let mut jobs = Vec::new();
+    for _ in 0..2 {
+        jobs.push(
+            thread::Builder::new()
+                .name("crypto-smoke".into())
+                .stack_size(4 * 1024 * 1024)
+                .spawn(crypto_roundtrip)?,
+        );
+    }
+    for job in jobs {
+        let result = job
+            .join()
+            .map_err(|_| error("native crypto worker panicked"))?
+            .map_err(|failure| error(format!("native crypto failed: {failure}")))?;
+        require(
+            result,
+            "native crypto signature/hash/time validation failed",
+        )?;
+    }
+    let result = crypto_roundtrip()
+        .map_err(|failure| error(format!("entry-thread crypto failed: {failure}")))?;
+    require(result, "entry-thread crypto validation failed")?;
+    mark("crypto_native");
+    Ok(())
+}
+
 fn run() -> io::Result<()> {
+    #[cfg(target_os = "trueos")]
+    native_crypto()?;
     require(
         cfg!(target_os = "trueos"),
         "run xerj-smoke.bp on TRUEOS; host checks do not launch XERJ",

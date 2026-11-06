@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/4de6d2794ad30328
-Reference source fingerprint: abd406e79c1d693f7aee6817b8e31a724e3731e602e6efacfd2e8e81d684e153
+API PRM trueos-blueprint-api/1/38528920dd3b965e
+Reference source fingerprint: 53f0969e8441189696a0d29075dbe6a850967ebe39f214c730cf611dc67fe889
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
@@ -83,6 +83,7 @@ trueos_cabi_dobby_ui4_type -> services.prm
 trueos_cabi_dobby_ui4_windows -> services.prm
 trueos_cabi_env_arg -> services.prm
 trueos_cabi_env_args_count -> services.prm
+trueos_cabi_env_current_dir -> services.prm
 trueos_cabi_env_var -> services.prm
 trueos_cabi_free -> memory.prm
 trueos_cabi_gamepad_control_idle -> services.prm
@@ -189,8 +190,12 @@ trueos_cabi_shell3_session_open_v1 -> terminal.prm
 trueos_cabi_shell3_session_read_v1 -> terminal.prm
 trueos_cabi_shell3_session_write_v1 -> terminal.prm
 trueos_cabi_shell3_window_v1 -> services.prm
+trueos_cabi_shell_attached_observe_v1 -> terminal.prm
 trueos_cabi_shell_attached_read_byte -> terminal.prm
+trueos_cabi_shell_attached_read_v1 -> terminal.prm
 trueos_cabi_shell_attached_retarget_slot -> terminal.prm
+trueos_cabi_shell_attached_wait_after_v1 -> terminal.prm
+trueos_cabi_shell_attached_wake_v1 -> terminal.prm
 trueos_cabi_shell_attached_write -> terminal.prm
 trueos_cabi_sleep_ms -> lifecycle.prm
 trueos_cabi_smtp_configure_account -> services.prm

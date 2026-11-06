@@ -21,6 +21,7 @@ mod legacy_tonic_overlay;
 mod lock_overlay_batch;
 mod native_fold;
 mod native_odin;
+mod openssl_overlay;
 mod publish;
 mod stack_capture;
 mod staging;
@@ -86,6 +87,7 @@ const BLUEPRINT_CATALOG_ROOT_ENV: &str = "TRUEOS_BLUEPRINT_CATALOG_ROOT";
 const BULK_EXCLUDED_APP_NAMES: &[&str] = &["rustc-min"];
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const TRUEOS_LIBC_VENDOR_DIR: &str = "libc-0.2.186";
+const TRUEOS_OPENSSL_SRC_VERSION: &str = "300.6.1+3.6.3";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 const BLUEPRINT_RUSTFLAGS: &[&str] =
@@ -2350,7 +2352,7 @@ fn source_overlay_patches(
         return Ok(out);
     }
 
-    ensure_overlay_registry_sources(app_dir, manifest_path, work_dir)?;
+    ensure_overlay_registry_sources(app_dir, manifest_path, work_dir, build_settings.flavor)?;
 
     // Crossterm 0.29, Rustix 1.1, and signal-hook-mio are checked-in
     // platform forks shared with TRUEOS and TRUEOS-Buildins. Crossterm 0.28 and Rustix 0.38 still need
@@ -2393,6 +2395,15 @@ fn source_overlay_patches(
         };
         out.retain(|patch| patch.name != *name);
         out.push(CratePatch::new(name, path));
+    }
+    if let Some(version) = std_openssl_registry_overlay_version(app_dir, build_settings.flavor)? {
+        let source_name = format!("openssl-src-{version}");
+        let source = find_crates_io_registry_crate(&source_name).ok_or_else(|| {
+            format!("missing crates.io source for {source_name}; run `cargo fetch` for the app once")
+        })?;
+        let path = openssl_overlay::stage(work_dir, &source)?;
+        out.retain(|patch| patch.name != "openssl-src");
+        out.push(CratePatch::new("openssl-src", path));
     }
     // Keep the resident/Codex pin unless an app already locks a newer h2.
     // Compile that release against std instead of forcing a downgrade across
@@ -2874,6 +2885,37 @@ fn h2_registry_overlay_versions(app_dir: &Path) -> Result<Vec<String>, String> {
     Ok(versions.into_iter().collect())
 }
 
+/// Adapt only the audited upstream OpenSSL release selected by this app.
+/// Multiple versions or sources remain the caller's graph, never a guessed
+/// crates.io replacement of a private, Git, or path fork.
+fn std_openssl_registry_overlay_version(
+    app_dir: &Path,
+    flavor: BuildFlavor,
+) -> Result<Option<&'static str>, String> {
+    if !matches!(flavor, BuildFlavor::TokioStd) {
+        return Ok(None);
+    }
+    let lock_path = app_lockfile(app_dir);
+    if !lock_path.is_file() {
+        return Ok(None);
+    }
+    let packages = lock_packages(&lock_path)?;
+    let candidates: Vec<_> = packages
+        .iter()
+        .filter(|package| package.name == "openssl-src")
+        .collect();
+    Ok(match candidates.as_slice() {
+        [package]
+            if package.version == TRUEOS_OPENSSL_SRC_VERSION
+                && package.source.as_deref()
+                    == Some("registry+https://github.com/rust-lang/crates.io-index") =>
+        {
+            Some(TRUEOS_OPENSSL_SRC_VERSION)
+        }
+        _ => None,
+    })
+}
+
 fn legacy_std_http_versions(app_dir: &Path) -> Result<BTreeMap<String, String>, String> {
     let lock_path = app_lockfile(app_dir);
     if !lock_path.is_file() {
@@ -3091,10 +3133,38 @@ fn find_cargo_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
     None
 }
 
+fn find_crates_io_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
+    let cargo_home = env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))?;
+    find_crates_io_registry_crate_in(&cargo_home, crate_dir_name)
+}
+
+fn find_crates_io_registry_crate_in(cargo_home: &Path, crate_dir_name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(cargo_home.join("registry/src")).ok()?;
+    for entry in entries.flatten() {
+        let registry = entry.file_name();
+        let Some(registry) = registry.to_str() else {
+            continue;
+        };
+        // Cargo uses the sparse registry host plus a hash; its older Git index
+        // uses this fixed canonical crates.io cache identity.
+        if !registry.starts_with("index.crates.io-") && registry != "github.com-1ecc6299db9ec823" {
+            continue;
+        }
+        let candidate = entry.path().join(crate_dir_name);
+        if candidate.join("Cargo.toml").is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn ensure_overlay_registry_sources(
     app_dir: &Path,
     manifest_path: &Path,
     work_dir: &Path,
+    flavor: BuildFlavor,
 ) -> Result<(), String> {
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
     let uses_crossterm_0_28 =
@@ -3143,6 +3213,12 @@ fn ensure_overlay_registry_sources(
             missing.push((crate_name, version, source_dir));
         }
     }
+    if let Some(version) = std_openssl_registry_overlay_version(app_dir, flavor)? {
+        let source_dir = format!("openssl-src-{version}");
+        if find_crates_io_registry_crate(&source_dir).is_none() {
+            missing.push(("openssl-src".to_owned(), version.to_owned(), source_dir));
+        }
+    }
     if missing.is_empty() {
         return Ok(());
     }
@@ -3179,8 +3255,14 @@ fn ensure_overlay_registry_sources(
 
     let still_missing = missing
         .into_iter()
-        .map(|(_, _, source_dir)| source_dir)
-        .filter(|source_dir| find_cargo_registry_crate(source_dir).is_none())
+        .filter_map(|(crate_name, _, source_dir)| {
+            let source = if crate_name == "openssl-src" {
+                find_crates_io_registry_crate(&source_dir)
+            } else {
+                find_cargo_registry_crate(&source_dir)
+            };
+            source.is_none().then_some(source_dir)
+        })
         .collect::<Vec<_>>();
     if still_missing.is_empty() {
         Ok(())
@@ -6589,6 +6671,81 @@ fn reset_dir(path: &Path) -> Result<(), String> {
         fs::remove_dir_all(path).map_err(io_string)?;
     }
     fs::create_dir_all(path).map_err(io_string)
+}
+
+#[cfg(test)]
+#[test]
+fn openssl_overlay_selection_preserves_flavor_version_and_source_boundaries() {
+    let root = env::temp_dir().join(format!("blueprint-openssl-selection-{}", std::process::id()));
+    reset_dir(&root).unwrap();
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"server\"\nversion = \"0.1.0\"\n").unwrap();
+    assert_eq!(std_openssl_registry_overlay_version(&root, BuildFlavor::TokioStd).unwrap(), None);
+    let official = "registry+https://github.com/rust-lang/crates.io-index";
+    let package = |name: &str, version: &str, source: Option<&str>| {
+        let mut text = format!("[[package]]\nname = {name:?}\nversion = {version:?}\n");
+        if let Some(source) = source {
+            text.push_str(&format!("source = {source:?}\n"));
+        }
+        text
+    };
+    for (name, version, source, expected) in [
+        ("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, Some(official), true),
+        ("other-app", TRUEOS_OPENSSL_SRC_VERSION, Some(official), false),
+        ("openssl-src", "300.5.4+3.5.4", Some(official), false),
+        ("openssl-src", "300.6.2+3.6.4", Some(official), false),
+        ("openssl-src", "300.6.1+3.6.2", Some(official), false),
+        ("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, Some("git+https://example.invalid/fork#1234"), false),
+        ("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, Some("registry+https://example.invalid/index"), false),
+        ("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, None, false),
+    ] {
+        fs::write(root.join("Cargo.lock"), package(name, version, source)).unwrap();
+        assert_eq!(
+            std_openssl_registry_overlay_version(&root, BuildFlavor::TokioStd).unwrap().is_some(),
+            expected,
+            "{name} {version} {source:?}",
+        );
+        assert_eq!(std_openssl_registry_overlay_version(&root, BuildFlavor::ThinNoStd).unwrap(), None);
+    }
+    let upstream = package("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, Some(official));
+    for other in [
+        package("openssl-src", "300.5.4+3.5.4", Some(official)),
+        package("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, Some("git+https://example.invalid/fork#1234")),
+        package("openssl-src", TRUEOS_OPENSSL_SRC_VERSION, None),
+    ] {
+        fs::write(root.join("Cargo.lock"), format!("{upstream}{other}")).unwrap();
+        assert_eq!(std_openssl_registry_overlay_version(&root, BuildFlavor::TokioStd).unwrap(), None);
+    }
+    fs::write(root.join("Cargo.lock"), format!("{upstream}\n[[patch.unused]]\nname = \"openssl-src\"\nversion = \"300.5.4+3.5.4\"\n")).unwrap();
+    assert_eq!(std_openssl_registry_overlay_version(&root, BuildFlavor::TokioStd).unwrap(), Some(TRUEOS_OPENSSL_SRC_VERSION));
+    let member = root.join("server");
+    fs::create_dir(&member).unwrap();
+    fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"server\"]\n").unwrap();
+    fs::write(member.join("Cargo.toml"), "[package]\nname = \"member\"\nversion = \"0.1.0\"\n").unwrap();
+    assert_eq!(std_openssl_registry_overlay_version(&member, BuildFlavor::TokioStd).unwrap(), Some(TRUEOS_OPENSSL_SRC_VERSION));
+    fs::write(member.join("Cargo.toml"), "[package]\nname = \"member\"\nversion = \"0.1.0\"\n[workspace]\n").unwrap();
+    fs::write(member.join("Cargo.lock"), package("other-app", "1.0.0", None)).unwrap();
+    assert_eq!(std_openssl_registry_overlay_version(&member, BuildFlavor::TokioStd).unwrap(), None);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(test)]
+#[test]
+fn openssl_overlay_registry_source_does_not_use_private_cache_copies() {
+    let root = env::temp_dir().join(format!("blueprint-openssl-registry-{}", std::process::id()));
+    reset_dir(&root).unwrap();
+    let source = format!("openssl-src-{TRUEOS_OPENSSL_SRC_VERSION}");
+    let private = root.join("registry/src/private.example-deadbeef").join(&source);
+    fs::create_dir_all(&private).unwrap();
+    fs::write(private.join("Cargo.toml"), "private copy").unwrap();
+    assert_eq!(find_crates_io_registry_crate_in(&root, &source), None);
+    for registry in ["index.crates.io-1949cf8c6b5b557f", "github.com-1ecc6299db9ec823"] {
+        let official = root.join("registry/src").join(registry).join(&source);
+        fs::create_dir_all(&official).unwrap();
+        fs::write(official.join("Cargo.toml"), "upstream copy").unwrap();
+        assert_eq!(find_crates_io_registry_crate_in(&root, &source), Some(official.clone()));
+        fs::remove_dir_all(official.parent().unwrap()).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(test)]

@@ -13,6 +13,11 @@ retains it for inspection, and reserves three unused consecutive loopback ports.
 It never reuses another run's data directory, indexes, namespaces, or listeners.
 
 Checks:
+  * Native OpenSSL on two worker threads and the entry thread: hardware entropy,
+    known SHA-256 digest, P-256 key generation/signing, valid signature acceptance,
+    tampered message rejection and a fixed UTC ASN.1 time. Requires working
+    RDSEED/RDRAND; the native OpenSSL provider fails if CPU entropy is unavailable.
+    No random bytes or key material are printed. Marker: stage=crypto_native.
   * Launch the full engine in a fresh child Hull, without external services.
   * Readiness on the ES-compatible and native REST listeners.
   * Write exactly one tiny Rust source and one Markdown file under this run's

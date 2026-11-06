@@ -21,6 +21,7 @@ tonic = { version = "=0.12.3", default-features = false, features = ["channel", 
 [target.'cfg(target_os = "trueos")'.dependencies]
 # Tower 0.4's IndexMap must explicitly use Cargo's native std runtime.
 indexmap_legacy = { package = "indexmap", version = "1.9.3", features = ["std"] }
+openssl = { version = "=0.10.81", features = ["vendored"] }
 
 [profile.release]
 panic = "abort"
