@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/9c736482369b8dc9
-Reference source fingerprint: 8f6e18cf107162878f2af5e3d6a7fd6486afa960a389c21105063a047ea1efb3
+API PRM trueos-blueprint-api/1/4de6d2794ad30328
+Reference source fingerprint: fa7c387a4bb7ddaf5ffcc610fb7dce44bd388da61a91cf578707b03615a977d2
 
 
 # services
@@ -225,21 +225,21 @@ Declaration: crates/trueos-v/src/bp_abi.rs:612
 
 extern "C" fn trueos_cabi_env_arg(index: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1741
+Declaration: crates/trueos-v/src/bp_abi.rs:1740
 
 
 ## trueos_cabi_env_args_count
 
 extern "C" fn trueos_cabi_env_args_count() -> usize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1740
+Declaration: crates/trueos-v/src/bp_abi.rs:1739
 
 
 ## trueos_cabi_env_var
 
 extern "C" fn trueos_cabi_env_var(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1742
+Declaration: crates/trueos-v/src/bp_abi.rs:1741
 
 
 ## trueos_cabi_gamepad_control_idle
@@ -428,7 +428,7 @@ Declaration: crates/trueos-v/src/bp_abi.rs:720
 
 extern "C" fn trueos_cabi_img_open_v1(paths_ptr: *const u8, paths_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1798
+Declaration: crates/trueos-v/src/bp_abi.rs:1797
 
 
 ## trueos_cabi_input_combo_bind_gamepad
@@ -582,35 +582,35 @@ Declaration: crates/trueos-v/src/bp_abi.rs:1624
 
 extern "C" fn trueos_cabi_lifecycle_checkpoint_restore(out_ptr: *mut u8, out_cap: usize, out_version: *mut u64) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1760
+Declaration: crates/trueos-v/src/bp_abi.rs:1759
 
 
 ## trueos_cabi_lifecycle_identity
 
 extern "C" fn trueos_cabi_lifecycle_identity(out: *mut TrueosLifecycleIdentity) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1765
+Declaration: crates/trueos-v/src/bp_abi.rs:1764
 
 
 ## trueos_cabi_lifecycle_poll
 
 extern "C" fn trueos_cabi_lifecycle_poll(out: *mut TrueosLifecyclePreparePause) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1752
+Declaration: crates/trueos-v/src/bp_abi.rs:1751
 
 
 ## trueos_cabi_lifecycle_ready
 
 extern "C" fn trueos_cabi_lifecycle_ready(operation: u64, checkpoint_version: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1753
+Declaration: crates/trueos-v/src/bp_abi.rs:1752
 
 
 ## trueos_cabi_lifecycle_ready_with_checkpoint
 
 extern "C" fn trueos_cabi_lifecycle_ready_with_checkpoint(operation: u64, checkpoint_version: u64, checkpoint_ptr: *const u8, checkpoint_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1754
+Declaration: crates/trueos-v/src/bp_abi.rs:1753
 
 
 ## trueos_cabi_lumen_checkpoint_read
@@ -886,28 +886,21 @@ Declaration: crates/trueos-v/src/bp_abi.rs:1251
 
 extern "C" fn trueos_cabi_ntp_current_unix_seconds() -> u64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1846
+Declaration: crates/trueos-v/src/bp_abi.rs:1845
 
 
 ## trueos_cabi_ntp_kernel_date_day_month_year
 
 extern "C" fn trueos_cabi_ntp_kernel_date_day_month_year(out_ptr: *mut u8, out_cap: usize) -> usize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1847
-
-
-## trueos_cabi_qjs_mouse_pop
-
-extern "C" fn trueos_cabi_qjs_mouse_pop(out: *mut TrueosMouseState) -> i32;
-
-Declaration: crates/trueos-v/src/bp_abi.rs:1738
+Declaration: crates/trueos-v/src/bp_abi.rs:1846
 
 
 ## trueos_cabi_shell3_window_v1
 
 extern "C" fn trueos_cabi_shell3_window_v1(x: i32, y: i32, width: u32, height: u32) -> i64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1793
+Declaration: crates/trueos-v/src/bp_abi.rs:1792
 
 
 ## trueos_cabi_smtp_configure_account
@@ -1103,14 +1096,14 @@ Declaration: crates/trueos-v/src/bp_abi.rs:1355
 
 extern "C" fn trueos_cabi_vid_open_v1(path_ptr: *const u8, path_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1799
+Declaration: crates/trueos-v/src/bp_abi.rs:1798
 
 
 ## trueos_cabi_vid_open_v2
 
 extern "C" fn trueos_cabi_vid_open_v2(path_ptr: *const u8, path_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1800
+Declaration: crates/trueos-v/src/bp_abi.rs:1799
 
 
 ## trueos_cabi_vmedia_image_decode_begin
