@@ -80,3 +80,35 @@ delegate_iterator! {
     Drain<'_, T> => T,
     impl<T: Send>
 }
+
+// Native consumers use both std collections and the existing hashbrown types.
+// Both adapters collect into the same Vec-backed iterators; Drain's marker
+// retains the exclusive loan for either source collection.
+#[cfg(target_os = "trueos")]
+mod native_std {
+    use super::*;
+    use std::collections::HashSet;
+
+    into_par_vec! {
+        HashSet<T, S> => IntoIter<T>,
+        impl<T: Send, S>
+    }
+
+    into_par_vec! {
+        &'a HashSet<T, S> => Iter<'a, T>,
+        impl<'a, T: Sync, S>
+    }
+
+    impl<'a, T: Send, S> ParallelDrainFull for &'a mut HashSet<T, S> {
+        type Iter = Drain<'a, T>;
+        type Item = T;
+
+        fn par_drain(self) -> Self::Iter {
+            let vec: Vec<_> = self.drain().collect();
+            Drain {
+                inner: vec.into_par_iter(),
+                marker: PhantomData,
+            }
+        }
+    }
+}

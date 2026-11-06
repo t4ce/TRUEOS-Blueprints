@@ -1,0 +1,60 @@
+XERJ native integration smoke probe
+
+Build from the TRUEOS-Blueprints repository:
+    cargo bp probes/xerj_smoke
+
+Run xerj-smoke through Shell3 on TRUEOS after installing both xerj.bp and
+xerj-smoke.bp in the regular AppDB. Optional arguments:
+    xerj-smoke [xerj.bp|/absolute/path/xerj.bp] [existing-state-parent]
+
+The default program is xerj.bp. The default state parent is the current
+TRUEOSFS directory. Each run creates its own xerj-smoke-<epoch-nanos> directory,
+retains it for inspection, and reserves three unused consecutive loopback ports.
+It never reuses another run's data directory, indexes, namespaces, or listeners.
+
+Checks:
+  * Launch the full engine in a fresh child Hull, without external services.
+  * Readiness on the ES-compatible and native REST listeners.
+  * Write exactly one tiny Rust source and one Markdown file under this run's
+    corpus directory; engine data and autoindex state are sibling directories.
+  * Separate CLI children: autoindex --dry-run --json, then autoindex --json
+    against the existing node, using this run's own fixed-prefix namespace.
+    Require both planned files, a complete zero-junk two-file result, a matching
+    journal finish record, a visible catalog run, and both exact searchable files.
+  * HTTP index/write/search and lexical agent-memory store/recall.
+  * Tonic unary /xerj.v1.XerjSearch/Health on the gRPC listener, with a complete
+    successful gRPC response and positive index/document counts, after HTTP
+    indexing and again after restart. Uses matching Tonic 0.12.3 / Prost 0.13
+    wire types on a current-thread runtime, with a 20-second total deadline.
+  * Separate MCP child: initialize, initialized notification, tools/list,
+    xerj_search, xerj_memory_store, and xerj_memory_recall. Prefix code search
+    must return the generated Rust AST definition with its exact source line.
+  * Flush acknowledged writes, terminate owned children, restart the same
+    engine/data directory, and retrieve the document, corpus files and both
+    memory records.
+  * Stop every owned child on success or error. No engine is left running.
+
+Every launch uses --disable-feedback and XERJ_DISABLE_FEEDBACK=true. The engine
+uses lexical embedding. Neural model download, external model services, TLS,
+remote network access, larger corpora, and field reports are outside this check.
+The gRPC check covers unary health and HTTP/2 transport, not gRPC document
+mutation, search, streaming, authentication, or TLS.
+
+Evidence is stdout: xerj-smoke v=1 stage=<name> ok=true. The final marker is
+stage=end ok=true only after persisted reads and child cleanup pass. On failure,
+stage=end ok=false includes a JSON-escaped error; unexpected child exits include
+the bounded stdout tail. Readiness is limited to 90 seconds per listener,
+requests to 20 seconds, and child termination to 20 seconds. Polls drain child
+stdout so a full output queue cannot prevent engine or MCP progress.
+The finite gRPC call drains engine stdout before and after its current-thread
+runtime; all child Hull control remains on the synchronous entry thread.
+Each autoindex CLI child has a 120-second deadline and a 2 MiB stdout limit.
+The native child ABI exposes stdout and lifecycle status, without stderr or
+process exit codes. Autoindex prints xerj-done on stderr, so this probe does not
+claim to observe that completion marker. It requires an exited child, the
+genuine --json result and journal/catalog/retrieval evidence listed above;
+it does not infer success from child exit alone. The two-file fixture must be
+fully indexed without junk, missing datasets or skipped inputs.
+
+Host validation (does not launch XERJ or pretend to exercise the kernel ABI):
+    cargo test --manifest-path probes/xerj_smoke/Cargo.toml

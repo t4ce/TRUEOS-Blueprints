@@ -624,3 +624,65 @@ impl ParallelExtend<()> for () {
         par_iter.into_par_iter().drive_unindexed(NoopConsumer)
     }
 }
+
+// Use the same reservation and ordering policy for native std collections.
+#[cfg(target_os = "trueos")]
+mod native_std {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    impl<K, V, S> ParallelExtend<(K, V)> for HashMap<K, V, S>
+    where
+        K: Eq + Hash + Send,
+        V: Send,
+        S: BuildHasher + Send,
+    {
+        fn par_extend<I>(&mut self, par_iter: I)
+        where
+            I: IntoParallelIterator<Item = (K, V)>,
+        {
+            // See the map_collect benchmarks in rayon-demo for different strategies.
+            extend_reserved!(self, par_iter);
+        }
+    }
+
+    impl<'a, K: 'a, V: 'a, S> ParallelExtend<(&'a K, &'a V)> for HashMap<K, V, S>
+    where
+        K: Copy + Eq + Hash + Send + Sync,
+        V: Copy + Send + Sync,
+        S: BuildHasher + Send,
+    {
+        fn par_extend<I>(&mut self, par_iter: I)
+        where
+            I: IntoParallelIterator<Item = (&'a K, &'a V)>,
+        {
+            extend_reserved!(self, par_iter);
+        }
+    }
+
+    impl<T, S> ParallelExtend<T> for HashSet<T, S>
+    where
+        T: Eq + Hash + Send,
+        S: BuildHasher + Send,
+    {
+        fn par_extend<I>(&mut self, par_iter: I)
+        where
+            I: IntoParallelIterator<Item = T>,
+        {
+            extend_reserved!(self, par_iter);
+        }
+    }
+
+    impl<'a, T, S> ParallelExtend<&'a T> for HashSet<T, S>
+    where
+        T: 'a + Copy + Eq + Hash + Send + Sync,
+        S: BuildHasher + Send,
+    {
+        fn par_extend<I>(&mut self, par_iter: I)
+        where
+            I: IntoParallelIterator<Item = &'a T>,
+        {
+            extend_reserved!(self, par_iter);
+        }
+    }
+}

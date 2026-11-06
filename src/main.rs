@@ -16,6 +16,9 @@ mod cargo_output;
 mod cli;
 mod codex_artifact;
 mod codex_workload;
+mod legacy_axum_overlay;
+mod legacy_tonic_overlay;
+mod lock_overlay_batch;
 mod native_fold;
 mod native_odin;
 mod publish;
@@ -2368,6 +2371,44 @@ fn source_overlay_patches(
     let uses_zune_jpeg = manifest_or_lock_mentions_crate(app_dir, manifest_path, "zune-jpeg")?;
 
     add_blueprint_vendor_patches(app_dir, &mut out)?;
+    // The full std runtime can compile older HTTP stacks directly. Keep an
+    // external workspace's existing API versions consistent across its root
+    // package and path dependencies instead of upgrading only the root.
+    let legacy_http = legacy_std_http_versions(app_dir)?;
+    for (name, version) in &legacy_http {
+        let source_name = format!("{name}-{version}");
+        let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+            format!("missing Cargo registry source for {source_name}; run `cargo fetch` for the app once")
+        })?;
+        let path = match name.as_str() {
+            "axum" | "axum-core" => legacy_axum_overlay::stage(work_dir, &source)?,
+            "tonic" => legacy_tonic_overlay::stage(work_dir, &source)?,
+            "reqwest" => {
+                let staged = work_dir.join("source-overlay-crates").join(&source_name);
+                reset_dir(&staged)?;
+                copy_app_tree(&source, &staged)?;
+                staged
+            }
+            _ => unreachable!(),
+        };
+        out.retain(|patch| patch.name != *name);
+        out.push(CratePatch::new(name, path));
+    }
+    // Keep the resident/Codex pin unless an app already locks a newer h2.
+    // Compile that release against std instead of forcing a downgrade across
+    // its dependers' declared requirements.
+    let h2_versions = h2_registry_overlay_versions(app_dir)?;
+    if !h2_versions.is_empty() {
+        out.retain(|patch| patch.name != "h2");
+        for (index, version) in h2_versions.iter().enumerate() {
+            let path = stage_h2_trueos_overlay(work_dir, version)?;
+            out.push(if index == 0 {
+                CratePatch::new("h2", path)
+            } else {
+                CratePatch::alias(format!("h2_{}", version.replace('.', "_")), "h2", path)
+            });
+        }
+    }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         add_trueos_image_codec_vendor_patches(app_dir, &mut out, uses_png, uses_zune_jpeg);
     }
@@ -2416,7 +2457,7 @@ fn source_overlay_patches(
         ));
     }
 
-    if uses_tonic {
+    if uses_tonic && !legacy_http.contains_key("tonic") {
         out.retain(|patch| patch.name != "tonic");
         out.push(CratePatch::new(
             "tonic",
@@ -2814,6 +2855,61 @@ fn manifest_or_lock_requires_rustix_0_38_overlay(
     Ok(!direct_rustix.is_some_and(|line| line.contains("1.")))
 }
 
+fn h2_registry_overlay_versions(app_dir: &Path) -> Result<Vec<String>, String> {
+    let lock_path = app_lockfile(app_dir);
+    if !lock_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let mut versions = BTreeSet::new();
+    for package in lock_packages(&lock_path)? {
+        if package.name == "h2"
+            && package.source.as_deref() == Some("registry+https://github.com/rust-lang/crates.io-index")
+        {
+            let version = SimpleVersion::parse(&package.version)?;
+            if version.major == 0 && version.minor == 4 && version.patch > 14 {
+                versions.insert(package.version);
+            }
+        }
+    }
+    Ok(versions.into_iter().collect())
+}
+
+fn legacy_std_http_versions(app_dir: &Path) -> Result<BTreeMap<String, String>, String> {
+    let lock_path = app_lockfile(app_dir);
+    if !lock_path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+    let packages = lock_packages(&lock_path)?;
+    let mut selected = BTreeMap::new();
+    for (name, supported) in [
+        ("axum", "0.7.9"),
+        ("axum-core", "0.4.5"),
+        ("reqwest", "0.12.28"),
+        ("tonic", "0.12.3"),
+    ] {
+        let candidates: Vec<_> = packages.iter().filter(|package| package.name == name).collect();
+        if let [package] = candidates.as_slice() {
+            if package.version == supported
+                && package.source.as_deref() == Some("registry+https://github.com/rust-lang/crates.io-index")
+            {
+                selected.insert(name.to_owned(), supported.to_owned());
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn stage_h2_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf, String> {
+    let source_name = format!("h2-{version}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!("missing Cargo registry source for {source_name}; run `cargo fetch` for the app once")
+    })?;
+    let staged = work_dir.join("source-overlay-crates").join(source_name);
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    Ok(staged)
+}
+
 fn stage_rama_http_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     let source_name = "rama-http-0.3.0-alpha.4";
     let source = find_cargo_registry_crate(source_name).ok_or_else(|| {
@@ -3032,6 +3128,18 @@ fn ensure_overlay_registry_sources(
                 || required_by_tonic
                 || manifest_or_lock_mentions_crate(app_dir, manifest_path, crate_name)?)
         {
+            missing.push((crate_name.to_owned(), version.to_owned(), source_dir.to_owned()));
+        }
+    }
+    for version in h2_registry_overlay_versions(app_dir)? {
+        let source_dir = format!("h2-{version}");
+        if find_cargo_registry_crate(&source_dir).is_none() {
+            missing.push(("h2".to_owned(), version, source_dir));
+        }
+    }
+    for (crate_name, version) in legacy_std_http_versions(app_dir)? {
+        let source_dir = format!("{crate_name}-{version}");
+        if find_cargo_registry_crate(&source_dir).is_none() {
             missing.push((crate_name, version, source_dir));
         }
     }
@@ -3043,7 +3151,7 @@ fn ensure_overlay_registry_sources(
         "trueos-blueprint: fetching missing overlay sources: {}",
         missing
             .iter()
-            .map(|(_, _, source_dir)| *source_dir)
+            .map(|(_, _, source_dir)| source_dir.as_str())
             .collect::<Vec<_>>()
             .join(",")
     );
@@ -3503,6 +3611,9 @@ fn staged_manifest_for_overlay(
             .join(",")
     );
 
+    lock_overlay_batch::unlock_staged_lock_overlay_batch(
+        &staged_manifest, source_overlay, lock_mismatches,
+    )?;
     for mismatch in lock_mismatches {
         run_staged_lock_overlay_update(&staged_manifest, source_overlay, &mismatch)?;
     }
@@ -5920,19 +6031,24 @@ fn materialized_workspace_dependency(
             "regex = { version = \"1\", default-features = false, features = [\"perf\"] }"
                 .to_string()
         }
-        "reqwest" => format!(
-            "reqwest = {{ path = {}, default-features = false, features = [\"json\", \"rustls\"] }}",
-            toml_string(
-                &workspace_dependency_vendor_path(
-                    source_overlay,
-                    work_dir,
-                    "reqwest",
-                    &blueprint_root.join("../TRUEOS-Buildins/vendor/reqwest-0.13.3"),
-                )
-                .display()
-                .to_string(),
+        "reqwest" => {
+            let path = workspace_dependency_vendor_path(
+                source_overlay,
+                work_dir,
+                "reqwest",
+                &blueprint_root.join("../TRUEOS-Buildins/vendor/reqwest-0.13.3"),
+            );
+            let tls = if package_version(&path.join("Cargo.toml"))?
+                .is_some_and(|version| version.starts_with("0.12.")) {
+                "rustls-tls"
+            } else {
+                "rustls"
+            };
+            format!(
+                "reqwest = {{ path = {}, default-features = false, features = [\"json\", {}] }}",
+                toml_string(&path.display().to_string()), toml_string(tls),
             )
-        ),
+        },
         "rustls" => {
             "rustls = { version = \"0.23.27\", default-features = false, features = [\"std\", \"tls12\"] }"
                 .to_string()
@@ -6473,6 +6589,59 @@ fn reset_dir(path: &Path) -> Result<(), String> {
         fs::remove_dir_all(path).map_err(io_string)?;
     }
     fs::create_dir_all(path).map_err(io_string)
+}
+
+#[cfg(test)]
+#[test]
+fn h2_overlay_keeps_resident_pin_and_preserves_newer_locked_releases() {
+    let root = env::temp_dir().join(format!("blueprint-h2-selection-{}", std::process::id()));
+    reset_dir(&root).expect("create workspace fixture");
+    fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"server\"]\n")
+        .expect("write workspace manifest");
+    let member = root.join("server");
+    fs::create_dir(&member).expect("create workspace member");
+    fs::write(member.join("Cargo.toml"), "[package]\nname = \"server\"\nversion = \"0.1.0\"\n")
+        .expect("write member manifest");
+    assert!(h2_registry_overlay_versions(&member).unwrap().is_empty());
+    for (locked, expected) in [
+        ("0.4.14", Vec::<String>::new()),
+        ("0.3.27", Vec::<String>::new()),
+        ("0.4.19", vec!["0.4.19".to_owned()]),
+        ("0.4.20", vec!["0.4.20".to_owned()]),
+    ] {
+        fs::write(
+            root.join("Cargo.lock"),
+            format!("[[package]]\nname = \"h2\"\nversion = \"{locked}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"),
+        ).expect("write workspace lock");
+        assert_eq!(h2_registry_overlay_versions(&member).unwrap(), expected);
+    }
+    fs::remove_dir_all(root).expect("remove workspace fixture");
+}
+
+#[cfg(test)]
+#[test]
+fn legacy_http_selection_preserves_registry_versions_and_respects_source_forks() {
+    let root = env::temp_dir().join(format!("blueprint-http-selection-{}", std::process::id()));
+    reset_dir(&root).unwrap();
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"server\"\nversion = \"0.1.0\"\n").unwrap();
+    for (name, version) in [
+        ("axum", "0.7.9"), ("axum-core", "0.4.5"),
+        ("reqwest", "0.12.28"), ("tonic", "0.12.3"),
+    ] {
+        for (source, selected) in [
+            (Some("registry+https://github.com/rust-lang/crates.io-index"), true),
+            (Some("git+https://example.invalid/fork#1234"), false),
+            (None, false),
+        ] {
+            let mut locked = format!("[[package]]\nname = {name:?}\nversion = {version:?}\n");
+            if let Some(source) = source { locked.push_str(&format!("source = {source:?}\n")); }
+            fs::write(root.join("Cargo.lock"), locked).unwrap();
+            assert_eq!(legacy_std_http_versions(&root).unwrap().contains_key(name), selected);
+        }
+    }
+    fs::write(root.join("Cargo.lock"), "[[package]]\nname = \"axum\"\nversion = \"0.8.9\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n").unwrap();
+    assert!(legacy_std_http_versions(&root).unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(test)]

@@ -284,3 +284,37 @@ impl FromParallelIterator<()> for () {
         par_iter.into_par_iter().drive_unindexed(NoopConsumer)
     }
 }
+
+// Keep native hashbrown support while also accepting Rust std collections.
+#[cfg(target_os = "trueos")]
+mod native_std {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    impl<K, V, S> FromParallelIterator<(K, V)> for HashMap<K, V, S>
+    where
+        K: Eq + Hash + Send,
+        V: Send,
+        S: BuildHasher + Default + Send,
+    {
+        fn from_par_iter<I>(par_iter: I) -> Self
+        where
+            I: IntoParallelIterator<Item = (K, V)>,
+        {
+            collect_extended(par_iter)
+        }
+    }
+
+    impl<V, S> FromParallelIterator<V> for HashSet<V, S>
+    where
+        V: Eq + Hash + Send,
+        S: BuildHasher + Default + Send,
+    {
+        fn from_par_iter<I>(par_iter: I) -> Self
+        where
+            I: IntoParallelIterator<Item = V>,
+        {
+            collect_extended(par_iter)
+        }
+    }
+}

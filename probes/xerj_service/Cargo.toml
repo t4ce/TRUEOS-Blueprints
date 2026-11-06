@@ -1,0 +1,21 @@
+[package]
+name = "xerj-service"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+fs-scope = "trueosfs"
+replicatable = false
+rewrite-std-imports = false
+
+[dependencies]
+trueos = { path = "../../api" }
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

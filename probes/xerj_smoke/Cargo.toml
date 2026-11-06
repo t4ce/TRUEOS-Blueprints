@@ -1,0 +1,29 @@
+[package]
+name = "xerj-smoke"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+fs-scope = "trueosfs"
+rewrite-std-imports = false
+stack-capture = true
+
+[dependencies]
+trueos = { path = "../../api" }
+serde_json = "=1.0.150"
+prost = "=0.13.5"
+tokio = { version = "1", default-features = false, features = ["net", "rt", "time"] }
+tonic = { version = "=0.12.3", default-features = false, features = ["channel", "codegen", "prost"] }
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+# Tower 0.4's IndexMap must explicitly use Cargo's native std runtime.
+indexmap_legacy = { package = "indexmap", version = "1.9.3", features = ["std"] }
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

@@ -1,6 +1,7 @@
 {
   "apps": [
     { "name": "codex-cli", "path": "../codex/codex-rs/cli" },
+    { "name": "xerj-server", "path": "../xerj/engine/crates/xerj-server", "optional": true },
     "rebsky",
     "calculator",
     "ruler",

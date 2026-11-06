@@ -1,0 +1,28 @@
+XERJ persistent native launcher
+
+Build from the TRUEOS-Blueprints repository:
+    cargo bp probes/xerj_service
+
+Install xerj.bp and xerj-service.bp through the regular AppDB workflow. Launch
+the exact bare app name in Shell3:
+    xerj-service
+
+The launcher stays alive and owns one full XERJ engine child. It sets the
+working directory to /apps/xerj, stores engine data in /apps/xerj/data, binds
+127.0.0.1:9200, and disables feedback with both --disable-feedback and
+XERJ_DISABLE_FEEDBACK=true. XERJ creates its usual REST and gRPC listeners on
+9201 and 9202. Authentication and the engine's feature defaults are preserved.
+The launcher forwards the child's stdout bytes and flushes them unchanged.
+It does not claim readiness or successful indexing from lifecycle status;
+check the engine's readiness/API responses through its normal clients.
+
+This is a single-instance app. Leave the launcher running while Codex's XERJ
+MCP client uses the node. Stop the parent xerj-service Hull to stop its owned
+engine child; dropping the launcher also requests child termination. Native
+parent/child Hull ownership handles cleanup when the parent is terminated.
+Do not run another engine on the same data directory or normal ports.
+
+Launch, output draining, lifecycle polling and cleanup stay on the original
+Hull entry thread. Unexpected child exit is an error. There are no subprocess
+or network stand-ins on the host: running the host executable returns an
+explicit unsupported-platform error. No field reports are sent.
