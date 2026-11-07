@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/0044bdad50842ffb
-Reference source fingerprint: 70d20c7937616dd1744e46cf5c2275545e6ec8346730e578f50fe467acd380ad
+API PRM trueos-blueprint-api/1/b46919099a313069
+Reference source fingerprint: bee3041031bacb210809b265d98e5c08b8c799e35de895b7c4cddf18db80b5ef
 
 
 # terminal
@@ -23,116 +23,116 @@ ANSI alternate screen, cursor, color and mouse modes travel over the attached by
 
 extern "C" fn trueos_cabi_blueprint_terminal_lease_current_v1(ready_epoch: u64, out_epoch: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1833
+Declaration: crates/trueos-v/src/bp_abi.rs:1828
 
 
 ## trueos_cabi_blueprint_terminal_lease_poll_reentry_v1
 
 extern "C" fn trueos_cabi_blueprint_terminal_lease_poll_reentry_v1(ticket: u64, out_epoch: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1841
+Declaration: crates/trueos-v/src/bp_abi.rs:1836
 
 
 ## trueos_cabi_blueprint_terminal_lease_release_v1
 
 extern "C" fn trueos_cabi_blueprint_terminal_lease_release_v1(expected_epoch: u64, out_ticket: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1837
+Declaration: crates/trueos-v/src/bp_abi.rs:1832
 
 
 ## trueos_cabi_blueprint_terminal_surface_snapshot_v1
 
 extern "C" fn trueos_cabi_blueprint_terminal_surface_snapshot_v1(out_generation: *mut u64, out_cols: *mut u32, out_rows: *mut u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1845
+Declaration: crates/trueos-v/src/bp_abi.rs:1840
 
 
 ## trueos_cabi_konsole_begin_frame
 
 extern "C" fn trueos_cabi_konsole_begin_frame(cols: u32, rows: u32, reserved_top_rows: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1851
+Declaration: crates/trueos-v/src/bp_abi.rs:1846
 
 
 ## trueos_cabi_konsole_size
 
 extern "C" fn trueos_cabi_konsole_size(out_cols: *mut u32, out_rows: *mut u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1850
+Declaration: crates/trueos-v/src/bp_abi.rs:1845
 
 
 ## trueos_cabi_shell3_session_control_v1
 
 extern "C" fn trueos_cabi_shell3_session_control_v1(session: u64, operation: u32, cols: u32, rows: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1793
+Declaration: crates/trueos-v/src/bp_abi.rs:1788
 
 
 ## trueos_cabi_shell3_session_open_v1
 
 extern "C" fn trueos_cabi_shell3_session_open_v1(script_ptr: *const u8, script_len: usize, cols: u32, rows: u32, stdin_open: u32) -> i64;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1776
+Declaration: crates/trueos-v/src/bp_abi.rs:1771
 
 
 ## trueos_cabi_shell3_session_read_v1
 
 extern "C" fn trueos_cabi_shell3_session_read_v1(session: u64, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1783
+Declaration: crates/trueos-v/src/bp_abi.rs:1778
 
 
 ## trueos_cabi_shell3_session_write_v1
 
 extern "C" fn trueos_cabi_shell3_session_write_v1(session: u64, bytes_ptr: *const u8, bytes_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1788
+Declaration: crates/trueos-v/src/bp_abi.rs:1783
 
 
 ## trueos_cabi_shell_attached_observe_v1
 
 extern "C" fn trueos_cabi_shell_attached_observe_v1() -> u32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1769
+Declaration: crates/trueos-v/src/bp_abi.rs:1764
 
 
 ## trueos_cabi_shell_attached_read_byte
 
 extern "C" fn trueos_cabi_shell_attached_read_byte() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1773
+Declaration: crates/trueos-v/src/bp_abi.rs:1768
 
 
 ## trueos_cabi_shell_attached_read_v1
 
 extern "C" fn trueos_cabi_shell_attached_read_v1(out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1768
+Declaration: crates/trueos-v/src/bp_abi.rs:1763
 
 
 ## trueos_cabi_shell_attached_retarget_slot
 
 extern "C" fn trueos_cabi_shell_attached_retarget_slot(slot_ptr: *const u8, slot_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1774
+Declaration: crates/trueos-v/src/bp_abi.rs:1769
 
 
 ## trueos_cabi_shell_attached_wait_after_v1
 
 extern "C" fn trueos_cabi_shell_attached_wait_after_v1(observed: u32, timeout_ms: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1770
+Declaration: crates/trueos-v/src/bp_abi.rs:1765
 
 
 ## trueos_cabi_shell_attached_wake_v1
 
 extern "C" fn trueos_cabi_shell_attached_wake_v1() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1771
+Declaration: crates/trueos-v/src/bp_abi.rs:1766
 
 
 ## trueos_cabi_shell_attached_write
 
 extern "C" fn trueos_cabi_shell_attached_write(data_ptr: *const u8, data_len: usize) -> usize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1767
+Declaration: crates/trueos-v/src/bp_abi.rs:1762

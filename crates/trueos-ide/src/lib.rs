@@ -4,9 +4,10 @@
 #[macro_use]
 extern crate alloc;
 
+pub mod models;
+pub use models::*;
 pub mod protocol;
 pub mod html_preview;
-#[cfg(feature = "store")]
 pub mod workspace;
 
 #[cfg(feature = "store-core")]
@@ -15,7 +16,6 @@ pub mod source_db;
 pub use source_db::*;
 #[cfg(feature = "store-core")]
 pub mod source_image;
-#[cfg(feature = "store-core")]
 pub mod store_protocol;
 
 #[cfg(feature = "api-reference")]

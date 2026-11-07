@@ -1,11 +1,10 @@
-API PRM trueos-blueprint-api/1/0044bdad50842ffb
-Reference source fingerprint: 70d20c7937616dd1744e46cf5c2275545e6ec8346730e578f50fe467acd380ad
+API PRM trueos-blueprint-api/1/b46919099a313069
+Reference source fingerprint: bee3041031bacb210809b265d98e5c08b8c799e35de895b7c4cddf18db80b5ef
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
 sys_dealloc -> services.prm
 sys_rand -> services.prm
-trueos_cabi_alloc -> memory.prm
 trueos_cabi_archive_discard -> filesystem.prm
 trueos_cabi_archive_lz4_decode_start_v1 -> filesystem.prm
 trueos_cabi_archive_pack_many_start -> filesystem.prm
@@ -71,7 +70,6 @@ trueos_cabi_blueprint_terminal_lease_release_v1 -> terminal.prm
 trueos_cabi_blueprint_terminal_surface_snapshot_v1 -> terminal.prm
 trueos_cabi_boot_timestamp_secs -> services.prm
 trueos_cabi_calculator_evaluate -> services.prm
-trueos_cabi_calloc -> memory.prm
 trueos_cabi_clipboard_command_v1 -> services.prm
 trueos_cabi_dns_resolve_ipv4 -> services.prm
 trueos_cabi_dobby_ui4_focus -> services.prm
@@ -86,7 +84,6 @@ trueos_cabi_env_arg -> services.prm
 trueos_cabi_env_args_count -> services.prm
 trueos_cabi_env_current_dir -> services.prm
 trueos_cabi_env_var -> services.prm
-trueos_cabi_free -> memory.prm
 trueos_cabi_gamepad_control_idle -> services.prm
 trueos_cabi_gamepad_control_release -> services.prm
 trueos_cabi_gamepad_control_request -> services.prm
@@ -156,7 +153,6 @@ trueos_cabi_lumen_restore_write -> services.prm
 trueos_cabi_lumen_status -> services.prm
 trueos_cabi_lumen_template_open -> services.prm
 trueos_cabi_lumen_tool_result_submit -> services.prm
-trueos_cabi_malloc_usable_size -> memory.prm
 trueos_cabi_matrix_compute_capacity_v1 -> services.prm
 trueos_cabi_matrix_compute_v1 -> services.prm
 trueos_cabi_mouse_motion_cursor_idle -> services.prm
@@ -185,7 +181,6 @@ trueos_cabi_net_prewarm_url_start -> services.prm
 trueos_cabi_ntp_current_unix_seconds -> services.prm
 trueos_cabi_ntp_kernel_date_day_month_year -> services.prm
 trueos_cabi_poll_once -> lifecycle.prm
-trueos_cabi_realloc -> memory.prm
 trueos_cabi_shell3_session_control_v1 -> terminal.prm
 trueos_cabi_shell3_session_open_v1 -> terminal.prm
 trueos_cabi_shell3_session_read_v1 -> terminal.prm
