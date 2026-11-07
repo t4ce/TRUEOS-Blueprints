@@ -1000,60 +1000,45 @@ pub struct TrueosAllocator;
 #[global_allocator]
 static DEFAULT_GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
+// Rust callers provide a real Layout. Preserve it at the native heap boundary
+// instead of entering the removed layout-less C allocation registry.
 unsafe impl GlobalAlloc for TrueosAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.align() > core::mem::align_of::<usize>() {
-            return unsafe { alloc_aligned(layout) };
-        }
-        unsafe { v::vcabi::trueos_cabi_alloc(layout.size().max(1)) }
+        unsafe { v::vcabi::sys_alloc_aligned(layout.size().max(1), layout.align()) }
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if ptr.is_null() {
-            return;
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        if !ptr.is_null() {
+            // The native heap's in-band allocation tag identifies its owner.
+            unsafe { v::vcabi::sys_dealloc(ptr) }
         }
-        unsafe { v::vcabi::trueos_cabi_free(ptr) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if layout.align() > core::mem::align_of::<usize>() {
-            let ptr = unsafe { alloc_aligned(layout) };
-            if !ptr.is_null() {
-                unsafe { core::ptr::write_bytes(ptr, 0, layout.size().max(1)) };
-            }
-            return ptr;
+        let ptr = unsafe { self.alloc(layout) };
+        if !ptr.is_null() {
+            unsafe { core::ptr::write_bytes(ptr, 0, layout.size().max(1)) };
         }
-        unsafe { v::vcabi::trueos_cabi_calloc(1, layout.size().max(1)) }
+        ptr
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if ptr.is_null() {
-            return unsafe { self.alloc(layout) };
-        }
-        if layout.align() > core::mem::align_of::<usize>() {
-            let Some(new_layout) = Layout::from_size_align(new_size.max(1), layout.align()).ok()
-            else {
-                return null_mut();
-            };
-            let new_ptr = unsafe { alloc_aligned(new_layout) };
-            if !new_ptr.is_null() {
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        ptr,
-                        new_ptr,
-                        core::cmp::min(layout.size(), new_size),
-                    );
-                    v::vcabi::trueos_cabi_free(ptr);
-                }
+        let Ok(new_layout) = Layout::from_size_align(new_size.max(1), layout.align()) else {
+            return null_mut();
+        };
+        let new_ptr = unsafe { self.alloc(new_layout) };
+        if !new_ptr.is_null() && !ptr.is_null() {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    ptr,
+                    new_ptr,
+                    core::cmp::min(layout.size(), new_size),
+                );
+                self.dealloc(ptr, layout);
             }
-            return new_ptr;
         }
-        unsafe { v::vcabi::trueos_cabi_realloc(ptr, new_size.max(1)) }
+        new_ptr
     }
-}
-
-unsafe fn alloc_aligned(layout: Layout) -> *mut u8 {
-    unsafe { v::vcabi::sys_alloc_aligned(layout.size().max(1), layout.align()) }
 }
 
 pub fn panic_abort(message: &str) -> ! {

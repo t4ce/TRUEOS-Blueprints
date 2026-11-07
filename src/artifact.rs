@@ -204,6 +204,20 @@ fn collect_rlibs_from_rlink(rlink: &Path, deps_dir: &Path) -> Result<Vec<PathBuf
     }
 }
 
+/// Validate the actual selected link closure, independent of which build-std
+/// libraries Cargo compiled. A native no_std app owns its panic handler and
+/// does not select std's panic runtime archive.
+pub(crate) fn verify_selected_panic_runtime(rlibs: &[PathBuf]) -> Result<(), String> {
+    if rlibs.iter().any(|path| {
+        is_rlib_for_crate(path, "std")
+            || is_rlib_for_crate(path, "panic_abort")
+            || is_rlib_for_crate(path, "panic_unwind")
+    }) {
+        verify_abort_panic_runtime(rlibs)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_abort_panic_runtime(rlibs: &[PathBuf]) -> Result<(), String> {
     let panic_abort = rlibs
         .iter()
@@ -848,6 +862,18 @@ mod tests {
         assert!(!rlibs.contains(&cached_panic_unwind));
         verify_abort_panic_runtime(&rlibs).unwrap();
         fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn selected_panic_runtime_distinguishes_native_and_std_link_closures() {
+        let core = PathBuf::from("/tmp/libcore-1111111111111111.rlib");
+        let std = PathBuf::from("/tmp/libstd-2222222222222222.rlib");
+        let abort = PathBuf::from("/tmp/libpanic_abort-3333333333333333.rlib");
+        let unwind = PathBuf::from("/tmp/libpanic_unwind-4444444444444444.rlib");
+        verify_selected_panic_runtime(&[core.clone()]).unwrap();
+        assert!(verify_selected_panic_runtime(&[core.clone(), std.clone()]).is_err());
+        verify_selected_panic_runtime(&[core.clone(), std, abort]).unwrap();
+        assert!(verify_selected_panic_runtime(&[core, unwind]).is_err());
     }
 
     #[test]

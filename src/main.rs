@@ -45,7 +45,7 @@ use artifact::{
     AssetBundleEntry, BLUEPRINT_CAP_ARGV_ENTRY_V1, BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT,
     BLUEPRINT_CAP_REPLICATABLE, BLUEPRINT_CAP_TRUEOSFS_SCOPE, attach_trueos_asset_bundle,
     cargo_artifact_stem, collect_rlibs_for_rlink, entry_hint_hex, entry_symbol_name,
-    latest_cargo_root_artifacts, tool_command, verify_abort_panic_runtime, write_blueprint,
+    latest_cargo_root_artifacts, tool_command, verify_selected_panic_runtime, write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
 use cargo_output::{
@@ -858,9 +858,7 @@ fn build_one_target_to(
     // this invocation, including mutually exclusive build-std panic runtimes.
     // The root crate's `.rlink` is rustc's selected native link closure.
     let rlibs = collect_rlibs_for_rlink(&root_artifacts.rlink, &deps_dir)?;
-    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        verify_abort_panic_runtime(&rlibs)?;
-    }
+    verify_selected_panic_runtime(&rlibs)?;
     if stack_capture {
         stack_capture::retain_native_inventory(
             &root_artifacts,
@@ -2183,6 +2181,15 @@ fn ensure_rust_std_trueos_hash_random(sysroot: &Path) -> Result<(), String> {
 }
 
 fn ensure_rust_std_trueos_no_backtrace(sysroot: &Path) -> Result<(), String> {
+    // The native target has no stack-symbolization provider. Reporting that
+    // capability here also avoids reading RUST_BACKTRACE through Unix getenv.
+    ensure_rust_src_replacement(
+        sysroot,
+        "std/src/panic.rs",
+        "pub fn get_backtrace_style() -> Option<BacktraceStyle> {\n    if !cfg!(feature = \"backtrace\") {",
+        "pub fn get_backtrace_style() -> Option<BacktraceStyle> {\n    if cfg!(any(target_os = \"trueos\", target_os = \"zkvm\")) || !cfg!(feature = \"backtrace\") {",
+        "native backtrace capability",
+    )?;
     ensure_rust_src_replacement(
         sysroot,
         "std/src/sys/backtrace.rs",

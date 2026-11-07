@@ -5,11 +5,6 @@ mod native_transport;
 #[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
 mod native_backend;
 
-// The SDK's legacy C allocator exports do not exist in native-only images.
-#[cfg(target_os = "trueos")]
-#[global_allocator]
-static ALLOCATOR: std::alloc::System = std::alloc::System;
-
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},

@@ -133,6 +133,8 @@ fn validate_private_sysroot(
 }
 
 const CACHE_SOURCES: &[&str] = &[
+    "std/src/panic.rs",
+    "std/src/sys/backtrace.rs",
     "std/src/sys/thread/mod.rs",
     "std/src/sys/thread/trueos.rs",
     "std/src/os/unix/mod.rs",
@@ -244,6 +246,10 @@ mod tests {
         let (_temporary, installed, output, prepared) = fixture_sysroots();
         let fixtures = [
             (
+                "std/src/panic.rs",
+                "pub fn get_backtrace_style() -> Option<BacktraceStyle> {\n    if !cfg!(feature = \"backtrace\") {\n        return None;\n    }\n}",
+            ),
+            (
                 "std/src/hash/random.rs",
                 r#"        thread_local!(static KEYS: Cell<(u64, u64)> = {
             Cell::new(hashmap_random_keys())
@@ -310,15 +316,13 @@ mod tests {
         }
         let target = root.join("target.json");
         fs::write(&target, b"{}").unwrap();
-        let before = cache_revision_for_library(&root, &target).unwrap();
-        fs::write(
-            root.join("std/src/sys/fs/unix.rs"),
-            b"typed directory decoder",
-        )
-        .unwrap();
-        let after = cache_revision_for_library(&root, &target).unwrap();
-        assert_ne!(before, after);
-        assert_eq!(after, cache_revision_for_library(&root, &target).unwrap());
+        for changed in ["std/src/sys/fs/unix.rs", "std/src/panic.rs", "std/src/sys/backtrace.rs"] {
+            let before = cache_revision_for_library(&root, &target).unwrap();
+            fs::write(root.join(changed), b"changed native backend source").unwrap();
+            let after = cache_revision_for_library(&root, &target).unwrap();
+            assert_ne!(before, after, "{changed} did not invalidate the cache");
+            assert_eq!(after, cache_revision_for_library(&root, &target).unwrap());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }
