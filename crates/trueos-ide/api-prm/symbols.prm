@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/75aa03784524c06c
-Reference source fingerprint: b4f9edc91e21bfa26787a39324b9ea8fb86755d1b4df7e6c2229294449fc6783
+API PRM trueos-blueprint-api/1/9ec92c0bb481e8d3
+Reference source fingerprint: 52aaf3259c5e5e09edda434b6712c639a3947d414a45598fbe95b359a7e2e91c
 
 # C ABI symbol lookup
 sys_alloc_aligned -> memory.prm
@@ -180,6 +180,10 @@ trueos_cabi_net_fetch_post_json_start_with_timeout -> services.prm
 trueos_cabi_net_fetch_result -> services.prm
 trueos_cabi_net_fetch_start -> services.prm
 trueos_cabi_net_fetch_wait -> services.prm
+trueos_cabi_net_http_request_discard_v1 -> services.prm
+trueos_cabi_net_http_request_head_v1 -> services.prm
+trueos_cabi_net_http_request_read_v1 -> services.prm
+trueos_cabi_net_http_request_start_v1 -> services.prm
 trueos_cabi_net_prewarm_url_start -> services.prm
 trueos_cabi_ntp_current_unix_seconds -> services.prm
 trueos_cabi_ntp_kernel_date_day_month_year -> services.prm
