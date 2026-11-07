@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/b5b4bae7014fabc0
-Reference source fingerprint: 90e46c1b5ceb476c629ec13f7f5b0f14bfed27067f42b1b9e768239c9b93f4f9
+API PRM trueos-blueprint-api/1/75aa03784524c06c
+Reference source fingerprint: b4f9edc91e21bfa26787a39324b9ea8fb86755d1b4df7e6c2229294449fc6783
 
 # Start here
 TRUEOS application reference, generated from cargo rustdoc JSON. Read the index first and load only the needed topic. These files contain signatures, public data layouts, constants and usage contracts; no kernel implementations, Cargo dependencies or SDK source trees are included.
@@ -12,7 +12,7 @@ Retired synchronous trueos_cabi_fs_* and trueos_cabi_trueosfs_* declarations are
 # Topic lookup
 - logging.prm: 2 C ABI functions. trueos_cabi_log(level,target_ptr,target_len,message_ptr,message_len) sends one already formatted UTF-8 record to the host log router, separate from attached-terminal bytes.
 - terminal.prm: 17 C ABI functions. A foreground TUI starts by calling terminal_lease_current_v1(0,&epoch).
-- filesystem.prm: 30 C ABI functions. Use async operations scoped to the Blueprint filesystem identity.
+- filesystem.prm: 32 C ABI functions. Use async operations scoped to the Blueprint filesystem identity.
 - lifecycle.prm: 27 C ABI functions. Check blueprint_stop_control_v1 using the same operation protocol as the native examples (initial registration 0, loop check 1).
 - memory.prm: 2 C ABI functions. Allocation, buffer ownership and cleanup remain explicit across the ABI.
 - graphics.prm: 120 C ABI functions. UI4 resources are owner-scoped.

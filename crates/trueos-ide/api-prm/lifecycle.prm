@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/b5b4bae7014fabc0
-Reference source fingerprint: 90e46c1b5ceb476c629ec13f7f5b0f14bfed27067f42b1b9e768239c9b93f4f9
+API PRM trueos-blueprint-api/1/75aa03784524c06c
+Reference source fingerprint: b4f9edc91e21bfa26787a39324b9ea8fb86755d1b4df7e6c2229294449fc6783
 
 
 # lifecycle
@@ -17,84 +17,84 @@ blueprint_launch_script_v1 payload is app + NUL + script, optionally + NUL + des
 
 extern "C" fn trueos_cabi_blueprint_child_read_v1(handle: u64, out: *mut u8, cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1818
+Declaration: crates/trueos-v/src/bp_abi.rs:1820
 
 
 ## trueos_cabi_blueprint_child_receive_v1
 
 extern "C" fn trueos_cabi_blueprint_child_receive_v1(handle: u64, out_ptr: *mut u8, out_cap: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1824
+Declaration: crates/trueos-v/src/bp_abi.rs:1826
 
 
 ## trueos_cabi_blueprint_child_send_v1
 
 extern "C" fn trueos_cabi_blueprint_child_send_v1(handle: u64, data_ptr: *const u8, data_len: usize) -> isize;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1819
+Declaration: crates/trueos-v/src/bp_abi.rs:1821
 
 
 ## trueos_cabi_blueprint_child_spawn_program_v1
 
 extern "C" fn trueos_cabi_blueprint_child_spawn_program_v1(request: *const u8, len: usize, out_handle: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1813
+Declaration: crates/trueos-v/src/bp_abi.rs:1815
 
 
 ## trueos_cabi_blueprint_child_spawn_v1
 
 extern "C" fn trueos_cabi_blueprint_child_spawn_v1(initial_ptr: *const u8, initial_len: usize, out_handle: *mut u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1808
+Declaration: crates/trueos-v/src/bp_abi.rs:1810
 
 
 ## trueos_cabi_blueprint_child_status_v1
 
 extern "C" fn trueos_cabi_blueprint_child_status_v1(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1829
+Declaration: crates/trueos-v/src/bp_abi.rs:1831
 
 
 ## trueos_cabi_blueprint_child_terminate_v1
 
 extern "C" fn trueos_cabi_blueprint_child_terminate_v1(handle: u64) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1830
+Declaration: crates/trueos-v/src/bp_abi.rs:1832
 
 
 ## trueos_cabi_blueprint_exit_reason
 
 extern "C" fn trueos_cabi_blueprint_exit_reason(data_ptr: *const u8, data_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1831
+Declaration: crates/trueos-v/src/bp_abi.rs:1833
 
 
 ## trueos_cabi_blueprint_launch_script_v1
 
 extern "C" fn trueos_cabi_blueprint_launch_script_v1(payload_ptr: *const u8, payload_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1801
+Declaration: crates/trueos-v/src/bp_abi.rs:1803
 
 
 ## trueos_cabi_blueprint_return_to_cli
 
 extern "C" fn trueos_cabi_blueprint_return_to_cli() -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1833
+Declaration: crates/trueos-v/src/bp_abi.rs:1835
 
 
 ## trueos_cabi_blueprint_shutdown
 
 extern "C" fn trueos_cabi_blueprint_shutdown(data_ptr: *const u8, data_len: usize) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1832
+Declaration: crates/trueos-v/src/bp_abi.rs:1834
 
 
 ## trueos_cabi_blueprint_stop_control_v1
 
 extern "C" fn trueos_cabi_blueprint_stop_control_v1(operation: u32) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1753
+Declaration: crates/trueos-v/src/bp_abi.rs:1755
 
 Cooperative stop: operation 0 registers the sole cleanup owner;
 operation 1 returns 0 (running), 1 (stop requested), or -1 (invalid).
