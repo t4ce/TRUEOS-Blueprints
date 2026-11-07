@@ -68,6 +68,7 @@ impl SqliteConnectOptions {
         let deadline = Instant::now() + SETUP_TIMEOUT;
         let client = reqwest::Client::builder().no_proxy()
             .connect_timeout(HTTP_ATTEMPT_TIMEOUT).build().map_err(protocol)?;
+        #[cfg(target_os = "trueos")]
         ensure_service(&client, &endpoint, deadline).await?;
         let database = persistent_database_name(&self.filename);
         let request = serde_json::to_vec(&serde_json::json!({"database": database})).map_err(protocol)?;

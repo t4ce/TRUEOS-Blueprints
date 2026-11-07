@@ -81,7 +81,10 @@ pub mod client;"###)?;
                     .listen(4096)
                     .context("mark the socket as ready to accept incoming connection requests")?;
                 self.bind_socket(socket).await"###, r###"                #[cfg(target_os = "trueos")]
-                { return Ok(TcpListener { inner: crate::trueos_native::listener(&opts)? }); }
+                {
+                    if self.ttl.is_some() { return Err(crate::trueos_native::unsupported("native TCP listener TTL inheritance is unsupported").into()); }
+                    return Ok(TcpListener { inner: crate::trueos_native::listener(&opts)? });
+                }
                 #[cfg(not(target_os = "trueos"))]
                 {
                 let socket = opts
