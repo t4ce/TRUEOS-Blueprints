@@ -59,7 +59,13 @@ impl RequestTiming {
 impl Drop for RequestTiming {
     fn drop(&mut self) {
         let elapsed_us = elapsed_us(self.started);
-        let all = *TIMING_ALL.get_or_init(|| std::env::var("TRUEOS_SQLITE_TIMING_ALL").as_deref() == Ok("1"));
+        let all = *TIMING_ALL.get_or_init(|| {
+            #[cfg(target_os = "trueos")]
+            let value = trueos::env::var("TRUEOS_SQLITE_TIMING_ALL");
+            #[cfg(not(target_os = "trueos"))]
+            let value = std::env::var("TRUEOS_SQLITE_TIMING_ALL");
+            value.as_deref() == Ok("1")
+        });
         if !all && self.seq > 16 {
             if self.seq % 64 != 0 && elapsed_us < 100_000 && self.completed { return; }
             let now_ms = EPOCH.get_or_init(Instant::now).elapsed().as_millis().min(u64::MAX as u128) as u64;

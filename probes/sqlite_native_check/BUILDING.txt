@@ -1,0 +1,26 @@
+Finite on-demand SQLite validation Blueprint. No app/buildin registration.
+
+Pack through the normal publisher from TRUEOS-Blueprints:
+    cargo bp probes/sqlite_native_check
+
+Start a dedicated SQLite service with a fresh instance NAME using its runscript:
+    instance NAME
+
+Its port is 20000 + (FNV-1a-32(NAME) % 40000). Confirm the actual READY log.
+Launch this probe headless with a runscript:
+    port PORT
+    run UNIQUE_RUN_NAME
+    phase seed
+
+The seed phase creates only database UNIQUE_RUN_NAME inside the selected test
+instance. It refuses existing test tables. Checkpoint logs contain the run and
+phase. Require check=COMPLETE, with no FAIL marker for that launch.
+
+For restart persistence, stop only that owned SQLite instance, relaunch the
+same instance, then launch this probe using the same port/run and phase verify.
+That phase checks the typed row, counter=8 and integrity without recreating it.
+
+Transport, runtime, allocation, logging and launch-file reads use native TRUEOS
+services. Every TCP address is IPv4 loopback. The native backend host suite still
+covers publication failure injection and persistent-session lock ownership;
+this client adds physical native entropy/time, transport and storage coverage.

@@ -3982,11 +3982,10 @@ fn rewrite_staged_source_for_target(
         rewritten.push('\n');
     }
     rewritten.push_str(
-        // Terminate through the Hull ABI before its executable image can be
-        // released: background pthread carriers may still be using that image.
-        // This also works for no_std apps and retains the shim's existing policy
-        // of discarding main's return value.
-        "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    let _ = main();\n    unsafe extern \"C\" {\n        fn exit(code: core::ffi::c_int) -> !;\n    }\n    unsafe { exit(0) }\n}\n",
+        // Return terminal ownership, then stop the Blueprint through its native
+        // lifecycle before its image can be released while workers still exist.
+        // Preserve the existing policy of discarding main's return value.
+        "\n#[allow(unsafe_code)]\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    let _ = main();\n    unsafe extern \"C\" {\n        fn trueos_cabi_blueprint_return_to_cli() -> i32;\n        fn trueos_cabi_blueprint_shutdown(data: *const u8, len: usize) -> i32;\n    }\n    unsafe {\n        let _ = trueos_cabi_blueprint_return_to_cli();\n        let _ = trueos_cabi_blueprint_shutdown(core::ptr::null(), 0);\n    }\n    loop { core::hint::spin_loop(); }\n}\n",
     );
 
     // A staged app may retain an upstream source symlink. Replace that link

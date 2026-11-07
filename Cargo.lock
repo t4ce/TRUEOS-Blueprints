@@ -3631,6 +3631,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "trueos",
 ]
 
@@ -3993,12 +3994,16 @@ version = "1.54.1"
 dependencies = [
  "bytes",
  "libc",
+ "libm",
  "mio",
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "trueos-io",
+ "trueos-path",
+ "trueos-runtime",
  "windows-sys 0.61.2",
 ]
 
@@ -4175,6 +4180,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "trueos-path"
+version = "0.1.0"
+dependencies = [
+ "typed-path",
+]
+
+[[package]]
 name = "trueos-redb"
 version = "0.1.0"
 dependencies = [
@@ -4213,6 +4225,12 @@ dependencies = [
  "serde_json",
  "termcolor",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
 
 [[package]]
 name = "typenum"

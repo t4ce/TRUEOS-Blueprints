@@ -15,6 +15,17 @@ roll back an uncommitted transaction when their socket closes or is idle for
 60 seconds. There is no
 client-side WAL or filesystem maintenance lock.
 
+On TRUEOS, the bundled engine uses SQLite's application-defined OS boundary.
+SQLite still has real serialized mutexes, including recursive mutexes, backed by
+Rust synchronization, and its allocation callbacks use the native Rust heap.
+The Unix VFS, file locks, mmap and dynamic extension loader are not compiled in.
+The small replacement VFS supplies native entropy, UTC time and sleep; attempts
+to open database paths fail. Temporary databases and sorting stay in memory even
+if SQL requests `PRAGMA temp_store=FILE`. Persistence remains the completed image
+publication described above. UTC date/time functions remain available;
+`localtime` and `utc` modifiers return NULL because this platform has no local
+timezone contract. Ordinary host builds retain the original bundled Unix backend.
+
 Codex's SQLx SQLite driver connects to this service on TRUEOS. It retains the
 existing SQLx query, row decoding, pool, and migration interfaces. The native
 host driver still uses the original SQLx implementation.
@@ -136,6 +147,16 @@ python3 apps/sqlite/tests/test_service.py --binary apps/sqlite/host/target/debug
 Host tests cover typed parameters, 32 concurrent writes, rollback, failed
 publication, separate instances, duplicate-owner rejection, restart, and image
 integrity. `cargo bpp sqlite_client` packs the separate Blueprint client probe.
+
+The host manifest's opt-in `native-sqlite` feature exercises the production OS
+boundary using host entropy and UTC time. Set `LIBSQLITE3_FLAGS` to the exact
+value in the app manifest's `package.metadata.trueos-blueprint.build-env`, then
+build with `--features native-sqlite` and an isolated host target directory.
+Run the service suite with `--native`; it also verifies UTC/entropy, unsupported
+timezone modifiers, temporary B-trees/sorting, independent concurrent databases,
+and nested/disconnected session transactions. `cargo test` with the same feature
+and flags runs focused allocator and mutex tests, including simultaneous C API
+calls on a single `FULLMUTEX` connection.
 
 On 2026-10-12 the physical devrig passed eight concurrent requests, rollback, and
 two isolated named instances. `default` advertised port 40894; the second

@@ -2,6 +2,9 @@
 use super::*;
 use axum::{body::Body, extract::Request, response::Response};
 use fallible_iterator::FallibleIterator;
+#[cfg(any(target_os = "trueos", feature = "native-transport"))]
+use crate::native_transport::TokioIo;
+#[cfg(not(any(target_os = "trueos", feature = "native-transport")))]
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

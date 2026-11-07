@@ -7,6 +7,7 @@ edition = "2024"
 
 [features]
 native-sqlite = []
+native-transport = []
 
 [[bin]]
 name = "sqlite"
@@ -32,4 +33,9 @@ features = ["tokio"]
 
 [dependencies.fallible-iterator]
 version = "0.3"
+
+[dependencies.tower]
+version = "=0.5.3"
+default-features = false
+features = ["util"]
 

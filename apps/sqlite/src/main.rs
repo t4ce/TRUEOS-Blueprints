@@ -1,5 +1,7 @@
 mod storage;
 mod session;
+#[cfg(any(target_os = "trueos", feature = "native-transport"))]
+mod native_transport;
 #[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
 mod native_backend;
 
@@ -359,8 +361,10 @@ fn port_for(instance: &str) -> u16 {
 fn options() -> Result<(String, PathBuf), String> {
     let mut instance = "default".to_string();
     let mut directory = None;
-    #[allow(unused_mut)]
-    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+    #[cfg(target_os = "trueos")]
+    let mut args = trueos::env::args().skip(1).collect::<Vec<_>>();
+    #[cfg(not(target_os = "trueos"))]
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
     #[cfg(target_os = "trueos")]
     if let Ok(script) = trueos::async_fs::block_on(trueos::async_fs::read_file(b"vFile:launch")) {
         args.extend(
@@ -423,7 +427,11 @@ async fn run(instance: String, directory: PathBuf) -> Result<(), String> {
         .route("/v1/connect", get(session::upgrade))
         .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(service);
-    axum::serve(listener, router)
+    #[cfg(any(target_os = "trueos", feature = "native-transport"))]
+    let server = native_transport::serve(listener, router);
+    #[cfg(not(any(target_os = "trueos", feature = "native-transport")))]
+    let server = axum::serve(listener, router);
+    server
         .await
         .map_err(|e| e.to_string())
 }

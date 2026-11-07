@@ -34,7 +34,9 @@ fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
         if entrypoint {
             assert!(rewritten.starts_with(&format!("#![no_main]\n{source}")));
             assert!(rewritten.contains("pub extern \"C\" fn _start() -> !"));
-            assert!(rewritten.contains("unsafe { exit(0) }"));
+            assert!(rewritten.contains("trueos_cabi_blueprint_return_to_cli()"));
+            assert!(rewritten.contains("trueos_cabi_blueprint_shutdown(core::ptr::null(), 0)"));
+            assert!(!rewritten.contains("fn exit("));
         } else {
             assert_eq!(rewritten, source);
         }
@@ -69,7 +71,26 @@ fn entrypoint_rewrite_exits_after_main_returns() {
             .replace("#[unsafe(no_mangle)]\n", "");
         let fixture = root.join(format!("fixture{index}.rs"));
         let executable = root.join(format!("fixture{index}"));
-        fs::write(&fixture, format!("mod app {{\n{body}\n}}\nfn main() {{ app::_start(); }}\n")).unwrap();
+        fs::write(&fixture, format!(r#"
+mod app {{
+{body}
+}}
+static PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_blueprint_return_to_cli() -> i32 {{
+    assert_eq!(std::fs::read("marker").unwrap(), b"returned");
+    assert_eq!(PHASE.swap(1, std::sync::atomic::Ordering::SeqCst), 0);
+    0
+}}
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_blueprint_shutdown(data: *const u8, len: usize) -> i32 {{
+    assert_eq!(PHASE.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(data.is_null());
+    assert_eq!(len, 0);
+    std::process::exit(0);
+}}
+fn main() {{ app::_start(); }}
+"#)).unwrap();
         let result = Command::new("rustc").arg("--edition=2024").arg(&fixture)
             .arg("-o").arg(&executable).output().unwrap();
         assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));

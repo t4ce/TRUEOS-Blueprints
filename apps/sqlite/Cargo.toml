@@ -13,17 +13,24 @@ LIBSQLITE3_FLAGS = "-DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=1 -DSQLITE_MUTEX_APP
 [features]
 # The standalone host test manifest uses the same source with this opt-in.
 native-sqlite = []
+native-transport = []
 
 [dependencies]
-axum = { workspace = true, features = ["json", "http1", "tokio"] }
+axum = { version = "=0.8.9", default-features = false, features = ["json"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "net", "time", "sync", "fs", "io-util", "macros"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net", "time", "sync", "io-util"] }
 rusqlite = { git = "https://github.com/t4ce/rusqlite", rev = "c5a9ada73515cd860f490f8bdd59f83acf5d8e3f", default-features = false, features = ["bundled", "serialize", "hooks", "extra_check", "column_decltype"] }
 
-hyper = { workspace = true }
-hyper-util = { workspace = true, features = ["tokio"] }
+hyper = { version = "=1.10.0", default-features = false, features = ["server", "http1"] }
+tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 fallible-iterator = "0.3"
 
 [target.'cfg(target_os = "trueos")'.dependencies]
-trueos = { workspace = true, features = ["lifecycle-net"] }
+trueos = { workspace = true, features = ["tokio-runtime"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["native"] }
+
+[target.'cfg(not(target_os = "trueos"))'.dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["fs", "macros"] }
+hyper-util = { version = "0.1.20", default-features = false, features = ["tokio"] }

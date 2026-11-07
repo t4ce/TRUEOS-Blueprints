@@ -1,0 +1,23 @@
+[package]
+name = "sqlite_native_check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+
+[dependencies]
+trueos_native = { package = "trueos", path = "../../../TRUEOS-Buildins/vendor/trueos", features = ["native-net"] }
+serde_json = { version = "=1.0.150", default-features = false, features = ["alloc"] }
+
+[profile.release]
+panic = "abort"
+
+[[bin]]
+name = "sqlite_native_check"
+path = "src/main.rs"
+test = false
+bench = false

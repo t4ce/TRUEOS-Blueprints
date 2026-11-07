@@ -10,7 +10,7 @@ use std::{
     cell::UnsafeCell,
     ffi::{c_char, c_int, c_void},
     ptr,
-    sync::{Condvar, Mutex, OnceLock},
+    sync::{Condvar, Mutex, OnceLock, TryLockError},
     thread::ThreadId,
     time::Duration,
 };
@@ -240,7 +240,11 @@ unsafe extern "C" fn mutex_try(pointer: *mut ffi::sqlite3_mutex) -> c_int {
     }
     let mutex = unsafe { &*pointer.cast::<NativeMutex>() };
     let current = std::thread::current().id();
-    let mut state = mutex.state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = match mutex.state.try_lock() {
+        Ok(state) => state,
+        Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(TryLockError::WouldBlock) => return ffi::SQLITE_BUSY,
+    };
     if state.owner.is_some() && !(mutex.recursive && state.owner == Some(current)) {
         return ffi::SQLITE_BUSY;
     }
@@ -536,6 +540,25 @@ mod tests {
     }
 
     #[test]
+    fn try_mutex_never_waits_for_the_bookkeeping_lock() {
+        unsafe {
+            let pointer = mutex_alloc(ffi::SQLITE_MUTEX_FAST);
+            let mutex = &*pointer.cast::<NativeMutex>();
+            let state = mutex.state.lock().unwrap();
+            let address = pointer as usize;
+            let (sender, result) = std::sync::mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                sender.send(mutex_try(address as *mut _)).unwrap();
+            });
+            let observed = result.recv_timeout(Duration::from_secs(2));
+            drop(state);
+            thread.join().unwrap();
+            assert_eq!(observed.unwrap(), ffi::SQLITE_BUSY);
+            mutex_free(pointer);
+        }
+    }
+
+    #[test]
     fn static_mutexes_have_stable_distinct_identity() {
         unsafe {
             let mut pointers = Vec::new();
@@ -559,7 +582,15 @@ mod tests {
         initialize().unwrap();
         unsafe {
             assert_eq!(ffi::sqlite3_threadsafe(), 1);
-            let connection = rusqlite::Connection::open_in_memory().unwrap();
+            // rusqlite deliberately defaults to NOMUTEX because Rust callers
+            // serialize each Connection themselves. Exercise SQLite's real
+            // serialized C API here by explicitly requesting FULLMUTEX.
+            let connection = rusqlite::Connection::open_in_memory_with_flags(
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_FULL_MUTEX,
+            )
+            .unwrap();
             assert!(!ffi::sqlite3_db_mutex(connection.handle()).is_null());
             connection
                 .execute_batch("CREATE TABLE concurrent(value INTEGER)")

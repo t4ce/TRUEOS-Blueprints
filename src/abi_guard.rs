@@ -10,6 +10,8 @@ const KERNEL_REPO_ENV: &str = "TRUEOS_REPO_ROOT";
 const ABI_GUARD_ENV: &str = "TRUEOS_BLUEPRINT_ABI_GUARD";
 const ABI_DECLARATIONS_RELATIVE: &str = "crates/trueos-v/src/bp_abi.rs";
 const ABI_LOCK_RELATIVE: &str = "abi/portal-cabi-v2.sha256";
+const KERNEL_PREBIND_RELATIVE: &str = "src/hv/blueprint/prebind.rs";
+const KERNEL_UNIX_COMPAT_RELATIVE: &str = "src/unix_compat.rs";
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct FunctionContract {
@@ -25,6 +27,13 @@ pub(crate) fn verify_before_pack(
     // deliberately disabled or no kernel checkout can be discovered.
     let imports = undefined_imports(linked_object)?;
     verify_launchable_imports(&imports)?;
+    let kernel_root = blueprint_root
+        .map(locate_kernel_repo)
+        .transpose()?
+        .flatten();
+    if let Some(kernel_root) = &kernel_root {
+        verify_kernel_launchable_imports(&imports, kernel_root)?;
+    }
     if guard_disabled() {
         println!("trueos-blueprint: WARNING: CABI pack guard disabled by {ABI_GUARD_ENV}");
         return Ok(());
@@ -37,7 +46,7 @@ pub(crate) fn verify_before_pack(
         return Ok(());
     };
     let blueprint_abi = blueprint_root.join(ABI_DECLARATIONS_RELATIVE);
-    let Some(kernel_root) = locate_kernel_repo(blueprint_root)? else {
+    let Some(kernel_root) = kernel_root else {
         println!(
             "trueos-blueprint: CABI pack guard skipped: no sibling directory named trueos (case-insensitive)"
         );
@@ -273,6 +282,376 @@ fn verify_launchable_imports(imports: &BTreeSet<String>) -> Result<(), String> {
     ))
 }
 
+#[derive(Debug, Default)]
+struct KernelRetirements {
+    exact: BTreeSet<String>,
+    prefixes: BTreeSet<String>,
+}
+
+impl KernelRetirements {
+    fn rejects(&self, symbol: &str) -> bool {
+        self.exact.contains(symbol)
+            || self
+                .prefixes
+                .iter()
+                .any(|prefix| symbol.starts_with(prefix))
+    }
+}
+
+fn verify_kernel_launchable_imports(
+    imports: &BTreeSet<String>,
+    kernel: &Path,
+) -> Result<(), String> {
+    let read = |relative: &str| {
+        fs::read_to_string(kernel.join(relative)).map_err(|error| {
+            format!(
+                "cannot verify kernel loader retirements in {}: {error}",
+                kernel.join(relative).display()
+            )
+        })
+    };
+    let rules = parse_kernel_retirements(
+        &read(KERNEL_PREBIND_RELATIVE)?,
+        &read(KERNEL_UNIX_COMPAT_RELATIVE)?,
+    )
+    .map_err(|error| {
+        format!(
+            "cannot verify kernel loader retirement source in {}: {error}",
+            kernel.display()
+        )
+    })?;
+    let rejected = imports
+        .iter()
+        .filter(|symbol| rules.rejects(symbol))
+        .collect::<Vec<_>>();
+    if !rejected.is_empty() {
+        return Err(format!(
+            "Blueprint imports APIs retired by the selected kernel; no new .bp was produced:\n{}\nKernel loader sources: {}, {}.\nRebuild against native TRUEOS APIs. Disabling the CABI signature guard does not bypass loader retirement checks.",
+            rejected
+                .iter()
+                .map(|symbol| format!("  {symbol}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            kernel.join(KERNEL_PREBIND_RELATIVE).display(),
+            kernel.join(KERNEL_UNIX_COMPAT_RELATIVE).display(),
+        ));
+    }
+    println!(
+        "trueos-blueprint: kernel loader retirement guard: imports={} compatible=1 kernel={}",
+        imports.len(),
+        kernel.display()
+    );
+    Ok(())
+}
+
+// Read the loader's maintained rules rather than copying its historical Unix
+// classifier into the SDK. The accepted Rust shapes are deliberately narrow:
+// an unrecognized edit fails the build instead of silently weakening the gate.
+fn parse_kernel_retirements(prebind: &str, unix: &str) -> Result<KernelRetirements, String> {
+    let retired = source_function(prebind, "retired_import_error")?;
+    let mut rules = KernelRetirements {
+        exact: match_literal_names(&retired, false)?,
+        prefixes: BTreeSet::new(),
+    };
+    // Only unconditional prefix rejection branches may precede the literal
+    // match. New guards/operators must be reviewed instead of being ignored.
+    let mut at = 0;
+    while retired.get(at).is_some_and(|token| token.word("if")) {
+        let branch = retired
+            .get(at..at + 8)
+            .ok_or("incomplete retired prefix branch")?;
+        let prefix = match branch {
+            [
+                keyword,
+                name,
+                SourceToken::Punct('.'),
+                method,
+                SourceToken::Punct('('),
+                SourceToken::Literal(prefix),
+                SourceToken::Punct(')'),
+                SourceToken::Punct('{'),
+            ] if keyword.word("if") && name.word("name") && method.word("starts_with") => prefix,
+            _ => return Err("unrecognized retired prefix condition".into()),
+        };
+        validate_symbol(prefix)?;
+        let close = matching_source_delimiter(&retired, at + 7)?;
+        let body = &retired[at + 8..close];
+        if !matches!(body,
+            [keyword, some, SourceToken::Punct('('), SourceToken::Literal(_), SourceToken::Punct(')'), SourceToken::Punct(';')]
+            | [keyword, some, SourceToken::Punct('('), SourceToken::Literal(_), SourceToken::Punct(','), SourceToken::Punct(')'), SourceToken::Punct(';')]
+            if keyword.word("return") && some.word("Some"))
+        {
+            return Err("unrecognized retired prefix result".into());
+        }
+        rules.prefixes.insert(prefix.clone());
+        at = close + 1;
+    }
+    if !retired.get(at..at + 3).is_some_and(|tokens| {
+        tokens[0].word("match") && tokens[1].word("name") && tokens[2] == SourceToken::Punct('{')
+    }) {
+        return Err("unrecognized retired loader source before literal match".into());
+    }
+    let predicate = source_function(unix, "unsupported_unix_import_reason")?;
+    if predicate == [SourceToken::Word("None".into())] {
+        return Ok(rules);
+    }
+    let condition_start = predicate.iter().position(|token| token.word("if")).ok_or(
+        "unsupported_unix_import_reason must contain the recognized retirement predicate or None",
+    )? + 1;
+    let condition_end = predicate[condition_start..]
+        .iter()
+        .position(|token| *token == SourceToken::Punct('{'))
+        .map(|offset| condition_start + offset)
+        .ok_or("unclosed Unix retirement predicate")?;
+    let expected = source_tokens("is_unix_import(name) && resolve_import(name).is_none()")?;
+    if predicate[condition_start..condition_end] != expected {
+        return Err(
+            "unrecognized Unix retirement predicate; review the kernel loader guard parser".into(),
+        );
+    }
+    let predicate_close = matching_source_delimiter(&predicate, condition_end)?;
+    if !predicate
+        .get(condition_end + 1)
+        .is_some_and(|token| token.word("Some"))
+        || predicate[predicate_close + 1..] != source_tokens("else { None }")?
+    {
+        return Err("unrecognized Unix retirement result; expected Some(reason) else None".into());
+    }
+    let classified = source_function(unix, "is_unix_import")?;
+    let macro_start = classified
+        .windows(5)
+        .position(|window| {
+            window[0].word("matches")
+                && window[1] == SourceToken::Punct('!')
+                && window[2] == SourceToken::Punct('(')
+                && window[3].word("name")
+                && window[4] == SourceToken::Punct(',')
+        })
+        .ok_or("is_unix_import must use matches!(name, literal patterns)")?;
+    let close = matching_source_delimiter(&classified, macro_start + 2)?;
+    let historical = literal_patterns(&classified[macro_start + 5..close])?;
+    let providers = match_literal_names(&source_function(unix, "resolve_import")?, true)?;
+    rules
+        .exact
+        .extend(historical.difference(&providers).cloned());
+    Ok(rules)
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum SourceToken {
+    Word(String),
+    Literal(String),
+    Punct(char),
+}
+
+impl SourceToken {
+    fn word(&self, value: &str) -> bool {
+        matches!(self, Self::Word(word) if word == value)
+    }
+}
+
+fn source_tokens(source: &str) -> Result<Vec<SourceToken>, String> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at].is_ascii_whitespace() {
+            at += 1;
+            continue;
+        }
+        if bytes[at..].starts_with(b"//") {
+            at += 2;
+            while at < bytes.len() && bytes[at] != b'\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if bytes[at..].starts_with(b"/*") {
+            at += 2;
+            let mut depth = 1;
+            while at < bytes.len() && depth != 0 {
+                if bytes[at..].starts_with(b"/*") {
+                    depth += 1;
+                    at += 2;
+                } else if bytes[at..].starts_with(b"*/") {
+                    depth -= 1;
+                    at += 2;
+                } else {
+                    at += 1;
+                }
+            }
+            if depth != 0 {
+                return Err("unclosed source comment".into());
+            }
+            continue;
+        }
+        if bytes[at] == b'"' {
+            at += 1;
+            let mut value = String::new();
+            while at < bytes.len() && bytes[at] != b'"' {
+                if bytes[at] == b'\\' {
+                    at += 1;
+                    if at == bytes.len() {
+                        return Err("unclosed source string escape".into());
+                    }
+                    // Escaped diagnostic strings are irrelevant to symbol patterns.
+                    value.push('\\');
+                }
+                value.push(bytes[at] as char);
+                at += 1;
+            }
+            if at == bytes.len() {
+                return Err("unclosed source string".into());
+            }
+            at += 1;
+            tokens.push(SourceToken::Literal(value));
+            continue;
+        }
+        if bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_' {
+            let start = at;
+            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                at += 1;
+            }
+            tokens.push(SourceToken::Word(source[start..at].into()));
+        } else {
+            tokens.push(SourceToken::Punct(bytes[at] as char));
+            at += 1;
+        }
+    }
+    Ok(tokens)
+}
+
+fn matching_source_delimiter(tokens: &[SourceToken], open: usize) -> Result<usize, String> {
+    let SourceToken::Punct(start) = tokens[open] else {
+        return Err("expected source delimiter".into());
+    };
+    let end = match start {
+        '(' => ')',
+        '{' => '}',
+        '[' => ']',
+        _ => return Err("invalid source delimiter".into()),
+    };
+    let mut stack = vec![end];
+    for (index, token) in tokens.iter().enumerate().skip(open + 1) {
+        if let SourceToken::Punct(symbol) = token {
+            match symbol {
+                '(' => stack.push(')'),
+                '{' => stack.push('}'),
+                '[' => stack.push(']'),
+                ')' | '}' | ']' => {
+                    if stack.pop() != Some(*symbol) {
+                        return Err("mismatched source delimiter".into());
+                    }
+                    if stack.is_empty() {
+                        return Ok(index);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Err("unclosed source delimiter".into())
+}
+
+fn source_function(source: &str, name: &str) -> Result<Vec<SourceToken>, String> {
+    let tokens = source_tokens(source)?;
+    let start = tokens
+        .windows(2)
+        .position(|window| window[0].word("fn") && window[1].word(name))
+        .ok_or_else(|| format!("missing kernel loader function {name}"))?;
+    let open = tokens
+        .iter()
+        .enumerate()
+        .skip(start + 2)
+        .find(|(_, token)| **token == SourceToken::Punct('{'))
+        .map(|(index, _)| index)
+        .ok_or_else(|| format!("missing body for {name}"))?;
+    let close = matching_source_delimiter(&tokens, open)?;
+    Ok(tokens[open + 1..close].to_vec())
+}
+
+fn validate_symbol(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(format!("unrecognized loader symbol literal {value:?}"));
+    }
+    Ok(())
+}
+
+fn literal_patterns(patterns: &[SourceToken]) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    let mut expect_literal = true;
+    for token in patterns {
+        match token {
+            SourceToken::Literal(name) if expect_literal => {
+                validate_symbol(name)?;
+                names.insert(name.clone());
+                expect_literal = false;
+            }
+            SourceToken::Punct('|') if !expect_literal => expect_literal = true,
+            SourceToken::Punct(',') if !expect_literal => {}
+            _ => return Err("loader patterns must be literal names separated by |".into()),
+        }
+    }
+    if expect_literal || names.is_empty() {
+        return Err("empty or incomplete loader literal pattern".into());
+    }
+    Ok(names)
+}
+
+fn match_literal_names(
+    tokens: &[SourceToken],
+    providers_only: bool,
+) -> Result<BTreeSet<String>, String> {
+    let start = tokens
+        .windows(3)
+        .position(|window| {
+            window[0].word("match")
+                && window[1].word("name")
+                && window[2] == SourceToken::Punct('{')
+        })
+        .ok_or("kernel loader function must contain match name")?
+        + 2;
+    let close = matching_source_delimiter(tokens, start)?;
+    let mut names = BTreeSet::new();
+    let mut at = start + 1;
+    while at < close {
+        if tokens[at] == SourceToken::Punct(',') {
+            at += 1;
+            continue;
+        }
+        let arrow = tokens[at..close]
+            .windows(2)
+            .position(|window| window == [SourceToken::Punct('='), SourceToken::Punct('>')])
+            .map(|offset| at + offset)
+            .ok_or("missing loader match arm arrow")?;
+        let wildcard = tokens[at..arrow] == [SourceToken::Word("_".into())];
+        let rhs = arrow + 2;
+        let has_provider = tokens.get(rhs).is_some_and(|token| token.word("Some"));
+        if wildcard && !tokens.get(rhs).is_some_and(|token| token.word("None")) {
+            return Err("kernel loader wildcard must resolve to None".into());
+        }
+        if !wildcard && (!providers_only || has_provider) {
+            names.extend(literal_patterns(&tokens[at..arrow])?);
+        }
+        if !wildcard && !has_provider {
+            return Err("unrecognized kernel resolver arm; expected Some(provider)".into());
+        }
+        at = rhs;
+        while at < close && tokens[at] != SourceToken::Punct(',') {
+            if matches!(tokens[at], SourceToken::Punct('(' | '{' | '[')) {
+                at = matching_source_delimiter(tokens, at)? + 1;
+            } else {
+                at += 1;
+            }
+        }
+    }
+    Ok(names)
+}
+
 fn parse_contract_file(path: &Path) -> Result<BTreeMap<String, FunctionContract>, String> {
     let source = fs::read_to_string(path)
         .map_err(|err| format!("failed to read CABI declarations {}: {err}", path.display()))?;
@@ -438,6 +817,156 @@ fn digest_hex(digest: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PREBIND_FIXTURE: &str = r#"
+        // "comment_must_not_be_retired" => Some("ignored")
+        fn retired_import_error(name: &str) -> Option<&'static str> {
+            if name.starts_with("retired_crypto_") { return Some("old crypto"); }
+            match name {
+                "exit" | "trueos_cabi_alloc" => Some("retired allocation/process"),
+                "old_native" => Some("retired native symbol"),
+                _ => None,
+            }
+        }
+    "#;
+    const UNIX_FIXTURE: &str = r#"
+        fn unsupported_unix_import_reason(name: &str) -> Option<&'static str> {
+            if is_unix_import(name) && resolve_import(name).is_none() {
+                Some("unsupported Unix API")
+            } else { None }
+        }
+        fn is_unix_import(name: &str) -> bool {
+            matches!(name, "read" | "pthread_mutex_lock" | "memchr" | "log")
+        }
+        fn resolve_import(name: &str) -> Option<usize> {
+            match name {
+                "memchr" => Some(crate::helpers::memchr as *const () as usize),
+                "log" => Some(crate::math::log as *const () as usize),
+                _ => None,
+            }
+        }
+    "#;
+
+    #[test]
+    fn kernel_retirement_rules_follow_names_prefixes_and_actual_providers() {
+        let rules = parse_kernel_retirements(PREBIND_FIXTURE, UNIX_FIXTURE).unwrap();
+        for name in [
+            "exit",
+            "trueos_cabi_alloc",
+            "old_native",
+            "read",
+            "pthread_mutex_lock",
+            "retired_crypto_sha",
+        ] {
+            assert!(rules.rejects(name), "accepted {name}");
+        }
+        for name in [
+            "memchr",
+            "log",
+            "trueos_cabi_thread_spawn",
+            "comment_must_not_be_retired",
+            "retired_crypto",
+        ] {
+            assert!(!rules.rejects(name), "rejected {name}");
+        }
+    }
+
+    #[test]
+    fn inactive_kernel_retirement_does_not_retire_the_historical_classifier() {
+        let unix = UNIX_FIXTURE.replace(
+            "if is_unix_import(name) && resolve_import(name).is_none() {\n                Some(\"unsupported Unix API\")\n            } else { None }",
+            "None",
+        );
+        let rules = parse_kernel_retirements(PREBIND_FIXTURE, &unix).unwrap();
+        assert!(!rules.rejects("read"));
+        assert!(rules.rejects("exit"));
+    }
+
+    #[test]
+    fn kernel_retirement_source_drift_fails_closed() {
+        for unix in [
+            UNIX_FIXTURE.replace("&& resolve_import(name).is_none()", ""),
+            UNIX_FIXTURE.replace("Some(\"unsupported Unix API\")", "None"),
+            UNIX_FIXTURE.replace("\"memchr\" => Some", "\"memchr\" => custom_provider"),
+            UNIX_FIXTURE.replace("matches!(name,", "custom_classifier(name,"),
+        ] {
+            assert!(parse_kernel_retirements(PREBIND_FIXTURE, &unix).is_err());
+        }
+        assert!(parse_kernel_retirements("fn unrelated() {}", UNIX_FIXTURE).is_err());
+        assert!(
+            parse_kernel_retirements(
+                &PREBIND_FIXTURE.replace("starts_with", "ends_with"),
+                UNIX_FIXTURE
+            )
+            .is_err()
+        );
+        assert!(
+            parse_kernel_retirements(
+                &PREBIND_FIXTURE.replace("_ => None", "_ => Some(\"all\")"),
+                UNIX_FIXTURE
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn source_lexer_ignores_nested_comments_and_quoted_fake_functions() {
+        let prebind = format!(
+            "/* nested /* fn retired_import_error() {{ }} */ */ const TEXT: &str = \"fn retired_import_error() {{ fake }}\"; {PREBIND_FIXTURE}"
+        );
+        let rules = parse_kernel_retirements(&prebind, UNIX_FIXTURE).unwrap();
+        assert!(rules.rejects("old_native"));
+        assert!(!rules.rejects("fake"));
+    }
+
+    #[test]
+    fn current_kernel_retirements_reject_old_sqlite_but_allow_native_helpers() {
+        let blueprint = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let Some(kernel) = locate_kernel_repo(blueprint).unwrap() else {
+            return;
+        };
+        let imports = BTreeSet::from([
+            "read".into(),
+            "open64".into(),
+            "getpid".into(),
+            "exit".into(),
+            "pthread_mutex_lock".into(),
+            "trueos_cabi_alloc".into(),
+            "ring_core_probe".into(),
+        ]);
+        let error = verify_kernel_launchable_imports(&imports, &kernel).unwrap_err();
+        for symbol in imports {
+            assert!(error.contains(&symbol), "{symbol}: {error}");
+        }
+        verify_kernel_launchable_imports(
+            &BTreeSet::from([
+                "memchr".into(),
+                "log".into(),
+                "abs".into(),
+                "qsort".into(),
+                "trueos_time_unix_nanos".into(),
+                "trueos_cabi_thread_spawn".into(),
+            ]),
+            &kernel,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn kernel_loader_gate_precedes_the_signature_guard_override() {
+        // Verify the real entry point's ordering without mutating process env
+        // while other SDK tests can be running in parallel.
+        let entry = source_function(include_str!("abi_guard.rs"), "verify_before_pack").unwrap();
+        let loader = entry
+            .iter()
+            .position(|token| token.word("verify_kernel_launchable_imports"))
+            .unwrap();
+        let disabled = entry
+            .iter()
+            .position(|token| token.word("guard_disabled"))
+            .unwrap();
+        assert!(loader < disabled);
+    }
 
     #[test]
     fn versioned_undefined_symbols_keep_the_name_before_the_version_index() {
