@@ -7,6 +7,13 @@ edition = "2024"
 replicatable = true
 argv-entry-v1 = true
 
+[package.metadata.trueos-blueprint.build-env]
+LIBSQLITE3_FLAGS = "-DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=1 -DSQLITE_MUTEX_APPDEF=1 -DSQLITE_ZERO_MALLOC=1 -DSQLITE_TEMP_STORE=3 -DSQLITE_OMIT_LOAD_EXTENSION=1 -USQLITE_ENABLE_LOAD_EXTENSION -DSQLITE_OMIT_LOCALTIME=1"
+
+[features]
+# The standalone host test manifest uses the same source with this opt-in.
+native-sqlite = []
+
 [dependencies]
 axum = { workspace = true, features = ["json", "http1", "tokio"] }
 serde = { workspace = true, features = ["derive"] }

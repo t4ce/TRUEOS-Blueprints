@@ -1,5 +1,12 @@
 mod storage;
 mod session;
+#[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
+mod native_backend;
+
+// The SDK's legacy C allocator exports do not exist in native-only images.
+#[cfg(target_os = "trueos")]
+#[global_allocator]
+static ALLOCATOR: std::alloc::System = std::alloc::System;
 
 use axum::{
     Json, Router,
@@ -430,6 +437,8 @@ fn announce(text: &str) {
 
 fn main() {
     let result = (|| {
+        #[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
+        native_backend::initialize()?;
         let (instance, directory) = options()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

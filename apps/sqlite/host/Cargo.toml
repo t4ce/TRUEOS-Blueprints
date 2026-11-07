@@ -5,6 +5,9 @@ edition = "2024"
 
 [workspace]
 
+[features]
+native-sqlite = []
+
 [[bin]]
 name = "sqlite"
 path = "../src/main.rs"

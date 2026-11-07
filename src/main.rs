@@ -35,7 +35,7 @@ use app_catalog::{
     RustcTier, example_required_features, example_specs, manifest_declared_features,
     manifest_has_dependency, package_app_spec, package_app_specs, package_bin_name,
     package_blueprint_argv_entry_v1, package_blueprint_filesystem_independent,
-    package_blueprint_build_env_paths, package_blueprint_profile,
+    package_blueprint_build_env, package_blueprint_build_env_paths, package_blueprint_profile,
     package_blueprint_replicatable,
     package_blueprint_stack_capture,
     package_blueprint_rustc_embed_sysroot, package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier,
@@ -658,12 +658,6 @@ fn build_one_target_to(
             "trueos-blueprint: diagnostic stack capture enabled (full DWARF, frame pointers, retained sidecars)"
         );
     }
-    // SQLite's optional sort workers create POSIX pthreads directly, which
-    // Blueprint loaders reject. Keep SQLite mutex/thread safety enabled and
-    // execute SQL on the caller's TRUEOS carrier instead.
-    let mut sqlite_flags = env::var("LIBSQLITE3_FLAGS").unwrap_or_default();
-    sqlite_flags.push_str(" -USQLITE_MAX_WORKER_THREADS -DSQLITE_MAX_WORKER_THREADS=0");
-    cargo.env("LIBSQLITE3_FLAGS", sqlite_flags);
     cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     if let Some(root) = blueprint_root(app_dir) {
@@ -672,9 +666,7 @@ fn build_one_target_to(
         // embedded with `include_str!`, such as rustc-min's runtime demo.
         cargo.env(BLUEPRINT_CATALOG_ROOT_ENV, root);
     }
-    for (key, path) in package_blueprint_build_env_paths(manifest_path)? {
-        cargo.env(key, path);
-    }
+    push_package_build_env(&mut cargo, manifest_path, env::var_os("LIBSQLITE3_FLAGS"))?;
     if rustc_tier.is_some() {
         toolchain::configure_rustc_bootstrap_env(&mut cargo, &target_name)?;
     }
@@ -1035,6 +1027,30 @@ fn build_one_target_to(
     }
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(out)
+}
+
+fn push_package_build_env(
+    cargo: &mut Command,
+    manifest_path: &Path,
+    inherited_sqlite_flags: Option<std::ffi::OsString>,
+) -> Result<(), String> {
+    for (key, value) in package_blueprint_build_env(manifest_path)? {
+        cargo.env(key, value);
+    }
+    for (key, path) in package_blueprint_build_env_paths(manifest_path)? {
+        cargo.env(key, path);
+    }
+    let mut sqlite_flags = inherited_sqlite_flags.unwrap_or_default();
+    if let Some((_, Some(app_flags))) = cargo.get_envs().find(|(key, _)| *key == "LIBSQLITE3_FLAGS") {
+        sqlite_flags.push(" ");
+        sqlite_flags.push(app_flags);
+    }
+    // SQLite's optional sort workers create POSIX pthreads directly, which
+    // Blueprint loaders reject. Keep mutex/thread safety enabled and execute
+    // SQL on the caller's carrier. This must follow inherited and app flags.
+    sqlite_flags.push(" -USQLITE_MAX_WORKER_THREADS -DSQLITE_MAX_WORKER_THREADS=0");
+    cargo.env("LIBSQLITE3_FLAGS", sqlite_flags);
+    Ok(())
 }
 
 // Caching is optional; an unreadable stamp/input must fall back to the build.
@@ -6671,6 +6687,46 @@ fn reset_dir(path: &Path) -> Result<(), String> {
         fs::remove_dir_all(path).map_err(io_string)?;
     }
     fs::create_dir_all(path).map_err(io_string)
+}
+
+#[cfg(test)]
+#[test]
+fn package_build_env_forwards_literals_and_keeps_sqlite_worker_constraint_last() {
+    let root = env::temp_dir().join(format!("blueprint-package-build-env-{}", std::process::id()));
+    reset_dir(&root).unwrap();
+    fs::create_dir(root.join("assets")).unwrap();
+    let manifest = root.join("Cargo.toml");
+    fs::write(&manifest, r#"
+[package.metadata.trueos-blueprint.build-env]
+LIBSQLITE3_FLAGS = "-DSQLITE_OS_OTHER=1 -DSQLITE_MAX_WORKER_THREADS=8"
+APP_VALUE = "literal #1 with spaces"
+[package.metadata.trueos-blueprint.build-env-paths]
+ASSET_DIR = "assets"
+"#).unwrap();
+    let mut cargo = Command::new("cargo");
+    cargo.env("APP_VALUE", "inherited value");
+    push_package_build_env(&mut cargo, &manifest, Some("-DINHERITED=1 -DSQLITE_MAX_WORKER_THREADS=4".into())).unwrap();
+    let forwarded: BTreeMap<_, _> = cargo.get_envs().map(|(key, value)| {
+        (key.to_owned(), value.unwrap().to_owned())
+    }).collect();
+    assert_eq!(forwarded.get(std::ffi::OsStr::new("APP_VALUE")).unwrap(), "literal #1 with spaces");
+    assert_eq!(forwarded.get(std::ffi::OsStr::new("ASSET_DIR")).unwrap(), fs::canonicalize(root.join("assets")).unwrap().as_os_str());
+    assert_eq!(forwarded.get(std::ffi::OsStr::new("LIBSQLITE3_FLAGS")).unwrap(), "-DINHERITED=1 -DSQLITE_MAX_WORKER_THREADS=4 -DSQLITE_OS_OTHER=1 -DSQLITE_MAX_WORKER_THREADS=8 -USQLITE_MAX_WORKER_THREADS -DSQLITE_MAX_WORKER_THREADS=0");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(test)]
+#[test]
+fn package_build_env_preserves_inherited_sqlite_flags_without_app_metadata() {
+    let root = env::temp_dir().join(format!("blueprint-inherited-build-env-{}", std::process::id()));
+    reset_dir(&root).unwrap();
+    let manifest = root.join("Cargo.toml");
+    fs::write(&manifest, "[package]\nname = \"probe\"\n").unwrap();
+    let mut cargo = Command::new("cargo");
+    push_package_build_env(&mut cargo, &manifest, Some("-DKEEP_ME=1".into())).unwrap();
+    let flags = cargo.get_envs().find(|(key, _)| *key == "LIBSQLITE3_FLAGS").unwrap().1.unwrap();
+    assert_eq!(flags, "-DKEEP_ME=1 -USQLITE_MAX_WORKER_THREADS -DSQLITE_MAX_WORKER_THREADS=0");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(test)]
