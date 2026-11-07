@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/38528920dd3b965e
-Reference source fingerprint: 53f0969e8441189696a0d29075dbe6a850967ebe39f214c730cf611dc67fe889
+API PRM trueos-blueprint-api/1/0044bdad50842ffb
+Reference source fingerprint: da88614f64601a084b4a4aacb0e7065d122bf7b0fc3cc94c084adab384709095
 
 # Start here
 TRUEOS application reference, generated from cargo rustdoc JSON. Read the index first and load only the needed topic. These files contain signatures, public data layouts, constants and usage contracts; no kernel implementations, Cargo dependencies or SDK source trees are included.
@@ -16,7 +16,7 @@ Retired synchronous trueos_cabi_fs_* and trueos_cabi_trueosfs_* declarations are
 - lifecycle.prm: 27 C ABI functions. Check blueprint_stop_control_v1 using the same operation protocol as the native examples (initial registration 0, loop check 1).
 - memory.prm: 7 C ABI functions. Allocation, buffer ownership and cleanup remain explicit across the ABI.
 - graphics.prm: 120 C ABI functions. UI4 resources are owner-scoped.
-- services.prm: 167 C ABI functions. These are additional Blueprint service declarations.
+- services.prm: 168 C ABI functions. These are additional Blueprint service declarations.
 - types.prm: repr(C) field order, arrays, public ABI constants. No implementation bodies.
 - symbols.prm: searchable C symbol-to-topic index; consult when you know a function name.
 - manifest.json: version, source hashes, artifact hashes, counts, excluded retired declarations.

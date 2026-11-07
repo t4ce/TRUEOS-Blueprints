@@ -12,43 +12,6 @@ use std::{
 pub const BUILD_ROOT: &str = "/apps/common/ide/builds";
 pub const MAX_BUILD_INPUT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Publish only project sources into the preview VM's public folder. The
-/// database remains authoritative; saves replace complete individual files.
-pub fn publish_html(root: &Path, source: &LoadedSource) -> io::Result<()> {
-    use crate::html_preview::valid_asset_path;
-    if source.files.iter().any(|file| !valid_asset_path(&file.path)
-        || file.path.ends_with(".preview-tmp") || file.bytes.len() > 8 * 1024 * 1024)
-        || source.files.iter().map(|f| f.bytes.len()).sum::<usize>() > MAX_BUILD_INPUT_BYTES {
-        return Err(invalid("Invalid or oversized preview sources"));
-    }
-    fs::create_dir_all(root)?;
-    let manifest = root.parent().ok_or_else(|| invalid("Preview root has no owner folder"))?.join("published.json");
-    let previous: Vec<String> = match fs::read(&manifest) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error),
-    };
-    for file in &source.files {
-        let path = root.join(&file.path);
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-        let temporary = path.with_file_name(format!("{}.preview-tmp", path.file_name().unwrap().to_string_lossy()));
-        fs::write(&temporary, &file.bytes)?;
-        fs::rename(temporary, path)?;
-    }
-    for path in previous {
-        if valid_asset_path(&path) && source.file(&path).is_none() {
-            match fs::remove_file(root.join(path)) {
-                Ok(()) => {}, Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-                Err(error) => return Err(error),
-            }
-        }
-    }
-    let paths: Vec<_> = source.files.iter().map(|file| &file.path).collect();
-    let temporary = manifest.with_extension("tmp");
-    fs::write(&temporary, serde_json::to_vec(&paths).map_err(io::Error::other)?)?;
-    fs::rename(temporary, manifest)
-}
-
 pub struct PreparedBuild {
     pub request: BuildRequest,
     pub request_path: PathBuf,
@@ -355,23 +318,6 @@ fn invalid(message: &str) -> io::Error {
 mod tests {
     use super::*;
     use crate::{SourceDatabase, SourceFileInput};
-    #[test]
-    fn preview_publication_updates_removes_assets_and_rejects_escape_before_writing() {
-        let (base, mut source) = fixture();
-        let root = base.join("preview/public");
-        publish_html(&root, &source).unwrap();
-        assert_eq!(fs::read(root.join("main.rs")).unwrap(), b"source");
-        source.files[0].path = "index.html".into();
-        source.files[0].bytes = b"updated".to_vec();
-        publish_html(&root, &source).unwrap();
-        assert!(!root.join("main.rs").exists());
-        assert_eq!(fs::read(root.join("index.html")).unwrap(), b"updated");
-        source.files[0].path = "../outside".into();
-        assert!(publish_html(&root, &source).is_err());
-        assert!(!base.join("preview/outside").exists());
-        fs::remove_dir_all(base).unwrap();
-    }
-
     fn fixture() -> (PathBuf, LoadedSource) {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
