@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/9ec92c0bb481e8d3
-Reference source fingerprint: 4747f6f3b9ea495b49f289d9202d0569b2fafff2d89f3abd51030025c373a0b0
+API PRM trueos-blueprint-api/1/bcaa360e2bcf39dc
+Reference source fingerprint: acc384816ed8213e038b483da034595057e976e224a166663c7b2f893fddb095
 
 # Public C ABI data layouts
 Fields are in repr(C) order. This is not a packed serialization: honor native alignment, pointers, padding and array lengths. Raw-pointer mutability indicates direction; explicit lengths remain authoritative. Numeric byte offsets are not synthesized by rustdoc.
@@ -87,7 +87,7 @@ struct GamepadControlCommand {
   left_trigger: u16,
   right_trigger: u16,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1923
+Declaration: crates/trueos-v/src/bp_abi.rs:1947
 
 ## GamepadControlDeviceInfo
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -97,7 +97,7 @@ struct GamepadControlDeviceInfo {
   slot_id: u32,
   reserved: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1915
+Declaration: crates/trueos-v/src/bp_abi.rs:1939
 
 ## GamepadControlSnapshot
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -114,7 +114,7 @@ struct GamepadControlSnapshot {
   left_trigger: u16,
   right_trigger: u16,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1941
+Declaration: crates/trueos-v/src/bp_abi.rs:1965
 
 ## IndexedBatchDraw
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -217,7 +217,7 @@ struct KeyboardControlCommand {
   key_code: u16,
   reserved1: u16,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1902
+Declaration: crates/trueos-v/src/bp_abi.rs:1926
 
 ## KeyboardControlDeviceInfo
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -227,7 +227,7 @@ struct KeyboardControlDeviceInfo {
   slot_id: u32,
   reserved: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1894
+Declaration: crates/trueos-v/src/bp_abi.rs:1918
 
 ## MouseMotionCommand
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -249,7 +249,7 @@ struct MouseMotionCommand {
   wheel: i16,
   reserved: u16,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1874
+Declaration: crates/trueos-v/src/bp_abi.rs:1898
 
 ## MouseMotionCursorInfo
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -259,7 +259,7 @@ struct MouseMotionCursorInfo {
   slot_id: u32,
   reserved: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1866
+Declaration: crates/trueos-v/src/bp_abi.rs:1890
 
 ## OffscreenIndexedBatchV1
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -537,7 +537,7 @@ struct TrueosHidCursorEvent {
   y: f64,
   flags: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2058
+Declaration: crates/trueos-v/src/bp_abi.rs:2082
 
 ## TrueosHidHutKeyboardState
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -556,7 +556,7 @@ struct TrueosHidHutKeyboardState {
   key_down_bits: [u32; 8],
   source_tag: [u8; 32],
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2113
+Declaration: crates/trueos-v/src/bp_abi.rs:2137
 
 ## TrueosHidHutMouseState
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -575,7 +575,7 @@ struct TrueosHidHutMouseState {
   x: f64,
   y: f64,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2077
+Declaration: crates/trueos-v/src/bp_abi.rs:2101
 
 ## TrueosHidHutTabletState
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -596,7 +596,7 @@ struct TrueosHidHutTabletState {
   x: f64,
   y: f64,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2094
+Declaration: crates/trueos-v/src/bp_abi.rs:2118
 
 ## TrueosHidKeyboardSample
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -612,7 +612,7 @@ struct TrueosHidKeyboardSample {
   ascii: [u8; 6],
   flags: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1995
+Declaration: crates/trueos-v/src/bp_abi.rs:2019
 
 ## TrueosHidMouseSample
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -627,7 +627,7 @@ struct TrueosHidMouseSample {
   wheel: i8,
   flags: u8,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1982
+Declaration: crates/trueos-v/src/bp_abi.rs:2006
 
 ## TrueosHidTabletSample
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -645,7 +645,7 @@ struct TrueosHidTabletSample {
   x_norm_q15: u16,
   y_norm_q15: u16,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2009
+Declaration: crates/trueos-v/src/bp_abi.rs:2033
 
 ## TrueosImageSourceInfo
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -681,7 +681,7 @@ struct TrueosInputCombo {
   gamepad_slot_id: u32,
   gamepad_ep_target: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2130
+Declaration: crates/trueos-v/src/bp_abi.rs:2154
 
 ## TrueosKeyboardOutputEvent
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -703,7 +703,7 @@ struct TrueosKeyboardOutputEvent {
   utf8: [u8; 4],
   flags: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2025
+Declaration: crates/trueos-v/src/bp_abi.rs:2049
 
 ## TrueosLifecycleIdentity
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -755,7 +755,7 @@ struct TrueosMidiInputEventV1 {
   velocity: u8,
   gate: u8,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2046
+Declaration: crates/trueos-v/src/bp_abi.rs:2070
 
 ## TrueosMouseState
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -770,7 +770,7 @@ struct TrueosMouseState {
   seq: u32,
   slot_id: u32,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1956
+Declaration: crates/trueos-v/src/bp_abi.rs:1980
 
 ## TrueosTabletEvent
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -785,7 +785,7 @@ struct TrueosTabletEvent {
   y_norm_q15: u16,
   flags: u8,
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:1969
+Declaration: crates/trueos-v/src/bp_abi.rs:1993
 
 ## TrueosUi4ButtonRegionV1
 repr: {"align": null, "int": null, "kind": "c", "packed": null}
@@ -1208,7 +1208,7 @@ struct TrueosUi4WindowStateV1 {
   focused: u32,
   reserved: [u32; 3],
 }
-Declaration: crates/trueos-v/src/bp_abi.rs:2156
+Declaration: crates/trueos-v/src/bp_abi.rs:2180
 
 ## TrueosVmediaImageInfo
 repr: {"align": null, "int": null, "kind": "c", "packed": null}

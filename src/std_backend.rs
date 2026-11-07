@@ -149,6 +149,7 @@ const CACHE_SOURCES: &[&str] = &[
     "std/src/sys/fs/unix.rs",
     "std/src/sys/fs/mod.rs",
     "std/src/sys/fs/trueos.rs",
+    "std/src/fs.rs",
     "std/src/sys/env/mod.rs",
     "std/src/sys/env/trueos.rs",
     "std/src/sys/args/mod.rs",
@@ -168,6 +169,7 @@ const CACHE_SOURCES: &[&str] = &[
     "std/src/os/fd/owned.rs",
     "std/src/os/fd/raw.rs",
     "std/src/os/unix/fs.rs",
+    "std/src/os/linux/fs.rs",
 ];
 
 fn cache_revision_for_library(library: &Path, target_spec: &Path) -> Result<String, String> {
