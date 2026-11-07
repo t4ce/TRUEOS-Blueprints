@@ -711,6 +711,8 @@ dependencies = [
  "serde",
  "signal-hook",
  "signal-hook-mio",
+ "trueos-io",
+ "trueos-runtime",
 ]
 
 [[package]]
@@ -4177,6 +4179,13 @@ name = "trueos-redb"
 version = "0.1.0"
 dependencies = [
  "redb",
+]
+
+[[package]]
+name = "trueos-runtime"
+version = "0.1.0"
+dependencies = [
+ "trueos-io",
 ]
 
 [[package]]
