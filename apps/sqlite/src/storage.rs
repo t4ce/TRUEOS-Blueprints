@@ -52,3 +52,20 @@ pub async fn publish(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Preserve a recovery archive without ever replacing an existing backup.
+pub async fn publish_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    #[cfg(target_os = "trueos")]
+    return trueos::async_fs::write_file_typed_checked(
+        path.to_string_lossy().as_bytes(), bytes,
+        trueos::async_fs::ContentTypeId::BLOB, true, None,
+    ).await.map_err(|code| format!("create archive: TRUEOSFS {code}"));
+    #[cfg(not(target_os = "trueos"))]
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(path)
+            .await.map_err(|e| e.to_string())?;
+        file.write_all(bytes).await.map_err(|e| e.to_string())?;
+        file.sync_all().await.map_err(|e| e.to_string())
+    }
+}

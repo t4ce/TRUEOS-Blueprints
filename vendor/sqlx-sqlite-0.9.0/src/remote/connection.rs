@@ -37,6 +37,61 @@ const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(300);
 static NEXT_CONNECTION_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_REQUEST_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// Receipt from the SQLite service that owns Codex's persisted database image.
+/// `backup_locator` is a service resource, never a client filesystem pathname.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct CodexDatabaseRecovery {
+    pub storage_owner: String,
+    pub instance: String,
+    pub database: String,
+    pub backup_locator: String,
+    pub archived_bytes: usize,
+}
+
+fn persistent_database_name(filename: &std::path::Path) -> String {
+    let hash = filename.to_string_lossy().bytes().fold(14695981039346656037u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(1099511628211)
+    });
+    format!("db-{hash:016x}")
+}
+
+impl SqliteConnectOptions {
+    /// Ask Codex's SQLite service to archive a corrupt image and publish a fresh
+    /// database. The service independently verifies corruption and refuses to
+    /// reset healthy or open databases. This does not inspect, rename or delete
+    /// client-side files. It does not retry an ambiguous HTTP response.
+    pub async fn recover_codex_database(&self) -> Result<CodexDatabaseRecovery, Error> {
+        if self.in_memory || self.filename.as_ref() == std::path::Path::new(":memory:") || self.read_only {
+            return Err(Error::Protocol("Codex recovery requires a writable persistent database".into()));
+        }
+        let endpoint = endpoint()?;
+        let deadline = Instant::now() + SETUP_TIMEOUT;
+        let client = reqwest::Client::builder().no_proxy()
+            .connect_timeout(HTTP_ATTEMPT_TIMEOUT).build().map_err(protocol)?;
+        ensure_service(&client, &endpoint, deadline).await?;
+        let database = persistent_database_name(&self.filename);
+        let request = serde_json::to_vec(&serde_json::json!({"database": database})).map_err(protocol)?;
+        let response = timeout_at(deadline, client.post(format!("{endpoint}/v1/codex/recover"))
+            .header("content-type", "application/json").body(request).send())
+            .await.map_err(|_| setup_timeout())?.map_err(protocol)?;
+        let status = response.status();
+        let bytes = timeout_at(deadline, response.bytes()).await
+            .map_err(|_| setup_timeout())?.map_err(protocol)?;
+        if !status.is_success() {
+            let detail = serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+                .and_then(|body| body.get("error").and_then(|value| value.as_str()).map(str::to_owned))
+                .unwrap_or_else(|| status.to_string());
+            return Err(Error::Protocol(format!("SQLite service recovery refused: {detail}")));
+        }
+        let receipt: CodexDatabaseRecovery = serde_json::from_slice(&bytes).map_err(protocol)?;
+        if receipt.storage_owner != "sqlite-service" || receipt.database != database
+            || !receipt.backup_locator.starts_with(&format!("sqlite-service://{}/db-backups/{database}/", receipt.instance)) {
+            return Err(Error::Protocol("invalid SQLite service recovery receipt".into()));
+        }
+        Ok(receipt)
+    }
+}
+
 /// Fixed phase names and numeric correlation only. Never include endpoint,
 /// instance, database, SQL, parameters, response content or free-form errors.
 struct PhaseTiming {
@@ -237,10 +292,7 @@ impl SqliteConnection {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             )
         } else {
-            let hash = filename.bytes().fold(14695981039346656037u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(1099511628211)
-            });
-            format!("db-{hash:016x}")
+            persistent_database_name(&options.filename)
         };
         let opened = setup_step(deadline, connection_id, "open", exchange(
             &mut socket,

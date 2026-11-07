@@ -85,6 +85,8 @@ pub use connection::deserialize::SqliteOwnedBuf;
 #[cfg(not(any(target_os = "trueos", feature = "trueos-remote")))]
 pub use connection::PreupdateHookResult;
 pub use connection::{LockedSqliteHandle, SqliteConnection, SqliteOperation, UpdateHookResult};
+#[cfg(any(target_os = "trueos", feature = "trueos-remote"))]
+pub use connection::CodexDatabaseRecovery;
 pub use database::Sqlite;
 pub use error::SqliteError;
 pub use options::{

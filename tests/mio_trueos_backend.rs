@@ -7,16 +7,16 @@ fn read(root: &Path, relative: &str) -> String {
 }
 
 #[test]
-fn trueos_mio_uses_the_unix_poll_selector_contract() {
+fn trueos_mio_preserves_unix_defaults_and_allows_native_network_opt_in() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sys = read(root, "../TRUEOS/vendor/mio-1.2.0/src/sys/mod.rs");
     let unix = read(root, "../TRUEOS/vendor/mio-1.2.0/src/sys/unix/mod.rs");
     let poll = read(root, "../TRUEOS/vendor/mio-1.2.0/src/sys/unix/selector/poll.rs");
 
     assert!(
-        sys.contains("all(unix, not(all(any(target_os = \"trueos\", target_os = \"zkvm\"), not(feature = \"std-compat\"))))")
+        sys.contains("all(unix, not(all(any(target_os = \"trueos\", target_os = \"zkvm\"), any(not(feature = \"std-compat\"), feature = \"native-net\"))))")
             && sys.contains("pub use self::unix::*;"),
-        "the shared Mio crate must select the Unix backend for std-compat builds"
+        "the shared Mio crate must retain the Unix default for std-compat and require native-net opt-in"
     );
     assert!(
         unix.contains("target_os = \"trueos\"")

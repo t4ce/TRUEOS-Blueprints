@@ -166,20 +166,25 @@ async fn serve(
                 } if session.is_none() => {
                     let open = async {
                         if !valid_name(&database) {
-                            return Err("invalid database name".to_string());
+                            return Err(SqlError::from("invalid database name".to_string()));
                         }
                         if !create
                             && storage::read(&service.directory.join(format!("{database}.sqlite")))
-                                .await?
+                                .await.map_err(SqlError::from)?
                                 .is_none()
                             && !service.databases.lock().await.contains_key(&database)
                         {
-                            return Err("database does not exist".into());
+                            return Err(SqlError { code: 14, message: "database does not exist".into() });
                         }
                         let database = service
                             .database(&database)
                             .await
-                            .map_err(|(_, e)| e.0.to_string())?;
+                            .map_err(|(_, e)| SqlError {
+                                code: e.0.get("sqlite_code").and_then(|value| value.as_i64())
+                                    .and_then(|code| i32::try_from(code).ok()).unwrap_or(1),
+                                message: e.0.get("error").and_then(|value| value.as_str())
+                                    .unwrap_or("SQLite image open failed").to_string(),
+                            })?;
                         session = Some(Session {
                             database,
                             transaction: None,
@@ -187,17 +192,10 @@ async fn serve(
                             depth: 0,
                             read_only,
                         });
-                        Ok::<_, String>(Reply::default())
+                        Ok::<_, SqlError>(Reply::default())
                     }
                     .await;
-                    open.map_err(|message| SqlError {
-                        code: if message == "database does not exist" {
-                            14
-                        } else {
-                            1
-                        },
-                        message,
-                    })
+                    open
                 }
                 request => match session.as_mut() {
                     Some(s) => s.command(request, &mut timing).await,

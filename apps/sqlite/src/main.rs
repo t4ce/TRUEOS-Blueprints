@@ -1,5 +1,6 @@
 mod storage;
 mod session;
+mod codex_recovery;
 #[cfg(any(target_os = "trueos", feature = "native-transport"))]
 mod native_transport;
 #[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
@@ -118,38 +119,62 @@ fn valid_name(name: &str) -> bool {
 }
 
 fn connection(image: &[u8]) -> Result<Connection, String> {
-    if !image.is_empty() && (image.len() > MAX_IMAGE || !image.starts_with(b"SQLite format 3\0")) {
-        return Err("invalid SQLite image".into());
+    checked_connection(image).map_err(|error| error.message)
+}
+
+/// Keep SQLite's actual result code across the service boundary. In particular,
+/// allocation and transport failures must never authorize corruption recovery.
+#[derive(Debug)]
+struct ImageError {
+    code: i32,
+    message: String,
+}
+
+impl From<rusqlite::Error> for ImageError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self {
+            code: error.sqlite_error().map_or(1, |error| error.extended_code),
+            message: error.to_string(),
+        }
     }
-    let mut connection = Connection::open_in_memory().map_err(|e| e.to_string())?;
+}
+
+fn checked_connection(image: &[u8]) -> Result<Connection, ImageError> {
+    if image.len() > MAX_IMAGE {
+        return Err(ImageError { code: 18, message: "SQLite image limit exceeded".into() });
+    }
+    if !image.is_empty() && !image.starts_with(b"SQLite format 3\0") {
+        return Err(ImageError { code: 26, message: "invalid SQLite image".into() });
+    }
+    let mut connection = Connection::open_in_memory().map_err(ImageError::from)?;
     if image.is_empty() {
         // Materialize an empty main database so rollback snapshots can be
         // serialized before the client's first CREATE TABLE.
         connection
             .execute_batch("PRAGMA user_version=0;")
-            .map_err(|e| e.to_string())?;
+            .map_err(ImageError::from)?;
     }
     if !image.is_empty() {
         connection
             .deserialize_read_exact(MAIN_DB, image, image.len(), false)
-            .map_err(|e| e.to_string())?;
+            .map_err(ImageError::from)?;
         let integrity: String = connection
             .query_row("PRAGMA quick_check", [], |row| row.get(0))
-            .map_err(|e| e.to_string())?;
+            .map_err(ImageError::from)?;
         if integrity != "ok" {
-            return Err(format!("SQLite quick_check: {integrity}"));
+            return Err(ImageError { code: 11, message: format!("SQLite quick_check: {integrity}") });
         }
     }
     connection
         .execute_batch("PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;")
-        .map_err(|e| e.to_string())?;
+        .map_err(ImageError::from)?;
     // Databases are owned by this service; SQL cannot attach filesystem paths.
     connection
         .authorizer(Some(|context: AuthContext<'_>| match context.action {
             AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
             _ => Authorization::Allow,
         }))
-        .map_err(|e| e.to_string())?;
+        .map_err(ImageError::from)?;
     Ok(connection)
 }
 
@@ -167,16 +192,15 @@ impl Service {
             .await
             .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
         if bytes.as_ref().is_some_and(|b| b.is_empty()) {
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "existing SQLite image is empty",
-            ));
+            return Err(codex_recovery::image_error(ImageError {
+                code: 26, message: "existing SQLite image is empty".into(),
+            }));
         }
         let conn =
-            tokio::task::spawn_blocking(move || connection(bytes.as_deref().unwrap_or_default()))
+            tokio::task::spawn_blocking(move || checked_connection(bytes.as_deref().unwrap_or_default()))
                 .await
                 .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
-                .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+                .map_err(codex_recovery::image_error)?;
         let database = Arc::new(Mutex::new(Database {
             connection: conn,
             path,
@@ -420,6 +444,7 @@ async fn run(instance: String, directory: PathBuf) -> Result<(), String> {
         .route("/healthz", get(health))
         .route("/v1/batch", post(batch))
         .route("/v1/connect", get(session::upgrade))
+        .route("/v1/codex/recover", post(codex_recovery::recover))
         .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(service);
     #[cfg(any(target_os = "trueos", feature = "native-transport"))]

@@ -26,6 +26,7 @@ mod publish;
 mod stack_capture;
 mod staging;
 mod std_backend;
+mod rama_tcp_overlay;
 mod toolchain;
 
 #[cfg(test)]
@@ -2396,6 +2397,14 @@ fn source_overlay_patches(
     let uses_zune_jpeg = manifest_or_lock_mentions_crate(app_dir, manifest_path, "zune-jpeg")?;
 
     add_blueprint_vendor_patches(app_dir, &mut out)?;
+    if package_name(manifest_path)? == "codex-cli"
+        && manifest_or_lock_mentions_crate(app_dir, manifest_path, "rama-tcp")?
+    {
+        let source = find_cargo_registry_crate("rama-tcp-0.3.0-alpha.4")
+            .ok_or("missing pinned rama-tcp 0.3.0-alpha.4 source for Codex native networking")?;
+        out.retain(|patch| patch.name != "rama-tcp");
+        out.push(CratePatch::new("rama-tcp", rama_tcp_overlay::stage(work_dir, &source)?));
+    }
     // The full std runtime can compile older HTTP stacks directly. Keep an
     // external workspace's existing API versions consistent across its root
     // package and path dependencies instead of upgrading only the root.
