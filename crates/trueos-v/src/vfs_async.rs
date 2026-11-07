@@ -713,6 +713,35 @@ pub async fn typed_metadata(path: &[u8]) -> Result<TypedMetadata, i32> {
     })
 }
 
+
+/// Require an owner-authorized private native workspace before handling secrets.
+///
+/// The kernel checks the caller's frozen principal, captured workspace, real
+/// access-key root and ancestor policy. A missing leaf is allowed for creation;
+/// an unprotected or external path fails. This neither grants access nor changes
+/// permissions. Every subsequent file operation still enforces native policy.
+pub async fn assert_private_path(path: &[u8]) -> Result<(), i32> {
+    if path.is_empty() || path.len() > 1024 || path.contains(&0) {
+        return Err(ERR_BAD_PARAM);
+    }
+    if core::str::from_utf8(path).is_err() {
+        return Err(ERR_BAD_UTF8);
+    }
+    let mut request = [0u8; 24 + 1024];
+    request[..4].copy_from_slice(&14u32.to_le_bytes());
+    request[24..24 + path.len()].copy_from_slice(path);
+    let mut operation = Operation::from_start(unsafe {
+        vcabi::trueos_cabi_async_fs_object_start_v1(request.as_ptr(), 24 + path.len())
+    })?;
+    operation.ready().await?;
+    let length = unsafe { vcabi::trueos_cabi_async_fs_result_len(operation.id) };
+    if length != 0 {
+        return Err(if length < 0 { length as i32 } else { ERR_IO });
+    }
+    operation.discard();
+    Ok(())
+}
+
 /// Read the access key persisted in a TRUEOSFS file's on-disk record header.
 pub async fn record_key(path: &[u8]) -> Result<RecordKey, i32> {
     let mut operation = Operation::from_start(unsafe {

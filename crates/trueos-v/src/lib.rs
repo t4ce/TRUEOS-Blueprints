@@ -2,6 +2,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "native-c-alloc")]
+pub mod native_c_alloc;
+
 pub mod collections;
 pub mod fmt;
 pub mod iter;

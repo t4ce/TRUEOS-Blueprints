@@ -9,6 +9,10 @@ pub(crate) fn stage_tempfile(work_dir: &Path, source: &Path) -> Result<PathBuf, 
         "#[cfg_attr(any(unix, target_os = \"redox\", target_os = \"wasi\"), path = \"unix.rs\")]",
         "#[cfg_attr(target_os = \"trueos\", path = \"trueos.rs\")]\n#[cfg_attr(all(not(target_os = \"trueos\"), any(unix, target_os = \"redox\", target_os = \"wasi\")), path = \"unix.rs\")]",
     )?;
+    let fallback = "not(any(unix, target_os = \"redox\", target_os = \"wasi\", windows))";
+    if file.matches(fallback).count() != 1 {
+        return Err("pinned native tempfile fallback selector drifted".into());
+    }
     let file = file.replace(
         "not(any(unix, target_os = \"redox\", target_os = \"wasi\", windows))",
         "not(any(unix, target_os = \"trueos\", target_os = \"redox\", target_os = \"wasi\", windows))",
@@ -76,7 +80,12 @@ fn replacement(source: &Path, relative: &str, before: &str, after: &str) -> Resu
     let path = source.join(relative);
     let text =
         std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    if !text.contains(before) {
+    let expected = if relative == "src/dir/imp/mod.rs" {
+        2
+    } else {
+        1
+    };
+    if text.matches(before).count() != expected {
         return Err(format!(
             "pinned native file boundary drifted in {}",
             path.display()

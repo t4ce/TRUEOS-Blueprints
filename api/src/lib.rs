@@ -15,6 +15,8 @@ pub use v::child_hull;
 pub mod content_identity {
     pub use v::vfs_async::{ContentTypeId, ContentTypeInfo, content_type_info};
 }
+#[cfg(feature = "native-c-alloc")]
+pub use v::native_c_alloc;
 pub use v::collections;
 pub use v::env;
 pub use v::varchive as archive;

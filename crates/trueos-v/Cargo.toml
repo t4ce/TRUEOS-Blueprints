@@ -18,6 +18,7 @@ trueos-fs = { path = "../../../TRUEOS/crates/trueos-fs" }
 [features]
 default = []
 wc3-x86 = []
+native-c-alloc = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

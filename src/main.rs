@@ -21,12 +21,15 @@ mod legacy_tonic_overlay;
 mod lock_overlay_batch;
 mod native_fold;
 mod native_odin;
+mod native_file_overlays;
 mod openssl_overlay;
 mod publish;
 mod stack_capture;
 mod staging;
 mod std_backend;
 mod rama_tcp_overlay;
+mod codex_native_data_overlay;
+mod codex_native_c_overlay;
 mod toolchain;
 
 #[cfg(test)]
@@ -2397,6 +2400,24 @@ fn source_overlay_patches(
     let uses_zune_jpeg = manifest_or_lock_mentions_crate(app_dir, manifest_path, "zune-jpeg")?;
 
     add_blueprint_vendor_patches(app_dir, &mut out)?;
+    if package_name(manifest_path)? == "codex-cli" {
+        let packages = lock_packages(&app_lockfile(app_dir))?;
+        for (name, version) in [("tempfile", "3.27.0"), ("fd-lock", "4.0.4")] {
+            let selected: Vec<_> = packages.iter().filter(|package| package.name == name).collect();
+            if selected.len() != 1 || selected[0].version != version {
+                return Err(format!("Codex native file overlay requires exactly {name} {version} in Cargo.lock"));
+            }
+            let source = find_cargo_registry_crate(&format!("{name}-{version}"))
+                .ok_or_else(|| format!("missing pinned {name} {version} source for Codex native files"))?;
+            let staged = match name {
+                "tempfile" => native_file_overlays::stage_tempfile(work_dir, &source)?,
+                "fd-lock" => native_file_overlays::stage_fd_lock(work_dir, &source)?,
+                _ => unreachable!(),
+            };
+            out.retain(|patch| patch.name != name);
+            out.push(CratePatch::new(name, staged));
+        }
+    }
     if package_name(manifest_path)? == "codex-cli"
         && manifest_or_lock_mentions_crate(app_dir, manifest_path, "rama-tcp")?
     {
@@ -2404,6 +2425,36 @@ fn source_overlay_patches(
             .ok_or("missing pinned rama-tcp 0.3.0-alpha.4 source for Codex native networking")?;
         out.retain(|patch| patch.name != "rama-tcp");
         out.push(CratePatch::new("rama-tcp", rama_tcp_overlay::stage(work_dir, &source)?));
+    }
+    if package_name(manifest_path)? == "codex-cli" {
+        let packages = lock_packages(&app_lockfile(app_dir))?;
+        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2")] {
+            if !packages.iter().any(|package| package.name == name && package.version == version) {
+                return Err(format!("Codex native data provider requires {name} {version} in Cargo.lock"));
+            }
+            let source = find_cargo_registry_crate(&format!("{name}-{version}"))
+                .ok_or_else(|| format!("missing pinned native data source {name}-{version}"))?;
+            let staged = match name {
+                "rand" => codex_native_data_overlay::stage_rand(work_dir, &source)?,
+                "memmap2" => codex_native_data_overlay::stage_memmap(work_dir, &source)?,
+                _ => unreachable!(),
+            };
+            out.retain(|patch| patch.name != name);
+            out.push(CratePatch::alias(alias, name, staged));
+        }
+    }
+    if package_name(manifest_path)? == "codex-cli" {
+        let packages = lock_packages(&app_lockfile(app_dir))?;
+        for &(name, version) in codex_native_c_overlay::PROVIDERS {
+            if !packages.iter().any(|package| package.name == name && package.version == version) {
+                return Err(format!("Codex native C provider requires {name} {version} in Cargo.lock"));
+            }
+            let source = find_cargo_registry_crate(&format!("{name}-{version}"))
+                .ok_or_else(|| format!("missing pinned native C source {name}-{version}"))?;
+            let staged = codex_native_c_overlay::stage(work_dir, &source, name, version)?;
+            out.retain(|patch| patch.name != name);
+            out.push(CratePatch::new(name, staged));
+        }
     }
     // The full std runtime can compile older HTTP stacks directly. Keep an
     // external workspace's existing API versions consistent across its root
