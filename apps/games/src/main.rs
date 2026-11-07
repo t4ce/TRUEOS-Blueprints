@@ -1571,7 +1571,7 @@ fn append_text_quads(quads: &mut Vec<SpriteQuad>, row: &TextRow<'_>) {
             while x < 6 {
                 let filled = |x: usize| {
                     let bit = y * 6 + x;
-                    bit < 64 && glyph >> (63 - bit) & 1 != 0
+                    glyph >> (65 - bit) & 1 != 0
                 };
                 if !filled(x) {
                     x += 1;
@@ -1581,7 +1581,7 @@ fn append_text_quads(quads: &mut Vec<SpriteQuad>, row: &TextRow<'_>) {
                 while x < 6 && filled(x) {
                     x += 1;
                 }
-                let left = row.x + (index * 6 + start + usize::from(byte == b'q')) as f32 * scale;
+                let left = row.x + (index * 6 + start) as f32 * scale;
                 let top = row.y + y as f32 * scale;
                 let right = left + (x - start) as f32 * scale;
                 let bottom = top + scale;
