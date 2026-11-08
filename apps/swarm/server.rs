@@ -72,6 +72,12 @@ struct SketchSpec {
 
 const SWARM_SKETCHES: &[SketchSpec] = &[
     SketchSpec {
+        id: "guitar",
+        source_name: "guitar.py",
+        description: "Three-string guitar: four fret relays per string and a 270-degree strum servo (S3 pin defaults)",
+        body: include_bytes!("trueos-esp/iot/guitar.py"),
+    },
+    SketchSpec {
         id: "led",
         source_name: "led.py",
         description: "Basic addressable LED test",
