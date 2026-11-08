@@ -68,6 +68,34 @@ pub(crate) fn stage_source(work: &Path, source: &Path) -> Result<PathBuf, String
             "        if target == \"x86_64-unknown-trueos\" {\n            configure.arg(format!(\"-include{}\", inner_dir.join(\"include/internal/trueos_native.h\").display()));",
         )
     })?;
+    edit(&staged, "src/lib.rs", |text| {
+        replace(
+            text,
+            "\"--with-rand-seed=rdcpu\"",
+            "\"--with-rand-seed=getrandom\"",
+        )
+    })?;
+    edit(
+        &staged,
+        "openssl/providers/implementations/rands/seeding/rand_unix.c",
+        |text| {
+            replace(
+                text,
+                "static ssize_t syscall_random(void *buf, size_t buflen)\n{",
+                "static ssize_t syscall_random(void *buf, size_t buflen)\n{\n#if defined(OPENSSL_SYS_TRUEOS)\n    return ossl_trueos_getentropy(buf, buflen) == 0 ? (ssize_t)buflen : -1;\n#else",
+            )?;
+            replace(
+                text,
+                "}\n#endif /* defined(OPENSSL_RAND_SEED_GETRANDOM) */",
+                "#endif\n}\n#endif /* defined(OPENSSL_RAND_SEED_GETRANDOM) */",
+            )?;
+            replace(
+                text,
+                "#if defined(__linux) && defined(DEVRANDOM_WAIT) \\\n    && defined(OPENSSL_RAND_SEED_GETRANDOM)",
+                "#if !defined(OPENSSL_SYS_TRUEOS) && defined(__linux) && defined(DEVRANDOM_WAIT) \\\n    && defined(OPENSSL_RAND_SEED_GETRANDOM)",
+            )
+        },
+    )?;
     edit(&staged, "openssl/crypto/threads_pthread.c", |text| {
         replace(
             text,

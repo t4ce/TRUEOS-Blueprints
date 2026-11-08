@@ -17,6 +17,7 @@ pub(crate) fn patches(
         ("tar", "0.4.46"),
         ("ignore", "0.4.32"),
         ("fs2", "0.4.3"),
+        ("fs-err", "3.3.1"),
     ] {
         if selected.iter().any(|patch| patch.name == name)
             || !packages.iter().any(|package| {
@@ -60,6 +61,9 @@ fn stage(work: &Path, source: &Path, name: &str, version: &str) -> Result<PathBu
     }
     if name == "ignore" {
         return crate::codex_native_data_overlay::stage_ignore_version(work, source, version);
+    }
+    if name == "fs-err" {
+        return crate::xerj_fs_err_overlay::stage(work, source);
     }
     let staged = work
         .join("source-overlay-crates")
@@ -271,6 +275,7 @@ mod tests {
             ("tar", "0.4.46"),
             ("ignore", "0.4.32"),
             ("fs2", "0.4.3"),
+            ("fs-err", "3.3.1"),
         ] {
             let source = crate::find_cargo_registry_crate(&format!("{name}-{version}"))
                 .expect("cached original crate");

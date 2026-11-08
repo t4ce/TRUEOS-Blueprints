@@ -13,13 +13,17 @@ the existing child_hull::spawn_program API. The bare name runs the full check.
 The default program is xerj.bp. The default state parent is the current
 TRUEOSFS directory. Each run creates its own xerj-smoke-<epoch-nanos> directory,
 retains it for inspection, and reserves three unused consecutive loopback ports.
+Engine state lives separately under /apps/xerj/smoke/<same-run-basename>. The
+kernel grants the XERJ archive its own private root before entry; only the
+engine creates and reads its data. The probe inspects it through HTTP/MCP,
+without receiving XERJ's access key. This requires the native XERJ storage policy.
 It never reuses another run's data directory, indexes, namespaces, or listeners.
 
 Checks:
   * Launch the full engine in a fresh child Hull, without external services.
   * Readiness on the ES-compatible and native REST listeners.
   * Write one tiny Rust source, one Markdown file, and an embedded real SQLite
-    database under this run's corpus; engine data and autoindex state are siblings.
+    database under this run's corpus; autoindex state is a sibling directory.
     The SQLite fixture has one calibrations row (id 37), no journal or WAL, and
     exercises the engine's actual bundled SQLite provider during autoindex.
   * Separate CLI children: autoindex --dry-run --json, then autoindex --json
@@ -72,13 +76,12 @@ remote network access, larger corpora, and field reports are outside this check.
 The gRPC check covers unary health and HTTP/2 transport, not gRPC document
 mutation, search, streaming, authentication, or TLS.
 
-The retained openssl-check feature is a separate crypto-provider diagnostic and
-is off by default. It checks hardware entropy, SHA-256, P-256 signatures and a
-fixed ASN.1 time on the entry thread and two workers. Its historical OpenSSL
-thread/C imports require a native provider update after the Unix ABI removal;
-the default MCP probe neither builds nor claims to test OpenSSL. Do not bypass
-the retired-import check to enable it. Production native XERJ does not depend on
-this probe's OpenSSL diagnostic.
+The default openssl-check feature checks the native OpenSSL provider used by
+production WebAuthn. Before engine startup, it exercises hardware entropy,
+SHA-256, P-256 signatures, tamper rejection and a fixed ASN.1 time on the entry
+thread and two workers. Native packaging must pass the ordinary retired-import
+and CABI guards. Passing host crypto checks alone establishes no native runtime
+result; the live probe must emit crypto_native and its final success marker.
 
 The Codex phase uses an isolated provider that requires no credentials and sends
 no model turn. It disables plugins and shell snapshots. It reads no live Codex
@@ -99,7 +102,9 @@ codex_default_service_retained.
 
 Evidence is stdout and structured IMPORTANT stage markers under xerj-smoke:
 xerj-smoke v=1 stage=<name> ok=true. The final marker is
-stage=end ok=true only after persisted reads and child cleanup pass. On failure,
+stage=end ok=true only after persisted reads and child cleanup pass. Its
+evidence_root field identifies the probe-owned directory separately from private
+engine data. On failure,
 stage=end ok=false includes a JSON-escaped error; unexpected child exits include
 the bounded stdout tail. Readiness is limited to 90 seconds per listener,
 requests to 20 seconds, Codex app-server requests to 150 seconds, and child

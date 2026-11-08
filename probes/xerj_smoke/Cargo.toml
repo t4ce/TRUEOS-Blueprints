@@ -6,7 +6,8 @@ edition = "2024"
 [workspace]
 
 [features]
-# Separate crypto-provider diagnostic; the current native MCP check is Rust-only.
+# Exercise the same native crypto provider used by production WebAuthn.
+default = ["openssl-check"]
 openssl-check = ["dep:openssl"]
 
 [package.metadata.trueos-blueprint]

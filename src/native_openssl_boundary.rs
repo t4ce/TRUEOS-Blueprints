@@ -18,6 +18,51 @@ const ENOMEM: c_int = 12;
 const EDEADLK: c_int = 35;
 const EPERM: c_int = 1;
 
+fn entropy_with(bytes: &mut [u8], mut fill: impl FnMut(&mut [u8]) -> bool) -> bool {
+    for chunk in bytes.chunks_mut(256) {
+        if !fill(chunk) {
+            bytes.fill(0);
+            return false;
+        }
+    }
+    true
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ossl_trueos_getentropy(out: *mut c_void, len: usize) -> c_int {
+    if len == 0 {
+        return 0;
+    }
+    if out.is_null() || len > isize::MAX as usize {
+        return failure(EINVAL);
+    }
+    // C entropy buffers may be freshly allocated and uninitialized. Establish
+    // initialized bytes before forming a Rust slice, including on failure.
+    unsafe { ptr::write_bytes(out.cast::<u8>(), 0, len) };
+    let bytes = unsafe { std::slice::from_raw_parts_mut(out.cast::<u8>(), len) };
+    let ok = entropy_with(bytes, |chunk| {
+        #[cfg(target_os = "trueos")]
+        {
+            unsafe extern "C" {
+                fn trueos_cabi_random_bytes_v1(out: *mut u8, len: usize) -> c_int;
+            }
+            // The native bridge chooses guest transport or the hosted thread
+            // path. Raw vmcall is invalid on a native stackful worker.
+            unsafe { trueos_cabi_random_bytes_v1(chunk.as_mut_ptr(), chunk.len()) == 0 }
+        }
+        #[cfg(not(target_os = "trueos"))]
+        {
+            // Explicit host proof provider: the host OS's fallible strong
+            // entropy, never a deterministic fixture or hardware fallback.
+            unsafe extern "C" {
+                #[link_name = "getentropy"]
+                fn host_getentropy(out: *mut c_void, len: usize) -> c_int;
+            }
+            unsafe { host_getentropy(chunk.as_mut_ptr().cast(), chunk.len()) == 0 }
+        }
+    });
+    if ok { 0 } else { failure(5) }
+}
+
 fn held<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
     lock.lock().unwrap_or_else(|error| error.into_inner())
 }
@@ -183,6 +228,10 @@ pub unsafe extern "C" fn ossl_trueos_mutex_destroy(handle: *mut NativeMutex) -> 
     let Some(handle) = (unsafe { handle.as_ref() }) else {
         return EINVAL;
     };
+    let object = handle.object.load(Ordering::Acquire);
+    if !object.is_null() && held(&unsafe { &*object }.state).owner.is_some() {
+        return 16;
+    }
     let object = handle.object.swap(ptr::null_mut(), Ordering::AcqRel);
     if !object.is_null() {
         unsafe { drop(Box::from_raw(object)) };
@@ -301,11 +350,17 @@ impl Drop for Cleanup {
                 return;
             }
             for _ in 0..4 {
-                let values = std::mem::take(&mut *unsafe { &*pointer }.borrow_mut());
-                if values.is_empty() {
+                let scheduled: Vec<_> = unsafe { &*pointer }.borrow().keys().copied().collect();
+                if scheduled.is_empty() {
                     break;
                 }
-                for (key, value) in values {
+                for key in scheduled {
+                    // Clear only this key before its callback. Other keys must
+                    // remain readable by OpenSSL's interdependent cleanups.
+                    let value = unsafe { &*pointer }.borrow_mut().remove(&key);
+                    let Some(value) = value else {
+                        continue;
+                    };
                     let destructor = held(keys()).keys.get(&key).copied().flatten();
                     if let Some(destructor) = destructor.filter(|_| !value.is_null()) {
                         unsafe { destructor(value) };
@@ -580,4 +635,322 @@ pub unsafe extern "C" fn ossl_trueos_strerror_r(
         out.add(count).write(0)
     };
     if count == message.len() { 0 } else { 34 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicU32, AtomicUsize},
+    };
+
+    fn native_mutex() -> NativeMutex {
+        NativeMutex {
+            object: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+    fn native_cond() -> NativeCond {
+        NativeCond {
+            object: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+    #[test]
+    fn entropy_failure_clears_partial_output_and_validates_request() {
+        let mut bytes = [0xabu8; 300];
+        let mut calls = 0;
+        assert!(!entropy_with(&mut bytes, |chunk| {
+            calls += 1;
+            chunk.fill(7);
+            calls < 2
+        }));
+        assert!(bytes.iter().all(|byte| *byte == 0));
+        assert_eq!(unsafe { ossl_trueos_getentropy(ptr::null_mut(), 0) }, 0);
+        assert_eq!(unsafe { ossl_trueos_getentropy(ptr::null_mut(), 1) }, -1);
+        assert_eq!(
+            unsafe { ossl_trueos_getentropy(bytes.as_mut_ptr().cast(), isize::MAX as usize + 1) },
+            -1
+        );
+        assert!(bytes.iter().all(|byte| *byte == 0));
+        let mut uninitialized = std::mem::MaybeUninit::<[u8; 257]>::uninit();
+        assert_eq!(
+            unsafe { ossl_trueos_getentropy(uninitialized.as_mut_ptr().cast(), 257) },
+            0
+        );
+        let initialized = unsafe { uninitialized.assume_init() };
+        assert!(initialized.iter().any(|byte| *byte != 0));
+        assert_eq!(
+            unsafe { ossl_trueos_getentropy(bytes.as_mut_ptr().cast(), 257) },
+            0
+        );
+        assert_eq!(
+            unsafe { ossl_trueos_getentropy(bytes.as_mut_ptr().cast(), 256) },
+            0
+        );
+        assert!(bytes[..256].iter().any(|byte| *byte != 0));
+    }
+    struct Shared {
+        lock: NativeMutex,
+        cond: NativeCond,
+        values: UnsafeCell<(usize, bool, usize)>,
+    }
+    unsafe impl Sync for Shared {}
+
+    #[test]
+    fn mutex_static_initialization_serializes_workers_and_checks_ownership() {
+        let shared = Arc::new(Shared {
+            lock: native_mutex(),
+            cond: native_cond(),
+            values: UnsafeCell::new((0, false, 0)),
+        });
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let shared = shared.clone();
+            workers.push(std::thread::spawn(move || unsafe {
+                let lock = ptr::from_ref(&shared.lock).cast_mut();
+                for _ in 0..1000 {
+                    assert_eq!(ossl_trueos_mutex_lock(lock), 0);
+                    (*shared.values.get()).0 += 1;
+                    assert_eq!(ossl_trueos_mutex_unlock(lock), 0);
+                }
+                assert_eq!(ossl_trueos_mutex_unlock(lock), EPERM);
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        unsafe {
+            assert_eq!((*shared.values.get()).0, 8000);
+            let lock = ptr::from_ref(&shared.lock).cast_mut();
+            assert_eq!(ossl_trueos_mutex_lock(lock), 0);
+            assert_eq!(ossl_trueos_mutex_lock(lock), EDEADLK);
+            assert_eq!(ossl_trueos_mutex_destroy(lock), 16);
+            assert_eq!(ossl_trueos_mutex_unlock(lock), 0);
+            assert_eq!(ossl_trueos_mutex_destroy(lock), 0);
+        }
+    }
+
+    #[test]
+    fn condition_wait_releases_and_reacquires_mutex_and_broadcast_wakes_all() {
+        let shared = Arc::new(Shared {
+            lock: native_mutex(),
+            cond: native_cond(),
+            values: UnsafeCell::new((0, false, 0)),
+        });
+        let (ready, arrivals) = std::sync::mpsc::channel();
+        let mut workers = Vec::new();
+        for _ in 0..4 {
+            let shared = shared.clone();
+            let ready = ready.clone();
+            workers.push(std::thread::spawn(move || unsafe {
+                let lock = ptr::from_ref(&shared.lock).cast_mut();
+                let cond = ptr::from_ref(&shared.cond).cast_mut();
+                assert_eq!(ossl_trueos_mutex_lock(lock), 0);
+                (*shared.values.get()).0 += 1;
+                ready.send(()).unwrap();
+                while !(*shared.values.get()).1 {
+                    assert_eq!(ossl_trueos_cond_wait(cond, lock), 0);
+                }
+                (*shared.values.get()).2 += 1;
+                assert_eq!(ossl_trueos_mutex_unlock(lock), 0);
+            }));
+        }
+        for _ in 0..4 {
+            arrivals.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        unsafe {
+            let lock = ptr::from_ref(&shared.lock).cast_mut();
+            assert_eq!(ossl_trueos_mutex_lock(lock), 0);
+            assert_eq!((*shared.values.get()).0, 4);
+            (*shared.values.get()).1 = true;
+            assert_eq!(
+                ossl_trueos_cond_broadcast(ptr::from_ref(&shared.cond).cast_mut()),
+                0
+            );
+            assert_eq!(ossl_trueos_mutex_unlock(lock), 0);
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        unsafe {
+            assert_eq!((*shared.values.get()).2, 4);
+            assert_eq!(
+                ossl_trueos_cond_destroy(ptr::from_ref(&shared.cond).cast_mut()),
+                0
+            );
+            assert_eq!(
+                ossl_trueos_mutex_destroy(ptr::from_ref(&shared.lock).cast_mut()),
+                0
+            );
+        }
+    }
+
+    struct Payload {
+        counter: Arc<AtomicUsize>,
+        key: u32,
+        remaining: u32,
+    }
+    unsafe extern "C" fn cleanup(pointer: *mut c_void) {
+        let payload = unsafe { Box::from_raw(pointer.cast::<Payload>()) };
+        payload.counter.fetch_add(1, Ordering::SeqCst);
+        if payload.remaining != 0 {
+            let next = Box::new(Payload {
+                counter: payload.counter.clone(),
+                key: payload.key,
+                remaining: payload.remaining - 1,
+            });
+            assert_eq!(
+                unsafe { ossl_trueos_setspecific(payload.key, Box::into_raw(next).cast()) },
+                0
+            );
+        }
+    }
+    #[test]
+    fn tls_values_are_thread_local_and_destructors_can_reinstall_values() {
+        static KEY: AtomicU32 = AtomicU32::new(0);
+        let mut key = 0;
+        assert_eq!(
+            unsafe { ossl_trueos_key_create(&mut key, Some(cleanup)) },
+            0
+        );
+        KEY.store(key, Ordering::SeqCst);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let owned = counter.clone();
+        std::thread::spawn(move || unsafe {
+            assert!(ossl_trueos_getspecific(key).is_null());
+            let value = Box::into_raw(Box::new(Payload {
+                counter: owned,
+                key,
+                remaining: 2,
+            }))
+            .cast();
+            assert_eq!(ossl_trueos_setspecific(key, value), 0);
+            assert_eq!(ossl_trueos_getspecific(key), value);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+        assert!(unsafe { ossl_trueos_getspecific(key) }.is_null());
+        assert_eq!(unsafe { ossl_trueos_key_delete(key) }, 0);
+        assert_eq!(unsafe { ossl_trueos_setspecific(key, ptr::null()) }, EINVAL);
+    }
+    #[test]
+    fn deleting_tls_key_suppresses_other_threads_destructor_and_does_not_reuse_key() {
+        let mut key = 0;
+        assert_eq!(
+            unsafe { ossl_trueos_key_create(&mut key, Some(cleanup)) },
+            0
+        );
+        let counter = Arc::new(AtomicUsize::new(0));
+        let owned = counter.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let child_barrier = barrier.clone();
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || unsafe {
+            let value = Box::into_raw(Box::new(Payload {
+                counter: owned,
+                key,
+                remaining: 0,
+            }));
+            assert_eq!(ossl_trueos_setspecific(key, value.cast()), 0);
+            sent.send(value as usize).unwrap();
+            child_barrier.wait();
+            assert!(ossl_trueos_getspecific(key).is_null());
+        });
+        let value = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(unsafe { ossl_trueos_key_delete(key) }, 0);
+        barrier.wait();
+        worker.join().unwrap();
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        unsafe {
+            drop(Box::from_raw(value as *mut Payload));
+        }
+        let mut next = 0;
+        assert_eq!(unsafe { ossl_trueos_key_create(&mut next, None) }, 0);
+        assert_ne!(next, key);
+        assert_eq!(unsafe { ossl_trueos_key_delete(next) }, 0);
+    }
+    struct LinkedCleanup {
+        other: u32,
+        expected: usize,
+        observed: Arc<AtomicUsize>,
+    }
+    unsafe extern "C" fn linked_cleanup(pointer: *mut c_void) {
+        let payload = unsafe { Box::from_raw(pointer.cast::<LinkedCleanup>()) };
+        assert_eq!(
+            unsafe { ossl_trueos_getspecific(payload.other) } as usize,
+            payload.expected
+        );
+        payload.observed.fetch_add(1, Ordering::SeqCst);
+    }
+    #[test]
+    fn tls_destructor_can_read_other_keys_before_their_cleanup() {
+        let mut first = 0;
+        let mut other = 0;
+        assert_eq!(
+            unsafe { ossl_trueos_key_create(&mut first, Some(linked_cleanup)) },
+            0
+        );
+        assert_eq!(unsafe { ossl_trueos_key_create(&mut other, None) }, 0);
+        let observed = Arc::new(AtomicUsize::new(0));
+        let result = observed.clone();
+        std::thread::spawn(move || unsafe {
+            assert_eq!(
+                ossl_trueos_setspecific(other, 0x1234usize as *const c_void),
+                0
+            );
+            let value = Box::into_raw(Box::new(LinkedCleanup {
+                other,
+                expected: 0x1234,
+                observed: result,
+            }));
+            assert_eq!(ossl_trueos_setspecific(first, value.cast()), 0);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(observed.load(Ordering::SeqCst), 1);
+        assert_eq!(unsafe { ossl_trueos_key_delete(first) }, 0);
+        assert_eq!(unsafe { ossl_trueos_key_delete(other) }, 0);
+    }
+    #[test]
+    fn errno_thread_identity_clocks_and_error_text_have_native_contracts() {
+        unsafe {
+            ossl_trueos_errno().write(71);
+        }
+        let id = ossl_trueos_thread_self();
+        std::thread::spawn(move || unsafe {
+            assert_ne!(ossl_trueos_thread_self(), id);
+            assert_eq!(ossl_trueos_errno().read(), 0);
+            ossl_trueos_errno().write(72);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(unsafe { ossl_trueos_errno().read() }, 71);
+        assert!(unsafe { ossl_trueos_time(ptr::null_mut()) } > 1_700_000_000);
+        let mut time = Timespec {
+            seconds: 0,
+            nanos: 0,
+        };
+        assert_eq!(unsafe { ossl_trueos_clock_gettime(1, &mut time) }, 0);
+        assert_eq!(unsafe { ossl_trueos_clock_gettime(99, &mut time) }, -1);
+        assert_eq!(unsafe { ossl_trueos_errno().read() }, EINVAL);
+        let mut bytes = [0u8; 64];
+        assert_eq!(
+            unsafe { ossl_trueos_strerror_r(22, bytes.as_mut_ptr().cast(), bytes.len()) },
+            0
+        );
+        assert_eq!(
+            CStr::from_bytes_until_nul(&bytes)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "invalid argument"
+        );
+        let mut short = [0u8; 4];
+        assert_eq!(
+            unsafe { ossl_trueos_strerror_r(22, short.as_mut_ptr().cast(), short.len()) },
+            34
+        );
+        assert_eq!(&short, b"inv\0");
+    }
 }

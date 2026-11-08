@@ -97,7 +97,9 @@ impl Error {
 }
 
 cfg_if! {
-    if #[cfg(unix)] {
+    // TRUEOS uses native errors, not libc's strerror_r. Preserve the raw code
+    // through the numeric fallback below, including in no_std consumers.
+    if #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))] {
         fn os_err(errno: i32, buf: &mut [u8]) -> Option<&str> {
             let buf_ptr = buf.as_mut_ptr() as *mut libc::c_char;
             if unsafe { libc::strerror_r(errno, buf_ptr, buf.len()) } != 0 {

@@ -83,11 +83,12 @@ mod native {
     }
 
     pub(super) fn run() -> io::Result<()> {
-        std::fs::create_dir_all("/apps/xerj")?;
         // `replicatable` is a checkpoint capability, not singleton admission.
+        // Kernel admission provisioned this launcher's private root. It does
+        // not need the engine's key: the child creates its own private data.
         // Keep this lock alive across the complete owned engine lifetime.
         let Some(_owner) =
-            super::admission::acquire(std::path::Path::new("/apps/xerj/service.lock"))?
+            super::admission::acquire(std::path::Path::new("/apps/xerj-service/service.lock"))?
         else {
             return Ok(());
         };

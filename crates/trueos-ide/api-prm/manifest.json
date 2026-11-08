@@ -1,10 +1,10 @@
 {
-  "abi_sha256": "bcaa360e2bcf39dcb2cb2c2a9d9a5c4a29afb6af45ae8943b8a35872a133572f",
-  "api_id": "trueos-blueprint-api/1/bcaa360e2bcf39dc",
+  "abi_sha256": "5a6c1f0276bf6a40ab99eb387deee9e568ab9f929003d3b841dceb426ab0494f",
+  "api_id": "trueos-blueprint-api/1/5a6c1f0276bf6a40",
   "counts": {
     "constants": 75,
     "excluded": 9,
-    "functions": 381,
+    "functions": 382,
     "types": 78
   },
   "excluded_retired_declarations": [
@@ -21,43 +21,43 @@
   "files": {
     "filesystem.prm": {
       "bytes": 7897,
-      "sha256": "a0274156e7410a41e0847a97349fa5fd9c0afa49a7622629b855e24ad76909fa"
+      "sha256": "08ba0583c31aef2dae06e3cdca74e3bfe92edb4b0dc0b255ebd305f22117cd78"
     },
     "graphics.prm": {
       "bytes": 27692,
-      "sha256": "08c3838fb488e8dda06237f459063cbd5d8c771065383a3e6ef5f6d4d46d3db9"
+      "sha256": "4cc42edfdf57875fe518705902b1a7a5cef18cc482bebf5c5c40f93c1425cc4d"
     },
     "lifecycle.prm": {
       "bytes": 6228,
-      "sha256": "5aa7bdf1b6fc7c3ae558dd915973304b7ddae9800e8faff68acc45c86f1eb246"
+      "sha256": "1d67d85d90215023bd0a5805a5d9dc728db30f1082dce95713b1fbcc7165f008"
     },
     "logging.prm": {
       "bytes": 1852,
-      "sha256": "02106ae1c5d0e2604db103efbac8d44035e6183f96227ed05041fcbed165b5fd"
+      "sha256": "1b22bbacc69965e729e3cf952a5561fd19a040e2eb2358f3b254d841619998bc"
     },
     "memory.prm": {
       "bytes": 850,
-      "sha256": "261323956e52df46b7bd98791d6b1e6afbd064058d23e2a112b2b4199ea72d97"
+      "sha256": "bebbd6068ef8c1f6e5449a46b3e3ca42d25a5e6daedf2250289b6f542255158d"
     },
     "services.prm": {
-      "bytes": 35630,
-      "sha256": "4c1275213c25ad1340735292b1a7b7549fefd4dd6867929b67204af82ad0bdfd"
+      "bytes": 36003,
+      "sha256": "6d33cb0c7a7e06026988ffd2052c0594f16277bdbb48a01625f3bfd7c4826207"
     },
     "symbols.prm": {
-      "bytes": 19924,
-      "sha256": "9c5ea63f82c4d0808afdc24bcda78f310f32c6332fcecb1ad700ad58dc9cf152"
+      "bytes": 19968,
+      "sha256": "4e4523cf47c72c40d0939070473a75cbfb1253875b353517211ad4fc508e259e"
     },
     "terminal.prm": {
       "bytes": 5391,
-      "sha256": "e5d1f5849aa5f3642782a3b9f1ee8f7e66a31dbf15fd293051783200189ba0ce"
+      "sha256": "036f12155ff27b6bf3183261a83adb10d639c08c0c3522998189968ff45fa639"
     },
     "trueos-api.prm": {
       "bytes": 3353,
-      "sha256": "19d6a95ca7d415d0e4c6ccf70855e1f86b3a70f6d55fab3f7afdea7a2e2a0aff"
+      "sha256": "b322e3362e83cada3536fa1fcd6cc842403e09f19feb66b485011d8db3d9d941"
     },
     "types.prm": {
       "bytes": 35266,
-      "sha256": "2cbb90ee40ad41e267546b5b445d2a21fcebb216e8e8155784746cca1353a34e"
+      "sha256": "93e84dab2e8f8109d2af4fcfdb96669a13c34bbcd8ab0dc6cfed9856bf31dd64"
     }
   },
   "format_version": 1,
@@ -673,7 +673,7 @@
       "crates/trueos-v/Cargo.toml": "f9832472bc903ecff72fc94e12bbd4b5a25f2db839c921b204edd3a722dbacb0",
       "crates/trueos-v/src/alsa_compat.rs": "40e09f104a1342234824a27d406441013fbaf08cf4b5a4e15168d2da4d93ba0a",
       "crates/trueos-v/src/borrow.rs": "45dd92e1a88d00d3f62b1cc296bc5700651001f1215971314f2af589e0115492",
-      "crates/trueos-v/src/bp_abi.rs": "42cd66e468391e808dac9876c37045753149bc6cb60a2b657d039e20676b1cca",
+      "crates/trueos-v/src/bp_abi.rs": "2d58d0e5be17ce26a84dba2dbc967043d6fb99740acb7b4e0a5844b8e4b1b7a0",
       "crates/trueos-v/src/calculator_base.rs": "eed694bdf9639fb8468ec5e721022d4823ba11d0614748e4cda8f88a62c943a5",
       "crates/trueos-v/src/collections.rs": "d1dda3e859c9c0cd3fdc381b492053a935ee798b5b81febc50fd08fdf6c7ab62",
       "crates/trueos-v/src/content_identity.rs": "05fbc46b0132ea060325b9944d1db078917da69ad02a83ebde0b40b5a2a08632",
@@ -717,6 +717,6 @@
       "tools/api-prm/usage.json": "40e737a5bc0063ed440306fa688eb9ba60c84d6a7f2248cc9ece9783f20b4b32",
       "tools/build_api_prm.py": "54ea90feea2d9dcab56276d50ed6a7a8aa2498e7dc73a1de7e6364b3ca6efc4b"
     },
-    "sha256": "ffe0f1e7de200e0b351e75af58d0b04e5678ab53940b7738476ad3a789aff363"
+    "sha256": "d5bf388ef641765bd07e113e93df897b963be98c5225eba7d9abb2012e95b07e"
   }
 }

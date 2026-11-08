@@ -1512,8 +1512,13 @@ fn run() -> io::Result<()> {
         .as_nanos();
     let (port, reservations) = reserve_ports(seed)?;
     let run_root = fresh_directory(&root, seed)?;
-    let data = run_root.join("engine-data");
-    fs::create_dir(&data)?;
+    // XERJ owns persistent engine state under its own native access key. The
+    // probe passes a unique path but neither creates nor reads that state.
+    let data = Path::new("/apps/xerj/smoke").join(
+        run_root
+            .file_name()
+            .ok_or_else(|| error("fixture run directory has no basename"))?,
+    );
     let engine_args: Vec<String> = [
         "--insecure".to_owned(),
         "--bind".to_owned(),
@@ -1537,7 +1542,7 @@ fn run() -> io::Result<()> {
         port + 2
     );
     drop(reservations);
-    let mut engine = OwnedChild::spawn(&program, &engine_args, &data, "engine")?;
+    let mut engine = OwnedChild::spawn(&program, &engine_args, &run_root, "engine")?;
     ready(&mut engine, port)?;
     ready(&mut engine, port + 1)?;
     mark("http_ready");
@@ -1600,7 +1605,7 @@ fn run() -> io::Result<()> {
         format!("http://127.0.0.1:{port}"),
         "--disable-feedback".to_owned(),
     ];
-    let mut mcp = OwnedChild::spawn(&program, &mcp_args, &data, "mcp")?;
+    let mut mcp = OwnedChild::spawn(&program, &mcp_args, &run_root, "mcp")?;
     let initialized = rpc(
         &mut mcp,
         &mut engine,
@@ -1686,7 +1691,7 @@ fn run() -> io::Result<()> {
     )?;
     engine.stop()?;
     mark("engine_stopped");
-    let mut restarted = OwnedChild::spawn(&program, &engine_args, &data, "engine_restart")?;
+    let mut restarted = OwnedChild::spawn(&program, &engine_args, &run_root, "engine_restart")?;
     ready(&mut restarted, port)?;
     verify_persisted(&mut restarted, port)?;
     grpc_health(&mut restarted, port + 2, "grpc_health_restart")?;
@@ -1694,8 +1699,9 @@ fn run() -> io::Result<()> {
     restarted.stop()?;
     mark("children_stopped");
     marker(format!(
-        "xerj-smoke v=1 stage=end ok=true data={}",
-        json!(data.to_string_lossy())
+        "xerj-smoke v=1 stage=end ok=true data={} evidence_root={}",
+        json!(data.to_string_lossy()),
+        json!(run_root.to_string_lossy())
     ));
     Ok(())
 }

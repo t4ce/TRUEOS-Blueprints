@@ -36,9 +36,13 @@ mod codex_native_terminal_overlay;
 mod codex_native_socket_overlay;
 mod check_only;
 mod xerj_native_dependency_overlays;
+mod xerj_fs_err_overlay;
 mod native_tokio_features;
 mod native_c_dependency_overlays;
 mod native_sqlite_dependency_overlay;
+mod native_openssl_overlay;
+#[cfg(test)]
+mod native_staging_order_tests;
 mod codex_native_executable_overlay;
 mod codex_native_sync_http_overlay;
 mod toolchain;
@@ -2623,6 +2627,15 @@ fn source_overlay_patches(
         let path = openssl_overlay::stage(work_dir, &source)?;
         out.retain(|patch| patch.name != "openssl-src");
         out.push(CratePatch::new("openssl-src", path));
+    }
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd)
+        && matches!(package_name(manifest_path)?.as_str(), "xerj-server" | "xerj-mcp" | "xerj-smoke")
+    {
+        // Extend the legacy source stage last: it resets the same directory.
+        for patch in native_openssl_overlay::patches(app_dir, work_dir, &out)? {
+            out.retain(|existing| existing.name != patch.name);
+            out.push(patch);
+        }
     }
     // Keep the resident/Codex pin unless an app already locks a newer h2.
     // Compile that release against std instead of forcing a downgrade across

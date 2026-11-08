@@ -44,6 +44,7 @@ int ossl_trueos_gettimeofday(struct timeval *, void *);
 int ossl_trueos_clock_gettime(clockid_t, struct timespec *);
 int ossl_trueos_nanosleep(const struct timespec *, struct timespec *);
 int ossl_trueos_strerror_r(int, char *, size_t);
+int ossl_trueos_getentropy(void *, size_t);
 void *trueos_blueprint_c_malloc(size_t);
 void *trueos_blueprint_c_calloc(size_t, size_t);
 void *trueos_blueprint_c_realloc(void *, size_t);
@@ -80,7 +81,7 @@ void trueos_blueprint_c_free(void *);
 #define sched_yield ossl_trueos_yield
 #define getpid ossl_trueos_getpid
 #define getenv ossl_trueos_getenv
-#define time ossl_trueos_time
+#define time(value) ossl_trueos_time(value)
 #define gettimeofday ossl_trueos_gettimeofday
 #define clock_gettime ossl_trueos_clock_gettime
 #define nanosleep ossl_trueos_nanosleep

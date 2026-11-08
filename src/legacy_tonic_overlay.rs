@@ -13,6 +13,24 @@ use std::path::{Path, PathBuf};
 const CONNECTION: &str = "src/transport/channel/service/connection.rs";
 const BORROWED_REQUEST: &str = "        let fut = self.inner.send_request(req);\n\n        Box::pin(async move { fut.await.map_err(Into::into).map(|res| res.map(boxed)) })";
 const OWNED_REQUEST: &str = "        let mut inner = self.inner.clone();\n\n        Box::pin(async move { inner.send_request(req).await.map_err(Into::into).map(|res| res.map(boxed)) })";
+const INCOMING: &str = "src/transport/server/incoming.rs";
+const KEEPALIVE: &str = r#"        let sock_ref = socket2::SockRef::from(&stream);
+        let sock_keepalive = socket2::TcpKeepalive::new().with_time(timeout);
+
+        if let Err(e) = sock_ref.set_tcp_keepalive(&sock_keepalive) {"#;
+const NATIVE_KEEPALIVE: &str = r#"        #[cfg(not(target_os = "trueos"))]
+        let result = {
+            let sock_ref = socket2::SockRef::from(&stream);
+            let sock_keepalive = socket2::TcpKeepalive::new().with_time(timeout);
+            sock_ref.set_tcp_keepalive(&sock_keepalive)
+        };
+        #[cfg(target_os = "trueos")]
+        let result: std::io::Result<()> = {
+            let _ = timeout;
+            Err(std::io::Error::new(std::io::ErrorKind::Unsupported,
+                "native TCP does not expose TCP keepalive configuration"))
+        };
+        if let Err(e) = result {"#;
 
 pub(crate) fn stage(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
     let manifest = source.join("Cargo.toml");
@@ -35,6 +53,11 @@ pub(crate) fn stage(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
         ));
     }
     let patched = original.replacen(BORROWED_REQUEST, OWNED_REQUEST, 1);
+    let incoming = std::fs::read_to_string(source.join(INCOMING)).map_err(|e| e.to_string())?;
+    if incoming.matches(KEEPALIVE).count() != 1 {
+        return Err("pinned native Tonic keepalive boundary drifted".into());
+    }
+    let incoming = incoming.replace(KEEPALIVE, NATIVE_KEEPALIVE);
     let staged = work_dir
         .join("source-overlay-crates")
         .join("tonic-0.12.3-trueos");
@@ -42,6 +65,7 @@ pub(crate) fn stage(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
     crate::copy_app_tree(source, &staged)?;
     std::fs::write(staged.join(CONNECTION), patched)
         .map_err(|error| format!("write {}: {error}", staged.join(CONNECTION).display()))?;
+    std::fs::write(staged.join(INCOMING), incoming).map_err(|e| e.to_string())?;
     Ok(staged)
 }
 
@@ -72,6 +96,8 @@ mod tests {
             format!("// unchanged prefix\n{BORROWED_REQUEST}\n// unchanged suffix\n"),
         )
         .unwrap();
+        fs::create_dir_all(source.join(INCOMING).parent().unwrap()).unwrap();
+        fs::write(source.join(INCOMING), KEEPALIVE).unwrap();
         (root, source)
     }
 
