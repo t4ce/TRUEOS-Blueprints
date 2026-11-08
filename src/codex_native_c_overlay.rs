@@ -45,6 +45,11 @@ pub(crate) fn stage(
         "{before}\n    if std::env::var(\"CARGO_CFG_TARGET_OS\").as_deref() == Ok(\"trueos\") {{\n        {binding}.define(\"malloc\", Some(\"trueos_blueprint_c_malloc\"))\n            .define(\"calloc\", Some(\"trueos_blueprint_c_calloc\"))\n            .define(\"realloc\", Some(\"trueos_blueprint_c_realloc\"))\n            .define(\"free\", Some(\"trueos_blueprint_c_free\"));{text_options}\n    }}"
     );
     text = text.replace(&before, &selected);
+    if name == "zstd-sys" {
+        // The native runtime has no optional ELF weak tracing provider. Use
+        // Zstd's own switch to omit those hooks and their context bookkeeping.
+        text = text.replace(&before, &format!("{before}\n    if std::env::var(\"CARGO_CFG_TARGET_OS\").as_deref() == Ok(\"trueos\") {{ {binding}.define(\"ZSTD_NO_TRACE\", None); }}"));
+    }
     if name == "tree-sitter" {
         let before = "let mut config = cc::Build::new();";
         text = text.replace(before, &format!("{before}\n    if std::env::var(\"CARGO_CFG_TARGET_OS\").as_deref() == Ok(\"trueos\") {{ config.define(\"TRUEOS_BLUEPRINT_NATIVE_CLOCK\", None); }}"));
