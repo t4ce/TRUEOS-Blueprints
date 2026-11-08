@@ -36,16 +36,27 @@ pub fn create(dir: &Path) -> io::Result<File> {
 
 pub fn reopen(file: &File, path: &Path) -> io::Result<File> {
     // Opening again gives an independent cursor. try_clone shares the cursor.
-    let reopened = OpenOptions::new().read(true).write(true).open(path)?;
     let before = file.metadata()?;
+    let before_id = stable_id(&before)?;
+    let reopened = OpenOptions::new().read(true).write(true).open(path)?;
     let after = reopened.metadata()?;
-    if before.root_id() != after.root_id() || before.file_id() != after.file_id() {
+    let after_id = stable_id(&after)?;
+    if before.root_id() != after.root_id() || before_id != after_id {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "original tempfile has been replaced",
         ));
     }
     Ok(reopened)
+}
+
+fn stable_id(metadata: &fs::Metadata) -> io::Result<u64> {
+    metadata.file_id().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native tempfile metadata has no stable filesystem object identity",
+        )
+    })
 }
 
 pub fn persist(old: &Path, new: &Path, overwrite: bool) -> io::Result<()> {

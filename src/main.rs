@@ -2422,14 +2422,21 @@ fn source_overlay_patches(
     }
     if package_name(manifest_path)? == "codex-cli" {
         let packages = lock_packages(&app_lockfile(app_dir))?;
-        let selected: Vec<_> = packages.iter().filter(|package| package.name == "dirs-sys").collect();
-        if selected.len() != 1 || selected[0].version != "0.5.0" {
-            return Err("Codex native home provider requires exactly dirs-sys 0.5.0 in Cargo.lock".into());
+        for (name, version) in [("dirs-sys", "0.5.0"), ("gix-config-value", "0.21.0")] {
+            let selected: Vec<_> = packages.iter().filter(|package| package.name == name).collect();
+            if selected.len() != 1 || selected[0].version != version {
+                return Err(format!("Codex native home provider requires exactly {name} {version} in Cargo.lock"));
+            }
+            let source = find_cargo_registry_crate(&format!("{name}-{version}"))
+                .ok_or_else(|| format!("missing pinned {name} {version} source for native home provider"))?;
+            let staged = match name {
+                "dirs-sys" => native_identity_overlay::stage_dirs_sys(work_dir, &source)?,
+                "gix-config-value" => native_identity_overlay::stage_gix_config_value(work_dir, &source)?,
+                _ => unreachable!(),
+            };
+            out.retain(|patch| patch.name != name);
+            out.push(CratePatch::new(name, staged));
         }
-        let source = find_cargo_registry_crate("dirs-sys-0.5.0")
-            .ok_or("missing pinned dirs-sys 0.5.0 source for native home provider")?;
-        out.retain(|patch| patch.name != "dirs-sys");
-        out.push(CratePatch::new("dirs-sys", native_identity_overlay::stage_dirs_sys(work_dir, &source)?));
     }
     if package_name(manifest_path)? == "codex-cli"
         && manifest_or_lock_mentions_crate(app_dir, manifest_path, "rama-tcp")?
@@ -2441,7 +2448,7 @@ fn source_overlay_patches(
     }
     if package_name(manifest_path)? == "codex-cli" {
         let packages = lock_packages(&app_lockfile(app_dir))?;
-        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2")] {
+        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2"), ("walkdir", "2.5.0", "walkdir"), ("gix-sec", "0.16.0", "gix-sec")] {
             if !packages.iter().any(|package| package.name == name && package.version == version) {
                 return Err(format!("Codex native data provider requires {name} {version} in Cargo.lock"));
             }
@@ -2450,6 +2457,8 @@ fn source_overlay_patches(
             let staged = match name {
                 "rand" => codex_native_data_overlay::stage_rand(work_dir, &source)?,
                 "memmap2" => codex_native_data_overlay::stage_memmap(work_dir, &source)?,
+                "walkdir" => codex_native_data_overlay::stage_walkdir(work_dir, &source)?,
+                "gix-sec" => codex_native_data_overlay::stage_gix_sec(work_dir, &source, &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("api"))?,
                 _ => unreachable!(),
             };
             out.retain(|patch| patch.name != name);

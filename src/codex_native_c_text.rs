@@ -8,6 +8,9 @@ pub(super) fn compiler_options(name: &str, binding: &str) -> String {
     let mut options = format!(
         "\n        {binding}.define(\"TRUEOS_BLUEPRINT_NATIVE_TEXT\", None).include(\".\").flag(\"-include\").flag(\"trueos_native_text.h\");"
     );
+    if name == "tree-sitter" {
+        options.push_str("\n        println!(\"cargo:rustc-check-cfg=cfg(tree_sitter_trueos_native)\");\n        println!(\"cargo:rustc-cfg=tree_sitter_trueos_native\");");
+    }
     if name == "onig_sys" {
         options.push_str(&format!(
             "\n        if std::env::var_os(\"CARGO_FEATURE_PRINT_DEBUG\").is_some() {{ panic!(\"Onig FILE-based print-debug is unavailable on TRUEOS; regex errors and warning callbacks remain supported\"); }}\n        {binding}.define(\"ONIG_NO_PRINT\", None);"
@@ -48,7 +51,7 @@ pub(super) fn adapt(staged: &Path, name: &str) -> Result<(), String> {
             return Err("Tree-sitter descriptor DOT method selectors drifted".into());
         }
         *text = text.replace(before, "#[cfg(not(any(target_os = \"wasi\", target_os = \"trueos\")))]");
-        Ok(())
+        replace_once(text, "    fn free(ptr: *mut c_void);", "    #[cfg_attr(tree_sitter_trueos_native, link_name = \"trueos_blueprint_c_free\")]\n    fn free(ptr: *mut c_void);", "Rust owned C-string deallocator")
     })?;
     adapt_file(staged, "src/parser.c", |text| {
         replace_once(text, "void ts_parser_print_dot_graphs(TSParser *self, int fd) {", "#if !defined(TRUEOS_BLUEPRINT_NATIVE_TEXT)\nvoid ts_parser_print_dot_graphs(TSParser *self, int fd) {", "parser fd entry")?;

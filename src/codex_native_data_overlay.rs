@@ -1,4 +1,4 @@
-//! Pinned native providers for Codex's RNG and immutable Git file reads.
+//! Pinned native providers for Codex's RNG, Git files and object identity.
 use std::path::{Path, PathBuf};
 
 pub(crate) fn stage_rand(work: &Path, source: &Path) -> Result<PathBuf, String> {
@@ -66,6 +66,100 @@ pub(crate) fn stage_memmap(work: &Path, source: &Path) -> Result<PathBuf, String
         include_str!("memmap2_trueos.rs"),
     )
     .map_err(|e| e.to_string())?;
+    Ok(staged)
+}
+
+pub(crate) fn stage_walkdir(work: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "walkdir", "2.5.0")?;
+    let staged = prepare(work, source, "walkdir-2.5.0-trueos")?;
+    let path = staged.join("src/dent.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "        use std::os::unix::fs::DirEntryExt;",
+        "        #[cfg(not(target_os = \"trueos\"))]\n        use std::os::unix::fs::DirEntryExt;",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "        use std::os::unix::fs::MetadataExt;",
+        "        #[cfg(not(target_os = \"trueos\"))]\n        use std::os::unix::fs::MetadataExt;",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "            ino: ent.ino(),",
+        r#"            #[cfg(not(target_os = "trueos"))]
+            ino: ent.ino(),
+            #[cfg(target_os = "trueos")]
+            ino: ent.metadata().map_err(|err| Error::from_path(depth, ent.path(), err))?
+                .file_id().ok_or_else(|| Error::from_path(depth, ent.path(),
+                    std::io::Error::new(std::io::ErrorKind::Unsupported, "native directory entry has no stable object identity")))?,"#,
+        1,
+    )?;
+    replace(
+        &mut text,
+        "            ino: md.ino(),",
+        r#"            #[cfg(not(target_os = "trueos"))]
+            ino: md.ino(),
+            #[cfg(target_os = "trueos")]
+            ino: md.file_id().ok_or_else(|| Error::from_path(depth, pb.clone(),
+                std::io::Error::new(std::io::ErrorKind::Unsupported, "native path has no stable object identity")))?,"#,
+        1,
+    )?;
+    // Compute the fallible identity before moving the path into the entry.
+    replace(
+        &mut text,
+        "            ino: md.file_id().ok_or_else(|| Error::from_path(depth, pb.clone(),",
+        "            ino: md.file_id().ok_or_else(|| Error::from_path(depth, md_path.clone(),",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "        use std::os::unix::fs::MetadataExt;\n\n        let md =",
+        "        use std::os::unix::fs::MetadataExt;\n\n        #[cfg(target_os = \"trueos\")]\n        let md_path = pb.clone();\n        let md =",
+        1,
+    )?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    let path = staged.join("src/util.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "#[cfg(unix)]",
+        "#[cfg(all(unix, not(target_os = \"trueos\")))]",
+        1,
+    )?;
+    text.push_str("\n#[cfg(target_os = \"trueos\")]\npub fn device_num<P: AsRef<Path>>(path: P) -> io::Result<u64> {\n    path.as_ref().metadata().map(|md| u64::from(md.root_id()))\n}\n");
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
+
+pub(crate) fn stage_gix_sec(work: &Path, source: &Path, sdk_api: &Path) -> Result<PathBuf, String> {
+    validate(source, "gix-sec", "0.16.0")?;
+    let staged = prepare(work, source, "gix-sec-0.16.0-trueos")?;
+    let path = staged.join("src/identity.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "#[cfg(all(not(windows), not(target_os = \"wasi\")))]",
+        "#[cfg(all(not(windows), not(any(target_os = \"wasi\", target_os = \"trueos\"))))]",
+        1,
+    )?;
+    text.push_str(
+        "\n#[cfg(target_os = \"trueos\")]\n#[path = \"identity_trueos.rs\"]\nmod impl_;\n",
+    );
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    std::fs::write(
+        staged.join("src/identity_trueos.rs"),
+        include_str!("gix_sec_trueos.rs"),
+    )
+    .map_err(|e| e.to_string())?;
+    let path = staged.join("Cargo.toml");
+    let mut manifest = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let api = sdk_api.canonicalize().map_err(|e| e.to_string())?;
+    let api = api.to_str().ok_or("native Git SDK path is not UTF-8")?;
+    manifest.push_str(&format!("\n[target.'cfg(target_os = \"trueos\")'.dependencies.trueos]\npath = {api:?}\ndefault-features = false\n"));
+    std::fs::write(path, manifest).map_err(|e| e.to_string())?;
     Ok(staged)
 }
 fn replace(text: &mut String, before: &str, after: &str, expected: usize) -> Result<(), String> {
