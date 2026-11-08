@@ -149,6 +149,11 @@ const CACHE_SOURCES: &[&str] = &[
     "std/src/sys/fs/unix.rs",
     "std/src/sys/fs/mod.rs",
     "std/src/sys/fs/trueos.rs",
+    "std/src/sys/net/mod.rs",
+    "std/src/sys/net/connection/mod.rs",
+    "std/src/sys/net/connection/trueos.rs",
+    "std/src/net/mod.rs",
+    "std/src/os/fd/net.rs",
     "std/src/fs.rs",
     "std/src/sys/env/mod.rs",
     "std/src/sys/env/trueos.rs",
@@ -166,6 +171,9 @@ const CACHE_SOURCES: &[&str] = &[
     "std/src/sys/process/mod.rs",
     "std/src/sys/process/unix/mod.rs",
     "std/src/sys/process/unix/common.rs",
+    "std/src/sys/pipe/mod.rs",
+    "std/src/sys/pipe/unsupported.rs",
+    "std/src/os/unix/process.rs",
     "std/src/os/fd/owned.rs",
     "std/src/os/fd/raw.rs",
     "std/src/os/unix/fs.rs",
@@ -339,7 +347,7 @@ mod tests {
         }
         let target = root.join("target.json");
         fs::write(&target, b"{}").unwrap();
-        for changed in ["std/src/sys/fs/unix.rs", "std/src/panic.rs", "std/src/sys/backtrace.rs"] {
+        for changed in CACHE_SOURCES {
             let before = cache_revision_for_library(&root, &target).unwrap();
             fs::write(root.join(changed), b"changed native backend source").unwrap();
             let after = cache_revision_for_library(&root, &target).unwrap();

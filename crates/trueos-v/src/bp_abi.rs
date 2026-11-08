@@ -1853,6 +1853,10 @@ unsafe extern "C" {
     ) -> isize;
     pub fn trueos_cabi_lifecycle_identity(out: *mut TrueosLifecycleIdentity) -> i32;
     pub fn trueos_cabi_shell_attached_write(data_ptr: *const u8, data_len: usize) -> usize;
+    pub fn trueos_cabi_shell_attached_read_v1(out_ptr: *mut u8, out_cap: usize) -> isize;
+    pub safe fn trueos_cabi_shell_attached_observe_v1() -> u32;
+    pub safe fn trueos_cabi_shell_attached_wait_after_v1(observed: u32, timeout_ms: u64) -> i32;
+    pub safe fn trueos_cabi_shell_attached_wake_v1() -> i32;
     pub fn trueos_cabi_shell_attached_read_byte() -> i32;
     pub fn trueos_cabi_shell_attached_retarget_slot(slot_ptr: *const u8, slot_len: usize) -> i32;
     pub fn trueos_cabi_shell3_session_open_v1(script_ptr: *const u8, script_len: usize, cols: u32, rows: u32, stdin_open: u32) -> i64;

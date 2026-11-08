@@ -32,6 +32,11 @@ mod rama_tcp_overlay;
 mod codex_native_data_overlay;
 mod codex_native_c_overlay;
 mod codex_native_archive_overlay;
+mod codex_native_terminal_overlay;
+mod codex_native_socket_overlay;
+mod check_only;
+mod codex_native_executable_overlay;
+mod codex_native_sync_http_overlay;
 mod toolchain;
 
 #[cfg(test)]
@@ -218,13 +223,33 @@ fn main() {
 
 fn run() -> Result<(), String> {
     toolchain::verify_rustc_identity()?;
-    let args: Vec<_> = env::args_os().skip(1).collect();
+    let mut args: Vec<_> = env::args_os().skip(1).collect();
+    let check_only = check_only::take_flag(&mut args)?;
     let (app_dir, requested_apps, cargo_profile, package_catalog) = parse_cli_args(&args)?;
     let app_dir = fs::canonicalize(&app_dir)
         .map_err(|err| format!("failed to resolve app dir {}: {err}", app_dir.display()))?;
     let manifest_path = app_dir.join("Cargo.toml");
     if !manifest_path.is_file() {
         return Err(format!("missing Cargo.toml in {}", app_dir.display()));
+    }
+
+    if check_only {
+        let (dir, manifest) = if package_name(&manifest_path)? == "trueos-blueprint" {
+            if requested_apps.len() != 1 {
+                return Err("--check requires exactly one named package app".into());
+            }
+            let app = package_app_spec(&app_dir, &requested_apps[0], package_catalog)?
+                .ok_or("--check requires a Rust package app in the selected catalog")?;
+            (app.dir, app.manifest_path)
+        } else {
+            if !requested_apps.is_empty() {
+                return Err("--check directory mode does not accept app names".into());
+            }
+            (app_dir.clone(), manifest_path.clone())
+        };
+        build_one_target_to_mode(&dir, &manifest, BuildTarget::Package, &[],
+            &app_dir.join("dist"), cargo_profile, true)?;
+        return Ok(());
     }
 
     if package_name(&manifest_path)? == "trueos-blueprint" {
@@ -415,6 +440,18 @@ fn build_one_target_to(
     output_dir: &Path,
     cargo_profile: CargoProfile,
 ) -> Result<PathBuf, String> {
+    build_one_target_to_mode(app_dir, manifest_path, build_target, required_features, output_dir, cargo_profile, false)
+}
+
+fn build_one_target_to_mode(
+    app_dir: &Path,
+    manifest_path: &Path,
+    build_target: BuildTarget,
+    required_features: &[String],
+    output_dir: &Path,
+    cargo_profile: CargoProfile,
+    check_only: bool,
+) -> Result<PathBuf, String> {
     let mut capability_flags = if matches!(build_target, BuildTarget::Package)
         && package_blueprint_replicatable(manifest_path)?
     {
@@ -490,7 +527,12 @@ fn build_one_target_to(
         )))
         .map_err(io_string)?;
     build_lock.lock().map_err(io_string)?;
-    let mut build_cache = cache_inputs::base(app_dir, manifest_path, &target_input)
+    let work_dir = workdir(app_dir, &packer_target_dir, &output_name)?;
+    if check_only {
+        let receipt = work_dir.join("native-check.json");
+        if receipt.exists() { fs::remove_file(receipt).map_err(io_string)?; }
+    }
+    let mut build_cache = if check_only { None } else { cache_inputs::base(app_dir, manifest_path, &target_input)
         .and_then(|roots| {
             build_cache::BuildCache::new(
                 packer_target_dir
@@ -502,7 +544,7 @@ fn build_one_target_to(
             )
         })
         .map_err(|error| eprintln!("trueos-blueprint: cache unavailable: {error}"))
-        .ok();
+        .ok() };
     if cache_action(&mut build_cache, |cache| cache.is_fresh()).unwrap_or(false) {
         let workload = codex_workload_sdk
             .as_ref()
@@ -557,7 +599,6 @@ fn build_one_target_to(
         .join(cargo_profile.target_subdir());
     let deps_dir = target_dir.join("deps");
 
-    let work_dir = workdir(app_dir, &packer_target_dir, &output_name)?;
     let staging = staging::StagingGuard::new(&work_dir)?;
 
     let source_overlay =
@@ -765,6 +806,14 @@ fn build_one_target_to(
             cargo.arg("--example").arg(name);
         }
     };
+    if check_only {
+        let receipt = work_dir.join("native-check.json");
+        if receipt.exists() { fs::remove_file(&receipt).map_err(io_string)?; }
+        let mut check = check_only::command(&cargo)?;
+        run_cargo_rustc_command(&mut check, "cargo check", &deps_dir)?;
+        return check_only::receipt(&receipt, &check);
+    }
+
     // Derive ownership from this staged invocation, including its profile,
     // features, patches and build-std graph. Plan once; cached artifact names
     // cannot establish a dependency's current package/source identity.
@@ -2404,6 +2453,20 @@ fn source_overlay_patches(
     add_blueprint_vendor_patches(app_dir, &mut out)?;
     if package_name(manifest_path)? == "codex-cli" {
         let packages = lock_packages(&app_lockfile(app_dir))?;
+        if !packages.iter().any(|package| package.name == "terminal_size" && package.version == "0.4.3") {
+            return Err("Codex native terminal geometry requires terminal_size 0.4.3".into());
+        }
+        let source = find_cargo_registry_crate("terminal_size-0.4.3")
+            .ok_or("missing pinned terminal_size 0.4.3 source for native geometry")?;
+        out.retain(|patch| patch.name != "terminal_size");
+        out.push(CratePatch::new("terminal_size", codex_native_terminal_overlay::stage(work_dir, &source)?));
+        if !packages.iter().any(|package| package.name == "which" && package.version == "8.0.0") {
+            return Err("Codex native executable provider requires which 8.0.0".into());
+        }
+        let source = find_cargo_registry_crate("which-8.0.0")
+            .ok_or("missing pinned which 8.0.0 source for native executable discovery")?;
+        out.retain(|patch| patch.name != "which");
+        out.push(CratePatch::new("which", codex_native_executable_overlay::stage(work_dir, &source)?));
         for (name, version) in [("tempfile", "3.27.0"), ("fd-lock", "4.0.4"), ("same-file", "1.0.6")] {
             let selected: Vec<_> = packages.iter().filter(|package| package.name == name).collect();
             if selected.len() != 1 || selected[0].version != version {
@@ -2496,6 +2559,16 @@ fn source_overlay_patches(
             out.retain(|patch| patch.name != name);
             out.push(CratePatch::new(name, staged));
         }
+    }
+    if package_name(manifest_path)? == "codex-cli" {
+        let packages = lock_packages(&app_lockfile(app_dir))?;
+        if !packages.iter().any(|package| package.name == "tiny_http" && package.version == "0.12.0") {
+            return Err("Codex native synchronous HTTP requires tiny_http 0.12.0".into());
+        }
+        let source = find_cargo_registry_crate("tiny_http-0.12.0")
+            .ok_or("missing pinned tiny_http 0.12.0 source")?;
+        out.retain(|patch| patch.name != "tiny_http");
+        out.push(CratePatch::new("tiny_http", codex_native_sync_http_overlay::stage(work_dir, &source)?));
     }
     // The full std runtime can compile older HTTP stacks directly. Keep an
     // external workspace's existing API versions consistent across its root
@@ -2606,8 +2679,41 @@ fn source_overlay_patches(
     add_getrandom_source_overlays(app_dir, &mut out)?;
 
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "socket2")? {
-        let socket2_0_5 = stage_socket2_trueos_overlay(work_dir, "0.5.10")?;
-        out.push(CratePatch::alias("socket2_0_5", "socket2", socket2_0_5));
+        if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+            let codex = package_name(manifest_path)? == "codex-cli";
+            let packages = if codex { lock_packages(&app_lockfile(app_dir))? } else { Vec::new() };
+            for version in ["0.5.10", "0.6.3"] {
+                if codex && !packages.iter().any(|package| package.name == "socket2" && package.version == version) {
+                    return Err(format!("Codex native Socket2 requires pinned {version}"));
+                }
+                let source = if version == "0.6.3" {
+                    blueprint_vendor_path(&current_blueprint_root().ok_or("missing Blueprint SDK root")?, "socket2-0.6.3")
+                } else {
+                    find_cargo_registry_crate("socket2-0.5.10").ok_or("missing pinned socket2 0.5.10")?
+                };
+                let staged = codex_native_socket_overlay::stage_socket2(work_dir, &source)?;
+                if version == "0.6.3" {
+                    out.retain(|patch| patch.key != "socket2");
+                    out.push(CratePatch::new("socket2", staged));
+                } else {
+                    out.retain(|patch| patch.key != "socket2_0_5");
+                    out.push(CratePatch::alias("socket2_0_5", "socket2", staged));
+                }
+            }
+            if codex {
+                let source = find_cargo_registry_crate("rama-udp-0.3.0-alpha.4")
+                    .ok_or("missing pinned rama-udp 0.3.0-alpha.4")?;
+                out.retain(|patch| patch.name != "rama-udp");
+                out.push(CratePatch::new("rama-udp", codex_native_socket_overlay::stage_rama_udp(work_dir, &source)?));
+                let source = find_cargo_registry_crate("rama-unix-0.3.0-alpha.4")
+                    .ok_or("missing pinned rama-unix 0.3.0-alpha.4")?;
+                out.retain(|patch| patch.name != "rama-unix");
+                out.push(CratePatch::new("rama-unix", codex_native_socket_overlay::stage_rama_unix(work_dir, &source)?));
+            }
+        } else {
+            let socket2_0_5 = stage_socket2_trueos_overlay(work_dir, "0.5.10")?;
+            out.push(CratePatch::alias("socket2_0_5", "socket2", socket2_0_5));
+        }
     }
 
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "ctrlc")? {
