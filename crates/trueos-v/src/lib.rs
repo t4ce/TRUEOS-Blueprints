@@ -4,6 +4,8 @@ extern crate alloc;
 
 #[cfg(feature = "native-c-alloc")]
 pub mod native_c_alloc;
+#[cfg(feature = "native-c-clock")]
+pub mod native_c_clock;
 
 pub mod collections;
 pub mod fmt;

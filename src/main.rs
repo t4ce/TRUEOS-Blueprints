@@ -22,6 +22,7 @@ mod lock_overlay_batch;
 mod native_fold;
 mod native_odin;
 mod native_file_overlays;
+mod native_identity_overlay;
 mod openssl_overlay;
 mod publish;
 mod stack_capture;
@@ -2402,7 +2403,7 @@ fn source_overlay_patches(
     add_blueprint_vendor_patches(app_dir, &mut out)?;
     if package_name(manifest_path)? == "codex-cli" {
         let packages = lock_packages(&app_lockfile(app_dir))?;
-        for (name, version) in [("tempfile", "3.27.0"), ("fd-lock", "4.0.4")] {
+        for (name, version) in [("tempfile", "3.27.0"), ("fd-lock", "4.0.4"), ("same-file", "1.0.6")] {
             let selected: Vec<_> = packages.iter().filter(|package| package.name == name).collect();
             if selected.len() != 1 || selected[0].version != version {
                 return Err(format!("Codex native file overlay requires exactly {name} {version} in Cargo.lock"));
@@ -2412,11 +2413,23 @@ fn source_overlay_patches(
             let staged = match name {
                 "tempfile" => native_file_overlays::stage_tempfile(work_dir, &source)?,
                 "fd-lock" => native_file_overlays::stage_fd_lock(work_dir, &source)?,
+                "same-file" => native_file_overlays::stage_same_file(work_dir, &source)?,
                 _ => unreachable!(),
             };
             out.retain(|patch| patch.name != name);
             out.push(CratePatch::new(name, staged));
         }
+    }
+    if package_name(manifest_path)? == "codex-cli" {
+        let packages = lock_packages(&app_lockfile(app_dir))?;
+        let selected: Vec<_> = packages.iter().filter(|package| package.name == "dirs-sys").collect();
+        if selected.len() != 1 || selected[0].version != "0.5.0" {
+            return Err("Codex native home provider requires exactly dirs-sys 0.5.0 in Cargo.lock".into());
+        }
+        let source = find_cargo_registry_crate("dirs-sys-0.5.0")
+            .ok_or("missing pinned dirs-sys 0.5.0 source for native home provider")?;
+        out.retain(|patch| patch.name != "dirs-sys");
+        out.push(CratePatch::new("dirs-sys", native_identity_overlay::stage_dirs_sys(work_dir, &source)?));
     }
     if package_name(manifest_path)? == "codex-cli"
         && manifest_or_lock_mentions_crate(app_dir, manifest_path, "rama-tcp")?

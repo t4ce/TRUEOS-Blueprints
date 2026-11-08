@@ -1205,6 +1205,8 @@ unsafe extern "C" {
     ) -> i32;
     pub fn trueos_cabi_async_fs_write_commit(id: u32) -> i32;
     pub fn trueos_cabi_async_fs_create_dir_all_start(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_async_fs_create_dir_start_v1(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_async_fs_remove_leaf_start_v1(path_ptr: *const u8, path_len: usize, expected_kind: u32) -> i32;
     pub fn trueos_cabi_async_fs_metadata_start_v2(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_typed_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
@@ -1824,6 +1826,7 @@ unsafe extern "C" {
     /// IDs are VM slot + 1; zero means no such execution owner.
     pub fn trueos_cabi_process_identity_v1(which: u32) -> u32;
     pub fn trueos_cabi_env_args_count() -> usize;
+    pub fn trueos_cabi_env_current_dir(out_ptr: *mut u8, out_cap: usize) -> isize;
     pub fn trueos_cabi_env_arg(index: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
     pub fn trueos_cabi_env_var(
         key_ptr: *const u8,

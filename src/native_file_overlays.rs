@@ -64,6 +64,48 @@ pub(crate) fn stage_fd_lock(work_dir: &Path, source: &Path) -> Result<PathBuf, S
     Ok(staged)
 }
 
+pub(crate) fn stage_same_file(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "same-file", "1.0.6")?;
+    let path = source.join("src/lib.rs");
+    let original = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let unix = "#[cfg(any(target_os = \"redox\", unix))]";
+    let other = "#[cfg(not(any(target_os = \"redox\", unix, windows)))]";
+    if original.matches(unix).count() != 4 || original.matches(other).count() != 2 {
+        return Err("pinned native same-file platform selector drifted".into());
+    }
+    // Only the module selectors exclude native TRUEOS. The public dev()/ino()
+    // compatibility accessors continue returning actual root/file identities.
+    let selected = original
+        .replacen(
+            unix,
+            "#[cfg(all(not(target_os = \"trueos\"), any(target_os = \"redox\", unix)))]",
+            2,
+        )
+        .replace(
+            other,
+            "#[cfg(not(any(target_os = \"trueos\", target_os = \"redox\", unix, windows)))]",
+        );
+    let imports = "\nuse std::fs::File;\nuse std::io;\nuse std::path::Path;";
+    if selected.matches(imports).count() != 1 {
+        return Err("pinned native same-file import boundary drifted".into());
+    }
+    // Keep the crate's leading inner documentation and attributes before items.
+    let selected = selected.replacen(
+        imports,
+        "\n#[cfg(target_os = \"trueos\")]\nuse self::trueos as imp;\n#[cfg(target_os = \"trueos\")]\nmod trueos;\n\nuse std::fs::File;\nuse std::io;\nuse std::path::Path;",
+        1,
+    );
+    let staged = prepare(work_dir, source, "same-file-1.0.6-trueos")?;
+    write(&staged, "src/lib.rs", &selected)?;
+    write(
+        &staged,
+        "src/trueos.rs",
+        include_str!("same_file_trueos.rs"),
+    )?;
+    Ok(staged)
+}
+
 fn validate(source: &Path, name: &str, version: &str) -> Result<(), String> {
     let manifest = source.join("Cargo.toml");
     if crate::package_name(&manifest)? != name
