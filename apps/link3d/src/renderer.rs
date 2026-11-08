@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use trueos::{
     async_fs,
     vgpu::{
@@ -15,22 +17,19 @@ const VERTEX_STRIDE: usize = 48;
 /// changes. Camera movement submits transforms without uploading geometry.
 pub struct Renderer {
     device: Device,
-    palette: RetainedTexture,
+    palette_bmp: Vec<u8>,
+    palette: Option<RetainedTexture>,
     geometry: Option<Geometry>,
 }
 
 impl Renderer {
-    pub fn new(device: Device, palette_bmp: &[u8]) -> Result<Self, i32> {
-        let palette = async_fs::block_on(vmedia::decode_retained(
+    pub fn new(device: Device, palette_bmp: Vec<u8>) -> Self {
+        Self {
             device,
-            ImageFormat::Bmp,
             palette_bmp,
-        ))?;
-        Ok(Self {
-            device,
-            palette,
+            palette: None,
             geometry: None,
-        })
+        }
     }
 
     pub fn replace(&mut self, vertices: &[u8], indices: &[u8], radius: f32) -> Result<(), i32> {
@@ -76,14 +75,25 @@ impl Renderer {
                 return Err(error);
             }
         };
-        // Keep the current scene intact if allocating its replacement fails.
-        self.geometry = Some(Geometry {
+        let geometry = Geometry {
             device: self.device,
             mesh,
             vertex_buffer,
             index_buffer,
             radius,
-        });
+        };
+        // Mesh creation establishes this device's Picasso carrier. Retained
+        // textures can only be published after that carrier exists. An empty
+        // roster needs neither a mesh nor a palette upload.
+        if self.palette.is_none() {
+            self.palette = Some(async_fs::block_on(vmedia::decode_retained(
+                self.device,
+                ImageFormat::Bmp,
+                &self.palette_bmp,
+            ))?);
+        }
+        // Keep the current scene intact if allocating its replacement fails.
+        self.geometry = Some(geometry);
         Ok(())
     }
 
@@ -102,7 +112,12 @@ impl Renderer {
             seed_count: 1,
             ..RetainedFrameSubmit::default()
         };
-        frame.material.textures[vgpu::RETAINED_MATERIAL_BASE_COLOR] = self.palette.id().raw();
+        frame.material.textures[vgpu::RETAINED_MATERIAL_BASE_COLOR] = self
+            .palette
+            .as_ref()
+            .ok_or(vgpu::ERR_UNSUPPORTED)?
+            .id()
+            .raw();
         frame.seeds[0] = RetainedTransformSeed {
             scale: [1.0; 3],
             rotation: [0.0, 0.0, 0.0, 1.0],

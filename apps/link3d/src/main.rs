@@ -38,7 +38,7 @@ fn main() {
     if let Err(error) = run()
         && !matches!(error, Error::Ui(UiError::NotFound))
     {
-        logl::log(level::ERROR, format_args!("link3d: {error}"));
+        logl::log_record(level::ERROR, "link3d", format_args!("link3d: {error}"));
     }
 }
 
@@ -74,10 +74,11 @@ fn run() -> Result<(), Error> {
     frame.set_primary_activation(true)?;
     let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
     let queue = device.create_queue(QueueClass::Render)?;
-    let mut renderer = renderer::Renderer::new(device, &palette)?;
+    let mut renderer = renderer::Renderer::new(device, palette);
 
-    logl::log(
+    logl::log_record(
         level::IMPORTANT,
+        "link3d",
         format_args!(
             "link3d: keyboard prepared once vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette controls=primary-drag-orbit,wheel-zoom,Home-reset"
         ),
@@ -87,6 +88,7 @@ fn run() -> Result<(), Error> {
     let mut pending_resize = None;
     let mut redraws_pending = 1u8;
     let mut keyboards = Vec::new();
+    let mut inventory_initialized = false;
     let mut next_inventory_at = 0;
     let mut scene_center = [0.0; 3];
     let mut scene_radius = RADIUS;
@@ -94,8 +96,11 @@ fn run() -> Result<(), Error> {
         let now = clock::monotonic_millis();
         if now >= next_inventory_at {
             next_inventory_at = now.saturating_add(INVENTORY_INTERVAL_MS);
-            let current = virtual_keyboards(&hid::hid_hut_keyboards(), &hid::input_combos());
-            if current != keyboards {
+            let devices = hid::hid_hut_keyboards();
+            let combos = hid::input_combos();
+            let current = virtual_keyboards(&devices, &combos);
+            let roster_changed = current != keyboards;
+            if roster_changed {
                 let row = prepare_row(&vertices, &indices, &current, RADIUS);
                 renderer.replace(&row.vertices, &row.indices, row.origin_radius)?;
                 scene_center = row.center;
@@ -104,13 +109,19 @@ fn run() -> Result<(), Error> {
                 previous_view_projection = [0.0; 16];
                 redraws_pending = redraws_pending.max(1);
                 keyboards = current;
-                logl::log(
-                    level::INFO,
+            }
+            if !inventory_initialized || roster_changed {
+                logl::log_record(
+                    level::IMPORTANT,
+                    "link3d",
                     format_args!(
-                        "link3d: virtual keyboards={} inventory refreshed",
-                        keyboards.len()
+                        "link3d: inventory refreshed keyboards={} virtual-keyboards={} combos={}",
+                        devices.len(),
+                        keyboards.len(),
+                        combos.len()
                     ),
                 );
+                inventory_initialized = true;
             }
         }
         while let Some(event) = frame.take_resize_event()? {
