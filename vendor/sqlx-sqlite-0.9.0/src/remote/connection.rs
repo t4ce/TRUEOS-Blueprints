@@ -29,6 +29,9 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 use tokio::time::{Instant, timeout_at};
+#[cfg(any(target_os = "trueos", test))]
+#[path = "private_endpoint.rs"]
+mod private_endpoint;
 
 const SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -457,6 +460,16 @@ fn protocol(e: impl fmt::Display) -> Error {
 }
 fn endpoint() -> Result<String, Error> {
     let instance = std::env::var("TRUEOS_SQLITE_INSTANCE").unwrap_or_else(|_| "codex".into());
+    #[cfg(target_os = "trueos")]
+    {
+        let configured = std::env::var("TRUEOS_SQLITE_ENDPOINT").ok();
+        let trusted = std::env::var("TRUEOS_CODEX_SQLITE_ENDPOINT").ok();
+        if let Some(endpoint) = private_endpoint::select(&instance, configured.as_deref(), trusted.as_deref())
+            .map_err(|message| Error::Protocol(message.into()))?
+        {
+            return Ok(endpoint.into());
+        }
+    }
     let hash = instance.bytes().fold(2166136261u32, |h, b| {
         (h ^ u32::from(b)).wrapping_mul(16777619)
     });
@@ -491,7 +504,9 @@ async fn ensure_service(client: &reqwest::Client, endpoint: &str, deadline: Inst
     if health_ready(client, endpoint, deadline).await {
         return Ok(());
     }
-    if std::env::var_os("TRUEOS_SQLITE_ENDPOINT").is_some() {
+    if std::env::var_os("TRUEOS_SQLITE_ENDPOINT").is_some()
+        && std::env::var_os("TRUEOS_CODEX_SQLITE_ENDPOINT").is_none()
+    {
         return wait_for_service(client, endpoint, deadline).await;
     }
     let instance = std::env::var("TRUEOS_SQLITE_INSTANCE").unwrap_or_else(|_| "codex".into());

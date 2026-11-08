@@ -31,6 +31,7 @@ mod std_backend;
 mod rama_tcp_overlay;
 mod codex_native_data_overlay;
 mod codex_native_c_overlay;
+mod codex_native_archive_overlay;
 mod toolchain;
 
 #[cfg(test)]
@@ -2478,6 +2479,19 @@ fn source_overlay_patches(
             let source = find_cargo_registry_crate(&format!("{name}-{version}"))
                 .ok_or_else(|| format!("missing pinned native C source {name}-{version}"))?;
             let staged = codex_native_c_overlay::stage(work_dir, &source, name, version)?;
+            out.retain(|patch| patch.name != name);
+            out.push(CratePatch::new(name, staged));
+        }
+    }
+    if package_name(manifest_path)? == "codex-cli" {
+        let packages = lock_packages(&app_lockfile(app_dir))?;
+        for &(name, version) in codex_native_archive_overlay::PROVIDERS {
+            if !packages.iter().any(|package| package.name == name && package.version == version) {
+                return Err(format!("Codex native archive provider requires {name} {version} in Cargo.lock"));
+            }
+            let source = find_cargo_registry_crate(&format!("{name}-{version}"))
+                .ok_or_else(|| format!("missing pinned native archive source {name}-{version}"))?;
+            let staged = codex_native_archive_overlay::stage(work_dir, &source, name, version)?;
             out.retain(|patch| patch.name != name);
             out.push(CratePatch::new(name, staged));
         }

@@ -1,6 +1,7 @@
 mod storage;
 mod session;
 mod codex_recovery;
+mod private_storage;
 #[cfg(any(target_os = "trueos", feature = "native-transport"))]
 mod native_transport;
 #[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
@@ -406,13 +407,19 @@ fn options() -> Result<(String, PathBuf), String> {
     if !valid_name(&instance) {
         return Err("invalid instance name".into());
     }
-    let directory = directory
-        .unwrap_or_else(|| PathBuf::from("/common/sqlite-service"))
-        .join(&instance);
+    #[cfg(target_os = "trueos")]
+    let trusted_directory = trueos::env::var("TRUEOS_CODEX_SQLITE_STORAGE").ok();
+    #[cfg(target_os = "trueos")]
+    let trusted_endpoint = trueos::env::var("TRUEOS_CODEX_SQLITE_ENDPOINT").ok();
+    #[cfg(not(target_os = "trueos"))]
+    let (trusted_directory, trusted_endpoint): (Option<String>, Option<String>) = (None, None);
+    let directory = private_storage::resolve(&instance, directory, trusted_directory.as_deref(), trusted_endpoint.as_deref(), cfg!(target_os = "trueos"))?;
     Ok((instance, directory))
 }
 
 async fn run(instance: String, directory: PathBuf) -> Result<(), String> {
+    #[cfg(target_os = "trueos")]
+    private_storage::verify(&instance, &directory).await?;
     // Binding happens first: one named instance owns one loopback port and
     // therefore one persistence directory. A competing launch fails admission.
     let listener =
