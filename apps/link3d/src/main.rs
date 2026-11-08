@@ -1,15 +1,21 @@
 #![no_std]
 
+extern crate alloc;
+
+mod renderer;
+
+use alloc::vec::Vec;
 use core::fmt;
-use link3d::OrbitCamera;
+use link3d::{
+    OrbitCamera,
+    roster::virtual_keyboards,
+    scene::{palette_bmp, prepare_row},
+};
 use trueos::{
-    input,
+    clock, hid, input,
     logl::{self, level},
     ui4_scene::{self, Damage, Error as UiError, Frame, POINTER_BUTTON_PRIMARY},
-    vgpu::{
-        self, Buffer, Capabilities, Device, QueueClass, RetainedFrameSubmit,
-        RetainedMeshDescriptor, RetainedTransformSeed,
-    },
+    vgpu::{Capabilities, Device, QueueClass},
     vsys,
 };
 use trueos_picasso::{Picasso, PicassoError};
@@ -18,6 +24,7 @@ include!(concat!(env!("OUT_DIR"), "/prepared_keyboard.rs"));
 const SOURCE: &[u8] = include_bytes!("../Keyboard OP.glb");
 const VERTICES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.vertices.bin"));
 const INDICES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.indices.bin"));
+const INVENTORY_INTERVAL_MS: u64 = 3_000;
 
 #[global_allocator]
 static ALLOCATOR: trueos::TrueosAllocator = trueos::TrueosAllocator;
@@ -35,14 +42,6 @@ fn main() {
     }
 }
 
-fn upload(device: Device, bytes: &[u8], usage: u32) -> Result<Buffer, Error> {
-    let buffer = device.create_buffer(bytes.len(), usage | vgpu::BUFFER_USAGE_MAP_WRITE)?;
-    if device.write_buffer(buffer, 0, bytes)? != bytes.len() {
-        return Err(Error::Gpu(vgpu::ERR_IO));
-    }
-    Ok(buffer)
-}
-
 fn run() -> Result<(), Error> {
     // Reuse Picasso-Example's prepared-asset intake: exact source and prepared
     // geometry cross Picasso's database boundary once, before the GPU upload.
@@ -50,11 +49,15 @@ fn run() -> Result<(), Error> {
     picasso.put_embedded_asset("keyboard/source.glb", SOURCE)?;
     picasso.put_embedded_asset("keyboard/vertices", VERTICES)?;
     picasso.put_embedded_asset("keyboard/indices", INDICES)?;
+    picasso.put_embedded_asset("keyboard/palette.bmp", &palette_bmp())?;
     let vertices = picasso
         .embedded_asset("keyboard/vertices")?
         .ok_or(Error::Asset)?;
     let indices = picasso
         .embedded_asset("keyboard/indices")?
+        .ok_or(Error::Asset)?;
+    let palette = picasso
+        .embedded_asset("keyboard/palette.bmp")?
         .ok_or(Error::Asset)?;
 
     let (width, height) = (800, 600);
@@ -71,33 +74,45 @@ fn run() -> Result<(), Error> {
     frame.set_primary_activation(true)?;
     let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
     let queue = device.create_queue(QueueClass::Render)?;
-    let vertex_buffer = upload(device, &vertices, vgpu::BUFFER_USAGE_VERTEX)?;
-    let index_buffer = upload(device, &indices, vgpu::BUFFER_USAGE_INDEX)?;
-    let mesh = device.create_retained_mesh(
-        vertex_buffer,
-        index_buffer,
-        RetainedMeshDescriptor {
-            vertex_count: VERTEX_COUNT,
-            index_count: INDEX_COUNT,
-            vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_POS_NORMAL,
-            topology: vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-            ..RetainedMeshDescriptor::default()
-        },
-    )?;
-    drop(vertices);
-    drop(indices);
+    let mut renderer = renderer::Renderer::new(device, &palette)?;
 
     logl::log(
         level::IMPORTANT,
         format_args!(
-            "link3d: keyboard loaded once vertices={VERTEX_COUNT} indices={INDEX_COUNT} origin=0,0,0 radius={RADIUS:.3} controls=primary-drag-orbit,wheel-zoom,Home-reset"
+            "link3d: keyboard prepared once vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette controls=primary-drag-orbit,wheel-zoom,Home-reset"
         ),
     );
     let mut orbit = OrbitCamera::new(RADIUS);
     let mut previous_view_projection = [0.0; 16];
     let mut pending_resize = None;
     let mut redraws_pending = 1u8;
+    let mut keyboards = Vec::new();
+    let mut next_inventory_at = 0;
+    let mut scene_center = [0.0; 3];
+    let mut scene_radius = RADIUS;
     loop {
+        let now = clock::monotonic_millis();
+        if now >= next_inventory_at {
+            next_inventory_at = now.saturating_add(INVENTORY_INTERVAL_MS);
+            let current = virtual_keyboards(&hid::hid_hut_keyboards(), &hid::input_combos());
+            if current != keyboards {
+                let row = prepare_row(&vertices, &indices, &current, RADIUS);
+                renderer.replace(&row.vertices, &row.indices, row.origin_radius)?;
+                scene_center = row.center;
+                scene_radius = row.radius;
+                orbit.set_scene(scene_center, scene_radius);
+                previous_view_projection = [0.0; 16];
+                redraws_pending = redraws_pending.max(1);
+                keyboards = current;
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "link3d: virtual keyboards={} inventory refreshed",
+                        keyboards.len()
+                    ),
+                );
+            }
+        }
         while let Some(event) = frame.take_resize_event()? {
             pending_resize = Some((event.width.max(1), event.height.max(1)));
         }
@@ -136,6 +151,7 @@ fn run() -> Result<(), Error> {
                 && event.key_code == input::KEYBOARD_KEY_HOME
             {
                 orbit = OrbitCamera::new(RADIUS);
+                orbit.set_scene(scene_center, scene_radius);
                 redraws_pending = redraws_pending.max(1);
             }
         }
@@ -152,27 +168,7 @@ fn run() -> Result<(), Error> {
             let extent = surface.info();
             let (width, height) = (extent.width, extent.height);
             let camera = orbit.retained(width, height, previous_view_projection);
-            let mut submit = RetainedFrameSubmit {
-                camera,
-                clear_rgba8_srgb: u32::from_le_bytes([128, 128, 128, 0]),
-                seed_count: 1,
-                ..RetainedFrameSubmit::default()
-            };
-            // One static keyboard at the world origin, with its authored size.
-            submit.seeds[0] = RetainedTransformSeed {
-                scale: [1.0; 3],
-                rotation: [0.0, 0.0, 0.0, 1.0],
-                local_radius: RADIUS,
-                ..RetainedTransformSeed::default()
-            };
-            let point = device.submit_retained_frame(
-                queue,
-                surface,
-                mesh,
-                vertex_buffer,
-                index_buffer,
-                submit,
-            )?;
+            let point = renderer.render(queue, surface, camera)?;
             device.wait(queue, point.value)?;
             loop {
                 match frame.publish(Damage::full(width, height)) {

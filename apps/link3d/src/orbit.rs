@@ -1,11 +1,12 @@
 use trueos_picasso::cam::{Camera, Projection, Quaternion};
 
-/// An orbit around the model origin, using Picasso's camera convention.
+/// An orbit around the scene target, using Picasso's camera convention.
 pub struct OrbitCamera {
     yaw: f32,
     elevation: f32,
     distance: f32,
     radius: f32,
+    target: [f32; 3],
 }
 
 impl OrbitCamera {
@@ -20,15 +21,30 @@ impl OrbitCamera {
             elevation: core::f32::consts::FRAC_PI_4,
             distance: radius * 3.0,
             radius,
+            target: [0.0; 3],
         }
+    }
+
+    /// Reframe a changed scene while retaining the user's orbit and relative zoom.
+    pub fn set_scene(&mut self, target: [f32; 3], radius: f32) {
+        let radius = if radius.is_finite() && radius > 0.0 {
+            radius
+        } else {
+            1.0
+        };
+        self.distance =
+            (self.distance * (radius / self.radius)).clamp(radius * 0.15, radius * 20.0);
+        self.radius = radius;
+        self.target = target;
     }
 
     pub fn camera(&self) -> Camera {
         let yaw = Quaternion::from_axis_angle([0.0, 1.0, 0.0], self.yaw);
         let tilt = Quaternion::from_axis_angle([1.0, 0.0, 0.0], -self.elevation);
         let rotation = (yaw * tilt).normalized();
+        let offset = rotation.rotate([0.0, 0.0, self.distance]);
         Camera {
-            position: rotation.rotate([0.0, 0.0, self.distance]),
+            position: core::array::from_fn(|axis| self.target[axis] + offset[axis]),
             rotation,
             projection: Projection::Perspective {
                 yfov: core::f32::consts::FRAC_PI_4,
@@ -45,24 +61,10 @@ impl OrbitCamera {
         height: u32,
         previous_view_projection: [f32; 16],
     ) -> trueos::vgpu::RetainedCamera {
-        let mut camera = self
-            .camera()
-            .retained(width, height, previous_view_projection);
-        // POS_NORMAL uses the Naga-built Churn VS, which negates clip Y,
-        // followed by the native layout's negative viewport Y scale.
-        // Compensate in projection space so the logical Y-up orbit stays upright.
-        // The prepared mesh reverses triangle winding to preserve native fronts.
-        for matrix in [&mut camera.projection, &mut camera.view_projection] {
-            for column in 0..4 {
-                matrix[column * 4 + 1] = -matrix[column * 4 + 1];
-            }
-        }
-        // Inverse(reflection * VP) = inverse(VP) * reflection.
-        for value in &mut camera.inverse_view_projection[4..8] {
-            *value = -*value;
-        }
-        // History is already the preceding adapted view_projection.
-        camera
+        // The retained material renderer compensates its Naga clip Y in the
+        // viewport and selects the matching front faces for glTF winding.
+        self.camera()
+            .retained(width, height, previous_view_projection)
     }
 
     pub fn orbit(&mut self, dx: i32, dy: i32) {
@@ -104,13 +106,13 @@ mod tests {
         })
     }
 
-    /// The retained POS_NORMAL executable negates Y before the negative
+    /// The retained material executable negates Y before its positive
     /// SF viewport scale; keep both stages explicit in this screen oracle.
     fn screen(camera: trueos::vgpu::RetainedCamera, point: [f32; 3]) -> [f32; 2] {
         let clip = transform(camera.view_projection, [point[0], point[1], point[2], 1.0]);
         [
             clip[0] / clip[3] * 400.0 + 400.0,
-            -clip[1] / clip[3] * -300.0 + 300.0,
+            -clip[1] / clip[3] * 300.0 + 300.0,
         ]
     }
 
@@ -198,10 +200,10 @@ mod tests {
                     screen(camera, point)
                 });
                 let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-                // Native retained meshes keep clockwise fronts in y-down
-                // screen coordinates: outward-facing triangles need area > 0.
+                // The material renderer adjusts front-face selection for its
+                // positive viewport Y: original glTF fronts need area < 0.
                 assert!(
-                    area * facing > 0.0,
+                    area * facing < 0.0,
                     "culled exterior / retained interior at orbit {dx},{dy}"
                 );
                 if facing > 0.0 {
@@ -240,5 +242,29 @@ mod tests {
         assert!((distance(far) - 40.0).abs() < 0.000_01);
         assert_eq!(far.projection, initial.projection);
         assert_aims_at_origin(far);
+    }
+
+    #[test]
+    fn changed_row_stays_centered_and_preserves_orbit_and_relative_zoom() {
+        let mut orbit = OrbitCamera::new(2.0);
+        orbit.orbit(125, -80);
+        orbit.zoom(3);
+        let initial = orbit.camera();
+        let target = [0.0, 0.0, 7.5];
+        orbit.set_scene(target, 8.0);
+
+        let camera = orbit.camera();
+        let offset: [f32; 3] = core::array::from_fn(|axis| camera.position[axis] - target[axis]);
+        let row_distance = libm::sqrtf(offset.iter().map(|axis| axis * axis).sum());
+        assert!((row_distance / 8.0 - distance(initial) / 2.0).abs() < 0.000_01);
+        assert_eq!(
+            camera.rotation.rotate([0.0, 0.0, -1.0]),
+            initial.rotation.rotate([0.0, 0.0, -1.0])
+        );
+
+        let retained = orbit.retained(800, 600, [0.0; 16]);
+        let center = screen(retained, target);
+        assert!((center[0] - 400.0).abs() < 0.001);
+        assert!((center[1] - 300.0).abs() < 0.001);
     }
 }

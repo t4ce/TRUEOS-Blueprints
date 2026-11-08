@@ -155,17 +155,15 @@ fn append_node(node: gltf::Node<'_>, parent: Matrix, bin: &[u8], geometry: &mut 
                 !indices.is_empty() && indices.len().is_multiple_of(3),
                 "invalid triangle index count"
             );
-            // OrbitCamera::retained reflects clip Y to keep this native path
-            // upright. Reverse winding once to preserve its clockwise fronts.
-            for triangle in indices.chunks_exact(3) {
-                for index in [triangle[0], triangle[2], triangle[1]] {
-                    assert!(index < count, "primitive index exceeds vertex count");
-                    geometry.indices.extend(
-                        base.checked_add(index)
-                            .expect("index exceeds u32")
-                            .to_le_bytes(),
-                    );
-                }
+            // The retained material renderer handles its native viewport and
+            // front-face convention. Keep the original glTF triangle order.
+            for index in indices {
+                assert!(index < count, "primitive index exceeds vertex count");
+                geometry.indices.extend(
+                    base.checked_add(index)
+                        .expect("index exceeds u32")
+                        .to_le_bytes(),
+                );
             }
         }
     }
