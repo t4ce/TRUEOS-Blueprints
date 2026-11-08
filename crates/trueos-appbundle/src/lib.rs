@@ -24,8 +24,11 @@ struct Bundle {
 
 pub fn valid_archive(name: &str) -> bool {
     name.strip_suffix(".bp").is_some_and(|stem| {
-        !stem.is_empty() && stem.len() <= 128
-            && stem.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        !stem.is_empty()
+            && stem.len() <= 128
+            && stem
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
     })
 }
 
@@ -34,7 +37,10 @@ impl AppBundles {
         let metadata: Self = serde_json::from_slice(bytes)
             .map_err(|error| format!("Invalid appbundle.json: {error}"))?;
         if metadata.version != 1 {
-            return Err(format!("Unsupported appbundle.json version {}", metadata.version));
+            return Err(format!(
+                "Unsupported appbundle.json version {}",
+                metadata.version
+            ));
         }
         if metadata.bundles.len() > MAX_MEMBERS {
             return Err("Too many app bundles".into());
@@ -49,8 +55,14 @@ impl AppBundles {
                 return Err(format!("Too many requirements for {root}"));
             }
             for (index, member) in bundle.requires.iter().enumerate() {
-                if !valid_archive(member) || bundle.requires[..index].iter().any(|name| name.eq_ignore_ascii_case(member)) {
-                    return Err(format!("Invalid or duplicate requirement for {root}: {member}"));
+                if !valid_archive(member)
+                    || bundle.requires[..index]
+                        .iter()
+                        .any(|name| name.eq_ignore_ascii_case(member))
+                {
+                    return Err(format!(
+                        "Invalid or duplicate requirement for {root}: {member}"
+                    ));
                 }
             }
         }
@@ -68,17 +80,36 @@ impl AppBundles {
         Ok(ordered)
     }
 
-    fn visit(&self, archive: &str, visiting: &mut Vec<String>, ordered: &mut Vec<String>) -> Result<(), String> {
-        if ordered.iter().any(|name| name.eq_ignore_ascii_case(archive)) { return Ok(()); }
-        if visiting.iter().any(|name| name.eq_ignore_ascii_case(archive)) {
+    fn visit(
+        &self,
+        archive: &str,
+        visiting: &mut Vec<String>,
+        ordered: &mut Vec<String>,
+    ) -> Result<(), String> {
+        if ordered
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(archive))
+        {
+            return Ok(());
+        }
+        if visiting
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(archive))
+        {
             return Err(format!("App bundle dependency cycle at {archive}"));
         }
         if visiting.len() + ordered.len() >= MAX_MEMBERS {
             return Err("App bundle exceeds 64 Blueprints".into());
         }
         visiting.push(archive.into());
-        if let Some((_, bundle)) = self.bundles.iter().find(|(name, _)| name.eq_ignore_ascii_case(archive)) {
-            for member in &bundle.requires { self.visit(member, visiting, ordered)?; }
+        if let Some((_, bundle)) = self
+            .bundles
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(archive))
+        {
+            for member in &bundle.requires {
+                self.visit(member, visiting, ordered)?;
+            }
         }
         visiting.pop();
         ordered.push(archive.into());
@@ -93,17 +124,26 @@ mod tests {
     #[test]
     fn codex_needs_sqlite_but_sqlite_is_independent() {
         let bundles = AppBundles::parse(include_bytes!("../../../appbundle.json")).unwrap();
-        assert_eq!(bundles.members("codex.bp").unwrap(), ["sqlite.bp", "codex.bp"]);
-        assert_eq!(bundles.members("CODEX.bp").unwrap(), ["sqlite.bp", "CODEX.bp"]);
+        assert_eq!(
+            bundles.members("codex.bp").unwrap(),
+            ["sqlite.bp", "codex.bp"]
+        );
+        assert_eq!(
+            bundles.members("CODEX.bp").unwrap(),
+            ["sqlite.bp", "CODEX.bp"]
+        );
         assert_eq!(bundles.members("sqlite.bp").unwrap(), ["sqlite.bp"]);
         assert_eq!(bundles.members("Frog.bp").unwrap(), ["Frog.bp"]);
     }
 
     #[test]
     fn transitive_requirements_are_ordered_and_shared_members_fetched_once() {
-        let bundles = AppBundles::parse(br#"{"version":1,"bundles":{
+        let bundles = AppBundles::parse(
+            br#"{"version":1,"bundles":{
             "a.bp":{"requires":["b.bp","c.bp"]},
-            "b.bp":{"requires":["c.bp"]}}}"#).unwrap();
+            "b.bp":{"requires":["c.bp"]}}}"#,
+        )
+        .unwrap();
         assert_eq!(bundles.members("a.bp").unwrap(), ["c.bp", "b.bp", "a.bp"]);
     }
 
@@ -116,6 +156,8 @@ mod tests {
             r#"{"version":1,"bundles":{"a.bp":{"requires":["b.bp","B.bp"]}}}"#,
             r#"{"version":2,"bundles":{}}"#,
             r#"{"version":1,"bundles":{},"typo":true}"#,
-        ] { assert!(AppBundles::parse(bytes.as_bytes()).is_err(), "{bytes}"); }
+        ] {
+            assert!(AppBundles::parse(bytes.as_bytes()).is_err(), "{bytes}");
+        }
     }
 }
