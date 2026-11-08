@@ -1,0 +1,31 @@
+[package]
+name = "link3d"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Minimal keyboard GLB viewer with a Picasso orbit camera"
+
+[[bin]]
+name = "link3d"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libm = "0.2"
+trueos = { path = "../../api", features = ["ui4-scene"] }
+trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }
+
+[build-dependencies]
+gltf = { version = "1.4.1", default-features = false, features = ["utils"] }
+
+[dev-dependencies]
+trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint", "test-std"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[workspace]
