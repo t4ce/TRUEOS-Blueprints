@@ -16,6 +16,8 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { workspace = true, features = ["native-net"] }
 trueos.workspace = true
 trueos-redb.workspace = true
 

@@ -17,6 +17,8 @@ trueos-ide = { path = "../../crates/trueos-ide", features = ["store"] }
 
 [target.'cfg(target_os = "trueos")'.dependencies]
 trueos = { path = "../../api", features = ["tokio-runtime", "tokio-net-probe"] }
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -27,3 +29,8 @@ tempfile = "3"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
 
 [workspace]
+
+[patch.crates-io]
+# Cargo resolves target-specific features on the host too.
+tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1" }
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }

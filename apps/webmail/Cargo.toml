@@ -12,3 +12,7 @@ axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 trueos.workspace = true
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }

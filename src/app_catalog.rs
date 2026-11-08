@@ -1100,7 +1100,7 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             assert_eq!(probe.dir, root.join("probes").join(probe_name));
         }
 
-        for app_name in ["calculator", "bios", "rebsky", "share", "reticulum", "tantivy"] {
+        for app_name in ["calculator", "bios", "rebsky", "reticulum", "tantivy"] {
             let app = apps.iter().find(|app| app.name == app_name).unwrap();
             assert_eq!(app.dir, root.join("apps").join(app_name));
         }

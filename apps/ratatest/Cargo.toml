@@ -16,3 +16,7 @@ trueos-terminal = { path = "../../../TRUEOS/crates/trueos-terminal" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Crossterm uses Mio directly, without Tokio networking to forward this opt-in.
+mio = { version = "=1.2.0", default-features = false, features = ["std-compat", "native-net"] }

@@ -14,3 +14,7 @@ path = "server.rs"
 axum.workspace = true
 trueos = { workspace = true, features = ["lifecycle-net"] }
 v = { path = "../../crates/trueos-v" }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }

@@ -14,9 +14,15 @@ crossterm = { path = "../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos", 
 trueos-math = { path = "../../crates/trueos-math" }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Crossterm uses Mio directly, without Tokio networking to forward this opt-in.
+mio = { version = "=1.2.0", default-features = false, features = ["std-compat", "native-net"] }
 trueos = { path = "../../api" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
 
 [workspace]
+
+[patch.crates-io]
+# Cargo resolves target-specific features on the host too.
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }

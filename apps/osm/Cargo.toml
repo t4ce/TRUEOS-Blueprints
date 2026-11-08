@@ -19,6 +19,8 @@ font8x8 = "0.3"
 trueos-redb = { path = "../../crates/trueos-redb", features = ["std"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }
 trueos = { path = "../../api", features = ["tokio-net-probe", "ui4-scene"] }
 
 [lints.rust]
@@ -27,5 +29,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"
 [workspace]
 
 [patch.crates-io]
+# Cargo resolves target-specific features on the host too.
+tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1" }
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }
 reqwest = { path = "../../../TRUEOS-Buildins/vendor/reqwest-0.13.3" }
 hyper = { path = "../../../TRUEOS/vendor/hyper-1.10.0" }

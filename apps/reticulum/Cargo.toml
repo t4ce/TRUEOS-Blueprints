@@ -53,6 +53,8 @@ log = "0.4.27"
 env_logger = "0.10"
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }
 trueos = { path = "../../api", optional = true }
 
 [features]
@@ -117,3 +119,8 @@ path = "examples/kaonic_mesh.rs"
 [[example]]
 name = "multihop"
 path = "examples/multihop.rs"
+
+[patch.crates-io]
+# Cargo resolves target-specific features on the host too.
+tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1" }
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }

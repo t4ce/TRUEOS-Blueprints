@@ -11,6 +11,8 @@ sha2 = "0.10.9"
 tokio = { version = "=1.54.1", default-features = false, features = ["fs", "macros", "net", "rt", "sync", "time"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+# Keep std-facing I/O types while selecting native socket IDs and readiness.
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }
 hyper = { version = "=1.10.0", default-features = false, features = ["server", "http1"] }
 tower = { version = "=0.5.3", default-features = false }
 trueos = { path = "../../api", features = ["tokio-net-probe"] }

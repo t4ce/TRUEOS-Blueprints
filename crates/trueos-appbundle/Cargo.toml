@@ -1,0 +1,10 @@
+[package]
+name = "trueos-appbundle"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
