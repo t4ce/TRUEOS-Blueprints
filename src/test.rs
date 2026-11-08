@@ -3,6 +3,40 @@
 use super::*;
 
 #[test]
+fn native_file_overlays_follow_dependencies_and_preserve_explicit_sources() {
+    let root = env::temp_dir().join(format!("trueos-shared-files-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("Cargo.toml"), "[package]\nname=\"native-files-test\"\nversion=\"0.1.0\"\n").unwrap();
+    fs::write(root.join("Cargo.lock"), r#"
+version = 4
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+[[package]]
+name = "walkdir"
+version = "2.5.0"
+"#).unwrap();
+    let explicit = root.join("explicit-tempfile");
+    let mut patches = vec![CratePatch::new("tempfile", explicit.clone())];
+    add_shared_native_file_overlays(&root, &root.join("work"), &mut patches).unwrap();
+    assert_eq!(patches.len(), 2);
+    assert_eq!(patches[0].path, explicit);
+    let memmap = patches.iter().find(|patch| patch.name == "memmap2").unwrap();
+    assert!(memmap.path.join("src/trueos.rs").is_file());
+    assert!(fs::read_to_string(memmap.path.join("src/lib.rs")).unwrap()
+        .contains("#[cfg_attr(target_os = \"trueos\", path = \"trueos.rs\")]"));
+    // A path dependency keeps its source identity instead of being replaced by
+    // a same-name registry provider merely because its version matches.
+    assert!(!patches.iter().any(|patch| patch.name == "walkdir"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn entrypoint_rewrite_preserves_std_and_explicit_no_std_sources() {
     let root = env::temp_dir().join(format!("trueos-entrypoint-rewrite-{}", std::process::id()));
     let staged = root.join("staged");

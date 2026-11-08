@@ -5,13 +5,17 @@ use std::path::{Path, PathBuf};
 pub(crate) const PROVIDERS: &[(&str, &str)] =
     &[("tar", "0.4.45"), ("filetime", "0.2.27"), ("zip", "9.0.0")];
 
+// XERJ's archive dependency has a newer audited TAR pin. Keep Codex's provider
+// list unchanged: its staging loop must continue to resolve its own lockfile.
+const ADDITIONAL_PROVIDERS: &[(&str, &str)] = &[("tar", "0.4.46")];
+
 pub(crate) fn stage(
     work: &Path,
     source: &Path,
     name: &str,
     version: &str,
 ) -> Result<PathBuf, String> {
-    if !PROVIDERS.contains(&(name, version))
+    if !(PROVIDERS.contains(&(name, version)) || ADDITIONAL_PROVIDERS.contains(&(name, version)))
         || crate::package_name(&source.join("Cargo.toml"))? != name
         || crate::package_version(&source.join("Cargo.toml"))?.as_deref() != Some(version)
     {
@@ -102,10 +106,15 @@ pub(crate) fn stage(
                     "    native_metadata_mode(options.mode)?;\n    let stat = file.metadata()?;\n    let mut header = Header::new_gnu();",
                     1,
                 )?;
+                let append_fs = if version == "0.4.46" {
+                    "    let mut header = Header::new_gnu();\n\n    prepare_header_path(dst, &mut header, path, allow_absolute)?;\n    header.set_metadata_in_mode(meta, mode);"
+                } else {
+                    "    let mut header = Header::new_gnu();\n\n    prepare_header_path(dst, &mut header, path)?;\n    header.set_metadata_in_mode(meta, mode);"
+                };
                 replace(
                     s,
-                    "    let mut header = Header::new_gnu();\n\n    prepare_header_path(dst, &mut header, path)?;\n    header.set_metadata_in_mode(meta, mode);",
-                    "    native_metadata_mode(mode)?;\n    let mut header = Header::new_gnu();\n\n    prepare_header_path(dst, &mut header, path)?;\n    header.set_metadata_in_mode(meta, mode);",
+                    append_fs,
+                    &format!("    native_metadata_mode(mode)?;\n{append_fs}"),
                     1,
                 )?;
                 // Test injection can select TRUEOS alongside a host cfg, so

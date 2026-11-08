@@ -253,8 +253,19 @@ impl Capabilities {
 }
 
 pub(crate) fn stage_ignore(work: &Path, source: &Path) -> Result<PathBuf, String> {
-    validate(source, "ignore", "0.4.25")?;
-    let staged = prepare(work, source, "ignore-0.4.25-trueos")?;
+    stage_ignore_version(work, source, "0.4.25")
+}
+
+pub(crate) fn stage_ignore_version(
+    work: &Path,
+    source: &Path,
+    version: &str,
+) -> Result<PathBuf, String> {
+    if !matches!(version, "0.4.25" | "0.4.32") {
+        return Err(format!("native ignore provider requires audited version, got {version}"));
+    }
+    validate(source, "ignore", version)?;
+    let staged = prepare(work, source, &format!("ignore-{version}-trueos"))?;
     let path = staged.join("src/walk.rs");
     let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     replace(
@@ -280,15 +291,21 @@ pub(crate) fn stage_ignore(work: &Path, source: &Path) -> Result<PathBuf, String
                     "native ignored-directory entry has no stable object identity")).with_path(ent.path()))?,"#,
         1,
     )?;
-    replace(
-        &mut text,
+    let metadata = if version == "0.4.32" {
+        r#"        let md = fs::metadata(&pb)
+            .map_err(|err| Error::Io(err).with_depth(depth).with_path(&pb))?;"#
+    } else {
         r#"        let md =
-            fs::metadata(&pb).map_err(|err| Error::Io(err).with_path(&pb))?;"#,
-        r#"        let md =
-            fs::metadata(&pb).map_err(|err| Error::Io(err).with_path(&pb))?;
+            fs::metadata(&pb).map_err(|err| Error::Io(err).with_path(&pb))?;"#
+    };
+    let native_identity = r#"
         #[cfg(target_os = "trueos")]
         let native_ino = md.file_id().ok_or_else(|| Error::Io(io::Error::new(io::ErrorKind::Unsupported,
-            "native ignored path has no stable object identity")).with_path(&pb))?;"#,
+            "native ignored path has no stable object identity")).with_path(&pb))?;"#;
+    replace(
+        &mut text,
+        metadata,
+        &format!("{metadata}{native_identity}"),
         2,
     )?;
     replace(

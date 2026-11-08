@@ -122,17 +122,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_needs_sqlite_but_sqlite_is_independent() {
+    fn codex_installs_sqlite_and_xerj_service_with_its_engine() {
         let bundles = AppBundles::parse(include_bytes!("../../../appbundle.json")).unwrap();
         assert_eq!(
             bundles.members("codex.bp").unwrap(),
-            ["sqlite.bp", "codex.bp"]
+            ["sqlite.bp", "xerj.bp", "xerj-service.bp", "codex.bp"]
         );
         assert_eq!(
             bundles.members("CODEX.bp").unwrap(),
-            ["sqlite.bp", "CODEX.bp"]
+            ["sqlite.bp", "xerj.bp", "xerj-service.bp", "CODEX.bp"]
         );
         assert_eq!(bundles.members("sqlite.bp").unwrap(), ["sqlite.bp"]);
+        assert_eq!(bundles.members("xerj.bp").unwrap(), ["xerj.bp"]);
+        assert_eq!(
+            bundles.members("xerj-service.bp").unwrap(),
+            ["xerj.bp", "xerj-service.bp"]
+        );
         assert_eq!(bundles.members("Frog.bp").unwrap(), ["Frog.bp"]);
     }
 

@@ -1,5 +1,26 @@
 //! Persistent entry-thread owner for XERJ. See ../BUILDING.txt.
 
+#[cfg(any(target_os = "trueos", test))]
+mod admission {
+    use std::fs::{File, OpenOptions, TryLockError};
+    use std::io;
+    use std::path::Path;
+
+    pub fn acquire(path: &Path) -> io::Result<Option<File>> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
+    }
+}
+
 #[cfg(target_os = "trueos")]
 mod native {
     use std::io::{self, Write};
@@ -13,6 +34,7 @@ mod native {
         "args": [
             "--bind", "127.0.0.1",
             "--port", "9200",
+            "--no-auto-port",
             "--data-dir", "/apps/xerj/data",
             "--disable-feedback"
         ],
@@ -62,6 +84,13 @@ mod native {
 
     pub(super) fn run() -> io::Result<()> {
         std::fs::create_dir_all("/apps/xerj")?;
+        // `replicatable` is a checkpoint capability, not singleton admission.
+        // Keep this lock alive across the complete owned engine lifetime.
+        let Some(_owner) =
+            super::admission::acquire(std::path::Path::new("/apps/xerj/service.lock"))?
+        else {
+            return Ok(());
+        };
         // Spawn, read, status and cleanup always execute on the original Hull
         // entry thread. This launcher creates no runtime or worker threads.
         let engine = OwnedChild::spawn()?;
@@ -101,5 +130,19 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("xerj-service: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_one_launcher_can_own_an_engine_and_exit_releases_admission() {
+        let path = std::env::temp_dir().join(format!("xerj-service-lock-{}", std::process::id()));
+        let first = super::admission::acquire(&path).unwrap().unwrap();
+        assert!(super::admission::acquire(&path).unwrap().is_none());
+        drop(first);
+        let restarted = super::admission::acquire(&path).unwrap().unwrap();
+        drop(restarted);
+        std::fs::remove_file(path).unwrap();
     }
 }

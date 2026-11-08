@@ -35,6 +35,10 @@ mod codex_native_archive_overlay;
 mod codex_native_terminal_overlay;
 mod codex_native_socket_overlay;
 mod check_only;
+mod xerj_native_dependency_overlays;
+mod native_tokio_features;
+mod native_c_dependency_overlays;
+mod native_sqlite_dependency_overlay;
 mod codex_native_executable_overlay;
 mod codex_native_sync_http_overlay;
 mod toolchain;
@@ -720,6 +724,7 @@ fn build_one_target_to_mode(
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
     let mut extra_features = required_features.to_vec();
+    native_tokio_features::add(&cargo_manifest_path, build_settings.flavor, &mut extra_features)?;
     for feature in &build_settings.features {
         push_app_or_trueos_feature(
             &mut extra_features,
@@ -2570,6 +2575,23 @@ fn source_overlay_patches(
         out.retain(|patch| patch.name != "tiny_http");
         out.push(CratePatch::new("tiny_http", codex_native_sync_http_overlay::stage(work_dir, &source)?));
     }
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        add_shared_native_file_overlays(app_dir, work_dir, &mut out)?;
+        if matches!(package_name(manifest_path)?.as_str(), "xerj-server" | "xerj-mcp") {
+            for patch in xerj_native_dependency_overlays::patches(app_dir, work_dir, &out)? {
+                out.retain(|existing| existing.name != patch.name);
+                out.push(patch);
+            }
+            for patch in native_c_dependency_overlays::patches(app_dir, work_dir, &out)? {
+                out.retain(|existing| existing.name != patch.name);
+                out.push(patch);
+            }
+            for patch in native_sqlite_dependency_overlay::patches(app_dir, work_dir, &out)? {
+                out.retain(|existing| existing.name != patch.name);
+                out.push(patch);
+            }
+        }
+    }
     // The full std runtime can compile older HTTP stacks directly. Keep an
     // external workspace's existing API versions consistent across its root
     // package and path dependencies instead of upgrading only the root.
@@ -2760,6 +2782,40 @@ fn source_overlay_patches(
 /// nominally equal crates.io copy. Rust then treats their public types as
 /// unrelated. Pinned Git patches are resolved from the original locked graph
 /// and materialized as paths to Cargo's checkout of that exact commit.
+/// Select the audited native File providers for any std Blueprint that uses
+/// their pinned dependency versions. These providers are shared platform
+/// support; restricting them to Codex leaves other native apps on Unix FDs.
+fn add_shared_native_file_overlays(
+    app_dir: &Path,
+    work_dir: &Path,
+    patches: &mut Vec<CratePatch>,
+) -> Result<(), String> {
+    type Stage = fn(&Path, &Path) -> Result<PathBuf, String>;
+    let providers: &[(&str, &str, Stage)] = &[
+        ("tempfile", "3.27.0", native_file_overlays::stage_tempfile),
+        ("same-file", "1.0.6", native_file_overlays::stage_same_file),
+        ("memmap2", "0.9.11", codex_native_data_overlay::stage_memmap),
+        ("walkdir", "2.5.0", codex_native_data_overlay::stage_walkdir),
+        ("dirs-sys", "0.5.0", native_identity_overlay::stage_dirs_sys),
+    ];
+    let packages = lock_packages(&app_lockfile(app_dir))?;
+    for &(name, version, stage) in providers {
+        if patches.iter().any(|patch| patch.name == name)
+            || !packages.iter().any(|package| {
+                package.name == name
+                    && package.version == version
+                    && package.source.as_deref().is_some_and(|source| source.starts_with("registry+"))
+            })
+        {
+            continue;
+        }
+        let source = find_cargo_registry_crate(&format!("{name}-{version}"))
+            .ok_or_else(|| format!("missing pinned native File source {name}-{version}"))?;
+        patches.push(CratePatch::new(name, stage(work_dir, &source)?));
+    }
+    Ok(())
+}
+
 fn add_manifest_source_patches(
     manifest_path: &Path,
     patches: &mut Vec<CratePatch>,

@@ -2,7 +2,10 @@
   "version": 1,
   "bundles": {
     "codex.bp": {
-      "requires": ["sqlite.bp"]
+      "requires": ["sqlite.bp", "xerj-service.bp"]
+    },
+    "xerj-service.bp": {
+      "requires": ["xerj.bp"]
     }
   }
 }

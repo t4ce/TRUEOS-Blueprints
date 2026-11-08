@@ -5,6 +5,10 @@ edition = "2024"
 
 [workspace]
 
+[features]
+# Separate crypto-provider diagnostic; the current native MCP check is Rust-only.
+openssl-check = ["dep:openssl"]
+
 [package.metadata.trueos-blueprint]
 entry-abi = "argv-v1"
 fs-scope = "trueosfs"
@@ -19,9 +23,15 @@ tokio = { version = "1", default-features = false, features = ["net", "rt", "tim
 tonic = { version = "=0.12.3", default-features = false, features = ["channel", "codegen", "prost"] }
 
 [target.'cfg(target_os = "trueos")'.dependencies]
+# Match Codex's native socket capability backend after the Unix ABI removal.
+tokio = { version = "1", features = ["native-net"] }
 # Tower 0.4's IndexMap must explicitly use Cargo's native std runtime.
 indexmap_legacy = { package = "indexmap", version = "1.9.3", features = ["std"] }
-openssl = { version = "=0.10.81", features = ["vendored"] }
+openssl = { version = "=0.10.81", features = ["vendored"], optional = true }
+
+[patch.crates-io]
+tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1" }
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }
 
 [profile.release]
 panic = "abort"

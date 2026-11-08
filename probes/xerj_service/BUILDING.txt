@@ -16,8 +16,17 @@ The launcher forwards the child's stdout bytes and flushes them unchanged.
 It does not claim readiness or successful indexing from lifecycle status;
 check the engine's readiness/API responses through its normal clients.
 
-This is a single-instance app. Leave the launcher running while Codex's XERJ
-MCP client uses the node. Stop the parent xerj-service Hull to stop its owned
+`xerj mcp --ensure-local` starts this installed Blueprint headlessly when the
+authenticated node is absent. This launch is independent of the MCP client;
+closing one Codex session does not stop the engine used by other clients.
+Appbundle installation supplies xerj-service.bp and xerj.bp before that call,
+so it uses AppDB directly and performs no runtime catalog download.
+
+The launcher retains an exclusive /apps/xerj/service.lock before spawning its
+engine. A competing launcher exits without another child. `replicatable=false`
+is checkpoint metadata, not singleton admission. The engine also retains its
+own data-directory lock and --no-auto-port fixes the expected endpoint.
+Stop the parent xerj-service Hull to stop its owned
 engine child; dropping the launcher also requests child termination. Native
 parent/child Hull ownership handles cleanup when the parent is terminated.
 Do not run another engine on the same data directory or normal ports.
