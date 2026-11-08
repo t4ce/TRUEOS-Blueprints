@@ -359,6 +359,16 @@ pub(crate) fn device_id(metadata: &std::fs::Metadata) -> u64 {
     std::fs::write(path, text).map_err(|e| e.to_string())?;
     Ok(staged)
 }
+
+pub(crate) fn stage_supports_color(work: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "supports-color", "2.1.0")?;
+    let staged = prepare(work, source, "supports-color-2.1.0-trueos")?;
+    let path = staged.join("src/lib.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(&mut text, "    use is_terminal::*;", "    #[cfg(not(target_os = \"trueos\"))]\n    use is_terminal::*;\n    #[cfg(target_os = \"trueos\")]\n    use std::io::IsTerminal;", 1)?;
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
 fn replace(text: &mut String, before: &str, after: &str, expected: usize) -> Result<(), String> {
     if text.matches(before).count() != expected {
         return Err(format!("pinned memmap2 boundary drifted: {before}"));

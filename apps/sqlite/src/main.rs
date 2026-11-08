@@ -1,11 +1,11 @@
-mod storage;
-mod session;
 mod codex_recovery;
-mod private_storage;
-#[cfg(any(target_os = "trueos", feature = "native-transport"))]
-mod native_transport;
 #[cfg(any(target_os = "trueos", feature = "native-sqlite"))]
 mod native_backend;
+#[cfg(any(target_os = "trueos", feature = "native-transport"))]
+mod native_transport;
+mod private_storage;
+mod session;
+mod storage;
 
 use axum::{
     Json, Router,
@@ -142,10 +142,16 @@ impl From<rusqlite::Error> for ImageError {
 
 fn checked_connection(image: &[u8]) -> Result<Connection, ImageError> {
     if image.len() > MAX_IMAGE {
-        return Err(ImageError { code: 18, message: "SQLite image limit exceeded".into() });
+        return Err(ImageError {
+            code: 18,
+            message: "SQLite image limit exceeded".into(),
+        });
     }
     if !image.is_empty() && !image.starts_with(b"SQLite format 3\0") {
-        return Err(ImageError { code: 26, message: "invalid SQLite image".into() });
+        return Err(ImageError {
+            code: 26,
+            message: "invalid SQLite image".into(),
+        });
     }
     let mut connection = Connection::open_in_memory().map_err(ImageError::from)?;
     if image.is_empty() {
@@ -163,7 +169,10 @@ fn checked_connection(image: &[u8]) -> Result<Connection, ImageError> {
             .query_row("PRAGMA quick_check", [], |row| row.get(0))
             .map_err(ImageError::from)?;
         if integrity != "ok" {
-            return Err(ImageError { code: 11, message: format!("SQLite quick_check: {integrity}") });
+            return Err(ImageError {
+                code: 11,
+                message: format!("SQLite quick_check: {integrity}"),
+            });
         }
     }
     connection
@@ -194,14 +203,16 @@ impl Service {
             .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
         if bytes.as_ref().is_some_and(|b| b.is_empty()) {
             return Err(codex_recovery::image_error(ImageError {
-                code: 26, message: "existing SQLite image is empty".into(),
+                code: 26,
+                message: "existing SQLite image is empty".into(),
             }));
         }
-        let conn =
-            tokio::task::spawn_blocking(move || checked_connection(bytes.as_deref().unwrap_or_default()))
-                .await
-                .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
-                .map_err(codex_recovery::image_error)?;
+        let conn = tokio::task::spawn_blocking(move || {
+            checked_connection(bytes.as_deref().unwrap_or_default())
+        })
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .map_err(codex_recovery::image_error)?;
         let database = Arc::new(Mutex::new(Database {
             connection: conn,
             path,
@@ -413,7 +424,13 @@ fn options() -> Result<(String, PathBuf), String> {
     let trusted_endpoint = trueos::env::var("TRUEOS_CODEX_SQLITE_ENDPOINT").ok();
     #[cfg(not(target_os = "trueos"))]
     let (trusted_directory, trusted_endpoint): (Option<String>, Option<String>) = (None, None);
-    let directory = private_storage::resolve(&instance, directory, trusted_directory.as_deref(), trusted_endpoint.as_deref(), cfg!(target_os = "trueos"))?;
+    let directory = private_storage::resolve(
+        &instance,
+        directory,
+        trusted_directory.as_deref(),
+        trusted_endpoint.as_deref(),
+        cfg!(target_os = "trueos"),
+    )?;
     Ok((instance, directory))
 }
 
@@ -458,9 +475,7 @@ async fn run(instance: String, directory: PathBuf) -> Result<(), String> {
     let server = native_transport::serve(listener, router);
     #[cfg(not(any(target_os = "trueos", feature = "native-transport")))]
     let server = axum::serve(listener, router);
-    server
-        .await
-        .map_err(|e| e.to_string())
+    server.await.map_err(|e| e.to_string())
 }
 
 fn announce(text: &str) {

@@ -33,7 +33,12 @@ mod tests {
     }
     #[test]
     fn private_endpoint_cannot_be_redirected() {
-        for endpoint in ["http://127.0.0.1:12345", "http://localhost:42116", "http://example.com:42116", "http://127.0.0.1:42116/public"] {
+        for endpoint in [
+            "http://127.0.0.1:12345",
+            "http://localhost:42116",
+            "http://example.com:42116",
+            "http://127.0.0.1:42116/public",
+        ] {
             assert!(select("codex", Some(endpoint), Some(ENDPOINT)).is_err());
         }
         assert!(select("other", None, Some(ENDPOINT)).is_err());
@@ -41,7 +46,13 @@ mod tests {
     #[test]
     fn admitted_codex_and_other_explicit_instances_keep_their_contracts() {
         assert_eq!(select("codex", None, Some(ENDPOINT)), Ok(Some(ENDPOINT)));
-        assert_eq!(select("codex", Some(ENDPOINT), Some(ENDPOINT)), Ok(Some(ENDPOINT)));
-        assert_eq!(select("other", Some("http://localhost:12345"), None), Ok(None));
+        assert_eq!(
+            select("codex", Some(ENDPOINT), Some(ENDPOINT)),
+            Ok(Some(ENDPOINT))
+        );
+        assert_eq!(
+            select("other", Some("http://localhost:12345"), None),
+            Ok(None)
+        );
     }
 }
