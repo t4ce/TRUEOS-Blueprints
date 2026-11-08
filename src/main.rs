@@ -2448,7 +2448,7 @@ fn source_overlay_patches(
     }
     if package_name(manifest_path)? == "codex-cli" {
         let packages = lock_packages(&app_lockfile(app_dir))?;
-        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2"), ("walkdir", "2.5.0", "walkdir"), ("gix-sec", "0.16.0", "gix-sec")] {
+        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2"), ("walkdir", "2.5.0", "walkdir"), ("gix-sec", "0.16.0", "gix-sec"), ("gix-fs", "0.24.0", "gix-fs"), ("ignore", "0.4.25", "ignore"), ("file-id", "0.2.3", "file-id"), ("gix-discover", "0.57.0", "gix-discover")] {
             if !packages.iter().any(|package| package.name == name && package.version == version) {
                 return Err(format!("Codex native data provider requires {name} {version} in Cargo.lock"));
             }
@@ -2459,6 +2459,10 @@ fn source_overlay_patches(
                 "memmap2" => codex_native_data_overlay::stage_memmap(work_dir, &source)?,
                 "walkdir" => codex_native_data_overlay::stage_walkdir(work_dir, &source)?,
                 "gix-sec" => codex_native_data_overlay::stage_gix_sec(work_dir, &source, &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("api"))?,
+                "gix-fs" => codex_native_data_overlay::stage_gix_fs(work_dir, &source)?,
+                "ignore" => codex_native_data_overlay::stage_ignore(work_dir, &source)?,
+                "file-id" => codex_native_data_overlay::stage_file_id(work_dir, &source)?,
+                "gix-discover" => codex_native_data_overlay::stage_gix_discover(work_dir, &source)?,
                 _ => unreachable!(),
             };
             out.retain(|patch| patch.name != name);

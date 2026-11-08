@@ -162,6 +162,203 @@ pub(crate) fn stage_gix_sec(work: &Path, source: &Path, sdk_api: &Path) -> Resul
     std::fs::write(path, manifest).map_err(|e| e.to_string())?;
     Ok(staged)
 }
+
+pub(crate) fn stage_gix_fs(work: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "gix-fs", "0.24.0")?;
+    let staged = prepare(work, source, "gix-fs-0.24.0-trueos")?;
+    let path = staged.join("src/capabilities.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "#[cfg(all(unix, not(target_os = \"macos\")))]",
+        "#[cfg(all(unix, not(any(target_os = \"macos\", target_os = \"trueos\"))))]",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "    #[cfg(unix)]",
+        "    #[cfg(all(unix, not(target_os = \"trueos\")))]",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "    #[cfg(not(unix))]",
+        "    #[cfg(any(target_os = \"trueos\", not(unix)))]",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "    fn probe_symlink(root: &Path) -> std::io::Result<bool> {",
+        "    #[cfg(not(target_os = \"trueos\"))]\n    fn probe_symlink(root: &Path) -> std::io::Result<bool> {",
+        1,
+    )?;
+    text.push_str(r#"
+// Native files have access-key policy and no Unix executable or symlink bits.
+#[cfg(target_os = "trueos")]
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self { precompose_unicode: false, ignore_case: false, executable_bit: false, symlink: false }
+    }
+}
+#[cfg(target_os = "trueos")]
+impl Capabilities {
+    fn probe_symlink(_root: &Path) -> std::io::Result<bool> { Ok(false) }
+}
+"#);
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    let path = staged.join("src/lib.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "#[cfg(unix)]",
+        "#[cfg(all(unix, not(target_os = \"trueos\")))]",
+        3,
+    )?;
+    replace(
+        &mut text,
+        "#[cfg(not(unix))]",
+        "#[cfg(any(target_os = \"trueos\", not(unix)))]",
+        3,
+    )?;
+    replace(
+        &mut text,
+        r#"    #[cfg(all(unix, not(target_os = "trueos")))]
+    if shared_repository_permissions != 0 {"#,
+        r#"    #[cfg(target_os = "trueos")]
+    if shared_repository_permissions != 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported,
+            "Git Unix shared-repository permissions have no native access-key equivalent"));
+    }
+    #[cfg(all(unix, not(target_os = "trueos")))]
+    if shared_repository_permissions != 0 {"#,
+        1,
+    )?;
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    let path = staged.join("src/file.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "    #[cfg(unix)]",
+        "    // Native filesystem objects cannot be symlinks, so opening the final\n    // component needs no Unix flag. The native SDK rejects symlink creation.\n    #[cfg(all(unix, not(target_os = \"trueos\")))]",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "#[cfg_attr(not(any(unix, windows)), allow(unused_mut))]",
+        "#[cfg_attr(any(target_os = \"trueos\", not(any(unix, windows))), allow(unused_mut))]",
+        1,
+    )?;
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
+
+pub(crate) fn stage_ignore(work: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "ignore", "0.4.25")?;
+    let staged = prepare(work, source, "ignore-0.4.25-trueos")?;
+    let path = staged.join("src/walk.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "        use std::os::unix::fs::DirEntryExt;",
+        "        #[cfg(not(target_os = \"trueos\"))]\n        use std::os::unix::fs::DirEntryExt;",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "        use std::os::unix::fs::MetadataExt;",
+        "        #[cfg(not(target_os = \"trueos\"))]\n        use std::os::unix::fs::MetadataExt;",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "            ino: ent.ino(),",
+        r#"            #[cfg(not(target_os = "trueos"))]
+            ino: ent.ino(),
+            #[cfg(target_os = "trueos")]
+            ino: ent.metadata().map_err(|err| Error::Io(err).with_path(ent.path()))?
+                .file_id().ok_or_else(|| Error::Io(io::Error::new(io::ErrorKind::Unsupported,
+                    "native ignored-directory entry has no stable object identity")).with_path(ent.path()))?,"#,
+        1,
+    )?;
+    replace(
+        &mut text,
+        r#"        let md =
+            fs::metadata(&pb).map_err(|err| Error::Io(err).with_path(&pb))?;"#,
+        r#"        let md =
+            fs::metadata(&pb).map_err(|err| Error::Io(err).with_path(&pb))?;
+        #[cfg(target_os = "trueos")]
+        let native_ino = md.file_id().ok_or_else(|| Error::Io(io::Error::new(io::ErrorKind::Unsupported,
+            "native ignored path has no stable object identity")).with_path(&pb))?;"#,
+        2,
+    )?;
+    replace(
+        &mut text,
+        "            ino: md.ino(),",
+        "            #[cfg(not(target_os = \"trueos\"))]\n            ino: md.ino(),\n            #[cfg(target_os = \"trueos\")]\n            ino: native_ino,",
+        1,
+    )?;
+    replace(
+        &mut text,
+        "#[cfg(unix)]\nfn device_num",
+        "#[cfg(all(unix, not(target_os = \"trueos\")))]\nfn device_num",
+        1,
+    )?;
+    text.push_str("\n#[cfg(target_os = \"trueos\")]\nfn device_num<P: AsRef<Path>>(path: P) -> io::Result<u64> {\n    path.as_ref().metadata().map(|md| u64::from(md.root_id()))\n}\n");
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
+
+pub(crate) fn stage_file_id(work: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "file-id", "0.2.3")?;
+    let staged = prepare(work, source, "file-id-0.2.3-trueos")?;
+    let path = staged.join("src/lib.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(
+        &mut text,
+        "#[cfg(target_family = \"unix\")]",
+        "#[cfg(all(target_family = \"unix\", not(target_os = \"trueos\")))]",
+        1,
+    )?;
+    text.push_str(
+        r#"
+/// Return the native root and stable file object identity, without descriptors.
+#[cfg(target_os = "trueos")]
+pub fn get_file_id(path: impl AsRef<Path>) -> io::Result<FileId> {
+    let metadata = fs::metadata(path.as_ref())?;
+    let file_id = metadata.file_id().ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported,
+        "native metadata has no stable file identity"))?;
+    Ok(FileId::new_inode(u64::from(metadata.root_id()), file_id))
+}
+"#,
+    );
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
+
+pub(crate) fn stage_gix_discover(work: &Path, source: &Path) -> Result<PathBuf, String> {
+    validate(source, "gix-discover", "0.57.0")?;
+    let staged = prepare(work, source, "gix-discover-0.57.0-trueos")?;
+    let path = staged.join("src/upwards/util.rs");
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    replace(&mut text, "#[cfg(target_os = \"linux\")]", "#[cfg(all(target_os = \"linux\", not(target_os = \"trueos\")))]", 1)?;
+    replace(
+        &mut text,
+        "#[cfg(all(unix, not(target_os = \"linux\")))]",
+        "#[cfg(all(unix, not(any(target_os = \"linux\", target_os = \"trueos\"))))]",
+        1,
+    )?;
+    text.push_str(
+        r#"
+/// Native root identity is the filesystem-boundary key for Git discovery.
+#[cfg(target_os = "trueos")]
+pub(crate) fn device_id(metadata: &std::fs::Metadata) -> u64 {
+    u64::from(metadata.root_id())
+}
+"#,
+    );
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
 fn replace(text: &mut String, before: &str, after: &str, expected: usize) -> Result<(), String> {
     if text.matches(before).count() != expected {
         return Err(format!("pinned memmap2 boundary drifted: {before}"));
