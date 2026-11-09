@@ -1,7 +1,8 @@
 # Link3D
 
-One shared K70 Mini GLB mesh, instanced once per virtual HID-HUT keyboard. Combo
-colors come from the shared input palette; the chassis is gray, metallic 0.5,
+One shared K70 Mini GLB mesh, instanced once per live HID-HUT keyboard,
+including physical, remote and AI sources. Combo colors come from the shared
+input palette; the chassis is gray, metallic 0.5,
 roughness 0.4. Move the pointer for gentle tilt: horizontally up to eight degrees
 either way, vertically up to fifteen degrees with inverted pitch. Every cursor
 currently selecting this UI4 frame owns an equal share of both limits. Their

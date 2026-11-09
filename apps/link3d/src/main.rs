@@ -10,7 +10,7 @@ use link3d::{
     OrbitCamera,
     intro::{Intro, Stage},
     presentation::LayerPublications,
-    roster::{self, virtual_keyboards},
+    roster,
     scene::{metallic_roughness_bmp, prepare_geometry, prepare_scene},
 };
 use trueos::{
@@ -105,7 +105,7 @@ fn run() -> Result<(), Error> {
         level::IMPORTANT,
         "link3d",
         format_args!(
-            "link3d: K70 and mouse cuboid prepared once geometry-uploads=1 instance-bytes=64 keyboard-vertices={VERTEX_COUNT} keyboard-indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards+all-mice+tablets refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads feedback=ui4-routed-physical-hid,red-key-top controls=selection-shared-tilt,yaw:8deg,pitch:15deg-inverse,wheel-zoom,Home-reset"
+            "link3d: K70 and mouse cuboid prepared once geometry-uploads=1 instance-bytes=64 keyboard-vertices={VERTEX_COUNT} keyboard-indices={INDEX_COUNT} inventory=HID-HUT/all-keyboards+mice+tablets refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads feedback=ui4-routed-physical-hid,red-key-top controls=selection-shared-tilt,yaw:8deg,pitch:15deg-inverse,wheel-zoom,Home-reset"
         ),
     );
     let mut orbit = OrbitCamera::new(RADIUS);
@@ -139,7 +139,7 @@ fn run() -> Result<(), Error> {
             let mouse_devices = hid::hid_hut_mice();
             let tablet_devices = hid::hid_hut_tablets();
             let combos = hid::input_combos();
-            let current = virtual_keyboards(&devices, &combos);
+            let current = roster::keyboards(&devices, &combos);
             let current_mice = roster::mice(&mouse_devices, &combos);
             let current_tablets = roster::tablets(&tablet_devices, &combos);
             let roster_changed =
@@ -170,7 +170,7 @@ fn run() -> Result<(), Error> {
                     level::IMPORTANT,
                     "link3d",
                     format_args!(
-                        "link3d: inventory refreshed keyboards={} virtual-keyboards={} mice={} tablets={} combos={}",
+                        "link3d: inventory refreshed hut-keyboards={} shown-keyboards={} mice={} tablets={} combos={}",
                         devices.len(),
                         keyboards.len(),
                         mice.len(),
@@ -178,6 +178,30 @@ fn run() -> Result<(), Error> {
                         combos.len()
                     ),
                 );
+                for combo in &combos {
+                    let tag_len = usize::from(combo.source_tag_len).min(combo.source_tag.len());
+                    let tag = core::str::from_utf8(&combo.source_tag[..tag_len]).unwrap_or("?");
+                    logl::log_record(
+                        level::IMPORTANT,
+                        "link3d",
+                        format_args!(
+                            "link3d: combo={} source={:?} tag={} palette={:?} keyboard={}:{}:{} mouse={}:{}:{} tablet={}:{}:{}",
+                            combo.combo_id,
+                            hid::InputComboSourceKind::from_code(combo.source_kind),
+                            tag,
+                            hid::InputComboColor::from_index(combo.color_id),
+                            combo.keyboard_controller_id,
+                            combo.keyboard_slot_id,
+                            combo.keyboard_ep_target,
+                            combo.mouse_controller_id,
+                            combo.mouse_slot_id,
+                            combo.mouse_ep_target,
+                            combo.tablet_controller_id,
+                            combo.tablet_slot_id,
+                            combo.tablet_ep_target,
+                        ),
+                    );
+                }
                 inventory_initialized = true;
             }
         }

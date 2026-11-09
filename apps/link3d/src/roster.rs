@@ -65,14 +65,14 @@ pub fn mice(devices: &[TrueosHidHutMouseState], combos: &[TrueosInputCombo]) -> 
 }
 
 /// Project the live HUT roster into stable visual identities. Key activity is
-/// deliberately absent so typing does not trigger a scene rebuild.
-pub fn virtual_keyboards(
+/// deliberately absent so typing does not trigger a scene rebuild. Physical,
+/// remote and AI keyboards all belong here, independently of their persona.
+pub fn keyboards(
     keyboards: &[TrueosHidHutKeyboardState],
     combos: &[TrueosInputCombo],
 ) -> Vec<Keyboard> {
     let mut roster: Vec<_> = keyboards
         .iter()
-        .filter(|keyboard| keyboard.virtual_device != 0)
         .map(|keyboard| Keyboard {
             endpoint: [keyboard.controller_id, keyboard.slot_id, keyboard.ep_target],
             combo_id: keyboard.combo_id,
@@ -169,37 +169,62 @@ mod tests {
 
     #[test]
     fn empty_roster_and_empty_combos_never_create_placeholder_keyboards() {
-        assert!(virtual_keyboards(&[], &[]).is_empty());
-        assert!(virtual_keyboards(&[], &[combo(1, 2)]).is_empty());
-        assert!(virtual_keyboards(&[keyboard(1, false, 1)], &[combo(1, 2)]).is_empty());
+        assert!(super::keyboards(&[], &[]).is_empty());
+        assert!(super::keyboards(&[], &[combo(1, 2)]).is_empty());
+        assert_eq!(
+            super::keyboards(&[keyboard(1, false, 1)], &[combo(1, 2)]).len(),
+            1
+        );
     }
 
     #[test]
-    fn device_flag_selects_virtual_keyboards_independently_of_persona() {
-        let mut human_virtual = keyboard(3, true, 0);
-        human_virtual.source_kind = trueos::hid::InputComboSourceKind::Human as u8;
-        let mut ai_physical = keyboard(2, false, 0);
-        ai_physical.source_kind = trueos::hid::InputComboSourceKind::Ai as u8;
-        let roster = virtual_keyboards(&[human_virtual, ai_physical], &[]);
-        assert_eq!(roster.len(), 1);
-        assert_eq!(roster[0].endpoint, [1, 3, 2]);
-        assert_eq!(roster[0].rgba, [128, 128, 128, 255]);
+    fn physical_blue_remote_green_and_ai_red_keyboards_all_keep_their_source_combo() {
+        let mut physical = keyboard(4, false, 1);
+        physical.controller_id = 3;
+        physical.ep_target = 3;
+        physical.source_kind = trueos::hid::InputComboSourceKind::Human as u8;
+        let mut remote = keyboard(1426063361, true, 2);
+        remote.controller_id = 0x55445048;
+        remote.ep_target = 0;
+        remote.source_kind = trueos::hid::InputComboSourceKind::Remote as u8;
+        let mut ai = keyboard(1459617793, true, 3);
+        ai.controller_id = 0;
+        ai.ep_target = 0;
+        ai.source_kind = trueos::hid::InputComboSourceKind::Ai as u8;
+        let mut devices = [physical, remote, ai];
+        let combos = [
+            combo(1, InputComboColor::Azure as u8),
+            combo(2, InputComboColor::Mint as u8),
+            combo(3, InputComboColor::Coral as u8),
+        ];
+        let roster = super::keyboards(&devices, &combos);
+        assert_eq!(roster.len(), 3);
+        assert_eq!(roster[0].endpoint, [0, 1459617793, 0]);
+        assert_eq!(roster[0].rgba, InputComboColor::Coral.rgba());
+        assert_eq!(roster[1].endpoint, [3, 4, 3]);
+        assert_eq!(roster[1].rgba, InputComboColor::Azure.rgba());
+        assert_eq!(roster[2].endpoint, [0x55445048, 1426063361, 0]);
+        assert_eq!(roster[2].rgba, InputComboColor::Mint.rgba());
+        devices[0].virtual_device = 1;
+        devices[1].virtual_device = 0;
+        devices[2].source_kind = trueos::hid::InputComboSourceKind::Human as u8;
+        assert_eq!(super::keyboards(&devices, &combos), roster);
     }
 
     #[test]
     fn all_thirty_two_devices_survive_and_order_is_independent_of_snapshot_order() {
         let mut keyboards: Vec<_> = (1..=32).rev().map(|slot| keyboard(slot, true, 0)).collect();
-        let roster = virtual_keyboards(&keyboards, &[]);
+        let roster = super::keyboards(&keyboards, &[]);
         assert_eq!(roster.len(), 32);
         for (index, entry) in roster.iter().enumerate() {
             assert_eq!(entry.endpoint, [1, index as u32 + 1, 2]);
         }
         keyboards.reverse();
-        assert_eq!(virtual_keyboards(&keyboards, &[]), roster);
+        assert_eq!(super::keyboards(&keyboards, &[]), roster);
         keyboards[0].keys = [4, 5, 0, 0, 0, 0];
         keyboards[0].modifiers = 2;
         keyboards[0].key_down_bits[0] = 0x30;
-        assert_eq!(virtual_keyboards(&keyboards, &[]), roster);
+        assert_eq!(super::keyboards(&keyboards, &[]), roster);
     }
 
     #[test]
@@ -210,7 +235,7 @@ mod tests {
         let combos: Vec<_> = (0..InputComboColor::COUNT)
             .map(|color| combo(u32::from(color) + 1, color))
             .collect();
-        for (index, entry) in virtual_keyboards(&keyboards, &combos).iter().enumerate() {
+        for (index, entry) in super::keyboards(&keyboards, &combos).iter().enumerate() {
             assert_eq!(entry.rgba, InputComboColor::from_index(index as u8).rgba());
         }
     }
@@ -219,26 +244,26 @@ mod tests {
     fn membership_color_updates_and_removals_follow_each_snapshot() {
         let mut device = keyboard(7, true, 1);
         let mut combos = [combo(1, 2), combo(2, 6)];
-        let initial = virtual_keyboards(&[device], &combos)[0];
+        let initial = super::keyboards(&[device], &combos)[0];
         device.combo_id = 2;
-        let moved = virtual_keyboards(&[device], &combos)[0];
+        let moved = super::keyboards(&[device], &combos)[0];
         assert_eq!(moved.endpoint, initial.endpoint);
         assert_eq!(moved.combo_id, 2);
         assert_eq!(moved.rgba, InputComboColor::Cyan.rgba());
         combos[1].color_id = InputComboColor::Violet as u8;
         assert_eq!(
-            virtual_keyboards(&[device], &combos)[0].rgba,
+            super::keyboards(&[device], &combos)[0].rgba,
             InputComboColor::Violet.rgba()
         );
         assert_eq!(
-            virtual_keyboards(&[device], &[])[0].rgba,
+            super::keyboards(&[device], &[])[0].rgba,
             [128, 128, 128, 255]
         );
         device.combo_id = 0;
         assert_eq!(
-            virtual_keyboards(&[device], &[combo(0, 2)])[0].rgba,
+            super::keyboards(&[device], &[combo(0, 2)])[0].rgba,
             [128, 128, 128, 255]
         );
-        assert!(virtual_keyboards(&[], &combos).is_empty());
+        assert!(super::keyboards(&[], &combos).is_empty());
     }
 }
