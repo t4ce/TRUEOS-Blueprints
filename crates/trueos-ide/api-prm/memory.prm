@@ -1,5 +1,5 @@
-API PRM trueos-blueprint-api/1/5a6c1f0276bf6a40
-Reference source fingerprint: 7d66e95ebdd2525f37e1b1d18df2d7490833038351d8a034825dd3a30f4df15a
+API PRM trueos-blueprint-api/1/2d94b3d39bdbb662
+Reference source fingerprint: e6bd430bbf88e709754fd138341ac57f273a698eafa0801aa91769630156613e
 
 
 # memory
@@ -15,11 +15,11 @@ Allocation, buffer ownership and cleanup remain explicit across the ABI. Pass li
 
 extern "C" fn sys_alloc_aligned(size: usize, align: usize) -> *mut u8;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1110
+Declaration: crates/trueos-v/src/bp_abi.rs:1123
 
 
 ## trueos_cabi_heap_stats
 
 extern "C" fn trueos_cabi_heap_stats(out: *mut TrueosCabiHeapStats) -> i32;
 
-Declaration: crates/trueos-v/src/bp_abi.rs:1114
+Declaration: crates/trueos-v/src/bp_abi.rs:1127

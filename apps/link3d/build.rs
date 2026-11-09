@@ -13,14 +13,17 @@ const IDENTITY: Matrix = [
 #[derive(Default)]
 struct Geometry {
     vertices: Vec<u8>,
+    parts: Vec<u8>,
     indices: Vec<u8>,
     radius_squared: f32,
+    key_tops: Vec<(usize, [f32; 3], [f32; 3])>,
 }
 
 fn main() {
-    let source = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("Keyboard OP.glb");
+    let source =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("Keyboard k70 mini pro.glb");
     println!("cargo:rerun-if-changed={}", source.display());
-    let bytes = fs::read(&source).expect("read Keyboard OP.glb");
+    let bytes = fs::read(&source).expect("read Keyboard k70 mini pro.glb");
     let parsed = gltf::Gltf::from_slice(&bytes).expect("validate keyboard glTF");
     assert!(
         parsed.materials().next().is_none(),
@@ -48,6 +51,11 @@ fn main() {
         .default_scene()
         .expect("keyboard requires an active default scene");
     let mut geometry = Geometry::default();
+    assert_eq!(
+        parsed.meshes().count(),
+        63,
+        "expected K70 chassis and key meshes"
+    );
     for node in scene.nodes() {
         append_node(node, IDENTITY, bin, &mut geometry);
     }
@@ -63,9 +71,11 @@ fn main() {
         "invalid keyboard bounds"
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    prepare_legends(&source, &bytes, &geometry, &out);
     fs::write(out.join("keyboard.vertices.bin"), geometry.vertices)
         .expect("write keyboard vertices");
     fs::write(out.join("keyboard.indices.bin"), geometry.indices).expect("write keyboard indices");
+    fs::write(out.join("keyboard.parts.bin"), geometry.parts).expect("write keyboard parts");
     fs::write(out.join("prepared_keyboard.rs"), format!(
         "pub const VERTEX_COUNT: u32 = {vertex_count};\npub const INDEX_COUNT: u32 = {index_count};\npub const RADIUS: f32 = {radius:?};\n",
     )).expect("write keyboard metadata");
@@ -82,6 +92,10 @@ fn append_node(node: gltf::Node<'_>, parent: Matrix, bin: &[u8], geometry: &mut 
         "non-finite node transform"
     );
     if let Some(mesh) = node.mesh() {
+        let first_vertex = geometry.vertices.len() / 24;
+        let first_index = geometry.indices.len() / 4;
+        // The K70 export has 62 key meshes and one chassis (mesh 29).
+        let part = u8::from(mesh.index() == 29);
         assert!(mesh.weights().is_none(), "morph meshes are unsupported");
         let [a, b, c] =
             [world[0], world[1], world[2]].map(|column| [column[0], column[1], column[2]]);
@@ -143,6 +157,7 @@ fn append_node(node: gltf::Node<'_>, parent: Matrix, bin: &[u8], geometry: &mut 
                 );
                 let normal = normal.map(|component| component / normal_length);
                 geometry.radius_squared = geometry.radius_squared.max(dot(position, position));
+                geometry.parts.push(part);
                 for component in position.into_iter().chain(normal) {
                     geometry.vertices.extend(component.to_le_bytes());
                 }
@@ -166,10 +181,109 @@ fn append_node(node: gltf::Node<'_>, parent: Matrix, bin: &[u8], geometry: &mut 
                 );
             }
         }
+        if mesh.index() != 29 {
+            // Intersect the vertical ray at the key's XZ centre with its actual
+            // top triangles. The label plane follows this key's sculpt/tilt.
+            let value = |i: usize, axis: usize| {
+                f32::from_le_bytes(
+                    geometry.vertices[i * 24 + axis * 4..i * 24 + axis * 4 + 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            };
+            let mut min = [f32::INFINITY; 3];
+            let mut max = [f32::NEG_INFINITY; 3];
+            for i in first_vertex..geometry.vertices.len() / 24 {
+                for axis in 0..3 {
+                    min[axis] = min[axis].min(value(i, axis));
+                    max[axis] = max[axis].max(value(i, axis));
+                }
+            }
+            let x = (min[0] + max[0]) * 0.5;
+            let z = (min[2] + max[2]) * 0.5;
+            let mut top = None;
+            for triangle in geometry.indices[first_index * 4..].chunks_exact(12) {
+                let p: [[f32; 3]; 3] = std::array::from_fn(|corner| {
+                    let i = u32::from_le_bytes(
+                        triangle[corner * 4..corner * 4 + 4].try_into().unwrap(),
+                    ) as usize;
+                    std::array::from_fn(|axis| value(i, axis))
+                });
+                let a: [f32; 3] = std::array::from_fn(|i| p[1][i] - p[0][i]);
+                let b: [f32; 3] = std::array::from_fn(|i| p[2][i] - p[0][i]);
+                let normal = cross(a, b);
+                if normal[1] <= 0.0001 {
+                    continue;
+                }
+                let det = a[0] * b[2] - a[2] * b[0];
+                if det.abs() < 1e-6 {
+                    continue;
+                }
+                let u = ((x - p[0][0]) * b[2] - (z - p[0][2]) * b[0]) / det;
+                let v = (a[0] * (z - p[0][2]) - a[2] * (x - p[0][0])) / det;
+                if u < -1e-4 || v < -1e-4 || u + v > 1.0001 {
+                    continue;
+                }
+                let y = p[0][1] + u * a[1] + v * b[1];
+                if top
+                    .as_ref()
+                    .is_none_or(|(point, _): &([f32; 3], [f32; 3])| y > point[1])
+                {
+                    let length = dot(normal, normal).sqrt();
+                    top = Some(([x, y + 0.025, z], normal.map(|n| n / length)));
+                }
+            }
+            let (center, normal) = top.expect("key top at its centre");
+            geometry.key_tops.push((mesh.index(), center, normal));
+        }
     }
     for child in node.children() {
         append_node(child, world, bin, geometry);
     }
+}
+
+fn prepare_legends(
+    source: &std::path::Path,
+    bytes: &[u8],
+    geometry: &Geometry,
+    out: &std::path::Path,
+) {
+    use sha2::{Digest, Sha256};
+    let path = source.parent().unwrap().join("keyfarm/mapping.json");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let map: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).expect("read audited key map")).unwrap();
+    assert_eq!(
+        map["model_sha256"].as_str().unwrap(),
+        format!("{:x}", Sha256::digest(bytes))
+    );
+    let mut legends = String::from("pub const LEGENDS: &[Legend] = &[\n");
+    let mut scalars = std::collections::BTreeSet::new();
+    for key in map["keys"].as_array().unwrap() {
+        let label = key["press"]["label"].as_str().unwrap();
+        let mut chars = label.chars();
+        let Some(ch) = chars.next() else {
+            continue;
+        };
+        if chars.next().is_some() || !ch.is_ascii_alphanumeric() {
+            continue;
+        }
+        let ch = ch.to_ascii_uppercase();
+        assert!(scalars.insert(ch), "duplicate alphanumeric key");
+        let mesh = key["mesh"].as_u64().unwrap() as usize;
+        let (_, center, normal) = geometry
+            .key_tops
+            .iter()
+            .find(|(id, _, _)| *id == mesh)
+            .unwrap();
+        assert!(normal[1] > 0.8);
+        legends.push_str(&format!(
+            "Legend {{ scalar: {ch:?}, mesh: {mesh}, center: {center:?}, normal: {normal:?} }},\n"
+        ));
+    }
+    assert_eq!(scalars.len(), 36, "exactly A-Z and 0-9");
+    legends.push_str("];\n");
+    fs::write(out.join("keyboard.legends.rs"), legends).unwrap();
 }
 
 fn multiply(left: Matrix, right: Matrix) -> Matrix {

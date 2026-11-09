@@ -1,0 +1,2470 @@
+{
+  "schema": 1,
+  "model": "Keyboard k70 mini pro.glb",
+  "model_sha256": "54a7c8c1b7592b7ca0c8eaa6b43d0be74c55de7719cd2e983a5d8973216767f3",
+  "layout": "de",
+  "variant": "",
+  "keys": [
+    {
+      "slot": 1,
+      "row": 1,
+      "column": 1,
+      "node": 0,
+      "mesh": 0,
+      "name": "Cube",
+      "origin": [
+        -15.86754322052002,
+        1.8938896656036377,
+        -3.830108880996704
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 1,
+        "linux_key": "KEY_ESC",
+        "scan": 458793,
+        "label": "Esc",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Escape",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 2,
+      "row": 1,
+      "column": 2,
+      "node": 1,
+      "mesh": 1,
+      "name": "Cube.001",
+      "origin": [
+        -13.59852409362793,
+        1.8938896656036377,
+        -3.8301095962524414
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 2,
+        "linux_key": "KEY_1",
+        "scan": 458782,
+        "label": "1",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "1",
+            "text": "1"
+          },
+          {
+            "level": 1,
+            "keysym": "exclam",
+            "text": "!"
+          },
+          {
+            "level": 2,
+            "keysym": "onesuperior",
+            "text": "¹"
+          },
+          {
+            "level": 3,
+            "keysym": "exclamdown",
+            "text": "¡"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 3,
+      "row": 1,
+      "column": 3,
+      "node": 2,
+      "mesh": 2,
+      "name": "Cube.002",
+      "origin": [
+        -11.329505920410156,
+        1.8938896656036377,
+        -3.8301103115081787
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 3,
+        "linux_key": "KEY_2",
+        "scan": 458783,
+        "label": "2",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "2",
+            "text": "2"
+          },
+          {
+            "level": 1,
+            "keysym": "quotedbl",
+            "text": "\""
+          },
+          {
+            "level": 2,
+            "keysym": "twosuperior",
+            "text": "²"
+          },
+          {
+            "level": 3,
+            "keysym": "oneeighth",
+            "text": "⅛"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 4,
+      "row": 1,
+      "column": 4,
+      "node": 3,
+      "mesh": 3,
+      "name": "Cube.003",
+      "origin": [
+        -9.060483932495117,
+        1.8938896656036377,
+        -3.830111026763916
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 4,
+        "linux_key": "KEY_3",
+        "scan": 458784,
+        "label": "3",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "3",
+            "text": "3"
+          },
+          {
+            "level": 1,
+            "keysym": "section",
+            "text": "§"
+          },
+          {
+            "level": 2,
+            "keysym": "threesuperior",
+            "text": "³"
+          },
+          {
+            "level": 3,
+            "keysym": "sterling",
+            "text": "£"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 5,
+      "row": 1,
+      "column": 5,
+      "node": 4,
+      "mesh": 4,
+      "name": "Cube.004",
+      "origin": [
+        -6.791469573974609,
+        1.8938896656036377,
+        -3.8301117420196533
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 5,
+        "linux_key": "KEY_4",
+        "scan": 458785,
+        "label": "4",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "4",
+            "text": "4"
+          },
+          {
+            "level": 1,
+            "keysym": "dollar",
+            "text": "$"
+          },
+          {
+            "level": 2,
+            "keysym": "onequarter",
+            "text": "¼"
+          },
+          {
+            "level": 3,
+            "keysym": "currency",
+            "text": "¤"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 6,
+      "row": 1,
+      "column": 6,
+      "node": 5,
+      "mesh": 5,
+      "name": "Cube.005",
+      "origin": [
+        -4.522444725036621,
+        1.8938897848129272,
+        -3.8301124572753906
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 6,
+        "linux_key": "KEY_5",
+        "scan": 458786,
+        "label": "5",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "5",
+            "text": "5"
+          },
+          {
+            "level": 1,
+            "keysym": "percent",
+            "text": "%"
+          },
+          {
+            "level": 2,
+            "keysym": "onehalf",
+            "text": "½"
+          },
+          {
+            "level": 3,
+            "keysym": "threeeighths",
+            "text": "⅜"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 7,
+      "row": 1,
+      "column": 7,
+      "node": 6,
+      "mesh": 6,
+      "name": "Cube.006",
+      "origin": [
+        -2.2534265518188477,
+        1.8938897848129272,
+        -3.830113410949707
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 7,
+        "linux_key": "KEY_6",
+        "scan": 458787,
+        "label": "6",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "6",
+            "text": "6"
+          },
+          {
+            "level": 1,
+            "keysym": "ampersand",
+            "text": "&"
+          },
+          {
+            "level": 2,
+            "keysym": "notsign",
+            "text": "¬"
+          },
+          {
+            "level": 3,
+            "keysym": "fiveeighths",
+            "text": "⅝"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 8,
+      "row": 1,
+      "column": 8,
+      "node": 7,
+      "mesh": 7,
+      "name": "Cube.007",
+      "origin": [
+        0.015588760375976562,
+        1.8938897848129272,
+        -3.8301141262054443
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 8,
+        "linux_key": "KEY_7",
+        "scan": 458788,
+        "label": "7",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "7",
+            "text": "7"
+          },
+          {
+            "level": 1,
+            "keysym": "slash",
+            "text": "/"
+          },
+          {
+            "level": 2,
+            "keysym": "braceleft",
+            "text": "{"
+          },
+          {
+            "level": 3,
+            "keysym": "seveneighths",
+            "text": "⅞"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 9,
+      "row": 1,
+      "column": 9,
+      "node": 8,
+      "mesh": 8,
+      "name": "Cube.008",
+      "origin": [
+        2.284604072570801,
+        1.8938897848129272,
+        -3.8301148414611816
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 9,
+        "linux_key": "KEY_8",
+        "scan": 458789,
+        "label": "8",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "8",
+            "text": "8"
+          },
+          {
+            "level": 1,
+            "keysym": "parenleft",
+            "text": "("
+          },
+          {
+            "level": 2,
+            "keysym": "bracketleft",
+            "text": "["
+          },
+          {
+            "level": 3,
+            "keysym": "trademark",
+            "text": "™"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 10,
+      "row": 1,
+      "column": 10,
+      "node": 9,
+      "mesh": 9,
+      "name": "Cube.009",
+      "origin": [
+        4.553631782531738,
+        1.8938897848129272,
+        -3.830115556716919
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 10,
+        "linux_key": "KEY_9",
+        "scan": 458790,
+        "label": "9",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "9",
+            "text": "9"
+          },
+          {
+            "level": 1,
+            "keysym": "parenright",
+            "text": ")"
+          },
+          {
+            "level": 2,
+            "keysym": "bracketright",
+            "text": "]"
+          },
+          {
+            "level": 3,
+            "keysym": "plusminus",
+            "text": "±"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 11,
+      "row": 1,
+      "column": 11,
+      "node": 10,
+      "mesh": 10,
+      "name": "Cube.010",
+      "origin": [
+        6.8226518630981445,
+        1.8938899040222168,
+        -3.8301162719726562
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 11,
+        "linux_key": "KEY_0",
+        "scan": 458791,
+        "label": "0",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "0",
+            "text": "0"
+          },
+          {
+            "level": 1,
+            "keysym": "equal",
+            "text": "="
+          },
+          {
+            "level": 2,
+            "keysym": "braceright",
+            "text": "}"
+          },
+          {
+            "level": 3,
+            "keysym": "degree",
+            "text": "°"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 12,
+      "row": 1,
+      "column": 12,
+      "node": 11,
+      "mesh": 11,
+      "name": "Cube.011",
+      "origin": [
+        9.091660499572754,
+        1.8938899040222168,
+        -3.8301169872283936
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 12,
+        "linux_key": "KEY_MINUS",
+        "scan": 458797,
+        "label": "ß",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "ssharp",
+            "text": "ß"
+          },
+          {
+            "level": 1,
+            "keysym": "question",
+            "text": "?"
+          },
+          {
+            "level": 2,
+            "keysym": "backslash",
+            "text": "\\"
+          },
+          {
+            "level": 3,
+            "keysym": "questiondown",
+            "text": "¿"
+          },
+          {
+            "level": 4,
+            "keysym": "U1E9E",
+            "text": "ẞ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 13,
+      "row": 1,
+      "column": 13,
+      "node": 12,
+      "mesh": 12,
+      "name": "Cube.012",
+      "origin": [
+        11.360695838928223,
+        1.8938899040222168,
+        -3.830117702484131
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 13,
+        "linux_key": "KEY_EQUAL",
+        "scan": 458798,
+        "label": "dead_acute",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "dead_acute",
+            "text": ""
+          },
+          {
+            "level": 1,
+            "keysym": "dead_grave",
+            "text": ""
+          },
+          {
+            "level": 2,
+            "keysym": "dead_cedilla",
+            "text": ""
+          },
+          {
+            "level": 3,
+            "keysym": "dead_ogonek",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 14,
+      "row": 1,
+      "column": 14,
+      "node": 13,
+      "mesh": 13,
+      "name": "Cube.013",
+      "origin": [
+        14.677559852600098,
+        1.8938900232315063,
+        -3.8301186561584473
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 14,
+        "linux_key": "KEY_BACKSPACE",
+        "scan": 458794,
+        "label": "Backspace",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "BackSpace",
+            "text": ""
+          },
+          {
+            "level": 1,
+            "keysym": "BackSpace",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 15,
+      "row": 2,
+      "column": 1,
+      "node": 17,
+      "mesh": 17,
+      "name": "Cube.017",
+      "origin": [
+        -15.267542839050293,
+        1.6328686475753784,
+        -1.6922261714935303
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 15,
+        "linux_key": "KEY_TAB",
+        "scan": 458795,
+        "label": "Tab",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Tab",
+            "text": ""
+          },
+          {
+            "level": 1,
+            "keysym": "ISO_Left_Tab",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 16,
+      "row": 2,
+      "column": 2,
+      "node": 14,
+      "mesh": 14,
+      "name": "Cube.014",
+      "origin": [
+        -12.46754264831543,
+        1.6328686475753784,
+        -1.6922260522842407
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 16,
+        "linux_key": "KEY_Q",
+        "scan": 458772,
+        "label": "q",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "q",
+            "text": "q"
+          },
+          {
+            "level": 1,
+            "keysym": "Q",
+            "text": "Q"
+          },
+          {
+            "level": 2,
+            "keysym": "at",
+            "text": "@"
+          },
+          {
+            "level": 3,
+            "keysym": "Greek_OMEGA",
+            "text": "Ω"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 17,
+      "row": 2,
+      "column": 3,
+      "node": 30,
+      "mesh": 30,
+      "name": "Cube.030",
+      "origin": [
+        -10.19852352142334,
+        1.632868766784668,
+        -1.6922268867492676
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 17,
+        "linux_key": "KEY_W",
+        "scan": 458778,
+        "label": "w",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "w",
+            "text": "w"
+          },
+          {
+            "level": 1,
+            "keysym": "W",
+            "text": "W"
+          },
+          {
+            "level": 2,
+            "keysym": "U017F",
+            "text": "ſ"
+          },
+          {
+            "level": 3,
+            "keysym": "section",
+            "text": "§"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 18,
+      "row": 2,
+      "column": 4,
+      "node": 31,
+      "mesh": 31,
+      "name": "Cube.031",
+      "origin": [
+        -7.929505825042725,
+        1.632868766784668,
+        -1.6922276020050049
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 18,
+        "linux_key": "KEY_E",
+        "scan": 458760,
+        "label": "e",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "e",
+            "text": "e"
+          },
+          {
+            "level": 1,
+            "keysym": "E",
+            "text": "E"
+          },
+          {
+            "level": 2,
+            "keysym": "EuroSign",
+            "text": "€"
+          },
+          {
+            "level": 3,
+            "keysym": "EuroSign",
+            "text": "€"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 19,
+      "row": 2,
+      "column": 5,
+      "node": 32,
+      "mesh": 32,
+      "name": "Cube.032",
+      "origin": [
+        -5.660482883453369,
+        1.632868766784668,
+        -1.6922283172607422
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 19,
+        "linux_key": "KEY_R",
+        "scan": 458773,
+        "label": "r",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "r",
+            "text": "r"
+          },
+          {
+            "level": 1,
+            "keysym": "R",
+            "text": "R"
+          },
+          {
+            "level": 2,
+            "keysym": "paragraph",
+            "text": "¶"
+          },
+          {
+            "level": 3,
+            "keysym": "registered",
+            "text": "®"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 20,
+      "row": 2,
+      "column": 6,
+      "node": 33,
+      "mesh": 33,
+      "name": "Cube.033",
+      "origin": [
+        -3.3914690017700195,
+        1.632868766784668,
+        -1.6922290325164795
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 20,
+        "linux_key": "KEY_T",
+        "scan": 458775,
+        "label": "t",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "t",
+            "text": "t"
+          },
+          {
+            "level": 1,
+            "keysym": "T",
+            "text": "T"
+          },
+          {
+            "level": 2,
+            "keysym": "tslash",
+            "text": "ŧ"
+          },
+          {
+            "level": 3,
+            "keysym": "Tslash",
+            "text": "Ŧ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 21,
+      "row": 2,
+      "column": 7,
+      "node": 34,
+      "mesh": 34,
+      "name": "Cube.034",
+      "origin": [
+        -1.1224441528320312,
+        1.632868766784668,
+        -1.6922298669815063
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 21,
+        "linux_key": "KEY_Y",
+        "scan": 458780,
+        "label": "z",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "z",
+            "text": "z"
+          },
+          {
+            "level": 1,
+            "keysym": "Z",
+            "text": "Z"
+          },
+          {
+            "level": 2,
+            "keysym": "leftarrow",
+            "text": "←"
+          },
+          {
+            "level": 3,
+            "keysym": "yen",
+            "text": "¥"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 22,
+      "row": 2,
+      "column": 8,
+      "node": 35,
+      "mesh": 35,
+      "name": "Cube.035",
+      "origin": [
+        1.1465740203857422,
+        1.632868766784668,
+        -1.6922305822372437
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 22,
+        "linux_key": "KEY_U",
+        "scan": 458776,
+        "label": "u",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "u",
+            "text": "u"
+          },
+          {
+            "level": 1,
+            "keysym": "U",
+            "text": "U"
+          },
+          {
+            "level": 2,
+            "keysym": "downarrow",
+            "text": "↓"
+          },
+          {
+            "level": 3,
+            "keysym": "uparrow",
+            "text": "↑"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 23,
+      "row": 2,
+      "column": 9,
+      "node": 36,
+      "mesh": 36,
+      "name": "Cube.036",
+      "origin": [
+        3.4155893325805664,
+        1.632868766784668,
+        -1.692231297492981
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 23,
+        "linux_key": "KEY_I",
+        "scan": 458764,
+        "label": "i",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "i",
+            "text": "i"
+          },
+          {
+            "level": 1,
+            "keysym": "I",
+            "text": "I"
+          },
+          {
+            "level": 2,
+            "keysym": "rightarrow",
+            "text": "→"
+          },
+          {
+            "level": 3,
+            "keysym": "idotless",
+            "text": "ı"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 24,
+      "row": 2,
+      "column": 10,
+      "node": 37,
+      "mesh": 37,
+      "name": "Cube.037",
+      "origin": [
+        5.684604644775391,
+        1.632868766784668,
+        -1.6922320127487183
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 24,
+        "linux_key": "KEY_O",
+        "scan": 458770,
+        "label": "o",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "o",
+            "text": "o"
+          },
+          {
+            "level": 1,
+            "keysym": "O",
+            "text": "O"
+          },
+          {
+            "level": 2,
+            "keysym": "oslash",
+            "text": "ø"
+          },
+          {
+            "level": 3,
+            "keysym": "Oslash",
+            "text": "Ø"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 25,
+      "row": 2,
+      "column": 11,
+      "node": 38,
+      "mesh": 38,
+      "name": "Cube.038",
+      "origin": [
+        7.953632354736328,
+        1.632868766784668,
+        -1.6922327280044556
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 25,
+        "linux_key": "KEY_P",
+        "scan": 458771,
+        "label": "p",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "p",
+            "text": "p"
+          },
+          {
+            "level": 1,
+            "keysym": "P",
+            "text": "P"
+          },
+          {
+            "level": 2,
+            "keysym": "thorn",
+            "text": "þ"
+          },
+          {
+            "level": 3,
+            "keysym": "THORN",
+            "text": "Þ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 26,
+      "row": 2,
+      "column": 12,
+      "node": 39,
+      "mesh": 39,
+      "name": "Cube.039",
+      "origin": [
+        10.222652435302734,
+        1.632868766784668,
+        -1.6922335624694824
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 26,
+        "linux_key": "KEY_LEFTBRACE",
+        "scan": 458799,
+        "label": "ü",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "udiaeresis",
+            "text": "ü"
+          },
+          {
+            "level": 1,
+            "keysym": "Udiaeresis",
+            "text": "Ü"
+          },
+          {
+            "level": 2,
+            "keysym": "dead_diaeresis",
+            "text": ""
+          },
+          {
+            "level": 3,
+            "keysym": "dead_abovering",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 27,
+      "row": 2,
+      "column": 13,
+      "node": 40,
+      "mesh": 40,
+      "name": "Cube.040",
+      "origin": [
+        12.491661071777344,
+        1.632868766784668,
+        -1.6922342777252197
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 27,
+        "linux_key": "KEY_RIGHTBRACE",
+        "scan": 458800,
+        "label": "+",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "plus",
+            "text": "+"
+          },
+          {
+            "level": 1,
+            "keysym": "asterisk",
+            "text": "*"
+          },
+          {
+            "level": 2,
+            "keysym": "asciitilde",
+            "text": "~"
+          },
+          {
+            "level": 3,
+            "keysym": "macron",
+            "text": "¯"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 28,
+      "row": 2,
+      "column": 14,
+      "node": 28,
+      "mesh": 28,
+      "name": "Cube.028",
+      "origin": [
+        14.93140697479248,
+        1.2754403352737427,
+        -0.7856772541999817
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 28,
+        "linux_key": "KEY_ENTER",
+        "scan": 458792,
+        "label": "Enter",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Return",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 29,
+      "row": 3,
+      "column": 1,
+      "node": 18,
+      "mesh": 18,
+      "name": "Cube.018",
+      "origin": [
+        -14.967543601989746,
+        1.4659624099731445,
+        0.4367375671863556
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 58,
+        "linux_key": "KEY_CAPSLOCK",
+        "scan": 458809,
+        "label": "Caps",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Caps_Lock",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 30,
+      "row": 3,
+      "column": 2,
+      "node": 15,
+      "mesh": 15,
+      "name": "Cube.015",
+      "origin": [
+        -11.867542266845703,
+        1.4506866931915283,
+        0.43746745586395264
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 30,
+        "linux_key": "KEY_A",
+        "scan": 458756,
+        "label": "a",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "a",
+            "text": "a"
+          },
+          {
+            "level": 1,
+            "keysym": "A",
+            "text": "A"
+          },
+          {
+            "level": 2,
+            "keysym": "ae",
+            "text": "æ"
+          },
+          {
+            "level": 3,
+            "keysym": "AE",
+            "text": "Æ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 31,
+      "row": 3,
+      "column": 3,
+      "node": 41,
+      "mesh": 41,
+      "name": "Cube.041",
+      "origin": [
+        -9.598523139953613,
+        1.4506868124008179,
+        0.43746671080589294
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 31,
+        "linux_key": "KEY_S",
+        "scan": 458774,
+        "label": "s",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "s",
+            "text": "s"
+          },
+          {
+            "level": 1,
+            "keysym": "S",
+            "text": "S"
+          },
+          {
+            "level": 2,
+            "keysym": "U017F",
+            "text": "ſ"
+          },
+          {
+            "level": 3,
+            "keysym": "U1E9E",
+            "text": "ẞ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 32,
+      "row": 3,
+      "column": 4,
+      "node": 42,
+      "mesh": 42,
+      "name": "Cube.042",
+      "origin": [
+        -7.329505443572998,
+        1.4506868124008179,
+        0.43746596574783325
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 32,
+        "linux_key": "KEY_D",
+        "scan": 458759,
+        "label": "d",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "d",
+            "text": "d"
+          },
+          {
+            "level": 1,
+            "keysym": "D",
+            "text": "D"
+          },
+          {
+            "level": 2,
+            "keysym": "eth",
+            "text": "ð"
+          },
+          {
+            "level": 3,
+            "keysym": "ETH",
+            "text": "Ð"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 33,
+      "row": 3,
+      "column": 5,
+      "node": 43,
+      "mesh": 43,
+      "name": "Cube.043",
+      "origin": [
+        -5.060482501983643,
+        1.4506868124008179,
+        0.43746522068977356
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 33,
+        "linux_key": "KEY_F",
+        "scan": 458761,
+        "label": "f",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "f",
+            "text": "f"
+          },
+          {
+            "level": 1,
+            "keysym": "F",
+            "text": "F"
+          },
+          {
+            "level": 2,
+            "keysym": "dstroke",
+            "text": "đ"
+          },
+          {
+            "level": 3,
+            "keysym": "ordfeminine",
+            "text": "ª"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 34,
+      "row": 3,
+      "column": 6,
+      "node": 44,
+      "mesh": 44,
+      "name": "Cube.044",
+      "origin": [
+        -2.791468620300293,
+        1.4506868124008179,
+        0.43746447563171387
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 34,
+        "linux_key": "KEY_G",
+        "scan": 458762,
+        "label": "g",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "g",
+            "text": "g"
+          },
+          {
+            "level": 1,
+            "keysym": "G",
+            "text": "G"
+          },
+          {
+            "level": 2,
+            "keysym": "eng",
+            "text": "ŋ"
+          },
+          {
+            "level": 3,
+            "keysym": "ENG",
+            "text": "Ŋ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 35,
+      "row": 3,
+      "column": 7,
+      "node": 45,
+      "mesh": 45,
+      "name": "Cube.045",
+      "origin": [
+        -0.5224437713623047,
+        1.4506868124008179,
+        0.43746376037597656
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 35,
+        "linux_key": "KEY_H",
+        "scan": 458763,
+        "label": "h",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "h",
+            "text": "h"
+          },
+          {
+            "level": 1,
+            "keysym": "H",
+            "text": "H"
+          },
+          {
+            "level": 2,
+            "keysym": "hstroke",
+            "text": "ħ"
+          },
+          {
+            "level": 3,
+            "keysym": "Hstroke",
+            "text": "Ħ"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 36,
+      "row": 3,
+      "column": 8,
+      "node": 46,
+      "mesh": 46,
+      "name": "Cube.046",
+      "origin": [
+        1.7465744018554688,
+        1.4506868124008179,
+        0.43746301531791687
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 36,
+        "linux_key": "KEY_J",
+        "scan": 458765,
+        "label": "j",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "j",
+            "text": "j"
+          },
+          {
+            "level": 1,
+            "keysym": "J",
+            "text": "J"
+          },
+          {
+            "level": 2,
+            "keysym": "dead_belowdot",
+            "text": ""
+          },
+          {
+            "level": 3,
+            "keysym": "dead_abovedot",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 37,
+      "row": 3,
+      "column": 9,
+      "node": 47,
+      "mesh": 47,
+      "name": "Cube.047",
+      "origin": [
+        4.015589714050293,
+        1.4506868124008179,
+        0.4374622702598572
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 37,
+        "linux_key": "KEY_K",
+        "scan": 458766,
+        "label": "k",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "k",
+            "text": "k"
+          },
+          {
+            "level": 1,
+            "keysym": "K",
+            "text": "K"
+          },
+          {
+            "level": 2,
+            "keysym": "kra",
+            "text": "ĸ"
+          },
+          {
+            "level": 3,
+            "keysym": "ampersand",
+            "text": "&"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 38,
+      "row": 3,
+      "column": 10,
+      "node": 48,
+      "mesh": 48,
+      "name": "Cube.048",
+      "origin": [
+        6.284605026245117,
+        1.4506868124008179,
+        0.4374615252017975
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 38,
+        "linux_key": "KEY_L",
+        "scan": 458767,
+        "label": "l",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "l",
+            "text": "l"
+          },
+          {
+            "level": 1,
+            "keysym": "L",
+            "text": "L"
+          },
+          {
+            "level": 2,
+            "keysym": "lstroke",
+            "text": "ł"
+          },
+          {
+            "level": 3,
+            "keysym": "Lstroke",
+            "text": "Ł"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 39,
+      "row": 3,
+      "column": 11,
+      "node": 49,
+      "mesh": 49,
+      "name": "Cube.049",
+      "origin": [
+        8.553632736206055,
+        1.4506869316101074,
+        0.4374607801437378
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 39,
+        "linux_key": "KEY_SEMICOLON",
+        "scan": 458803,
+        "label": "ö",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "odiaeresis",
+            "text": "ö"
+          },
+          {
+            "level": 1,
+            "keysym": "Odiaeresis",
+            "text": "Ö"
+          },
+          {
+            "level": 2,
+            "keysym": "dead_doubleacute",
+            "text": ""
+          },
+          {
+            "level": 3,
+            "keysym": "dead_belowdot",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 40,
+      "row": 3,
+      "column": 12,
+      "node": 50,
+      "mesh": 50,
+      "name": "Cube.050",
+      "origin": [
+        10.822652816772461,
+        1.4506869316101074,
+        0.4374600648880005
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 40,
+        "linux_key": "KEY_APOSTROPHE",
+        "scan": 458804,
+        "label": "ä",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "adiaeresis",
+            "text": "ä"
+          },
+          {
+            "level": 1,
+            "keysym": "Adiaeresis",
+            "text": "Ä"
+          },
+          {
+            "level": 2,
+            "keysym": "dead_circumflex",
+            "text": ""
+          },
+          {
+            "level": 3,
+            "keysym": "dead_caron",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 41,
+      "row": 3,
+      "column": 13,
+      "node": 51,
+      "mesh": 51,
+      "name": "Cube.051",
+      "origin": [
+        13.09166145324707,
+        1.4506869316101074,
+        0.4374592900276184
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 43,
+        "linux_key": "KEY_BACKSLASH",
+        "scan": 458802,
+        "label": "#",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "numbersign",
+            "text": "#"
+          },
+          {
+            "level": 1,
+            "keysym": "apostrophe",
+            "text": "'"
+          },
+          {
+            "level": 2,
+            "keysym": "rightsinglequotemark",
+            "text": "’"
+          },
+          {
+            "level": 3,
+            "keysym": "dead_breve",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 42,
+      "row": 4,
+      "column": 1,
+      "node": 19,
+      "mesh": 19,
+      "name": "Cube.019",
+      "origin": [
+        -15.517542839050293,
+        1.4088214635849,
+        2.4961256980895996
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 42,
+        "linux_key": "KEY_LEFTSHIFT",
+        "scan": 458977,
+        "label": "Shift",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Shift_L",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 43,
+      "row": 4,
+      "column": 2,
+      "node": 16,
+      "mesh": 16,
+      "name": "Cube.016",
+      "origin": [
+        -12.96754264831543,
+        1.4088214635849,
+        2.4961256980895996
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 86,
+        "linux_key": "KEY_102ND",
+        "scan": 458852,
+        "label": "<",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "less",
+            "text": "<"
+          },
+          {
+            "level": 1,
+            "keysym": "greater",
+            "text": ">"
+          },
+          {
+            "level": 2,
+            "keysym": "bar",
+            "text": "|"
+          },
+          {
+            "level": 3,
+            "keysym": "dead_belowmacron",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 44,
+      "row": 4,
+      "column": 3,
+      "node": 52,
+      "mesh": 52,
+      "name": "Cube.052",
+      "origin": [
+        -10.69852352142334,
+        1.4088213443756104,
+        2.4961249828338623
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 44,
+        "linux_key": "KEY_Z",
+        "scan": 458781,
+        "label": "y",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "y",
+            "text": "y"
+          },
+          {
+            "level": 1,
+            "keysym": "Y",
+            "text": "Y"
+          },
+          {
+            "level": 2,
+            "keysym": "guillemotright",
+            "text": "»"
+          },
+          {
+            "level": 3,
+            "keysym": "U203A",
+            "text": "›"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 45,
+      "row": 4,
+      "column": 4,
+      "node": 53,
+      "mesh": 53,
+      "name": "Cube.053",
+      "origin": [
+        -8.429506301879883,
+        1.4088213443756104,
+        2.496124267578125
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 45,
+        "linux_key": "KEY_X",
+        "scan": 458779,
+        "label": "x",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "x",
+            "text": "x"
+          },
+          {
+            "level": 1,
+            "keysym": "X",
+            "text": "X"
+          },
+          {
+            "level": 2,
+            "keysym": "guillemotleft",
+            "text": "«"
+          },
+          {
+            "level": 3,
+            "keysym": "U2039",
+            "text": "‹"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 46,
+      "row": 4,
+      "column": 5,
+      "node": 54,
+      "mesh": 54,
+      "name": "Cube.054",
+      "origin": [
+        -6.160482883453369,
+        1.4088212251663208,
+        2.4961235523223877
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 46,
+        "linux_key": "KEY_C",
+        "scan": 458758,
+        "label": "c",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "c",
+            "text": "c"
+          },
+          {
+            "level": 1,
+            "keysym": "C",
+            "text": "C"
+          },
+          {
+            "level": 2,
+            "keysym": "cent",
+            "text": "¢"
+          },
+          {
+            "level": 3,
+            "keysym": "copyright",
+            "text": "©"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 47,
+      "row": 4,
+      "column": 6,
+      "node": 55,
+      "mesh": 55,
+      "name": "Cube.055",
+      "origin": [
+        -3.8914690017700195,
+        1.4088211059570312,
+        2.4961228370666504
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 47,
+        "linux_key": "KEY_V",
+        "scan": 458777,
+        "label": "v",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "v",
+            "text": "v"
+          },
+          {
+            "level": 1,
+            "keysym": "V",
+            "text": "V"
+          },
+          {
+            "level": 2,
+            "keysym": "doublelowquotemark",
+            "text": "„"
+          },
+          {
+            "level": 3,
+            "keysym": "singlelowquotemark",
+            "text": "‚"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 48,
+      "row": 4,
+      "column": 7,
+      "node": 56,
+      "mesh": 56,
+      "name": "Cube.056",
+      "origin": [
+        -1.6224441528320312,
+        1.4088211059570312,
+        2.496122121810913
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 48,
+        "linux_key": "KEY_B",
+        "scan": 458757,
+        "label": "b",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "b",
+            "text": "b"
+          },
+          {
+            "level": 1,
+            "keysym": "B",
+            "text": "B"
+          },
+          {
+            "level": 2,
+            "keysym": "leftdoublequotemark",
+            "text": "“"
+          },
+          {
+            "level": 3,
+            "keysym": "leftsinglequotemark",
+            "text": "‘"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 49,
+      "row": 4,
+      "column": 8,
+      "node": 57,
+      "mesh": 57,
+      "name": "Cube.057",
+      "origin": [
+        0.6465740203857422,
+        1.4088209867477417,
+        2.496121406555176
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 49,
+        "linux_key": "KEY_N",
+        "scan": 458769,
+        "label": "n",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "n",
+            "text": "n"
+          },
+          {
+            "level": 1,
+            "keysym": "N",
+            "text": "N"
+          },
+          {
+            "level": 2,
+            "keysym": "rightdoublequotemark",
+            "text": "”"
+          },
+          {
+            "level": 3,
+            "keysym": "rightsinglequotemark",
+            "text": "’"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 50,
+      "row": 4,
+      "column": 9,
+      "node": 58,
+      "mesh": 58,
+      "name": "Cube.058",
+      "origin": [
+        2.9155893325805664,
+        1.4088208675384521,
+        2.4961204528808594
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 50,
+        "linux_key": "KEY_M",
+        "scan": 458768,
+        "label": "m",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "m",
+            "text": "m"
+          },
+          {
+            "level": 1,
+            "keysym": "M",
+            "text": "M"
+          },
+          {
+            "level": 2,
+            "keysym": "mu",
+            "text": "µ"
+          },
+          {
+            "level": 3,
+            "keysym": "masculine",
+            "text": "º"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 51,
+      "row": 4,
+      "column": 10,
+      "node": 59,
+      "mesh": 59,
+      "name": "Cube.059",
+      "origin": [
+        5.184604644775391,
+        1.4088208675384521,
+        2.496119737625122
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 51,
+        "linux_key": "KEY_COMMA",
+        "scan": 458806,
+        "label": ",",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "comma",
+            "text": ","
+          },
+          {
+            "level": 1,
+            "keysym": "semicolon",
+            "text": ";"
+          },
+          {
+            "level": 2,
+            "keysym": "periodcentered",
+            "text": "·"
+          },
+          {
+            "level": 3,
+            "keysym": "multiply",
+            "text": "×"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 52,
+      "row": 4,
+      "column": 11,
+      "node": 60,
+      "mesh": 60,
+      "name": "Cube.060",
+      "origin": [
+        7.453632354736328,
+        1.4088207483291626,
+        2.4961190223693848
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 52,
+        "linux_key": "KEY_DOT",
+        "scan": 458807,
+        "label": ".",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "period",
+            "text": "."
+          },
+          {
+            "level": 1,
+            "keysym": "colon",
+            "text": ":"
+          },
+          {
+            "level": 2,
+            "keysym": "U2026",
+            "text": "…"
+          },
+          {
+            "level": 3,
+            "keysym": "division",
+            "text": "÷"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 53,
+      "row": 4,
+      "column": 12,
+      "node": 61,
+      "mesh": 61,
+      "name": "Cube.061",
+      "origin": [
+        9.722652435302734,
+        1.408820629119873,
+        2.4961183071136475
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 53,
+        "linux_key": "KEY_SLASH",
+        "scan": 458808,
+        "label": "-",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "minus",
+            "text": "-"
+          },
+          {
+            "level": 1,
+            "keysym": "underscore",
+            "text": "_"
+          },
+          {
+            "level": 2,
+            "keysym": "endash",
+            "text": "–"
+          },
+          {
+            "level": 3,
+            "keysym": "emdash",
+            "text": "—"
+          }
+        ]
+      }
+    },
+    {
+      "slot": 54,
+      "row": 4,
+      "column": 13,
+      "node": 62,
+      "mesh": 62,
+      "name": "Cube.062",
+      "origin": [
+        13.941667556762695,
+        1.4088205099105835,
+        2.496117115020752
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 54,
+        "linux_key": "KEY_RIGHTSHIFT",
+        "scan": 458981,
+        "label": "Shift",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Shift_R",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 55,
+      "row": 5,
+      "column": 1,
+      "node": 20,
+      "mesh": 20,
+      "name": "Cube.020",
+      "origin": [
+        -15.517542839050293,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 29,
+        "linux_key": "KEY_LEFTCTRL",
+        "scan": 458976,
+        "label": "Ctrl",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Control_L",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 56,
+      "row": 5,
+      "column": 2,
+      "node": 21,
+      "mesh": 21,
+      "name": "Cube.021",
+      "origin": [
+        -12.617542266845703,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 125,
+        "linux_key": "KEY_LEFTMETA",
+        "scan": 458979,
+        "label": "Super",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Super_L",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 57,
+      "row": 5,
+      "column": 3,
+      "node": 22,
+      "mesh": 22,
+      "name": "Cube.022",
+      "origin": [
+        -9.81754207611084,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 56,
+        "linux_key": "KEY_LEFTALT",
+        "scan": 458978,
+        "label": "Alt",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Alt_L",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 58,
+      "row": 5,
+      "column": 4,
+      "node": 23,
+      "mesh": 23,
+      "name": "Cube.023",
+      "origin": [
+        -1.3675436973571777,
+        1.3341989517211914,
+        4.651878833770752
+      ],
+      "spacebar": true,
+      "press": {
+        "status": "mapped",
+        "linux_code": 57,
+        "linux_key": "KEY_SPACE",
+        "scan": 458796,
+        "label": "Space",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "space",
+            "text": " "
+          }
+        ]
+      }
+    },
+    {
+      "slot": 59,
+      "row": 5,
+      "column": 5,
+      "node": 24,
+      "mesh": 24,
+      "name": "Cube.024",
+      "origin": [
+        7.082457542419434,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 100,
+        "linux_key": "KEY_RIGHTALT",
+        "scan": 458982,
+        "label": "AltGr",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "ISO_Level3_Shift",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 60,
+      "row": 5,
+      "column": 6,
+      "node": 25,
+      "mesh": 25,
+      "name": "Cube.025",
+      "origin": [
+        9.88245677947998,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "unreported",
+        "label": "Fn",
+        "reason": "hardware-local-fn",
+        "legends": []
+      }
+    },
+    {
+      "slot": 61,
+      "row": 5,
+      "column": 7,
+      "node": 26,
+      "mesh": 26,
+      "name": "Cube.026",
+      "origin": [
+        12.68245792388916,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 127,
+        "linux_key": "KEY_COMPOSE",
+        "scan": 458853,
+        "label": "Menu",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Menu",
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "slot": 62,
+      "row": 5,
+      "column": 8,
+      "node": 27,
+      "mesh": 27,
+      "name": "Cube.027",
+      "origin": [
+        15.582457542419434,
+        1.334199070930481,
+        4.651879787445068
+      ],
+      "spacebar": false,
+      "press": {
+        "status": "mapped",
+        "linux_code": 97,
+        "linux_key": "KEY_RIGHTCTRL",
+        "scan": 458980,
+        "label": "Ctrl",
+        "legends": [
+          {
+            "level": 0,
+            "keysym": "Control_R",
+            "text": ""
+          }
+        ]
+      }
+    }
+  ],
+  "audit": {
+    "source": "capture-original.txt",
+    "source_sha256": "48ddf3e3dc2fb657f5ad6e0a13d619b279332d04d1f58a5d6f5fd53dbe963913",
+    "layout_reference": "https://www.corsair.com/uk/en/explorer/gamer/keyboards/k70-pro-mini-wireless-keyboard-shortcut-guide/",
+    "notes": [
+      "User captured keys left to right, row by row, starting at Esc.",
+      "Fn sends no standalone event. User pressed right Ctrl twice to finish.",
+      "Slots 1 through 59 are unchanged. All captured XKB legends verified against the de keymap.",
+      "Slot 60 (mesh 25) is Fn, without an invented Linux code or HID usage.",
+      "Moved captured Menu from slot 60 to 61 (mesh 26), and right Ctrl from 61 to 62 (mesh 27).",
+      "Discarded the duplicate right Ctrl capture at original slot 62."
+    ]
+  }
+}

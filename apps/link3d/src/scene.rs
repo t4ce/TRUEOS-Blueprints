@@ -1,79 +1,80 @@
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
-use trueos::hid::InputComboColor;
-
 use crate::roster::Keyboard;
+use alloc::{vec, vec::Vec};
 
-const PALETTE_WIDTH: usize = InputComboColor::COUNT as usize + 1;
+pub const MAX_KEYBOARDS: usize = 32;
+const PALETTE_WIDTH: usize = 256;
+const PALETTE_HEIGHT: usize = 2;
 
-pub struct RowGeometry {
-    pub vertices: Vec<u8>,
-    pub indices: Vec<u8>,
-    pub center: [f32; 3],
-    pub radius: f32,
-    pub origin_radius: f32,
+/// Prepare a single immutable PBR mesh. U comes from the GPU's compacted
+/// original instance index; V selects the key or chassis material row.
+pub fn prepare_mesh(source_vertices: &[u8], source_parts: &[u8]) -> Vec<u8> {
+    assert_eq!(source_vertices.len() % 24, 0);
+    assert_eq!(source_parts.len(), source_vertices.len() / 24);
+    let mut vertices = Vec::with_capacity(source_parts.len() * 48);
+    for (source, &part) in source_vertices.chunks_exact(24).zip(source_parts) {
+        assert!(part <= 1);
+        vertices.extend_from_slice(source);
+        let normal = [
+            read_f32(source, 12),
+            read_f32(source, 16),
+            read_f32(source, 20),
+        ];
+        let tangent = if normal[0].abs() > normal[2].abs() {
+            [-normal[1], normal[0], 0.0]
+        } else {
+            [0.0, -normal[2], normal[1]]
+        };
+        let length = libm::sqrtf(tangent.iter().map(|value| value * value).sum());
+        let tangent = if length > 0.0 {
+            tangent.map(|value| value / length)
+        } else {
+            [1.0, 0.0, 0.0]
+        };
+        for value in [
+            0.0,
+            (f32::from(part) + 0.5) / 2.0,
+            tangent[0],
+            tangent[1],
+            tangent[2],
+            1.0,
+        ] {
+            vertices.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    vertices
 }
 
-/// Expand the prepared GLB mesh only when its device roster changes. Constant
-/// UVs select one shared palette texel for each independently colored keyboard.
-pub fn prepare_row(
-    source_vertices: &[u8],
-    source_indices: &[u8],
-    keyboards: &[Keyboard],
-    radius: f32,
-) -> RowGeometry {
-    assert_eq!(source_vertices.len() % 24, 0);
-    assert_eq!(source_indices.len() % 4, 0);
+pub struct RowInstances {
+    pub seeds: Vec<u8>,
+    pub count: u32,
+    pub center: [f32; 3],
+    pub radius: f32,
+}
+
+/// Roster updates upload only 64-byte transforms and a tiny color atlas.
+/// No vertex or index data is duplicated for additional keyboards.
+pub fn prepare_row(keyboards: &[Keyboard], radius: f32) -> RowInstances {
+    assert!(keyboards.len() <= MAX_KEYBOARDS);
     let spacing = radius * 2.2;
     let span = keyboards.len().saturating_sub(1) as f32 * spacing;
-    let vertex_count = source_vertices.len() / 24;
-    let mut row = RowGeometry {
-        vertices: Vec::with_capacity(vertex_count * keyboards.len() * 48),
-        indices: Vec::with_capacity(source_indices.len() * keyboards.len()),
+    let mut row = RowInstances {
+        seeds: Vec::with_capacity(keyboards.len() * 64),
+        count: keyboards.len() as u32,
         center: [0.0, 0.0, span * 0.5],
         radius: radius + span * 0.5,
-        origin_radius: radius + span,
     };
-    for (index, keyboard) in keyboards.iter().enumerate() {
-        let offset_z = index as f32 * spacing;
-        let palette_index = (0..InputComboColor::COUNT)
-            .find(|&color| InputComboColor::from_index(color).rgba() == keyboard.rgba)
-            .unwrap_or(InputComboColor::COUNT);
-        let u = (f32::from(palette_index) + 0.5) / PALETTE_WIDTH as f32;
-        for source in source_vertices.chunks_exact(24) {
-            let start = row.vertices.len();
-            row.vertices.extend_from_slice(source);
-            if index != 0 {
-                row.vertices[start + 8..start + 12]
-                    .copy_from_slice(&(read_f32(source, 8) + offset_z).to_le_bytes());
-            }
-            let normal = [
-                read_f32(source, 12),
-                read_f32(source, 16),
-                read_f32(source, 20),
-            ];
-            let tangent = if normal[0].abs() > normal[2].abs() {
-                [-normal[1], normal[0], 0.0]
-            } else {
-                [0.0, -normal[2], normal[1]]
-            };
-            let length = libm::sqrtf(tangent.iter().map(|value| value * value).sum());
-            let tangent = if length > 0.0 {
-                tangent.map(|value| value / length)
-            } else {
-                [1.0, 0.0, 0.0]
-            };
-            for value in [u, 0.5, tangent[0], tangent[1], tangent[2], 1.0] {
-                row.vertices.extend_from_slice(&value.to_le_bytes());
-            }
+    for index in 0..keyboards.len() {
+        let z = index as f32 * spacing;
+        for value in [
+            0.0, 0.0, z, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, radius, 0.0, 0.0, z,
+        ] {
+            row.seeds.extend_from_slice(&value.to_le_bytes());
         }
-        let base = u32::try_from(index * vertex_count).expect("keyboard vertex offset");
-        for source in source_indices.chunks_exact(4) {
-            let vertex = u32::from_le_bytes(source.try_into().unwrap());
-            row.indices
-                .extend_from_slice(&(base + vertex).to_le_bytes());
-        }
+        row.seeds.extend_from_slice(&0u32.to_le_bytes()); // One full-mesh draw group.
+        row.seeds
+            .extend_from_slice(&((index as u32) << 16).to_le_bytes());
     }
     row
 }
@@ -82,30 +83,47 @@ fn read_f32(bytes: &[u8], offset: usize) -> f32 {
     f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
-/// One 24-bit BMP row: the canonical combo palette followed by neutral gray.
-pub fn palette_bmp() -> Vec<u8> {
-    let row_stride = (PALETTE_WIDTH * 3 + 3) & !3;
-    let mut bmp = vec![0; 54 + row_stride];
+/// Column = original instance index; rows = keys/chassis. Colors come from
+/// the HUT combo palette, with neutral gray for unused columns.
+pub fn palette_bmp(keyboards: &[Keyboard]) -> Vec<u8> {
+    assert!(keyboards.len() <= MAX_KEYBOARDS);
+    material_bmp(Some(keyboards))
+}
+
+pub fn metallic_roughness_bmp() -> Vec<u8> {
+    material_bmp(None)
+}
+
+fn material_bmp(keyboards: Option<&[Keyboard]>) -> Vec<u8> {
+    let stride = PALETTE_WIDTH * 3;
+    let mut bmp = vec![0; 54 + stride * PALETTE_HEIGHT];
     bmp[..2].copy_from_slice(b"BM");
     for (offset, value) in [
-        (2, (54 + row_stride) as u32),
+        (2, (54 + stride * PALETTE_HEIGHT) as u32),
         (10, 54),
         (14, 40),
         (18, PALETTE_WIDTH as u32),
-        (22, 1),
-        (34, row_stride as u32),
+        (22, PALETTE_HEIGHT as u32),
+        (34, (stride * PALETTE_HEIGHT) as u32),
     ] {
         bmp[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
     bmp[26..28].copy_from_slice(&1u16.to_le_bytes());
     bmp[28..30].copy_from_slice(&24u16.to_le_bytes());
-    for index in 0..PALETTE_WIDTH {
-        let [r, g, b, _] = if index < InputComboColor::COUNT as usize {
-            InputComboColor::from_index(index as u8).rgba()
-        } else {
-            [128, 128, 128, 255]
-        };
-        bmp[54 + index * 3..57 + index * 3].copy_from_slice(&[b, g, r]);
+    for row in 0..PALETTE_HEIGHT {
+        for column in 0..PALETTE_WIDTH {
+            let [r, g, b, _] = match keyboards {
+                Some(keyboards) if row == 0 => keyboards
+                    .get(column)
+                    .map_or([128, 128, 128, 255], |keyboard| keyboard.rgba),
+                Some(_) => [128, 128, 128, 255],
+                None if row == 0 => [255, 255, 0, 255],
+                None => [255, 102, 255, 255],
+            };
+            // Positive-height BMP storage is bottom-up; UV row 0 is keys.
+            let at = 54 + (PALETTE_HEIGHT - 1 - row) * stride + column * 3;
+            bmp[at..at + 3].copy_from_slice(&[b, g, r]);
+        }
     }
     bmp
 }
@@ -113,128 +131,87 @@ pub fn palette_bmp() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn source() -> (Vec<u8>, Vec<u8>) {
-        let vertices = [
-            [1.0f32, 0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-        ]
-        .into_iter()
-        .flatten()
-        .flat_map(f32::to_le_bytes)
-        .collect();
-        let indices = [2u32, 0, 1]
-            .into_iter()
-            .flat_map(u32::to_le_bytes)
-            .collect();
-        (vertices, indices)
-    }
+    use trueos::hid::InputComboColor;
 
     fn keyboard(index: u8) -> Keyboard {
         Keyboard {
-            endpoint: [0, u32::from(index) + 1, 0],
-            combo_id: u32::from(index) + 1,
-            rgba: InputComboColor::from_index(index).rgba(),
+            endpoint: [1, index as u32, 0],
+            combo_id: index as u32 + 1,
+            rgba: InputComboColor::from_index(index % InputComboColor::COUNT).rgba(),
         }
+    }
+    fn pixel(bmp: &[u8], column: usize, row: usize) -> [u8; 3] {
+        let at = 54 + (1 - row) * 768 + column * 3;
+        [bmp[at + 2], bmp[at + 1], bmp[at]]
     }
 
     #[test]
-    fn empty_roster_has_no_geometry_and_keeps_valid_origin_bounds() {
-        let (vertices, indices) = source();
-        let row = prepare_row(&vertices, &indices, &[], 2.0);
-        assert!(row.vertices.is_empty() && row.indices.is_empty());
-        assert_eq!(row.center, [0.0; 3]);
-        assert_eq!(row.radius, 2.0);
-        assert_eq!(row.origin_radius, 2.0);
-    }
-
-    #[test]
-    fn thirty_two_meshes_preserve_authored_geometry_winding_and_valid_tangents() {
-        let (vertices, indices) = source();
-        let keyboards: Vec<_> = (0..32).map(keyboard).collect();
-        let row = prepare_row(&vertices, &indices, &keyboards, 2.0);
-        assert_eq!(row.vertices.len(), 32 * 3 * 48);
-        assert_eq!(row.indices.len(), 32 * indices.len());
-        for keyboard_index in 0..32 {
-            for vertex_index in 0..3 {
-                let source = &vertices[vertex_index * 24..(vertex_index + 1) * 24];
-                let start = (keyboard_index * 3 + vertex_index) * 48;
-                let vertex = &row.vertices[start..start + 48];
-                assert_eq!(&vertex[..8], &source[..8]);
-                assert_eq!(&vertex[12..24], &source[12..24]);
-                assert_eq!(
-                    read_f32(vertex, 8),
-                    read_f32(source, 8) + keyboard_index as f32 * 4.4
-                );
-                let dot: f32 = (0..3)
-                    .map(|axis| read_f32(vertex, 12 + axis * 4) * read_f32(vertex, 32 + axis * 4))
-                    .sum();
-                let length: f32 = (0..3)
-                    .map(|axis| {
-                        let value = read_f32(vertex, 32 + axis * 4);
-                        value * value
-                    })
-                    .sum();
-                assert!(dot.abs() < 0.000001 && (length - 1.0).abs() < 0.000001);
-                assert_eq!(read_f32(vertex, 44), 1.0);
-            }
-            for (corner, source_index) in [2u32, 0, 1].into_iter().enumerate() {
-                let start = (keyboard_index * 3 + corner) * 4;
-                assert_eq!(
-                    u32::from_le_bytes(row.indices[start..start + 4].try_into().unwrap()),
-                    keyboard_index as u32 * 3 + source_index
-                );
-            }
-        }
-        assert_eq!(&row.vertices[..24], &vertices[..24]);
-        let span = 31.0 * 4.4;
-        assert_eq!(row.center, [0.0, 0.0, span * 0.5]);
-        assert_eq!(row.radius, 2.0 + span * 0.5);
-        assert_eq!(row.origin_radius, 2.0 + span);
-        for index in 0..32 {
-            let z = read_f32(&row.vertices, index * 3 * 48 + 8);
-            assert!((z - row.center[2]).abs() + 2.0 <= row.radius + 0.0001);
-            assert!(z + 2.0 <= row.origin_radius + 0.0001);
-            if index != 0 {
-                let previous_z = read_f32(&row.vertices, (index - 1) * 3 * 48 + 8);
-                assert!(z - previous_z > 4.0);
-            }
-        }
-    }
-
-    #[test]
-    fn each_keyboard_selects_its_central_palette_texel_including_neutral() {
-        let (vertices, indices) = source();
-        let mut keyboards: Vec<_> = (0..InputComboColor::COUNT).map(keyboard).collect();
-        keyboards.push(Keyboard {
-            rgba: [128, 128, 128, 255],
-            ..keyboard(0)
-        });
-        let row = prepare_row(&vertices, &indices, &keyboards, 2.0);
-        for (index, vertex) in row.vertices.chunks_exact(48).enumerate() {
-            assert_eq!(read_f32(vertex, 24), ((index / 3) as f32 + 0.5) / 17.0);
-            assert_eq!(read_f32(vertex, 28), 0.5);
-        }
-    }
-
-    #[test]
-    fn bmp_header_pixels_and_padding_match_shared_palette() {
-        let bmp = palette_bmp();
-        assert_eq!(&bmp[..2], b"BM");
-        assert_eq!(bmp.len(), 106);
-        for (offset, value) in [(2, 106u32), (10, 54), (14, 40), (18, 17), (22, 1), (34, 52)] {
-            assert_eq!(
-                u32::from_le_bytes(bmp[offset..offset + 4].try_into().unwrap()),
-                value
+    fn k70_geometry_is_prepared_once_with_chassis_material_and_no_duplication() {
+        let source = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.vertices.bin"));
+        let parts = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.parts.bin"));
+        let mesh = prepare_mesh(source, parts);
+        assert_eq!(parts.len(), 36152);
+        assert_eq!(parts.iter().filter(|&&part| part == 1).count(), 88);
+        assert_eq!(mesh.len(), parts.len() * 48);
+        for ((vertex, source), &part) in mesh
+            .chunks_exact(48)
+            .zip(source.chunks_exact(24))
+            .zip(parts)
+        {
+            assert_eq!(&vertex[..24], source);
+            assert_eq!(read_f32(vertex, 28), if part == 1 { 0.75 } else { 0.25 });
+            let normal: [f32; 3] = core::array::from_fn(|i| read_f32(vertex, 12 + i * 4));
+            let tangent: [f32; 3] = core::array::from_fn(|i| read_f32(vertex, 32 + i * 4));
+            assert!(
+                normal
+                    .iter()
+                    .zip(tangent)
+                    .map(|(a, b)| a * b)
+                    .sum::<f32>()
+                    .abs()
+                    < 0.0001
             );
         }
-        assert_eq!(&bmp[26..30], &[1, 0, 24, 0]);
-        for color in 0..InputComboColor::COUNT {
-            let [r, g, b, _] = InputComboColor::from_index(color).rgba();
-            let start = 54 + usize::from(color) * 3;
-            assert_eq!(&bmp[start..start + 3], &[b, g, r]);
+        for count in [0, 1, 2, 32] {
+            let keyboards: Vec<_> = (0..count).map(keyboard).collect();
+            let row = prepare_row(&keyboards, 20.0);
+            assert_eq!(row.seeds.len(), count as usize * 64);
+            assert_eq!(row.count, count as u32);
+            for (index, seed) in row.seeds.chunks_exact(64).enumerate() {
+                let z = index as f32 * 44.0;
+                assert_eq!(read_f32(seed, 8), z);
+                assert_eq!(read_f32(seed, 52), z);
+                assert_eq!(read_f32(seed, 40), 20.0);
+                assert_eq!(
+                    u32::from_le_bytes(seed[60..64].try_into().unwrap()),
+                    (index as u32) << 16
+                );
+                assert!((z - row.center[2]).abs() + 20.0 <= row.radius + 0.001);
+            }
         }
-        assert_eq!(&bmp[102..106], &[128, 128, 128, 0]);
+    }
+
+    #[test]
+    fn compaction_keeps_exact_combo_colors_and_chassis_properties() {
+        let keyboards: Vec<_> = (0..32).map(keyboard).collect();
+        let colors = palette_bmp(&keyboards);
+        let properties = metallic_roughness_bmp();
+        assert_eq!(colors.len(), 1590);
+        assert_eq!(&colors[..2], b"BM");
+        assert_eq!(u32::from_le_bytes(colors[18..22].try_into().unwrap()), 256);
+        assert_eq!(u32::from_le_bytes(colors[22..26].try_into().unwrap()), 2);
+        // VF fetches the GPU compaction row's low byte as R8_UNORM.
+        // Even when preceding boards are culled, the original index selects
+        // its own exact 8-bit color rather than the compacted draw slot.
+        for original in [0usize, 7, 16, 31] {
+            let u = original as f32 / 255.0;
+            let texel = libm::floorf(u * 256.0) as usize;
+            assert_eq!(texel, original);
+            assert_eq!(pixel(&colors, texel, 0), keyboards[original].rgba[..3]);
+            assert_eq!(pixel(&colors, texel, 1), [128; 3]);
+            assert_eq!(pixel(&properties, texel, 0), [255, 255, 0]);
+            assert_eq!(pixel(&properties, texel, 1), [255, 102, 255]);
+        }
+        assert_eq!(pixel(&palette_bmp(&[]), 0, 0), [128; 3]);
     }
 }

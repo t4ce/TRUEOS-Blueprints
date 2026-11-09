@@ -9,7 +9,7 @@ use core::fmt;
 use link3d::{
     OrbitCamera,
     roster::virtual_keyboards,
-    scene::{palette_bmp, prepare_row},
+    scene::{metallic_roughness_bmp, prepare_mesh, prepare_row},
 };
 use trueos::{
     clock, hid, input,
@@ -21,9 +21,10 @@ use trueos::{
 use trueos_picasso::{Picasso, PicassoError};
 
 include!(concat!(env!("OUT_DIR"), "/prepared_keyboard.rs"));
-const SOURCE: &[u8] = include_bytes!("../Keyboard OP.glb");
+const SOURCE: &[u8] = include_bytes!("../Keyboard k70 mini pro.glb");
 const VERTICES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.vertices.bin"));
 const INDICES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.indices.bin"));
+const PARTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.parts.bin"));
 const INVENTORY_INTERVAL_MS: u64 = 3_000;
 
 #[global_allocator]
@@ -49,15 +50,19 @@ fn run() -> Result<(), Error> {
     picasso.put_embedded_asset("keyboard/source.glb", SOURCE)?;
     picasso.put_embedded_asset("keyboard/vertices", VERTICES)?;
     picasso.put_embedded_asset("keyboard/indices", INDICES)?;
-    picasso.put_embedded_asset("keyboard/palette.bmp", &palette_bmp())?;
+    picasso.put_embedded_asset("keyboard/parts", PARTS)?;
+    picasso.put_embedded_asset("keyboard/metallic-roughness.bmp", &metallic_roughness_bmp())?;
     let vertices = picasso
         .embedded_asset("keyboard/vertices")?
         .ok_or(Error::Asset)?;
     let indices = picasso
         .embedded_asset("keyboard/indices")?
         .ok_or(Error::Asset)?;
-    let palette = picasso
-        .embedded_asset("keyboard/palette.bmp")?
+    let parts = picasso
+        .embedded_asset("keyboard/parts")?
+        .ok_or(Error::Asset)?;
+    let metallic_roughness = picasso
+        .embedded_asset("keyboard/metallic-roughness.bmp")?
         .ok_or(Error::Asset)?;
 
     let (width, height) = (800, 600);
@@ -74,13 +79,26 @@ fn run() -> Result<(), Error> {
     frame.set_primary_activation(true)?;
     let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
     let queue = device.create_queue(QueueClass::Render)?;
-    let mut renderer = renderer::Renderer::new(device, palette);
+    let mesh_vertices = prepare_mesh(&vertices, &parts);
+    let mut renderer = renderer::Renderer::new(
+        device,
+        &mesh_vertices,
+        &indices,
+        RADIUS,
+        &metallic_roughness,
+    )?;
+    let mut legends = link3d::legends::Legends::default();
+    drop(mesh_vertices);
+    drop(vertices);
+    drop(indices);
+    drop(parts);
+    drop(metallic_roughness);
 
     logl::log_record(
         level::IMPORTANT,
         "link3d",
         format_args!(
-            "link3d: keyboard prepared once vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette controls=primary-drag-orbit,wheel-zoom,Home-reset"
+            "link3d: K70 mesh prepared once geometry-uploads=1 instance-bytes=64 vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads controls=primary-drag-orbit,wheel-zoom,Home-reset"
         ),
     );
     let mut orbit = OrbitCamera::new(RADIUS);
@@ -94,6 +112,9 @@ fn run() -> Result<(), Error> {
     let mut scene_radius = RADIUS;
     loop {
         let now = clock::monotonic_millis();
+        if legends.poll(&mut frame)? {
+            redraws_pending = redraws_pending.max(1);
+        }
         if now >= next_inventory_at {
             next_inventory_at = now.saturating_add(INVENTORY_INTERVAL_MS);
             let devices = hid::hid_hut_keyboards();
@@ -101,8 +122,8 @@ fn run() -> Result<(), Error> {
             let current = virtual_keyboards(&devices, &combos);
             let roster_changed = current != keyboards;
             if roster_changed {
-                let row = prepare_row(&vertices, &indices, &current, RADIUS);
-                renderer.replace(&row.vertices, &row.indices, row.origin_radius)?;
+                let row = prepare_row(&current, RADIUS);
+                renderer.update_instances(&row, &current)?;
                 scene_center = row.center;
                 scene_radius = row.radius;
                 orbit.set_scene(scene_center, scene_radius);
@@ -181,6 +202,7 @@ fn run() -> Result<(), Error> {
             let camera = orbit.retained(width, height, previous_view_projection);
             let point = renderer.render(queue, surface, camera)?;
             device.wait(queue, point.value)?;
+            legends.draw(&mut frame, &camera, width, height, keyboards.len(), RADIUS)?;
             loop {
                 match frame.publish(Damage::full(width, height)) {
                     Ok(()) => break,

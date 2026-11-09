@@ -164,7 +164,7 @@ mod tests {
                 [values[3], values[4], values[5]],
             )
         };
-        let mut orbit = OrbitCamera::new(3.3);
+        let mut orbit = OrbitCamera::new(20.0);
         for (dx, dy) in [(0, 0), (240, 0), (0, 140), (460, -280), (0, 260)] {
             orbit.orbit(dx, dy);
             let eye = orbit.camera().position;
@@ -184,11 +184,39 @@ mod tests {
                 }) {
                     continue;
                 }
+                // The beveled K70 export includes nearly collinear sliver
+                // triangles. Their winding can flip under f32 rounding; they
+                // have no stable raster area and cannot diagnose culling.
+                let ab: [f32; 3] = core::array::from_fn(|i| rows[1].0[i] - rows[0].0[i]);
+                let ac: [f32; 3] = core::array::from_fn(|i| rows[2].0[i] - rows[0].0[i]);
+                let cross = [
+                    ab[1] * ac[2] - ab[2] * ac[1],
+                    ab[2] * ac[0] - ab[0] * ac[2],
+                    ab[0] * ac[1] - ab[1] * ac[0],
+                ];
+                let area3 = libm::sqrtf(cross.iter().map(|v| v * v).sum());
+                let edge2 = ab
+                    .iter()
+                    .map(|v| v * v)
+                    .sum::<f32>()
+                    .max(ac.iter().map(|v| v * v).sum());
+                if area3 <= edge2 * 0.00001 {
+                    continue;
+                }
                 let center: [f32; 3] = core::array::from_fn(|axis| {
                     rows.iter().map(|(point, _)| point[axis]).sum::<f32>() / 3.0
                 });
                 let to_eye: [f32; 3] = core::array::from_fn(|axis| eye[axis] - center[axis]);
-                let facing: f32 = (0..3).map(|axis| rows[0].1[axis] * to_eye[axis]).sum();
+                assert!(
+                    (0..3)
+                        .map(|axis| cross[axis] * rows[0].1[axis])
+                        .sum::<f32>()
+                        > 0.0,
+                    "authored normal opposes a nondegenerate exterior triangle"
+                );
+                // Bevel/custom normals need not be exactly perpendicular to a
+                // flat triangle. Use its geometric normal for grazing views.
+                let facing: f32 = (0..3).map(|axis| cross[axis] * to_eye[axis] / area3).sum();
                 let eye_distance = libm::sqrtf(to_eye.iter().map(|v| v * v).sum());
                 if facing.abs() < eye_distance * 0.001 {
                     continue;
@@ -200,11 +228,14 @@ mod tests {
                     screen(camera, point)
                 });
                 let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+                if area.abs() < 0.001 {
+                    continue;
+                } // Below stable subpixel winding precision.
                 // The material renderer adjusts front-face selection for its
                 // positive viewport Y: original glTF fronts need area < 0.
                 assert!(
                     area * facing < 0.0,
-                    "culled exterior / retained interior at orbit {dx},{dy}"
+                    "culled exterior / retained interior at orbit {dx},{dy} area={area} facing={facing} rows={rows:?}"
                 );
                 if facing > 0.0 {
                     front += 1;
