@@ -2,13 +2,44 @@
 
 One shared K70 Mini GLB mesh, instanced once per virtual HID-HUT keyboard. Combo
 colors come from the shared input palette; the chassis is gray, metallic 0.5,
-roughness 0.4. Drag to orbit, scroll to zoom, Home to reset.
+roughness 0.4. Move the pointer for gentle tilt: horizontally up to eight degrees
+either way, vertically up to fifteen degrees with inverted pitch. Every cursor
+currently selecting this UI4 frame owns an equal share of both limits. Their
+clamped positions are averaged, including stationary selectors; opposite input
+cancels. Deselected cursors have no effect, and no selectors restores the neutral
+overview. Scroll to zoom, Home to reset zoom and cursor contributions.
+
+The UI4 frame opens centered at 75% of the desktop width and height.
+
+On its first nonempty inventory, the scene opens empty at the closest zoom.
+That limit is five outward wheel steps farther out than the original minimum;
+scrolling and the intro share this closest camera distance.
+After the existing font service finishes warming, a four-second intro zooms out
+with a smooth start and finish, keeping the zoom moving through the arrivals.
+The overview distance is 1.95 scene radii, 35% closer than the original three.
+Devices fly in from the right, taking turns among combo
+buckets. The entrance draws only unlit native lines: simple boxes around the
+keycaps, chassis and mouse/tablet placeholders, rather than a shaded mesh or a
+triangle wireframe. Once all devices land, the finished PBR scene crossfades in
+over 1.5 seconds using UI4's existing background-layer opacity. Labels appear
+with the completed scene. The normal foreground rendering path then resumes;
+the hidden background is idle between resizes and temporary line buffers are
+freed. Wheel zoom and shared pointer tilt remain available throughout; Home skips
+the entrance.
+Both UI4 layers publish an initial front (transparent for the background), so
+outline-only startup is visible. Every resize also publishes both replacements,
+even after the background becomes hidden. A ready background replacement waits
+for any foreground retry before accepting another animated update.
+Later inventory polls do not replay it. This addition requires only the Blueprint
+update, with no new kernel API or kernel deployment.
 
 Physical and virtual HID-HUT mice appear as palette-colored cuboids. Each is four
 regular key pitches wide and matches the GLB keyboard's height and front-to-back
 depth. A mouse sits to the right of the keyboard in its combo bucket; unpaired
 mice get their own rows. The camera frames both device types, including mouse-only
-scenes. The live roster, combo membership and colors refresh every three seconds.
+scenes. Row spacing is 1.1 keyboard radii, half the previous separation; device
+transforms, labels and pressed-key feedback share this spacing. The live roster,
+combo membership and colors refresh every three seconds.
 Tablets have their own slot after the mouse slot, use a quarter-height cuboid,
 and carry a `TABLET` label; mouse placeholders carry `MOUSE`. RDP's absolute
 pointer is a tablet and follows its actual HUT combo. Pointer movement does not
@@ -28,9 +59,9 @@ unassigned devices show `UNASSIGNED`. Captions face the viewer and reuse the sam
 kernel Microfont glyph textures as the key legends, with a light backing for
 readability. A paired keyboard and mouse share one caption.
 
-Cold styled Microfont rasterization owns Render0. Link3D publishes the 3D scene
-on Render1 while waiting for all glyph textures, then enables the overlay on
-Render0. Caption backings are also withheld until their glyphs are ready. Ordinary
+Cold styled Microfont rasterization owns Render0. The entrance waits in its
+empty frame until all glyph textures are ready before starting native lines on
+that lane. Caption backings are also withheld until their glyphs are ready. Ordinary
 overlay backpressure still reacquires and redraws a canceled frame; a busy final
 publication retries the same completed lease.
 
@@ -40,11 +71,15 @@ map's GLB hash and finds the corresponding key's top plane. A flat glyph quad si
 0.025 model units above it. All glyph cells start 0.05 units inside the red key
 highlight's top edge. Capitals are horizontally centered; numbers remain 0.4 units
 left of the key center. The glyph cell is 0.7 model units high, with Microfont's
-6:11 aspect. Other keys remain blank.
+6:11 aspect. The control keys additionally show `TAB`, `CAPS`, both `SHIFT` and
+`STRG` keys, `ALT`, `ALTGR`, `FN` and `ENTER`. Words are horizontally centered,
+share the capitals' top alignment, and shrink proportionally when needed to fit
+the key top. Enter uses the full-width upper section of its ISO shape. Other
+keys remain blank.
 
 Glyph coverage comes from the kernel's existing shared Microfont alpha atlas,
 through the font-sprite request/status facade. Each of the 36 transparent black
-glyph textures is requested once and reused across all boards. Each texture stays
+glyph textures is requested once and reused across all boards and control words. Each texture stays
 35×64 pixels, with 1.5 extra source pixels of native stroke width. Styled R8 masks
 are cached by the kernel font service; original UI font tiles retain their style.
 Cold variants are prepared on the blocking font worker, outside the frame lease.

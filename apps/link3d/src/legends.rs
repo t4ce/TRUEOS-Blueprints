@@ -1,5 +1,5 @@
 extern crate alloc;
-use crate::scene::{BucketCaption, CaptionKind};
+use crate::scene::{BucketCaption, CaptionKind, row_spacing};
 use alloc::{format, string::String, vec::Vec};
 use trueos::{
     ui4_scene::{
@@ -23,8 +23,17 @@ pub struct Key {
     pub center: [f32; 3],
     pub normal: [f32; 3],
 }
+#[derive(Clone, Copy, Debug)]
+pub struct WordLegend {
+    pub text: &'static str,
+    pub mesh: usize,
+    pub center: [f32; 3],
+    pub normal: [f32; 3],
+    pub width: f32,
+}
 include!(concat!(env!("OUT_DIR"), "/keyboard.legends.rs"));
 include!(concat!(env!("OUT_DIR"), "/keyboard.keys.rs"));
+include!(concat!(env!("OUT_DIR"), "/keyboard.words.rs"));
 
 pub const TEXTURE_HEIGHT: f32 = 64.0;
 pub const EXTRA_STROKE_PX: f32 = 1.5;
@@ -45,6 +54,10 @@ impl Default for Legends {
     }
 }
 impl Legends {
+    pub fn ready(&self) -> bool {
+        self.glyphs.iter().all(|(_, sprite)| sprite.is_some())
+    }
+
     /// Poll outside the writable UI4 lease. Never hold up input or the first mesh frame.
     pub fn poll(&mut self, frame: &mut Frame) -> Result<bool, Error> {
         let mut changed = false;
@@ -112,7 +125,7 @@ impl Legends {
         // particular, caption backings must not start a Render0 sprite pass
         // while their missing glyphs are still being rasterized there.
         // The keyboard can already render/publish independently on Render1.
-        if self.glyphs.iter().any(|(_, sprite)| sprite.is_none()) {
+        if !self.ready() {
             return Vec::new();
         }
         let mut quads = Vec::with_capacity(boards * LEGENDS.len());
@@ -133,7 +146,7 @@ impl Legends {
                         camera,
                         width,
                         height,
-                        board as f32 * radius * 2.2,
+                        board as f32 * row_spacing(radius),
                         [size; 2],
                     ) else {
                         continue;
@@ -156,9 +169,13 @@ impl Legends {
                 continue;
             };
             for board in 0..boards {
-                if let Some(corners) =
-                    project_quad(legend, camera, width, height, board as f32 * radius * 2.2)
-                {
+                if let Some(corners) = project_quad(
+                    legend,
+                    camera,
+                    width,
+                    height,
+                    board as f32 * row_spacing(radius),
+                ) {
                     quads.push(SpriteQuad {
                         sprite_id: sprite,
                         c0: corners[0],
@@ -169,6 +186,31 @@ impl Legends {
                         color_rgba: ui4_scene::rgba(255, 255, 255, 255),
                         source_over: true,
                     });
+                }
+                for word in WORD_LEGENDS {
+                    for (index, scalar) in word.text.chars().enumerate() {
+                        if scalar != legend.scalar {
+                            continue;
+                        }
+                        if let Some(corners) = project_word_quad(
+                            word,
+                            index,
+                            camera,
+                            width,
+                            height,
+                            board as f32 * row_spacing(radius),
+                        ) {
+                            quads.push(SpriteQuad {
+                                sprite_id: sprite,
+                                c0: corners[0],
+                                c1: corners[1],
+                                c2: corners[2],
+                                c3: corners[3],
+                                color_rgba: ui4_scene::rgba(255, 255, 255, 255),
+                                source_over: true,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -305,6 +347,34 @@ pub fn project_quad(
     )
 }
 
+fn project_word_quad(
+    word: &WordLegend,
+    index: usize,
+    camera: &RetainedCamera,
+    width: u32,
+    height: u32,
+    board_z: f32,
+) -> Option<[SpriteCorner; 4]> {
+    let count = word.text.len() as f32;
+    let glyph_height = GLYPH_HEIGHT.min(word.width / (count * 6. / 11.));
+    let cell = glyph_height * 6. / 11.;
+    let x = (index as f32 + 0.5 - count * 0.5) * cell;
+    let z = -KEY_HIGHLIGHT_INNER_SIZE * 0.5 + glyph_height * 0.5 + GLYPH_TOP_INSET;
+    let mut center = word.center;
+    center[0] += x;
+    center[1] -= (word.normal[0] * x + word.normal[2] * z) / word.normal[1];
+    center[2] += z;
+    project_plane(
+        center,
+        word.normal,
+        camera,
+        width,
+        height,
+        board_z,
+        [cell, glyph_height],
+    )
+}
+
 fn project_plane(
     mut center: [f32; 3],
     normal: [f32; 3],
@@ -367,6 +437,83 @@ fn project_plane(
 mod tests {
     use super::*;
     use crate::OrbitCamera;
+
+    #[test]
+    fn control_words_follow_the_audited_keys_including_both_sides_and_fn() {
+        assert_eq!(WORD_LEGENDS.len(), 10);
+        for (usage, text) in [
+            (Some(0x2b), "TAB"),
+            (Some(0x39), "CAPS"),
+            (Some(0xe1), "SHIFT"),
+            (Some(0xe5), "SHIFT"),
+            (Some(0xe0), "STRG"),
+            (Some(0xe4), "STRG"),
+            (Some(0xe2), "ALT"),
+            (Some(0xe6), "ALTGR"),
+            (Some(0x28), "ENTER"),
+            (None, "FN"),
+        ] {
+            let key = KEYS.iter().find(|key| key.usage == usage).unwrap();
+            let word = WORD_LEGENDS
+                .iter()
+                .find(|word| word.mesh == key.mesh)
+                .unwrap();
+            assert_eq!(word.text, text);
+            assert!(word.width > 1.3);
+            assert!(
+                word.text
+                    .chars()
+                    .all(|scalar| LEGENDS.iter().any(|l| l.scalar == scalar))
+            );
+        }
+        let enter = WORD_LEGENDS.iter().find(|w| w.text == "ENTER").unwrap();
+        let tab = WORD_LEGENDS.iter().find(|w| w.text == "TAB").unwrap();
+        assert_eq!(enter.center[2], tab.center[2]);
+        assert!(enter.width > GLYPH_HEIGHT * 6. / 11. * 5.);
+        let mut legends = Legends::default();
+        for (index, glyph) in legends.glyphs.iter_mut().enumerate() {
+            glyph.1 = Some(index as u32 + 100);
+        }
+        let mut orbit = OrbitCamera::new(20.);
+        orbit.set_scene(
+            [0., 0., row_spacing(20.) * 0.5],
+            20. + row_spacing(20.) * 0.5,
+        );
+        let camera = orbit.retained(800, 600, [0.; 16]);
+        let feedback = crate::feedback::Feedback::default();
+        let quads = legends.overlay_quads(&camera, 800, 600, 2, 20., &feedback, &[]);
+        assert_eq!(
+            quads.len(),
+            (LEGENDS.len() + WORD_LEGENDS.iter().map(|w| w.text.len()).sum::<usize>()) * 2
+        );
+        assert_eq!(legends.glyphs.len(), 36); // Words reuse the resident alphabet.
+    }
+
+    #[test]
+    fn control_words_stay_centered_fit_the_top_and_preserve_texture_aspect() {
+        let mut camera = RetainedCamera::default();
+        camera.position_near = [0., 10., 0., 0.01];
+        camera.view_projection[0] = 0.01;
+        camera.view_projection[9] = -0.01;
+        camera.view_projection[14] = 0.5;
+        camera.view_projection[15] = 1.;
+        for word in WORD_LEGENDS {
+            let first = project_word_quad(word, 0, &camera, 800, 800, 0.).unwrap();
+            let last = project_word_quad(word, word.text.len() - 1, &camera, 800, 800, 0.).unwrap();
+            let center_x = (word.center[0] * 0.01 + 1.) * 400.;
+            assert!(((first[0].x + last[2].x) * 0.5 - center_x).abs() < 1e-4);
+            assert!(last[2].x - first[0].x <= word.width * 4. + 1e-4);
+            let top_y = (1. + (word.center[2] - 0.62) * 0.01) * 400.;
+            assert!((first[0].y - top_y).abs() < 1e-4);
+            let width = first[1].x - first[0].x;
+            let height = first[3].y - first[0].y;
+            assert!((width / height - 6. / 11.).abs() < 1e-4);
+            assert_eq!(
+                (first[0].u, first[0].v, first[2].u, first[2].v),
+                (0., 0., 1., 1.)
+            );
+        }
+    }
 
     #[test]
     fn cold_and_partial_font_readiness_cannot_submit_caption_backings() {

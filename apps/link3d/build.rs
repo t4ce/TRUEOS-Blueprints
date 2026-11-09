@@ -16,7 +16,8 @@ struct Geometry {
     parts: Vec<u8>,
     indices: Vec<u8>,
     radius_squared: f32,
-    key_tops: Vec<(usize, [f32; 3], [f32; 3])>,
+    outline_boxes: Vec<[[f32; 3]; 2]>,
+    key_tops: Vec<(usize, [f32; 3], [f32; 3], [f32; 4])>,
 }
 
 fn main() {
@@ -72,6 +73,14 @@ fn main() {
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     prepare_legends(&source, &bytes, &geometry, &out);
+    fs::write(
+        out.join("keyboard.outlines.rs"),
+        format!(
+            "pub const KEYBOARD_BOXES: &[[[f32; 3]; 2]] = &{:?};\n",
+            geometry.outline_boxes
+        ),
+    )
+    .expect("write lightweight intro outlines");
     fs::write(out.join("keyboard.vertices.bin"), geometry.vertices)
         .expect("write keyboard vertices");
     fs::write(out.join("keyboard.indices.bin"), geometry.indices).expect("write keyboard indices");
@@ -181,6 +190,18 @@ fn append_node(node: gltf::Node<'_>, parent: Matrix, bin: &[u8], geometry: &mut 
                 );
             }
         }
+        // Deliberately simple intro wire boxes, prepared once per model part.
+        // No triangle wireframe, extra PBR geometry, or runtime GLB traversal.
+        let mut outline_min = [f32::INFINITY; 3];
+        let mut outline_max = [f32::NEG_INFINITY; 3];
+        for vertex in geometry.vertices[first_vertex * 24..].chunks_exact(24) {
+            for axis in 0..3 {
+                let value = f32::from_le_bytes(vertex[axis * 4..axis * 4 + 4].try_into().unwrap());
+                outline_min[axis] = outline_min[axis].min(value);
+                outline_max[axis] = outline_max[axis].max(value);
+            }
+        }
+        geometry.outline_boxes.push([outline_min, outline_max]);
         if mesh.index() != 29 {
             // Intersect the vertical ray at the key's XZ centre with its actual
             // top triangles. The label plane follows this key's sculpt/tilt.
@@ -234,7 +255,38 @@ fn append_node(node: gltf::Node<'_>, parent: Matrix, bin: &[u8], geometry: &mut 
                 }
             }
             let (center, normal) = top.expect("key top at its centre");
-            geometry.key_tops.push((mesh.index(), center, normal));
+            // Use the upward-facing top rather than the wider beveled base.
+            // Sculpted tops contain several slightly different face planes.
+            // For ISO Enter, these bounds retain the full upper section width.
+            let mut bounds = [
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+            ];
+            for triangle in geometry.indices[first_index * 4..].chunks_exact(12) {
+                let points: [[f32; 3]; 3] = std::array::from_fn(|corner| {
+                    let i = u32::from_le_bytes(
+                        triangle[corner * 4..corner * 4 + 4].try_into().unwrap(),
+                    ) as usize;
+                    std::array::from_fn(|axis| value(i, axis))
+                });
+                let a = std::array::from_fn(|axis| points[1][axis] - points[0][axis]);
+                let b = std::array::from_fn(|axis| points[2][axis] - points[0][axis]);
+                let face = cross(a, b);
+                if dot(normal, face) > dot(face, face).sqrt() * 0.9 {
+                    for point in points {
+                        bounds[0] = bounds[0].min(point[0]);
+                        bounds[1] = bounds[1].max(point[0]);
+                        bounds[2] = bounds[2].min(point[2]);
+                        bounds[3] = bounds[3].max(point[2]);
+                    }
+                }
+            }
+            assert!(bounds.iter().all(|v| v.is_finite()), "flat key top bounds");
+            geometry
+                .key_tops
+                .push((mesh.index(), center, normal, bounds));
         }
     }
     for child in node.children() {
@@ -259,14 +311,16 @@ fn prepare_legends(
     );
     let mut legends = String::from("pub const LEGENDS: &[Legend] = &[\n");
     let mut keys = String::from("pub const KEYS: &[Key] = &[\n");
+    let mut words = String::from("pub const WORD_LEGENDS: &[WordLegend] = &[\n");
+    let mut word_count = 0;
     let mut usages = std::collections::BTreeSet::new();
     let mut scalars = std::collections::BTreeSet::new();
     for key in map["keys"].as_array().unwrap() {
         let mesh = key["mesh"].as_u64().unwrap() as usize;
-        let (_, center, normal) = geometry
+        let (_, center, normal, bounds) = geometry
             .key_tops
             .iter()
-            .find(|(id, _, _)| *id == mesh)
+            .find(|(id, _, _, _)| *id == mesh)
             .unwrap();
         let usage = key["press"]["scan"].as_u64().map(|scan| {
             assert_eq!(
@@ -282,6 +336,37 @@ fn prepare_legends(
             "Key {{ usage: {usage:?}, mesh: {mesh}, center: {center:?}, normal: {normal:?} }},\n"
         ));
         let label = key["press"]["label"].as_str().unwrap();
+        let word = match usage {
+            Some(0x2b) => Some("TAB"),
+            Some(0x39) => Some("CAPS"),
+            Some(0xe1 | 0xe5) => Some("SHIFT"),
+            Some(0xe0 | 0xe4) => Some("STRG"),
+            Some(0xe2) => Some("ALT"),
+            Some(0xe6) => Some("ALTGR"),
+            Some(0x28) => Some("ENTER"),
+            None if label == "Fn" => Some("FN"),
+            _ => None,
+        };
+        if let Some(word) = word {
+            let mut anchor = *center;
+            anchor[0] = (bounds[0] + bounds[1]) * 0.5;
+            if word == "ENTER" {
+                // Keep the legend on the full-width upper row of the L shape.
+                anchor[2] = geometry
+                    .key_tops
+                    .iter()
+                    .find(|(id, _, _, _)| *id == 17)
+                    .unwrap()
+                    .1[2];
+            }
+            anchor[1] -= (normal[0] * (anchor[0] - center[0])
+                + normal[2] * (anchor[2] - center[2]))
+                / normal[1];
+            let width = bounds[1] - bounds[0] - 0.2;
+            assert!(width > 0.);
+            words.push_str(&format!("WordLegend {{ text: {word:?}, mesh: {mesh}, center: {anchor:?}, normal: {normal:?}, width: {width:?} }},\n"));
+            word_count += 1;
+        }
         let mut chars = label.chars();
         let Some(ch) = chars.next() else {
             continue;
@@ -292,10 +377,10 @@ fn prepare_legends(
         let ch = ch.to_ascii_uppercase();
         assert!(scalars.insert(ch), "duplicate alphanumeric key");
         let mesh = key["mesh"].as_u64().unwrap() as usize;
-        let (_, center, normal) = geometry
+        let (_, center, normal, _) = geometry
             .key_tops
             .iter()
-            .find(|(id, _, _)| *id == mesh)
+            .find(|(id, _, _, _)| *id == mesh)
             .unwrap();
         assert!(normal[1] > 0.8);
         legends.push_str(&format!(
@@ -308,6 +393,12 @@ fn prepare_legends(
     assert_eq!(usages.len(), 61, "61 input keys plus hardware-local Fn");
     keys.push_str("];\n");
     fs::write(out.join("keyboard.keys.rs"), keys).unwrap();
+    assert_eq!(
+        word_count, 10,
+        "requested control-key legends including both Shift/Ctrl keys"
+    );
+    words.push_str("];\n");
+    fs::write(out.join("keyboard.words.rs"), words).unwrap();
 }
 
 fn multiply(left: Matrix, right: Matrix) -> Matrix {

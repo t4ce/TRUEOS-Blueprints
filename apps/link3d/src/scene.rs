@@ -10,6 +10,11 @@ pub const MAX_INSTANCES: usize = MAX_KEYBOARDS + MAX_MICE + MAX_TABLETS;
 const PALETTE_WIDTH: usize = 256;
 const PALETTE_HEIGHT: usize = 2;
 
+/// Shared by device transforms, captions, key legends and pressed-key patches.
+pub fn row_spacing(radius: f32) -> f32 {
+    radius * 1.1
+}
+
 /// Prepare a single immutable PBR mesh. U comes from the GPU's compacted
 /// original instance index; V selects the key or chassis material row.
 pub fn prepare_mesh(source_vertices: &[u8], source_parts: &[u8]) -> Vec<u8> {
@@ -63,6 +68,12 @@ pub struct MouseShape {
     half_size: [f32; 3],
     radius: f32,
     keyboard_caption: [f32; 3],
+}
+
+impl MouseShape {
+    pub fn half_size(&self) -> [f32; 3] {
+        self.half_size
+    }
 }
 
 pub fn prepare_geometry(source: &[u8], parts: &[u8], indices: &[u8]) -> SceneGeometry {
@@ -190,7 +201,7 @@ pub enum CaptionKind {
 /// No vertex or index data is duplicated for additional keyboards.
 pub fn prepare_row(keyboards: &[Keyboard], radius: f32) -> RowInstances {
     assert!(keyboards.len() <= MAX_KEYBOARDS);
-    let spacing = radius * 2.2;
+    let spacing = row_spacing(radius);
     let span = keyboards.len().saturating_sub(1) as f32 * spacing;
     let mut row = RowInstances {
         seeds: Vec::with_capacity(keyboards.len() * 64),
@@ -228,7 +239,7 @@ pub fn prepare_scene(
     for (index, keyboard) in keyboards.iter().enumerate() {
         if keyboard.combo_id == 0 || !row.captions.iter().any(|c| c.combo_id == keyboard.combo_id) {
             let mut center = mouse.keyboard_caption;
-            center[2] += index as f32 * radius * 2.2;
+            center[2] += index as f32 * row_spacing(radius);
             row.captions.push(BucketCaption {
                 combo_id: keyboard.combo_id,
                 center,
@@ -240,7 +251,7 @@ pub fn prepare_scene(
     let mut next_row = keyboards.len();
     let mut bounds = Vec::with_capacity(keyboards.len() + mice.len() + tablets.len());
     for index in 0..keyboards.len() {
-        bounds.push(([0., 0., index as f32 * radius * 2.2], radius));
+        bounds.push(([0., 0., index as f32 * row_spacing(radius)], radius));
     }
     for (index, device) in mice.iter().enumerate() {
         let paired = keyboards.iter().enumerate().position(|(i, keyboard)| {
@@ -257,7 +268,7 @@ pub fn prepare_scene(
         let [x, y, z] = [
             mouse.center[0],
             mouse.center[1],
-            mouse.center[2] + slot as f32 * radius * 2.2,
+            mouse.center[2] + slot as f32 * row_spacing(radius),
         ];
         for value in [x, y, z, 1., 1., 1., 0., 0., 0., 1., mouse.radius, x, y, z] {
             row.seeds.extend_from_slice(&value.to_le_bytes());
@@ -275,7 +286,7 @@ pub fn prepare_scene(
         {
             let mut center = mouse.keyboard_caption;
             center[0] = x;
-            center[2] += slot as f32 * radius * 2.2;
+            center[2] += slot as f32 * row_spacing(radius);
             row.captions.push(BucketCaption {
                 combo_id: device.combo_id,
                 center,
@@ -299,7 +310,7 @@ pub fn prepare_scene(
         });
         let x = mouse.center[0] + mouse.half_size[0] * 2.5;
         let y = mouse.center[1] - mouse.half_size[1] * 0.75;
-        let z = mouse.center[2] + slot as f32 * radius * 2.2;
+        let z = mouse.center[2] + slot as f32 * row_spacing(radius);
         for value in [x, y, z, 1., 0.25, 1., 0., 0., 0., 1., mouse.radius, x, y, z] {
             row.seeds.extend_from_slice(&value.to_le_bytes());
         }
@@ -316,7 +327,7 @@ pub fn prepare_scene(
         {
             let mut center = mouse.keyboard_caption;
             center[0] = x;
-            center[2] += slot as f32 * radius * 2.2;
+            center[2] += slot as f32 * row_spacing(radius);
             row.captions.push(BucketCaption {
                 combo_id: device.combo_id,
                 center,
@@ -592,13 +603,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2, 0]
         );
-        assert!((row.captions[1].center[2] - row.captions[0].center[2] - 44.).abs() < 1e-5);
+        assert!((row.captions[1].center[2] - row.captions[0].center[2] - 22.).abs() < 1e-5);
         assert_eq!(&row.seeds[..128], &prepare_row(&keyboards, 20.).seeds);
         let colors = palette_bmp(&keyboards, &mice, &[]);
         for (index, slot) in [1, 0, 2, 3].into_iter().enumerate() {
             let seed = &row.seeds[(2 + index) * 64..][..64];
             assert!(
-                (read_f32(seed, 8) - geometry.mouse.center[2] - slot as f32 * 44.).abs() < 1e-5
+                (read_f32(seed, 8) - geometry.mouse.center[2] - slot as f32 * 22.).abs() < 1e-5
             );
             assert_eq!(u32::from_le_bytes(seed[56..60].try_into().unwrap()), 1);
             assert_eq!(
@@ -685,7 +696,7 @@ mod tests {
             assert_eq!(row.seeds.len(), count as usize * 64);
             assert_eq!(row.count, count as u32);
             for (index, seed) in row.seeds.chunks_exact(64).enumerate() {
-                let z = index as f32 * 44.0;
+                let z = index as f32 * 22.0;
                 assert_eq!(read_f32(seed, 8), z);
                 assert_eq!(read_f32(seed, 52), z);
                 assert_eq!(read_f32(seed, 40), 20.0);

@@ -1,6 +1,14 @@
 use trueos_picasso::cam::{Camera, Projection, Quaternion};
 
-/// An orbit around the scene target, using Picasso's camera convention.
+// Previous closest distance (0.15 radii), moved outward by five wheel ticks:
+// 0.15 * exp(5 * 0.12). Shared by wheel clamping, reframing and the intro.
+const MIN_DISTANCE_RADIUS: f32 = 0.27331782;
+
+const BASE_ELEVATION: f32 = 70.0 * core::f32::consts::PI / 180.0;
+const HORIZONTAL_TILT: f32 = 8.0 * core::f32::consts::PI / 180.0;
+const VERTICAL_TILT: f32 = 15.0 * core::f32::consts::PI / 180.0;
+
+/// A bounded hover tilt around the scene target, using Picasso's camera.
 pub struct OrbitCamera {
     yaw: f32,
     elevation: f32,
@@ -17,9 +25,9 @@ impl OrbitCamera {
             1.0
         };
         Self {
-            yaw: core::f32::consts::PI / 3.0,
-            elevation: core::f32::consts::FRAC_PI_4,
-            distance: radius * 3.0,
+            yaw: 0.0,
+            elevation: BASE_ELEVATION,
+            distance: radius * 1.95,
             radius,
             target: [0.0; 3],
         }
@@ -32,8 +40,8 @@ impl OrbitCamera {
         } else {
             1.0
         };
-        self.distance =
-            (self.distance * (radius / self.radius)).clamp(radius * 0.15, radius * 20.0);
+        self.distance = (self.distance * (radius / self.radius))
+            .clamp(radius * MIN_DISTANCE_RADIUS, radius * 20.0);
         self.radius = radius;
         self.target = target;
     }
@@ -67,7 +75,38 @@ impl OrbitCamera {
             .retained(width, height, previous_view_projection)
     }
 
-    pub fn orbit(&mut self, dx: i32, dy: i32) {
+    /// Animate only the view distance; wheel input still adjusts the destination.
+    pub fn retained_intro(
+        &self,
+        width: u32,
+        height: u32,
+        previous: [f32; 16],
+        progress: f32,
+    ) -> trueos::vgpu::RetainedCamera {
+        let mut camera = self.camera();
+        let distance = self.radius * MIN_DISTANCE_RADIUS
+            + (self.distance - self.radius * MIN_DISTANCE_RADIUS) * progress.clamp(0., 1.);
+        for axis in 0..3 {
+            camera.position[axis] = self.target[axis]
+                + (camera.position[axis] - self.target[axis]) * distance / self.distance;
+        }
+        camera.retained(width, height, previous)
+    }
+
+    /// Normalized, equally shared cursor input gives bounded absolute tilt.
+    /// Downward input lowers elevation (the inverse of the former drag pitch).
+    pub fn hover_tilt(&mut self, position: [f32; 2]) -> bool {
+        let yaw = -position[0].clamp(-1.0, 1.0) * HORIZONTAL_TILT;
+        let elevation = BASE_ELEVATION - position[1].clamp(-1.0, 1.0) * VERTICAL_TILT;
+        let changed = self.yaw != yaw || self.elevation != elevation;
+        self.yaw = yaw;
+        self.elevation = elevation;
+        changed
+    }
+
+    // Retain broad camera angles only for the GLB winding/projection tests.
+    #[cfg(test)]
+    fn orbit(&mut self, dx: i32, dy: i32) {
         const SENSITIVITY: f32 = 0.006;
         const MAX_ELEVATION: f32 = core::f32::consts::FRAC_PI_2 - 0.02;
         self.yaw = libm::fmodf(self.yaw - dx as f32 * SENSITIVITY, core::f32::consts::TAU);
@@ -78,7 +117,7 @@ impl OrbitCamera {
     /// Positive wheel ticks move closer without changing the field of view.
     pub fn zoom(&mut self, wheel: i16) {
         self.distance = (self.distance * libm::expf(-(wheel as f32) * 0.12))
-            .clamp(self.radius * 0.15, self.radius * 20.0);
+            .clamp(self.radius * MIN_DISTANCE_RADIUS, self.radius * 20.0);
     }
 }
 
@@ -136,18 +175,44 @@ mod tests {
     }
 
     #[test]
-    fn retained_orbit_drags_near_side_with_pointer() {
+    fn hover_tilt_is_bounded_reversible_and_does_not_accumulate() {
         let mut orbit = OrbitCamera::new(2.0);
-        let near_side = orbit.camera().position.map(|value| value / 6.0);
-        let before = screen(orbit.retained(800, 600, [0.0; 16]), near_side);
-        orbit.orbit(32, 0);
-        let right = screen(orbit.retained(800, 600, [0.0; 16]), near_side);
-        assert!(right[0] > before[0]);
+        let initial = orbit.camera();
+        assert!(!orbit.hover_tilt([0., 0.]));
+        assert!(orbit.hover_tilt([-1., 0.]));
+        let left = orbit.camera();
+        assert!(left.position[0] > initial.position[0]);
+        assert!(!orbit.hover_tilt([-100., 0.]));
+        assert!(orbit.hover_tilt([1., 0.]));
+        let right = orbit.camera();
+        assert!(right.position[0] < initial.position[0]);
+        for _ in 0..1000 {
+            assert!(!orbit.hover_tilt([100., 0.]));
+        }
+        assert_eq!(orbit.camera().rotation, right.rotation);
+        assert!(orbit.yaw.abs() <= 8.0 * core::f32::consts::PI / 180.0);
+        assert!(orbit.hover_tilt([0., 0.]));
+        assert_eq!(orbit.camera().rotation, initial.rotation);
+        assert_eq!(orbit.elevation, 70.0 * core::f32::consts::PI / 180.0);
+        assert!((distance(orbit.camera()) - distance(initial)).abs() < 1e-5);
+        assert_aims_at_origin(orbit.camera());
+    }
 
-        let mut orbit = OrbitCamera::new(2.0);
-        orbit.orbit(0, 32);
-        let down = screen(orbit.retained(800, 600, [0.0; 16]), near_side);
-        assert!(down[1] > before[1]);
+    #[test]
+    fn vertical_hover_is_inverted_limited_and_preserves_zoom_and_target() {
+        let mut orbit = OrbitCamera::new(2.);
+        orbit.zoom(2);
+        let distance_before = distance(orbit.camera());
+        assert!(orbit.hover_tilt([0., -1.]));
+        assert!((orbit.elevation - 85. * core::f32::consts::PI / 180.).abs() < 1e-6);
+        assert!(!orbit.hover_tilt([0., -100.]));
+        assert!(orbit.hover_tilt([0., 1.]));
+        assert!((orbit.elevation - 55. * core::f32::consts::PI / 180.).abs() < 1e-6);
+        assert!(!orbit.hover_tilt([0., 100.]));
+        assert!((distance(orbit.camera()) - distance_before).abs() < 1e-5);
+        assert_aims_at_origin(orbit.camera());
+        assert!(orbit.hover_tilt([0., 0.]));
+        assert_eq!(orbit.elevation, BASE_ELEVATION);
     }
 
     #[test]
@@ -256,8 +321,32 @@ mod tests {
             orbit.orbit(dx, dy);
             let camera = orbit.camera();
             assert_aims_at_origin(camera);
-            assert!((distance(camera) - 9.6).abs() < 0.000_01);
+            assert!((distance(camera) - 6.24).abs() < 0.000_01);
         }
+    }
+
+    #[test]
+    fn intro_starts_at_near_limit_and_finishes_at_user_zoom_without_changing_it() {
+        let mut orbit = OrbitCamera::new(2.);
+        orbit.set_scene([3., 0., 7.], 8.);
+        orbit.hover_tilt([0.3, -0.4]);
+        orbit.zoom(2);
+        let ordinary = orbit.retained(800, 600, [0.; 16]);
+        let near = orbit.retained_intro(800, 600, [0.; 16], 0.);
+        let offset: [f32; 3] = core::array::from_fn(|i| near.position_near[i] - orbit.target[i]);
+        assert!(
+            (libm::sqrtf(offset.iter().map(|v| v * v).sum()) - 8. * 0.15 * libm::expf(5. * 0.12))
+                .abs()
+                < 1e-5
+        );
+        let finish = orbit.retained_intro(800, 600, [0.; 16], 1.);
+        for (a, b) in finish.view_projection.iter().zip(ordinary.view_projection) {
+            assert!((a - b).abs() < 1e-5);
+        }
+        assert_eq!(
+            orbit.retained(800, 600, [0.; 16]).view_projection,
+            ordinary.view_projection
+        );
     }
 
     #[test]
@@ -267,7 +356,7 @@ mod tests {
         orbit.zoom(1);
         assert!(distance(orbit.camera()) < distance(initial));
         orbit.zoom(i16::MAX);
-        assert!((distance(orbit.camera()) - 0.3).abs() < 0.000_01);
+        assert!((distance(orbit.camera()) - 0.3 * libm::expf(5. * 0.12)).abs() < 0.000_01);
         orbit.zoom(i16::MIN);
         let far = orbit.camera();
         assert!((distance(far) - 40.0).abs() < 0.000_01);

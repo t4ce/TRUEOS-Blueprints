@@ -238,3 +238,106 @@ fn upload(device: Device, bytes: &[u8], usage: u32) -> Result<Buffer, i32> {
         }
     }
 }
+
+/// Temporary, unlit native LINE_LIST pass. Released when the entrance finishes.
+/// This uploads only clipped line positions, never another copy of the GLB.
+pub struct OutlineRenderer {
+    device: Device,
+    shader: vgpu::ShaderModule,
+    pipeline: vgpu::RenderPipeline,
+    vertices: Buffer,
+    indices: Buffer,
+}
+impl OutlineRenderer {
+    pub fn new(device: Device) -> Result<Self, i32> {
+        let count =
+            (MAX_KEYBOARDS * link3d::intro::KEYBOARD_BOXES.len() + MAX_MICE + MAX_TABLETS) * 24;
+        let shader = device
+            .create_shader_module(vgpu::SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64)?;
+        let pipeline = match device.create_render_pipeline(shader, 12, 0) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = device.destroy_shader_module(shader);
+                return Err(error);
+            }
+        };
+        let vertices = match device.create_buffer(
+            count * 12,
+            vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_MAP_WRITE,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = device.destroy_render_pipeline(pipeline);
+                let _ = device.destroy_shader_module(shader);
+                return Err(error);
+            }
+        };
+        let indices: alloc::vec::Vec<u8> = (0..count as u32).flat_map(u32::to_le_bytes).collect();
+        let indices = match upload(device, &indices, vgpu::BUFFER_USAGE_INDEX) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = device.destroy_buffer(vertices);
+                let _ = device.destroy_render_pipeline(pipeline);
+                let _ = device.destroy_shader_module(shader);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            device,
+            shader,
+            pipeline,
+            vertices,
+            indices,
+        })
+    }
+    pub fn render(
+        &self,
+        queue: Queue,
+        surface: Ui4Surface,
+        vertices: &[u8],
+        draws: &[link3d::intro::LineDraw],
+    ) -> Result<TimelinePoint, i32> {
+        if vertices.is_empty() {
+            return self.device.submit_ui4_clear(queue, surface, CLEAR);
+        }
+        if draws.len() > MAX_INSTANCES {
+            return Err(vgpu::ERR_UNSUPPORTED);
+        }
+        if self.device.write_buffer(self.vertices, 0, vertices)? != vertices.len() {
+            return Err(vgpu::ERR_IO);
+        }
+        let mut batch = vgpu::IndexedDrawBatchV2 {
+            clear_rgba8_srgb: CLEAR,
+            draw_count: draws.len() as u32,
+            ..vgpu::IndexedDrawBatchV2::default()
+        };
+        for (target, source) in batch.draws.iter_mut().zip(draws) {
+            *target = vgpu::IndexedBatchDrawV2 {
+                // Each range uses local sequential indices. A base vertex
+                // avoids copying preceding devices into every native line mesh.
+                base_vertex: source.first as i32,
+                first_index: 0,
+                index_count: source.count,
+                rgba8_srgb: u32::from_le_bytes(source.color),
+                topology: vgpu::PRIMITIVE_TOPOLOGY_LINE_LIST,
+                ..vgpu::IndexedBatchDrawV2::default()
+            };
+        }
+        self.device.submit_ui4_indexed_batch_v2(
+            queue,
+            surface,
+            self.pipeline,
+            self.vertices,
+            self.indices,
+            batch,
+        )
+    }
+}
+impl Drop for OutlineRenderer {
+    fn drop(&mut self) {
+        let _ = self.device.destroy_buffer(self.vertices);
+        let _ = self.device.destroy_buffer(self.indices);
+        let _ = self.device.destroy_render_pipeline(self.pipeline);
+        let _ = self.device.destroy_shader_module(self.shader);
+    }
+}
