@@ -8,8 +8,8 @@ use alloc::vec::Vec;
 use core::fmt;
 use link3d::{
     OrbitCamera,
-    roster::virtual_keyboards,
-    scene::{metallic_roughness_bmp, prepare_mesh, prepare_row},
+    roster::{self, virtual_keyboards},
+    scene::{metallic_roughness_bmp, prepare_geometry, prepare_scene},
 };
 use trueos::{
     clock, hid, input,
@@ -82,17 +82,13 @@ fn run() -> Result<(), Error> {
     frame.set_primary_activation(true)?;
     let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
     let queue = device.create_queue(QueueClass::Render)?;
-    let mesh_vertices = prepare_mesh(&vertices, &parts);
-    let mut renderer = renderer::Renderer::new(
-        device,
-        &mesh_vertices,
-        &indices,
-        RADIUS,
-        &metallic_roughness,
-    )?;
+    let geometry = prepare_geometry(&vertices, &parts, &indices);
+    let mut renderer = renderer::Renderer::new(device, &geometry, RADIUS, &metallic_roughness)?;
     let mut legends = link3d::legends::Legends::default();
     let mut feedback = link3d::feedback::Feedback::default();
-    drop(mesh_vertices);
+    let mouse_shape = geometry.mouse;
+    drop(geometry.vertices);
+    drop(geometry.indices);
     drop(vertices);
     drop(indices);
     drop(parts);
@@ -102,7 +98,7 @@ fn run() -> Result<(), Error> {
         level::IMPORTANT,
         "link3d",
         format_args!(
-            "link3d: K70 mesh prepared once geometry-uploads=1 instance-bytes=64 vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads feedback=ui4-routed-physical-hid,red-key-top controls=primary-drag-orbit,wheel-zoom,Home-reset"
+            "link3d: K70 and mouse cuboid prepared once geometry-uploads=1 instance-bytes=64 keyboard-vertices={VERTEX_COUNT} keyboard-indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards+all-mice refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads feedback=ui4-routed-physical-hid,red-key-top controls=primary-drag-orbit,wheel-zoom,Home-reset"
         ),
     );
     let mut orbit = OrbitCamera::new(RADIUS);
@@ -110,10 +106,12 @@ fn run() -> Result<(), Error> {
     let mut pending_resize = None;
     let mut redraws_pending = 1u8;
     let mut keyboards = Vec::new();
+    let mut mice = Vec::new();
     let mut inventory_initialized = false;
     let mut next_inventory_at = 0;
     let mut scene_center = [0.0; 3];
     let mut scene_radius = RADIUS;
+    let mut captions = Vec::new();
     loop {
         let now = clock::monotonic_millis();
         if feedback.expire(now) {
@@ -125,28 +123,33 @@ fn run() -> Result<(), Error> {
         if now >= next_inventory_at {
             next_inventory_at = now.saturating_add(INVENTORY_INTERVAL_MS);
             let devices = hid::hid_hut_keyboards();
+            let mouse_devices = hid::hid_hut_mice();
             let combos = hid::input_combos();
             let current = virtual_keyboards(&devices, &combos);
-            let roster_changed = current != keyboards;
+            let current_mice = roster::mice(&mouse_devices, &combos);
+            let roster_changed = current != keyboards || current_mice != mice;
             if roster_changed {
-                let row = prepare_row(&current, RADIUS);
-                renderer.update_instances(&row, &current)?;
+                let row = prepare_scene(&current, &current_mice, RADIUS, &mouse_shape);
+                renderer.update_instances(&row, &current, &current_mice)?;
                 feedback.set_roster(&current);
                 scene_center = row.center;
                 scene_radius = row.radius;
+                captions = row.captions;
                 orbit.set_scene(scene_center, scene_radius);
                 previous_view_projection = [0.0; 16];
                 redraws_pending = redraws_pending.max(1);
                 keyboards = current;
+                mice = current_mice;
             }
             if !inventory_initialized || roster_changed {
                 logl::log_record(
                     level::IMPORTANT,
                     "link3d",
                     format_args!(
-                        "link3d: inventory refreshed keyboards={} virtual-keyboards={} combos={}",
+                        "link3d: inventory refreshed keyboards={} virtual-keyboards={} mice={} combos={}",
                         devices.len(),
                         keyboards.len(),
+                        mice.len(),
                         combos.len()
                     ),
                 );
@@ -226,6 +229,7 @@ fn run() -> Result<(), Error> {
                 keyboards.len(),
                 RADIUS,
                 &feedback,
+                &captions,
             )?;
             loop {
                 match frame.publish(Damage::full(width, height)) {

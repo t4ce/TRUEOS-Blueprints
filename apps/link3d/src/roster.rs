@@ -1,13 +1,46 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use trueos::hid::{InputComboColor, TrueosHidHutKeyboardState, TrueosInputCombo};
+use trueos::hid::{
+    InputComboColor, TrueosHidHutKeyboardState, TrueosHidHutMouseState, TrueosInputCombo,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Keyboard {
     pub endpoint: [u32; 3],
     pub combo_id: u32,
     pub rgba: [u8; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mouse {
+    pub endpoint: [u32; 3],
+    pub combo_id: u32,
+    pub rgba: [u8; 4],
+}
+
+fn combo_rgba(combo_id: u32, combos: &[TrueosInputCombo]) -> [u8; 4] {
+    combos
+        .iter()
+        .find(|combo| combo_id != 0 && combo.combo_id == combo_id)
+        .map_or([128, 128, 128, 255], |combo| {
+            InputComboColor::from_index(combo.color_id).rgba()
+        })
+}
+
+/// Physical and virtual mice use the same HUT identities and combo buckets as
+/// Link. Position and button state do not change this static scene roster.
+pub fn mice(devices: &[TrueosHidHutMouseState], combos: &[TrueosInputCombo]) -> Vec<Mouse> {
+    let mut roster: Vec<_> = devices
+        .iter()
+        .map(|mouse| Mouse {
+            endpoint: [mouse.controller_id, mouse.slot_id, mouse.ep_target],
+            combo_id: mouse.combo_id,
+            rgba: combo_rgba(mouse.combo_id, combos),
+        })
+        .collect();
+    roster.sort_unstable_by_key(|mouse| mouse.endpoint);
+    roster
 }
 
 /// Project the live HUT roster into stable visual identities. Key activity is
@@ -22,12 +55,7 @@ pub fn virtual_keyboards(
         .map(|keyboard| Keyboard {
             endpoint: [keyboard.controller_id, keyboard.slot_id, keyboard.ep_target],
             combo_id: keyboard.combo_id,
-            rgba: combos
-                .iter()
-                .find(|combo| keyboard.combo_id != 0 && combo.combo_id == keyboard.combo_id)
-                .map_or([128, 128, 128, 255], |combo| {
-                    InputComboColor::from_index(combo.color_id).rgba()
-                }),
+            rgba: combo_rgba(keyboard.combo_id, combos),
         })
         .collect();
     roster.sort_unstable_by_key(|keyboard| keyboard.endpoint);
@@ -55,6 +83,46 @@ mod tests {
             color_id,
             ..TrueosInputCombo::default()
         }
+    }
+
+    #[test]
+    fn mice_include_physical_and_virtual_sources_without_tracking_motion() {
+        let mut devices = [
+            TrueosHidHutMouseState {
+                controller_id: 1,
+                slot_id: 7,
+                ep_target: 2,
+                combo_id: 1,
+                ..TrueosHidHutMouseState::default()
+            },
+            TrueosHidHutMouseState {
+                controller_id: 1,
+                slot_id: 3,
+                ep_target: 2,
+                combo_id: 2,
+                virtual_device: 1,
+                ..TrueosHidHutMouseState::default()
+            },
+        ];
+        let combos = [
+            combo(1, InputComboColor::Cyan as u8),
+            combo(2, InputComboColor::Violet as u8),
+        ];
+        let initial = mice(&devices, &combos);
+        assert_eq!(initial.len(), 2);
+        assert_eq!(initial[0].endpoint, [1, 3, 2]);
+        assert_eq!(initial[0].rgba, InputComboColor::Violet.rgba());
+        assert_eq!(initial[1].rgba, InputComboColor::Cyan.rgba());
+        devices.reverse();
+        devices[0].x = 1234.;
+        devices[0].y = -99.;
+        devices[0].buttons_down = 7;
+        assert_eq!(mice(&devices, &combos), initial);
+        devices[0].combo_id = 1;
+        assert_eq!(mice(&devices, &combos)[0].rgba, initial[1].rgba);
+        assert_eq!(mice(&devices[..1], &combos).len(), 1);
+        assert_eq!(mice(&devices, &[])[0].rgba, [128, 128, 128, 255]);
+        assert!(mice(&[], &combos).is_empty());
     }
 
     #[test]

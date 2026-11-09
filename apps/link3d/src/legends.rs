@@ -1,5 +1,6 @@
 extern crate alloc;
-use alloc::vec::Vec;
+use crate::scene::BucketCaption;
+use alloc::{format, string::String, vec::Vec};
 use trueos::{
     ui4_scene::{
         self, Error, Font, FontSpriteRequest, FontSpriteStatus, FontSpriteTicket, Frame,
@@ -26,8 +27,10 @@ include!(concat!(env!("OUT_DIR"), "/keyboard.legends.rs"));
 include!(concat!(env!("OUT_DIR"), "/keyboard.keys.rs"));
 
 pub const TEXTURE_HEIGHT: f32 = 64.0;
-pub const EXTRA_STROKE_PX: f32 = 2.5;
-pub const GLYPH_HEIGHT: f32 = 1.25 * 0.8;
+pub const EXTRA_STROKE_PX: f32 = 1.5;
+pub const GLYPH_HEIGHT: f32 = 0.7;
+const KEY_HIGHLIGHT_INNER_SIZE: f32 = 1.34;
+const GLYPH_TOP_INSET: f32 = 0.05;
 
 /// Masks belong to the shared kernel font service. One window-owned glyph
 /// texture is reused for the matching key on every board.
@@ -86,6 +89,7 @@ impl Legends {
         boards: usize,
         radius: f32,
         feedback: &crate::feedback::Feedback,
+        captions: &[BucketCaption],
     ) -> Result<(), Error> {
         let mut quads = Vec::with_capacity(boards * LEGENDS.len());
         // Constant-color quads use UI4's existing white pixel. Glyph textures
@@ -97,7 +101,7 @@ impl Legends {
                 }
                 for (size, color) in [
                     (1.50, ui4_scene::rgba(255, 255, 255, 235)),
-                    (1.34, ui4_scene::rgba(255, 32, 32, 235)),
+                    (KEY_HIGHLIGHT_INNER_SIZE, ui4_scene::rgba(255, 32, 32, 235)),
                 ] {
                     let Some(corners) = project_plane(
                         key.center,
@@ -144,6 +148,41 @@ impl Legends {
                 }
             }
         }
+        for caption in captions {
+            let Some([x, y]) = project_caption_anchor(caption.center, camera, width, height) else {
+                continue;
+            };
+            let text = caption_text(caption.combo_id);
+            const HEIGHT: f32 = 16.;
+            const CELL: f32 = HEIGHT * 6. / 11.;
+            let left = x - text.len() as f32 * CELL * 0.5;
+            let top = y - HEIGHT * 0.5;
+            quads.push(screen_quad(
+                0,
+                left - 4.,
+                top - 3.,
+                text.len() as f32 * CELL + 8.,
+                HEIGHT + 6.,
+                ui4_scene::rgba(255, 255, 255, 220),
+            ));
+            for (index, scalar) in text.chars().enumerate() {
+                let Some(sprite) = LEGENDS
+                    .iter()
+                    .position(|legend| legend.scalar == scalar)
+                    .and_then(|i| self.glyphs[i].1)
+                else {
+                    continue;
+                };
+                quads.push(screen_quad(
+                    sprite,
+                    left + index as f32 * CELL,
+                    top,
+                    CELL,
+                    HEIGHT,
+                    ui4_scene::rgba(255, 255, 255, 255),
+                ));
+            }
+        }
         if !quads.is_empty() {
             frame.draw_sprite_quads(&quads)?;
         }
@@ -151,7 +190,63 @@ impl Legends {
     }
 }
 
-/// A flat 6:11 cell, centered 0.025 model units above its key's top plane.
+fn caption_text(combo_id: u32) -> String {
+    if combo_id == 0 {
+        String::from("UNASSIGNED")
+    } else {
+        format!("BUCKET {combo_id}")
+    }
+}
+
+/// Captions follow their bucket in 3D but face the viewer at a readable UI size.
+fn project_caption_anchor(
+    center: [f32; 3],
+    camera: &RetainedCamera,
+    width: u32,
+    height: u32,
+) -> Option<[f32; 2]> {
+    let point = [center[0], center[1], center[2], 1.];
+    let clip: [f32; 4] = core::array::from_fn(|row| {
+        (0..4)
+            .map(|col| camera.view_projection[col * 4 + row] * point[col])
+            .sum()
+    });
+    if !clip.iter().all(|v| v.is_finite()) || clip[3] <= 0. || clip[2] < 0. || clip[2] > clip[3] {
+        return None;
+    }
+    Some([
+        (clip[0] / clip[3] + 1.) * width as f32 * 0.5,
+        (1. - clip[1] / clip[3]) * height as f32 * 0.5,
+    ])
+}
+
+fn screen_quad(
+    sprite_id: u32,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color_rgba: u32,
+) -> SpriteQuad {
+    let corners = [(0., 0.), (1., 0.), (1., 1.), (0., 1.)].map(|(u, v)| SpriteCorner {
+        x: x + u * width,
+        y: y + v * height,
+        u,
+        v,
+    });
+    SpriteQuad {
+        sprite_id,
+        c0: corners[0],
+        c1: corners[1],
+        c2: corners[2],
+        c3: corners[3],
+        color_rgba,
+        source_over: true,
+    }
+}
+
+/// A flat 6:11 cell inset from the red key highlight's top edge, 0.025 units above
+/// the key. Capitals are horizontally centered; digits retain their left offset.
 /// UI4 consumes the four projected corners and samples the service's alpha.
 /// This first pass is an overlay: top-facing rejection, not a depth attachment.
 pub fn project_quad(
@@ -161,8 +256,20 @@ pub fn project_quad(
     height: u32,
     board_z: f32,
 ) -> Option<[SpriteCorner; 4]> {
+    // Keyboard-local left is -X and the number-row direction is -Z. Follow
+    // the sloped top plane so the offset keeps the same clearance while orbiting.
+    let x = if legend.scalar.is_ascii_uppercase() {
+        0.0
+    } else {
+        -0.4
+    };
+    let z = -KEY_HIGHLIGHT_INNER_SIZE * 0.5 + GLYPH_HEIGHT * 0.5 + GLYPH_TOP_INSET;
+    let mut center = legend.center;
+    center[0] += x;
+    center[1] -= (legend.normal[0] * x + legend.normal[2] * z) / legend.normal[1];
+    center[2] += z;
     project_plane(
-        legend.center,
+        center,
         legend.normal,
         camera,
         width,
@@ -236,6 +343,23 @@ mod tests {
     use crate::OrbitCamera;
 
     #[test]
+    fn bucket_captions_reuse_loaded_glyphs_and_reject_clipped_anchors() {
+        assert_eq!(caption_text(0), "UNASSIGNED");
+        assert_eq!(caption_text(u32::MAX), "BUCKET 4294967295");
+        for scalar in caption_text(u32::MAX)
+            .chars()
+            .chain(caption_text(0).chars())
+        {
+            assert!(scalar == ' ' || LEGENDS.iter().any(|legend| legend.scalar == scalar));
+        }
+        let mut camera = OrbitCamera::new(20.).retained(800, 600, [0.; 16]);
+        let anchor = project_caption_anchor([0.; 3], &camera, 800, 600).unwrap();
+        assert!((anchor[0] - 400.).abs() < 1e-4 && (anchor[1] - 300.).abs() < 1e-4);
+        camera.view_projection[15] = -100.;
+        assert!(project_caption_anchor([0.; 3], &camera, 800, 600).is_none());
+    }
+
+    #[test]
     fn audited_layout_has_exactly_36_capitals_and_digits_and_correct_yz() {
         let mut chars: Vec<_> = LEGENDS.iter().map(|l| l.scalar).collect();
         chars.sort_unstable();
@@ -269,8 +393,8 @@ mod tests {
     }
 
     #[test]
-    fn smaller_placement_preserves_cell_aspect_full_uvs_and_key_center() {
-        let legend = Legend {
+    fn legends_fit_red_highlight_with_centered_capitals_and_left_digits() {
+        let mut legend = Legend {
             scalar: 'A',
             mesh: 15,
             center: [0., 1., 0.],
@@ -283,13 +407,32 @@ mod tests {
         camera.view_projection[9] = -0.1;
         camera.view_projection[14] = 0.5;
         camera.view_projection[15] = 1.;
-        let q = project_quad(&legend, &camera, 800, 800, 0.).unwrap();
-        let w = q[1].x - q[0].x;
-        let h = q[3].y - q[0].y;
-        assert!((h / 50. - 0.8).abs() < 1e-5);
-        assert!((w / h - 6. / 11.).abs() < 1e-5);
-        assert!(((q[0].x + q[2].x) * 0.5 - 400.).abs() < 1e-5);
-        assert!(((q[0].y + q[2].y) * 0.5 - 400.).abs() < 1e-5);
-        assert_eq!((q[0].u, q[0].v, q[2].u, q[2].v), (0., 0., 1., 1.));
+        let red = project_plane(
+            legend.center,
+            legend.normal,
+            &camera,
+            800,
+            800,
+            0.,
+            [KEY_HIGHLIGHT_INNER_SIZE; 2],
+        )
+        .unwrap();
+        for (scalar, center_x) in [('A', 400.), ('Z', 400.), ('0', 384.), ('9', 384.)] {
+            legend.scalar = scalar;
+            let q = project_quad(&legend, &camera, 800, 800, 0.).unwrap();
+            let w = q[1].x - q[0].x;
+            let h = q[3].y - q[0].y;
+            assert!((h - 28.).abs() < 1e-4);
+            assert!((w / h - 6. / 11.).abs() < 1e-5);
+            assert!(((q[0].x + q[2].x) * 0.5 - center_x).abs() < 1e-4);
+            assert!((q[0].y - red[0].y - 2.).abs() < 1e-4);
+            assert!(
+                q.iter().all(|p| p.x >= red[0].x
+                    && p.x <= red[2].x
+                    && p.y >= red[0].y
+                    && p.y <= red[2].y)
+            );
+            assert_eq!((q[0].u, q[0].v, q[2].u, q[2].v), (0., 0., 1., 1.));
+        }
     }
 }

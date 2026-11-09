@@ -1,6 +1,6 @@
 use link3d::{
-    roster::Keyboard,
-    scene::{MAX_KEYBOARDS, RowInstances, palette_bmp},
+    roster::{Keyboard, Mouse},
+    scene::{MAX_INSTANCES, MAX_KEYBOARDS, MAX_MICE, RowInstances, SceneGeometry, palette_bmp},
 };
 use trueos::{
     async_fs,
@@ -14,7 +14,7 @@ use trueos::{
 
 const CLEAR: u32 = u32::from_le_bytes([128, 128, 128, 0]);
 
-/// One resident mesh for every keyboard. Roster changes replace only the
+/// One resident mesh holding shared keyboard and mouse geometry. Roster changes replace only the
 /// 64-byte instance rows and their color palette; camera changes upload neither.
 pub struct Renderer {
     device: Device,
@@ -23,17 +23,19 @@ pub struct Renderer {
     count: u32,
     palette: Option<RetainedTexture>,
     properties: RetainedTexture,
+    keyboard_index_count: u32,
+    draws: [RetainedDrawRange; 4],
+    draw_count: u32,
 }
 
 impl Renderer {
     pub fn new(
         device: Device,
-        vertices: &[u8],
-        indices: &[u8],
+        scene: &SceneGeometry,
         radius: f32,
         properties: &[u8],
     ) -> Result<Self, i32> {
-        let geometry = Geometry::new(device, vertices, indices, radius)?;
+        let geometry = Geometry::new(device, &scene.vertices, &scene.indices, radius)?;
         // Mesh creation establishes the carrier before retained texture decode.
         let properties = async_fs::block_on(vmedia::decode_retained(
             device,
@@ -41,7 +43,7 @@ impl Renderer {
             properties,
         ))?;
         let seeds = device.create_buffer(
-            MAX_KEYBOARDS * 64,
+            MAX_INSTANCES * 64,
             vgpu::BUFFER_USAGE_MAP_READ | vgpu::BUFFER_USAGE_MAP_WRITE,
         )?;
         Ok(Self {
@@ -51,6 +53,9 @@ impl Renderer {
             count: 0,
             palette: None,
             properties,
+            keyboard_index_count: scene.keyboard_index_count,
+            draws: [RetainedDrawRange::default(); 4],
+            draw_count: 0,
         })
     }
 
@@ -58,21 +63,23 @@ impl Renderer {
         &mut self,
         row: &RowInstances,
         keyboards: &[Keyboard],
+        mice: &[Mouse],
     ) -> Result<(), i32> {
         if row.count == 0 {
             self.count = 0;
             return Ok(());
         }
-        if row.count as usize != keyboards.len()
-            || row.seeds.len() != keyboards.len() * 64
+        if row.count as usize != keyboards.len() + mice.len()
+            || row.seeds.len() != (keyboards.len() + mice.len()) * 64
             || keyboards.len() > MAX_KEYBOARDS
+            || mice.len() > MAX_MICE
         {
             return Err(vgpu::ERR_UNSUPPORTED);
         }
         let palette = async_fs::block_on(vmedia::decode_retained(
             self.device,
             ImageFormat::Bmp,
-            &palette_bmp(keyboards),
+            &palette_bmp(keyboards, mice),
         ))?;
         let written = self.device.write_buffer(self.seeds, 0, &row.seeds)?;
         if written != row.seeds.len() {
@@ -80,6 +87,23 @@ impl Renderer {
         }
         self.palette = Some(palette);
         self.count = row.count;
+        self.draws = [RetainedDrawRange::default(); 4];
+        self.draw_count = 0;
+        // The retained renderer requires every submitted group to be nonempty.
+        if !keyboards.is_empty() {
+            self.draws[0] = RetainedDrawRange {
+                first_index: 0,
+                index_count: self.keyboard_index_count,
+            };
+            self.draw_count += 1;
+        }
+        if !mice.is_empty() {
+            self.draws[self.draw_count as usize] = RetainedDrawRange {
+                first_index: self.keyboard_index_count,
+                index_count: self.geometry.index_count - self.keyboard_index_count,
+            };
+            self.draw_count += 1;
+        }
         Ok(())
     }
 
@@ -123,16 +147,8 @@ impl Renderer {
                 },
                 seed_buffer: self.seeds.raw(),
                 seed_count: self.count,
-                draw_count: 1,
-                draws: [
-                    RetainedDrawRange {
-                        first_index: 0,
-                        index_count: self.geometry.index_count,
-                    },
-                    RetainedDrawRange::default(),
-                    RetainedDrawRange::default(),
-                    RetainedDrawRange::default(),
-                ],
+                draw_count: self.draw_count,
+                draws: self.draws,
                 ..RetainedFrameSubmitV3::default()
             },
         )

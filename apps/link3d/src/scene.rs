@@ -1,9 +1,11 @@
 extern crate alloc;
 
-use crate::roster::Keyboard;
+use crate::roster::{Keyboard, Mouse};
 use alloc::{vec, vec::Vec};
 
 pub const MAX_KEYBOARDS: usize = 32;
+pub const MAX_MICE: usize = 32;
+pub const MAX_INSTANCES: usize = MAX_KEYBOARDS + MAX_MICE;
 const PALETTE_WIDTH: usize = 256;
 const PALETTE_HEIGHT: usize = 2;
 
@@ -46,11 +48,133 @@ pub fn prepare_mesh(source_vertices: &[u8], source_parts: &[u8]) -> Vec<u8> {
     vertices
 }
 
+pub struct SceneGeometry {
+    pub vertices: Vec<u8>,
+    pub indices: Vec<u8>,
+    pub keyboard_index_count: u32,
+    pub mouse: MouseShape,
+}
+
+/// A single resident cuboid shared by every mouse, beside the keyboard's right
+/// edge. Dimensions come from the actual model and its regular key pitch.
+pub struct MouseShape {
+    center: [f32; 3],
+    half_size: [f32; 3],
+    radius: f32,
+    keyboard_caption: [f32; 3],
+}
+
+pub fn prepare_geometry(source: &[u8], parts: &[u8], indices: &[u8]) -> SceneGeometry {
+    let mut vertices = prepare_mesh(source, parts);
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for vertex in source.chunks_exact(24) {
+        for axis in 0..3 {
+            let value = read_f32(vertex, axis * 4);
+            min[axis] = min[axis].min(value);
+            max[axis] = max[axis].max(value);
+        }
+    }
+    let key_x = |scalar| {
+        crate::legends::LEGENDS
+            .iter()
+            .find(|legend| legend.scalar == scalar)
+            .unwrap()
+            .center[0]
+    };
+    let pitch = (key_x('2') - key_x('1')).abs();
+    let half_size = [
+        pitch * 2.0,
+        (max[1] - min[1]) * 0.5,
+        (max[2] - min[2]) * 0.5,
+    ];
+    let mouse = MouseShape {
+        center: [
+            max[0] + pitch + half_size[0],
+            (min[1] + max[1]) * 0.5,
+            (min[2] + max[2]) * 0.5,
+        ],
+        half_size,
+        radius: libm::sqrtf(half_size.iter().map(|v| v * v).sum()),
+        keyboard_caption: [0., max[1] + 0.025, min[2] - pitch],
+    };
+    let keyboard_index_count = (indices.len() / 4) as u32;
+    let mut indices = indices.to_vec();
+    let mut cube = Vec::with_capacity(24 * 24);
+    for (normal, corners) in [
+        (
+            [1., 0., 0.],
+            [[1., -1., -1.], [1., 1., -1.], [1., 1., 1.], [1., -1., 1.]],
+        ),
+        (
+            [-1., 0., 0.],
+            [
+                [-1., -1., 1.],
+                [-1., 1., 1.],
+                [-1., 1., -1.],
+                [-1., -1., -1.],
+            ],
+        ),
+        (
+            [0., 1., 0.],
+            [[-1., 1., -1.], [-1., 1., 1.], [1., 1., 1.], [1., 1., -1.]],
+        ),
+        (
+            [0., -1., 0.],
+            [
+                [-1., -1., 1.],
+                [-1., -1., -1.],
+                [1., -1., -1.],
+                [1., -1., 1.],
+            ],
+        ),
+        (
+            [0., 0., 1.],
+            [[1., -1., 1.], [1., 1., 1.], [-1., 1., 1.], [-1., -1., 1.]],
+        ),
+        (
+            [0., 0., -1.],
+            [
+                [-1., -1., -1.],
+                [-1., 1., -1.],
+                [1., 1., -1.],
+                [1., -1., -1.],
+            ],
+        ),
+    ] {
+        let base = (source.len() / 24 + cube.len() / 24) as u32;
+        for corner in corners {
+            for value in (0..3)
+                .map(|axis| corner[axis] * mouse.half_size[axis])
+                .chain(normal)
+            {
+                cube.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        for index in [0, 1, 2, 0, 2, 3] {
+            indices.extend_from_slice(&(base + index).to_le_bytes());
+        }
+    }
+    vertices.extend_from_slice(&prepare_mesh(&cube, &[0; 24]));
+    SceneGeometry {
+        vertices,
+        indices,
+        keyboard_index_count,
+        mouse,
+    }
+}
+
 pub struct RowInstances {
     pub seeds: Vec<u8>,
     pub count: u32,
     pub center: [f32; 3],
     pub radius: f32,
+    pub captions: Vec<BucketCaption>,
+}
+
+pub struct BucketCaption {
+    pub combo_id: u32,
+    pub center: [f32; 3],
 }
 
 /// Roster updates upload only 64-byte transforms and a tiny color atlas.
@@ -64,6 +188,7 @@ pub fn prepare_row(keyboards: &[Keyboard], radius: f32) -> RowInstances {
         count: keyboards.len() as u32,
         center: [0.0, 0.0, span * 0.5],
         radius: radius + span * 0.5,
+        captions: Vec::new(),
     };
     for index in 0..keyboards.len() {
         let z = index as f32 * spacing;
@@ -72,9 +197,98 @@ pub fn prepare_row(keyboards: &[Keyboard], radius: f32) -> RowInstances {
         ] {
             row.seeds.extend_from_slice(&value.to_le_bytes());
         }
-        row.seeds.extend_from_slice(&0u32.to_le_bytes()); // One full-mesh draw group.
+        row.seeds.extend_from_slice(&0u32.to_le_bytes()); // Keyboard index range.
         row.seeds
             .extend_from_slice(&((index as u32) << 16).to_le_bytes());
+    }
+    row
+}
+
+/// Keep keyboard positions stable for their legends and feedback. A mouse joins
+/// its nonzero combo's keyboard row; unmatched mice get their own rows.
+pub fn prepare_scene(
+    keyboards: &[Keyboard],
+    mice: &[Mouse],
+    radius: f32,
+    mouse: &MouseShape,
+) -> RowInstances {
+    assert!(mice.len() <= MAX_MICE);
+    let mut row = prepare_row(keyboards, radius);
+    for (index, keyboard) in keyboards.iter().enumerate() {
+        if keyboard.combo_id == 0 || !row.captions.iter().any(|c| c.combo_id == keyboard.combo_id) {
+            let mut center = mouse.keyboard_caption;
+            center[2] += index as f32 * radius * 2.2;
+            row.captions.push(BucketCaption {
+                combo_id: keyboard.combo_id,
+                center,
+            });
+        }
+    }
+    let mut occupied = vec![false; keyboards.len()];
+    let mut next_row = keyboards.len();
+    let mut bounds = Vec::with_capacity(keyboards.len() + mice.len());
+    for index in 0..keyboards.len() {
+        bounds.push(([0., 0., index as f32 * radius * 2.2], radius));
+    }
+    for (index, device) in mice.iter().enumerate() {
+        let paired = keyboards.iter().enumerate().position(|(i, keyboard)| {
+            !occupied[i] && device.combo_id != 0 && device.combo_id == keyboard.combo_id
+        });
+        let slot = if let Some(slot) = paired {
+            occupied[slot] = true;
+            slot
+        } else {
+            let slot = next_row;
+            next_row += 1;
+            slot
+        };
+        let [x, y, z] = [
+            mouse.center[0],
+            mouse.center[1],
+            mouse.center[2] + slot as f32 * radius * 2.2,
+        ];
+        for value in [x, y, z, 1., 1., 1., 0., 0., 0., 1., mouse.radius, x, y, z] {
+            row.seeds.extend_from_slice(&value.to_le_bytes());
+        }
+        row.seeds
+            .extend_from_slice(&u32::from(!keyboards.is_empty()).to_le_bytes());
+        row.seeds
+            .extend_from_slice(&((index as u32) << 16).to_le_bytes());
+        bounds.push(([x, y, z], mouse.radius));
+        if device.combo_id == 0 || !row.captions.iter().any(|c| c.combo_id == device.combo_id) {
+            let mut center = mouse.keyboard_caption;
+            center[0] = x;
+            center[2] += slot as f32 * radius * 2.2;
+            row.captions.push(BucketCaption {
+                combo_id: device.combo_id,
+                center,
+            });
+        }
+    }
+    row.count = (keyboards.len() + mice.len()) as u32;
+    if !mice.is_empty() {
+        let mut min = [f32::INFINITY; 3];
+        let mut max = [f32::NEG_INFINITY; 3];
+        for (center, radius) in &bounds {
+            for axis in 0..3 {
+                min[axis] = min[axis].min(center[axis] - radius);
+                max[axis] = max[axis].max(center[axis] + radius);
+            }
+        }
+        row.center = core::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5);
+        row.radius = bounds
+            .iter()
+            .map(|(center, radius)| {
+                libm::sqrtf(
+                    (0..3)
+                        .map(|axis| {
+                            let delta = center[axis] - row.center[axis];
+                            delta * delta
+                        })
+                        .sum(),
+                ) + radius
+            })
+            .fold(0., f32::max);
     }
     row
 }
@@ -83,18 +297,19 @@ fn read_f32(bytes: &[u8], offset: usize) -> f32 {
     f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
-/// Column = original instance index; rows = keys/chassis. Colors come from
-/// the HUT combo palette, with neutral gray for unused columns.
-pub fn palette_bmp(keyboards: &[Keyboard]) -> Vec<u8> {
+/// Column = original global seed index (keyboards, then mice); rows = colored
+/// keys/mice and gray chassis. Culling keeps this index across both draw groups.
+pub fn palette_bmp(keyboards: &[Keyboard], mice: &[Mouse]) -> Vec<u8> {
     assert!(keyboards.len() <= MAX_KEYBOARDS);
-    material_bmp(Some(keyboards))
+    assert!(mice.len() <= MAX_MICE);
+    material_bmp(Some((keyboards, mice)))
 }
 
 pub fn metallic_roughness_bmp() -> Vec<u8> {
     material_bmp(None)
 }
 
-fn material_bmp(keyboards: Option<&[Keyboard]>) -> Vec<u8> {
+fn material_bmp(devices: Option<(&[Keyboard], &[Mouse])>) -> Vec<u8> {
     let stride = PALETTE_WIDTH * 3;
     let mut bmp = vec![0; 54 + stride * PALETTE_HEIGHT];
     bmp[..2].copy_from_slice(b"BM");
@@ -112,10 +327,17 @@ fn material_bmp(keyboards: Option<&[Keyboard]>) -> Vec<u8> {
     bmp[28..30].copy_from_slice(&24u16.to_le_bytes());
     for row in 0..PALETTE_HEIGHT {
         for column in 0..PALETTE_WIDTH {
-            let [r, g, b, _] = match keyboards {
-                Some(keyboards) if row == 0 => keyboards
+            let [r, g, b, _] = match devices {
+                Some((keyboards, mice)) if row == 0 => keyboards
                     .get(column)
-                    .map_or([128, 128, 128, 255], |keyboard| keyboard.rgba),
+                    .map(|keyboard| keyboard.rgba)
+                    .or_else(|| {
+                        column
+                            .checked_sub(keyboards.len())
+                            .and_then(|i| mice.get(i))
+                            .map(|mouse| mouse.rgba)
+                    })
+                    .unwrap_or([128, 128, 128, 255]),
                 Some(_) => [128, 128, 128, 255],
                 None if row == 0 => [255, 255, 0, 255],
                 None => [255, 102, 255, 255],
@@ -143,6 +365,157 @@ mod tests {
     fn pixel(bmp: &[u8], column: usize, row: usize) -> [u8; 3] {
         let at = 54 + (1 - row) * 768 + column * 3;
         [bmp[at + 2], bmp[at + 1], bmp[at]]
+    }
+
+    fn geometry() -> SceneGeometry {
+        prepare_geometry(
+            include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.vertices.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.parts.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.indices.bin")),
+        )
+    }
+
+    fn mouse(index: u8, combo_id: u32) -> Mouse {
+        Mouse {
+            endpoint: [2, index as u32, 1],
+            combo_id,
+            rgba: InputComboColor::from_index(index % InputComboColor::COUNT).rgba(),
+        }
+    }
+
+    #[test]
+    fn shared_mouse_cuboid_has_keyboard_height_depth_and_outward_faces() {
+        let scene = geometry();
+        let source = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.vertices.bin"));
+        let source_indices = include_bytes!(concat!(env!("OUT_DIR"), "/keyboard.indices.bin"));
+        let vertex_count = source.len() / 24;
+        assert_eq!(scene.vertices.len(), (vertex_count + 24) * 48);
+        assert_eq!(scene.indices.len(), source_indices.len() + 36 * 4);
+        assert_eq!(&scene.indices[..source_indices.len()], source_indices);
+        let mut min = [f32::INFINITY; 3];
+        let mut max = [f32::NEG_INFINITY; 3];
+        for vertex in source.chunks_exact(24) {
+            for axis in 0..3 {
+                min[axis] = min[axis].min(read_f32(vertex, axis * 4));
+                max[axis] = max[axis].max(read_f32(vertex, axis * 4));
+            }
+        }
+        for axis in [1, 2] {
+            assert!(
+                (scene.mouse.center[axis] - scene.mouse.half_size[axis] - min[axis]).abs() < 1e-5
+            );
+            assert!(
+                (scene.mouse.center[axis] + scene.mouse.half_size[axis] - max[axis]).abs() < 1e-5
+            );
+        }
+        assert!(scene.mouse.center[0] - scene.mouse.half_size[0] > max[0]);
+        let pitch = (crate::legends::LEGENDS
+            .iter()
+            .find(|l| l.scalar == '2')
+            .unwrap()
+            .center[0]
+            - crate::legends::LEGENDS
+                .iter()
+                .find(|l| l.scalar == '1')
+                .unwrap()
+                .center[0])
+            .abs();
+        assert!((scene.mouse.half_size[0] * 2. - pitch * 4.).abs() < 1e-5);
+        for triangle in scene.indices[source_indices.len()..].chunks_exact(12) {
+            let indices: [usize; 3] = core::array::from_fn(|i| {
+                u32::from_le_bytes(triangle[i * 4..i * 4 + 4].try_into().unwrap()) as usize
+            });
+            assert!(
+                indices
+                    .iter()
+                    .all(|&i| i >= vertex_count && i < vertex_count + 24)
+            );
+            let point = |i: usize| {
+                core::array::from_fn::<_, 3, _>(|axis| {
+                    read_f32(&scene.vertices[i * 48..], axis * 4)
+                })
+            };
+            let [a, b, c] = indices.map(point);
+            let ab: [f32; 3] = core::array::from_fn(|i| b[i] - a[i]);
+            let ac: [f32; 3] = core::array::from_fn(|i| c[i] - a[i]);
+            let cross = [
+                ab[1] * ac[2] - ab[2] * ac[1],
+                ab[2] * ac[0] - ab[0] * ac[2],
+                ab[0] * ac[1] - ab[1] * ac[0],
+            ];
+            assert!(
+                (0..3)
+                    .map(|i| cross[i] * read_f32(&scene.vertices[indices[0] * 48..], 12 + i * 4))
+                    .sum::<f32>()
+                    > 0.
+            );
+        }
+    }
+
+    #[test]
+    fn mice_pair_by_combo_and_unpaired_mice_get_distinct_rows() {
+        let geometry = geometry();
+        let keyboards = [keyboard(0), keyboard(1)];
+        let mice = [mouse(0, 2), mouse(1, 1), mouse(2, 0), mouse(3, 1)];
+        let row = prepare_scene(&keyboards, &mice, 20., &geometry.mouse);
+        assert_eq!(row.count, 6);
+        // Shared keyboard/mouse buckets have one caption with the actual ID.
+        assert_eq!(
+            row.captions.iter().map(|c| c.combo_id).collect::<Vec<_>>(),
+            [1, 2, 0]
+        );
+        assert!((row.captions[1].center[2] - row.captions[0].center[2] - 44.).abs() < 1e-5);
+        assert_eq!(&row.seeds[..128], &prepare_row(&keyboards, 20.).seeds);
+        let colors = palette_bmp(&keyboards, &mice);
+        for (index, slot) in [1, 0, 2, 3].into_iter().enumerate() {
+            let seed = &row.seeds[(2 + index) * 64..][..64];
+            assert!(
+                (read_f32(seed, 8) - geometry.mouse.center[2] - slot as f32 * 44.).abs() < 1e-5
+            );
+            assert_eq!(u32::from_le_bytes(seed[56..60].try_into().unwrap()), 1);
+            assert_eq!(
+                u32::from_le_bytes(seed[60..64].try_into().unwrap()),
+                (index as u32) << 16
+            );
+            assert_eq!(pixel(&colors, 2 + index, 0), mice[index].rgba[..3]);
+            let distance = libm::sqrtf(
+                (0..3)
+                    .map(|axis| {
+                        let delta = read_f32(seed, axis * 4) - row.center[axis];
+                        delta * delta
+                    })
+                    .sum(),
+            );
+            assert!(distance + geometry.mouse.radius <= row.radius + 1e-4);
+        }
+    }
+
+    #[test]
+    fn zero_keyboard_and_full_rosters_keep_valid_groups_and_palette_columns() {
+        let geometry = geometry();
+        for (keyboard_count, mouse_count) in [(0, 0), (0, 2), (2, 0), (32, 32)] {
+            let keyboards: Vec<_> = (0..keyboard_count).map(keyboard).collect();
+            let mice: Vec<_> = (0..mouse_count).map(|i| mouse(i, i as u32 + 1)).collect();
+            let row = prepare_scene(&keyboards, &mice, 20., &geometry.mouse);
+            assert_eq!(row.count as usize, keyboards.len() + mice.len());
+            assert_eq!(row.seeds.len(), row.count as usize * 64);
+            assert!(row.radius.is_finite() && row.radius > 0.);
+            if row.count == 0 {
+                assert!(row.captions.is_empty());
+            }
+            if keyboards.is_empty() && !mice.is_empty() {
+                assert_eq!(row.captions.len(), mice.len());
+            }
+            let colors = palette_bmp(&keyboards, &mice);
+            for (index, device) in mice.iter().enumerate() {
+                let seed = &row.seeds[(keyboards.len() + index) * 64..][..64];
+                assert_eq!(
+                    u32::from_le_bytes(seed[56..60].try_into().unwrap()),
+                    u32::from(!keyboards.is_empty())
+                );
+                assert_eq!(pixel(&colors, keyboards.len() + index, 0), device.rgba[..3]);
+            }
+        }
     }
 
     #[test]
@@ -194,7 +567,7 @@ mod tests {
     #[test]
     fn compaction_keeps_exact_combo_colors_and_chassis_properties() {
         let keyboards: Vec<_> = (0..32).map(keyboard).collect();
-        let colors = palette_bmp(&keyboards);
+        let colors = palette_bmp(&keyboards, &[]);
         let properties = metallic_roughness_bmp();
         assert_eq!(colors.len(), 1590);
         assert_eq!(&colors[..2], b"BM");
@@ -212,6 +585,6 @@ mod tests {
             assert_eq!(pixel(&properties, texel, 0), [255, 255, 0]);
             assert_eq!(pixel(&properties, texel, 1), [255, 102, 255]);
         }
-        assert_eq!(pixel(&palette_bmp(&[]), 0, 0), [128; 3]);
+        assert_eq!(pixel(&palette_bmp(&[], &[]), 0, 0), [128; 3]);
     }
 }

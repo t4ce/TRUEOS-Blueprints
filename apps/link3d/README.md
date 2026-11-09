@@ -4,16 +4,39 @@ One shared K70 Mini GLB mesh, instanced once per virtual HID-HUT keyboard. Combo
 colors come from the shared input palette; the chassis is gray, metallic 0.5,
 roughness 0.4. Drag to orbit, scroll to zoom, Home to reset.
 
+Physical and virtual HID-HUT mice appear as palette-colored cuboids. Each is four
+regular key pitches wide and matches the GLB keyboard's height and front-to-back
+depth. A mouse sits to the right of the keyboard in its combo bucket; unpaired
+mice get their own rows. The camera frames both device types, including mouse-only
+scenes. The live roster, combo membership and colors refresh every three seconds.
+Pointer movement does not move these placeholders, and bucket assignment remains
+in Link.
+
+One resident vertex/index buffer holds the keyboard and one 24-vertex mouse box.
+Both use shared PBR geometry with 64-byte instance transforms, separate index
+ranges and the central combo palette. Adding devices uploads transforms and
+palette colors rather than duplicating either mesh. Mouse display requires the
+host-backed mouse snapshot in the Blueprint HUT bridge (snapshot kind 3); an older
+kernel's guest-local mouse registry returns an empty roster. Deploy the corrected
+kernel once, then reopen Link3D.
+
+Each visible bucket has a `BUCKET <combo_id>` caption anchored above its row;
+unassigned devices show `UNASSIGNED`. Captions face the viewer and reuse the same
+kernel Microfont glyph textures as the key legends, with a light backing for
+readability. A paired keyboard and mouse share one caption.
+
 The audited German map in `keyfarm/mapping.json` supplies **36 black legends:
 A–Z and 0–9**. Y and Z follow the recorded physical layout. The build checks the
-map's GLB hash, finds the corresponding key's top plane and centers a flat glyph
-quad 0.025 model units above it. The glyph cell is 1.0 model units high (20% smaller
-than the first pass), with Microfont's 6:11 aspect. Other keys remain blank.
+map's GLB hash and finds the corresponding key's top plane. A flat glyph quad sits
+0.025 model units above it. All glyph cells start 0.05 units inside the red key
+highlight's top edge. Capitals are horizontally centered; numbers remain 0.4 units
+left of the key center. The glyph cell is 0.7 model units high, with Microfont's
+6:11 aspect. Other keys remain blank.
 
 Glyph coverage comes from the kernel's existing shared Microfont alpha atlas,
 through the font-sprite request/status facade. Each of the 36 transparent black
 glyph textures is requested once and reused across all boards. Each texture stays
-35×64 pixels, with 2.5 extra source pixels of native stroke width. Styled R8 masks
+35×64 pixels, with 1.5 extra source pixels of native stroke width. Styled R8 masks
 are cached by the kernel font service; original UI font tiles retain their style.
 Cold variants are prepared on the blocking font worker, outside the frame lease.
 There is no
