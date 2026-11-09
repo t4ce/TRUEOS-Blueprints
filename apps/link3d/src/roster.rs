@@ -2,7 +2,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use trueos::hid::{
-    InputComboColor, TrueosHidHutKeyboardState, TrueosHidHutMouseState, TrueosInputCombo,
+    InputComboColor, TrueosHidHutKeyboardState, TrueosHidHutMouseState, TrueosHidHutTabletState,
+    TrueosInputCombo,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +18,26 @@ pub struct Mouse {
     pub endpoint: [u32; 3],
     pub combo_id: u32,
     pub rgba: [u8; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tablet {
+    pub endpoint: [u32; 3],
+    pub combo_id: u32,
+    pub rgba: [u8; 4],
+}
+
+pub fn tablets(devices: &[TrueosHidHutTabletState], combos: &[TrueosInputCombo]) -> Vec<Tablet> {
+    let mut roster: Vec<_> = devices
+        .iter()
+        .map(|tablet| Tablet {
+            endpoint: [tablet.controller_id, tablet.slot_id, tablet.ep_target],
+            combo_id: tablet.combo_id,
+            rgba: combo_rgba(tablet.combo_id, combos),
+        })
+        .collect();
+    roster.sort_unstable_by_key(|tablet| tablet.endpoint);
+    roster
 }
 
 fn combo_rgba(combo_id: u32, combos: &[TrueosInputCombo]) -> [u8; 4] {
@@ -83,6 +104,27 @@ mod tests {
             color_id,
             ..TrueosInputCombo::default()
         }
+    }
+
+    #[test]
+    fn tablets_are_independent_of_mice_and_keep_combo_identity_during_motion() {
+        let mut device = TrueosHidHutTabletState {
+            controller_id: 0x55445048,
+            slot_id: 1,
+            combo_id: 7,
+            virtual_device: 1,
+            ..Default::default()
+        };
+        let combos = [combo(7, InputComboColor::Cyan as u8)];
+        let initial = tablets(&[device], &combos);
+        assert_eq!(initial[0].rgba, InputComboColor::Cyan.rgba());
+        device.x_raw = 500;
+        device.x = 0.5;
+        device.buttons_down = 3;
+        assert_eq!(tablets(&[device], &combos), initial);
+        device.virtual_device = 0;
+        assert_eq!(tablets(&[device], &combos), initial);
+        assert!(tablets(&[], &combos).is_empty());
     }
 
     #[test]

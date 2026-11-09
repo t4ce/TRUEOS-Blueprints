@@ -1,6 +1,9 @@
 use link3d::{
-    roster::{Keyboard, Mouse},
-    scene::{MAX_INSTANCES, MAX_KEYBOARDS, MAX_MICE, RowInstances, SceneGeometry, palette_bmp},
+    roster::{Keyboard, Mouse, Tablet},
+    scene::{
+        MAX_INSTANCES, MAX_KEYBOARDS, MAX_MICE, MAX_TABLETS, RowInstances, SceneGeometry,
+        palette_bmp,
+    },
 };
 use trueos::{
     async_fs,
@@ -64,22 +67,24 @@ impl Renderer {
         row: &RowInstances,
         keyboards: &[Keyboard],
         mice: &[Mouse],
+        tablets: &[Tablet],
     ) -> Result<(), i32> {
         if row.count == 0 {
             self.count = 0;
             return Ok(());
         }
-        if row.count as usize != keyboards.len() + mice.len()
-            || row.seeds.len() != (keyboards.len() + mice.len()) * 64
+        if row.count as usize != keyboards.len() + mice.len() + tablets.len()
+            || row.seeds.len() != (keyboards.len() + mice.len() + tablets.len()) * 64
             || keyboards.len() > MAX_KEYBOARDS
             || mice.len() > MAX_MICE
+            || tablets.len() > MAX_TABLETS
         {
             return Err(vgpu::ERR_UNSUPPORTED);
         }
         let palette = async_fs::block_on(vmedia::decode_retained(
             self.device,
             ImageFormat::Bmp,
-            &palette_bmp(keyboards, mice),
+            &palette_bmp(keyboards, mice, tablets),
         ))?;
         let written = self.device.write_buffer(self.seeds, 0, &row.seeds)?;
         if written != row.seeds.len() {
@@ -97,7 +102,7 @@ impl Renderer {
             };
             self.draw_count += 1;
         }
-        if !mice.is_empty() {
+        if !mice.is_empty() || !tablets.is_empty() {
             self.draws[self.draw_count as usize] = RetainedDrawRange {
                 first_index: self.keyboard_index_count,
                 index_count: self.geometry.index_count - self.keyboard_index_count,

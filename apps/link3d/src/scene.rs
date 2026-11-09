@@ -1,11 +1,12 @@
 extern crate alloc;
 
-use crate::roster::{Keyboard, Mouse};
+use crate::roster::{Keyboard, Mouse, Tablet};
 use alloc::{vec, vec::Vec};
 
 pub const MAX_KEYBOARDS: usize = 32;
 pub const MAX_MICE: usize = 32;
-pub const MAX_INSTANCES: usize = MAX_KEYBOARDS + MAX_MICE;
+pub const MAX_TABLETS: usize = 32;
+pub const MAX_INSTANCES: usize = MAX_KEYBOARDS + MAX_MICE + MAX_TABLETS;
 const PALETTE_WIDTH: usize = 256;
 const PALETTE_HEIGHT: usize = 2;
 
@@ -175,6 +176,14 @@ pub struct RowInstances {
 pub struct BucketCaption {
     pub combo_id: u32,
     pub center: [f32; 3],
+    pub kind: CaptionKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CaptionKind {
+    Bucket,
+    Mouse,
+    Tablet,
 }
 
 /// Roster updates upload only 64-byte transforms and a tiny color atlas.
@@ -209,10 +218,12 @@ pub fn prepare_row(keyboards: &[Keyboard], radius: f32) -> RowInstances {
 pub fn prepare_scene(
     keyboards: &[Keyboard],
     mice: &[Mouse],
+    tablets: &[Tablet],
     radius: f32,
     mouse: &MouseShape,
 ) -> RowInstances {
     assert!(mice.len() <= MAX_MICE);
+    assert!(tablets.len() <= MAX_TABLETS);
     let mut row = prepare_row(keyboards, radius);
     for (index, keyboard) in keyboards.iter().enumerate() {
         if keyboard.combo_id == 0 || !row.captions.iter().any(|c| c.combo_id == keyboard.combo_id) {
@@ -221,12 +232,13 @@ pub fn prepare_scene(
             row.captions.push(BucketCaption {
                 combo_id: keyboard.combo_id,
                 center,
+                kind: CaptionKind::Bucket,
             });
         }
     }
     let mut occupied = vec![false; keyboards.len()];
     let mut next_row = keyboards.len();
-    let mut bounds = Vec::with_capacity(keyboards.len() + mice.len());
+    let mut bounds = Vec::with_capacity(keyboards.len() + mice.len() + tablets.len());
     for index in 0..keyboards.len() {
         bounds.push(([0., 0., index as f32 * radius * 2.2], radius));
     }
@@ -255,18 +267,70 @@ pub fn prepare_scene(
         row.seeds
             .extend_from_slice(&((index as u32) << 16).to_le_bytes());
         bounds.push(([x, y, z], mouse.radius));
-        if device.combo_id == 0 || !row.captions.iter().any(|c| c.combo_id == device.combo_id) {
+        if device.combo_id == 0
+            || !row
+                .captions
+                .iter()
+                .any(|c| c.kind == CaptionKind::Bucket && c.combo_id == device.combo_id)
+        {
             let mut center = mouse.keyboard_caption;
             center[0] = x;
             center[2] += slot as f32 * radius * 2.2;
             row.captions.push(BucketCaption {
                 combo_id: device.combo_id,
                 center,
+                kind: CaptionKind::Bucket,
             });
         }
+        row.captions.push(BucketCaption {
+            combo_id: device.combo_id,
+            center: [x, y + mouse.half_size[1] + 0.025, z],
+            kind: CaptionKind::Mouse,
+        });
     }
-    row.count = (keyboards.len() + mice.len()) as u32;
-    if !mice.is_empty() {
+    for (index, device) in tablets.iter().enumerate() {
+        let paired = keyboards
+            .iter()
+            .position(|keyboard| device.combo_id != 0 && device.combo_id == keyboard.combo_id);
+        let slot = paired.unwrap_or_else(|| {
+            let slot = next_row;
+            next_row += 1;
+            slot
+        });
+        let x = mouse.center[0] + mouse.half_size[0] * 2.5;
+        let y = mouse.center[1] - mouse.half_size[1] * 0.75;
+        let z = mouse.center[2] + slot as f32 * radius * 2.2;
+        for value in [x, y, z, 1., 0.25, 1., 0., 0., 0., 1., mouse.radius, x, y, z] {
+            row.seeds.extend_from_slice(&value.to_le_bytes());
+        }
+        row.seeds
+            .extend_from_slice(&u32::from(!keyboards.is_empty()).to_le_bytes());
+        row.seeds
+            .extend_from_slice(&(((mice.len() + index) as u32) << 16).to_le_bytes());
+        bounds.push(([x, y, z], mouse.radius));
+        if device.combo_id == 0
+            || !row
+                .captions
+                .iter()
+                .any(|c| c.kind == CaptionKind::Bucket && c.combo_id == device.combo_id)
+        {
+            let mut center = mouse.keyboard_caption;
+            center[0] = x;
+            center[2] += slot as f32 * radius * 2.2;
+            row.captions.push(BucketCaption {
+                combo_id: device.combo_id,
+                center,
+                kind: CaptionKind::Bucket,
+            });
+        }
+        row.captions.push(BucketCaption {
+            combo_id: device.combo_id,
+            center: [x, y + mouse.half_size[1] * 0.25 + 0.025, z],
+            kind: CaptionKind::Tablet,
+        });
+    }
+    row.count = (keyboards.len() + mice.len() + tablets.len()) as u32;
+    if !mice.is_empty() || !tablets.is_empty() {
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
         for (center, radius) in &bounds {
@@ -299,17 +363,18 @@ fn read_f32(bytes: &[u8], offset: usize) -> f32 {
 
 /// Column = original global seed index (keyboards, then mice); rows = colored
 /// keys/mice and gray chassis. Culling keeps this index across both draw groups.
-pub fn palette_bmp(keyboards: &[Keyboard], mice: &[Mouse]) -> Vec<u8> {
+pub fn palette_bmp(keyboards: &[Keyboard], mice: &[Mouse], tablets: &[Tablet]) -> Vec<u8> {
     assert!(keyboards.len() <= MAX_KEYBOARDS);
     assert!(mice.len() <= MAX_MICE);
-    material_bmp(Some((keyboards, mice)))
+    assert!(tablets.len() <= MAX_TABLETS);
+    material_bmp(Some((keyboards, mice, tablets)))
 }
 
 pub fn metallic_roughness_bmp() -> Vec<u8> {
     material_bmp(None)
 }
 
-fn material_bmp(devices: Option<(&[Keyboard], &[Mouse])>) -> Vec<u8> {
+fn material_bmp(devices: Option<(&[Keyboard], &[Mouse], &[Tablet])>) -> Vec<u8> {
     let stride = PALETTE_WIDTH * 3;
     let mut bmp = vec![0; 54 + stride * PALETTE_HEIGHT];
     bmp[..2].copy_from_slice(b"BM");
@@ -328,7 +393,7 @@ fn material_bmp(devices: Option<(&[Keyboard], &[Mouse])>) -> Vec<u8> {
     for row in 0..PALETTE_HEIGHT {
         for column in 0..PALETTE_WIDTH {
             let [r, g, b, _] = match devices {
-                Some((keyboards, mice)) if row == 0 => keyboards
+                Some((keyboards, mice, tablets)) if row == 0 => keyboards
                     .get(column)
                     .map(|keyboard| keyboard.rgba)
                     .or_else(|| {
@@ -336,6 +401,12 @@ fn material_bmp(devices: Option<(&[Keyboard], &[Mouse])>) -> Vec<u8> {
                             .checked_sub(keyboards.len())
                             .and_then(|i| mice.get(i))
                             .map(|mouse| mouse.rgba)
+                    })
+                    .or_else(|| {
+                        column
+                            .checked_sub(keyboards.len() + mice.len())
+                            .and_then(|i| tablets.get(i))
+                            .map(|tablet| tablet.rgba)
                     })
                     .unwrap_or([128, 128, 128, 255]),
                 Some(_) => [128, 128, 128, 255],
@@ -380,6 +451,59 @@ mod tests {
             endpoint: [2, index as u32, 1],
             combo_id,
             rgba: InputComboColor::from_index(index % InputComboColor::COUNT).rgba(),
+        }
+    }
+
+    #[test]
+    fn tablets_keep_distinct_slots_shared_geometry_and_palette_with_all_96_devices() {
+        let geometry = geometry();
+        for count in [0, 1, 32] {
+            let keyboards: Vec<_> = (0..count).map(keyboard).collect();
+            let mice: Vec<_> = (0..count).map(|i| mouse(i, i as u32 + 1)).collect();
+            let tablets: Vec<_> = (0..count)
+                .map(|i| Tablet {
+                    endpoint: [3, i as u32, 1],
+                    combo_id: i as u32 + 1,
+                    rgba: InputComboColor::from_index((i + 1) % InputComboColor::COUNT).rgba(),
+                })
+                .collect();
+            let row = prepare_scene(&keyboards, &mice, &tablets, 20., &geometry.mouse);
+            let colors = palette_bmp(&keyboards, &mice, &tablets);
+            assert_eq!(row.count, count as u32 * 3);
+            for (index, tablet) in tablets.iter().enumerate() {
+                let mouse_seed = &row.seeds[(keyboards.len() + index) * 64..][..64];
+                let tablet_seed = &row.seeds[(keyboards.len() + mice.len() + index) * 64..][..64];
+                assert_eq!(read_f32(mouse_seed, 8), read_f32(tablet_seed, 8));
+                assert!(
+                    read_f32(tablet_seed, 0) - geometry.mouse.half_size[0]
+                        > read_f32(mouse_seed, 0) + geometry.mouse.half_size[0]
+                );
+                assert_eq!(read_f32(tablet_seed, 16), 0.25);
+                assert!(
+                    (read_f32(tablet_seed, 4)
+                        - geometry.mouse.half_size[1] * 0.25
+                        - (read_f32(mouse_seed, 4) - geometry.mouse.half_size[1]))
+                        .abs()
+                        < 1e-5
+                );
+                assert_eq!(
+                    u32::from_le_bytes(tablet_seed[56..60].try_into().unwrap()),
+                    1
+                );
+                assert_eq!(
+                    u32::from_le_bytes(tablet_seed[60..64].try_into().unwrap()),
+                    ((mice.len() + index) as u32) << 16
+                );
+                assert_eq!(
+                    pixel(&colors, keyboards.len() + mice.len() + index, 0),
+                    tablet.rgba[..3]
+                );
+            }
+            let only_tablets = prepare_scene(&[], &[], &tablets, 20., &geometry.mouse);
+            assert_eq!(only_tablets.count, tablets.len() as u32);
+            for seed in only_tablets.seeds.chunks_exact(64) {
+                assert_eq!(u32::from_le_bytes(seed[56..60].try_into().unwrap()), 0);
+            }
         }
     }
 
@@ -457,16 +581,20 @@ mod tests {
         let geometry = geometry();
         let keyboards = [keyboard(0), keyboard(1)];
         let mice = [mouse(0, 2), mouse(1, 1), mouse(2, 0), mouse(3, 1)];
-        let row = prepare_scene(&keyboards, &mice, 20., &geometry.mouse);
+        let row = prepare_scene(&keyboards, &mice, &[], 20., &geometry.mouse);
         assert_eq!(row.count, 6);
         // Shared keyboard/mouse buckets have one caption with the actual ID.
         assert_eq!(
-            row.captions.iter().map(|c| c.combo_id).collect::<Vec<_>>(),
+            row.captions
+                .iter()
+                .filter(|c| c.kind == CaptionKind::Bucket)
+                .map(|c| c.combo_id)
+                .collect::<Vec<_>>(),
             [1, 2, 0]
         );
         assert!((row.captions[1].center[2] - row.captions[0].center[2] - 44.).abs() < 1e-5);
         assert_eq!(&row.seeds[..128], &prepare_row(&keyboards, 20.).seeds);
-        let colors = palette_bmp(&keyboards, &mice);
+        let colors = palette_bmp(&keyboards, &mice, &[]);
         for (index, slot) in [1, 0, 2, 3].into_iter().enumerate() {
             let seed = &row.seeds[(2 + index) * 64..][..64];
             assert!(
@@ -496,7 +624,7 @@ mod tests {
         for (keyboard_count, mouse_count) in [(0, 0), (0, 2), (2, 0), (32, 32)] {
             let keyboards: Vec<_> = (0..keyboard_count).map(keyboard).collect();
             let mice: Vec<_> = (0..mouse_count).map(|i| mouse(i, i as u32 + 1)).collect();
-            let row = prepare_scene(&keyboards, &mice, 20., &geometry.mouse);
+            let row = prepare_scene(&keyboards, &mice, &[], 20., &geometry.mouse);
             assert_eq!(row.count as usize, keyboards.len() + mice.len());
             assert_eq!(row.seeds.len(), row.count as usize * 64);
             assert!(row.radius.is_finite() && row.radius > 0.);
@@ -504,9 +632,15 @@ mod tests {
                 assert!(row.captions.is_empty());
             }
             if keyboards.is_empty() && !mice.is_empty() {
-                assert_eq!(row.captions.len(), mice.len());
+                assert_eq!(
+                    row.captions
+                        .iter()
+                        .filter(|c| c.kind == CaptionKind::Bucket)
+                        .count(),
+                    mice.len()
+                );
             }
-            let colors = palette_bmp(&keyboards, &mice);
+            let colors = palette_bmp(&keyboards, &mice, &[]);
             for (index, device) in mice.iter().enumerate() {
                 let seed = &row.seeds[(keyboards.len() + index) * 64..][..64];
                 assert_eq!(
@@ -567,7 +701,7 @@ mod tests {
     #[test]
     fn compaction_keeps_exact_combo_colors_and_chassis_properties() {
         let keyboards: Vec<_> = (0..32).map(keyboard).collect();
-        let colors = palette_bmp(&keyboards, &[]);
+        let colors = palette_bmp(&keyboards, &[], &[]);
         let properties = metallic_roughness_bmp();
         assert_eq!(colors.len(), 1590);
         assert_eq!(&colors[..2], b"BM");
@@ -585,6 +719,6 @@ mod tests {
             assert_eq!(pixel(&properties, texel, 0), [255, 255, 0]);
             assert_eq!(pixel(&properties, texel, 1), [255, 102, 255]);
         }
-        assert_eq!(pixel(&palette_bmp(&[], &[]), 0, 0), [128; 3]);
+        assert_eq!(pixel(&palette_bmp(&[], &[], &[]), 0, 0), [128; 3]);
     }
 }

@@ -1,5 +1,5 @@
 extern crate alloc;
-use crate::scene::BucketCaption;
+use crate::scene::{BucketCaption, CaptionKind};
 use alloc::{format, string::String, vec::Vec};
 use trueos::{
     ui4_scene::{
@@ -91,6 +91,30 @@ impl Legends {
         feedback: &crate::feedback::Feedback,
         captions: &[BucketCaption],
     ) -> Result<(), Error> {
+        let quads = self.overlay_quads(camera, width, height, boards, radius, feedback, captions);
+        if !quads.is_empty() {
+            frame.draw_sprite_quads(&quads)?;
+        }
+        Ok(())
+    }
+
+    fn overlay_quads(
+        &self,
+        camera: &RetainedCamera,
+        width: u32,
+        height: u32,
+        boards: usize,
+        radius: f32,
+        feedback: &crate::feedback::Feedback,
+        captions: &[BucketCaption],
+    ) -> Vec<SpriteQuad> {
+        // A cold stroke variant is built asynchronously on Render0. In
+        // particular, caption backings must not start a Render0 sprite pass
+        // while their missing glyphs are still being rasterized there.
+        // The keyboard can already render/publish independently on Render1.
+        if self.glyphs.iter().any(|(_, sprite)| sprite.is_none()) {
+            return Vec::new();
+        }
         let mut quads = Vec::with_capacity(boards * LEGENDS.len());
         // Constant-color quads use UI4's existing white pixel. Glyph textures
         // remain shared, black, and untinted; blank keys receive feedback too.
@@ -152,7 +176,7 @@ impl Legends {
             let Some([x, y]) = project_caption_anchor(caption.center, camera, width, height) else {
                 continue;
             };
-            let text = caption_text(caption.combo_id);
+            let text = caption_text(caption.combo_id, caption.kind);
             const HEIGHT: f32 = 16.;
             const CELL: f32 = HEIGHT * 6. / 11.;
             let left = x - text.len() as f32 * CELL * 0.5;
@@ -183,14 +207,16 @@ impl Legends {
                 ));
             }
         }
-        if !quads.is_empty() {
-            frame.draw_sprite_quads(&quads)?;
-        }
-        Ok(())
+        quads
     }
 }
 
-fn caption_text(combo_id: u32) -> String {
+fn caption_text(combo_id: u32, kind: CaptionKind) -> String {
+    match kind {
+        CaptionKind::Mouse => return String::from("MOUSE"),
+        CaptionKind::Tablet => return String::from("TABLET"),
+        CaptionKind::Bucket => {}
+    }
     if combo_id == 0 {
         String::from("UNASSIGNED")
     } else {
@@ -343,12 +369,46 @@ mod tests {
     use crate::OrbitCamera;
 
     #[test]
+    fn cold_and_partial_font_readiness_cannot_submit_caption_backings() {
+        let camera = OrbitCamera::new(20.).retained(800, 600, [0.; 16]);
+        let captions = [BucketCaption {
+            combo_id: 7,
+            center: [0.; 3],
+            kind: CaptionKind::Bucket,
+        }];
+        let feedback = crate::feedback::Feedback::default();
+        let mut legends = Legends::default();
+        assert!(
+            legends
+                .overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions)
+                .is_empty()
+        );
+        for glyph in legends.glyphs.iter_mut().take(LEGENDS.len() - 1) {
+            glyph.1 = Some(100);
+        }
+        assert!(
+            legends
+                .overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions)
+                .is_empty()
+        );
+        legends.glyphs.last_mut().unwrap().1 = Some(100);
+        let warm = legends.overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions);
+        assert!(warm.iter().any(|quad| quad.sprite_id == 0)); // Caption backing.
+        assert!(warm.iter().filter(|quad| quad.sprite_id == 100).count() >= LEGENDS.len());
+        assert_eq!(caption_text(7, CaptionKind::Mouse), "MOUSE");
+        assert_eq!(caption_text(7, CaptionKind::Tablet), "TABLET");
+    }
+
+    #[test]
     fn bucket_captions_reuse_loaded_glyphs_and_reject_clipped_anchors() {
-        assert_eq!(caption_text(0), "UNASSIGNED");
-        assert_eq!(caption_text(u32::MAX), "BUCKET 4294967295");
-        for scalar in caption_text(u32::MAX)
+        assert_eq!(caption_text(0, CaptionKind::Bucket), "UNASSIGNED");
+        assert_eq!(
+            caption_text(u32::MAX, CaptionKind::Bucket),
+            "BUCKET 4294967295"
+        );
+        for scalar in caption_text(u32::MAX, CaptionKind::Bucket)
             .chars()
-            .chain(caption_text(0).chars())
+            .chain(caption_text(0, CaptionKind::Bucket).chars())
         {
             assert!(scalar == ' ' || LEGENDS.iter().any(|legend| legend.scalar == scalar));
         }

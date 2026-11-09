@@ -9,21 +9,30 @@ regular key pitches wide and matches the GLB keyboard's height and front-to-back
 depth. A mouse sits to the right of the keyboard in its combo bucket; unpaired
 mice get their own rows. The camera frames both device types, including mouse-only
 scenes. The live roster, combo membership and colors refresh every three seconds.
-Pointer movement does not move these placeholders, and bucket assignment remains
-in Link.
+Tablets have their own slot after the mouse slot, use a quarter-height cuboid,
+and carry a `TABLET` label; mouse placeholders carry `MOUSE`. RDP's absolute
+pointer is a tablet and follows its actual HUT combo. Pointer movement does not
+move these placeholders, and bucket assignment remains in Link.
 
 One resident vertex/index buffer holds the keyboard and one 24-vertex mouse box.
 Both use shared PBR geometry with 64-byte instance transforms, separate index
 ranges and the central combo palette. Adding devices uploads transforms and
 palette colors rather than duplicating either mesh. Mouse display requires the
-host-backed mouse snapshot in the Blueprint HUT bridge (snapshot kind 3); an older
-kernel's guest-local mouse registry returns an empty roster. Deploy the corrected
-kernel once, then reopen Link3D.
+host-backed mouse and tablet snapshots in the Blueprint HUT bridge (kinds 3 and
+4); older guest-local registries return empty rosters. Deploy the corrected
+kernel, then reopen Link3D. All three device classes share the same resident
+geometry buffers, with up to 32 instances of each class.
 
 Each visible bucket has a `BUCKET <combo_id>` caption anchored above its row;
 unassigned devices show `UNASSIGNED`. Captions face the viewer and reuse the same
 kernel Microfont glyph textures as the key legends, with a light backing for
 readability. A paired keyboard and mouse share one caption.
+
+Cold styled Microfont rasterization owns Render0. Link3D publishes the 3D scene
+on Render1 while waiting for all glyph textures, then enables the overlay on
+Render0. Caption backings are also withheld until their glyphs are ready. Ordinary
+overlay backpressure still reacquires and redraws a canceled frame; a busy final
+publication retries the same completed lease.
 
 The audited German map in `keyfarm/mapping.json` supplies **36 black legends:
 A–Z and 0–9**. Y and Z follow the recorded physical layout. The build checks the
