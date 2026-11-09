@@ -258,8 +258,29 @@ fn prepare_legends(
         format!("{:x}", Sha256::digest(bytes))
     );
     let mut legends = String::from("pub const LEGENDS: &[Legend] = &[\n");
+    let mut keys = String::from("pub const KEYS: &[Key] = &[\n");
+    let mut usages = std::collections::BTreeSet::new();
     let mut scalars = std::collections::BTreeSet::new();
     for key in map["keys"].as_array().unwrap() {
+        let mesh = key["mesh"].as_u64().unwrap() as usize;
+        let (_, center, normal) = geometry
+            .key_tops
+            .iter()
+            .find(|(id, _, _)| *id == mesh)
+            .unwrap();
+        let usage = key["press"]["scan"].as_u64().map(|scan| {
+            assert_eq!(
+                scan >> 16,
+                7,
+                "recorded key must belong to USB HID keyboard page"
+            );
+            let usage = u8::try_from(scan & 0xffff).expect("8-bit keyboard usage");
+            assert!(usages.insert(usage), "duplicate recorded HID usage");
+            usage
+        });
+        keys.push_str(&format!(
+            "Key {{ usage: {usage:?}, mesh: {mesh}, center: {center:?}, normal: {normal:?} }},\n"
+        ));
         let label = key["press"]["label"].as_str().unwrap();
         let mut chars = label.chars();
         let Some(ch) = chars.next() else {
@@ -284,6 +305,9 @@ fn prepare_legends(
     assert_eq!(scalars.len(), 36, "exactly A-Z and 0-9");
     legends.push_str("];\n");
     fs::write(out.join("keyboard.legends.rs"), legends).unwrap();
+    assert_eq!(usages.len(), 61, "61 input keys plus hardware-local Fn");
+    keys.push_str("];\n");
+    fs::write(out.join("keyboard.keys.rs"), keys).unwrap();
 }
 
 fn multiply(left: Matrix, right: Matrix) -> Matrix {

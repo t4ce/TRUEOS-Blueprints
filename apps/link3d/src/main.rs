@@ -75,6 +75,9 @@ fn run() -> Result<(), Error> {
         })
         .unwrap_or((80, 64));
     let mut frame = Frame::open_streaming(x, y, width, height)?;
+    frame.set_escape_key_action(
+        trueos::ui4_solara_text::FrameEscapeKeyAction::DeliverToApplication,
+    )?;
     frame.set_title("Link3D — drag to orbit · wheel to zoom · Home to reset")?;
     frame.set_primary_activation(true)?;
     let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))?;
@@ -88,6 +91,7 @@ fn run() -> Result<(), Error> {
         &metallic_roughness,
     )?;
     let mut legends = link3d::legends::Legends::default();
+    let mut feedback = link3d::feedback::Feedback::default();
     drop(mesh_vertices);
     drop(vertices);
     drop(indices);
@@ -98,7 +102,7 @@ fn run() -> Result<(), Error> {
         level::IMPORTANT,
         "link3d",
         format_args!(
-            "link3d: K70 mesh prepared once geometry-uploads=1 instance-bytes=64 vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads controls=primary-drag-orbit,wheel-zoom,Home-reset"
+            "link3d: K70 mesh prepared once geometry-uploads=1 instance-bytes=64 vertices={VERTEX_COUNT} indices={INDEX_COUNT} inventory=HID-HUT/virtual-keyboards refresh-ms={INVENTORY_INTERVAL_MS} colors=input-combo-palette chassis=gray,metallic:0.5,roughness:0.4 legends=kernel-microfont,A-Z+0-9,black-flat-quads feedback=ui4-routed-physical-hid,red-key-top controls=primary-drag-orbit,wheel-zoom,Home-reset"
         ),
     );
     let mut orbit = OrbitCamera::new(RADIUS);
@@ -112,6 +116,9 @@ fn run() -> Result<(), Error> {
     let mut scene_radius = RADIUS;
     loop {
         let now = clock::monotonic_millis();
+        if feedback.expire(now) {
+            redraws_pending = redraws_pending.max(1);
+        }
         if legends.poll(&mut frame)? {
             redraws_pending = redraws_pending.max(1);
         }
@@ -124,6 +131,7 @@ fn run() -> Result<(), Error> {
             if roster_changed {
                 let row = prepare_row(&current, RADIUS);
                 renderer.update_instances(&row, &current)?;
+                feedback.set_roster(&current);
                 scene_center = row.center;
                 scene_radius = row.radius;
                 orbit.set_scene(scene_center, scene_radius);
@@ -187,6 +195,14 @@ fn run() -> Result<(), Error> {
                 redraws_pending = redraws_pending.max(1);
             }
         }
+        while let Some(event) = frame.take_physical_keyboard_event()? {
+            if feedback.event(&event, now) {
+                redraws_pending = redraws_pending.max(1);
+            }
+        }
+        if feedback.any() && feedback.reconcile_selection(&frame.input_routes()?) {
+            redraws_pending = redraws_pending.max(1);
+        }
         if redraws_pending != 0 {
             match frame.begin_gpu_frame() {
                 Ok(()) => {}
@@ -202,7 +218,15 @@ fn run() -> Result<(), Error> {
             let camera = orbit.retained(width, height, previous_view_projection);
             let point = renderer.render(queue, surface, camera)?;
             device.wait(queue, point.value)?;
-            legends.draw(&mut frame, &camera, width, height, keyboards.len(), RADIUS)?;
+            legends.draw(
+                &mut frame,
+                &camera,
+                width,
+                height,
+                keyboards.len(),
+                RADIUS,
+                &feedback,
+            )?;
             loop {
                 match frame.publish(Damage::full(width, height)) {
                     Ok(()) => break,

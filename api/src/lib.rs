@@ -62,6 +62,10 @@ pub mod input {
     pub const KEYBOARD_OUTPUT_FLAG_TEXT_BURST: u32 = 1 << 4;
     pub const KEYBOARD_OUTPUT_KIND_TEXT: u8 = 1;
     pub const KEYBOARD_OUTPUT_KIND_KEY: u8 = 2;
+    /// Reset held state after a source disappears or its routed queue overruns.
+    pub const KEYBOARD_OUTPUT_KIND_DEVICE_LOST: u8 = 3;
+    /// Physical transitions: key_code is a USB HID keyboard-page usage.
+    pub const KEYBOARD_OUTPUT_KIND_PHYSICAL: u8 = 4;
 
     pub const KEYBOARD_KEY_BACKSPACE: u16 = 1;
     pub const KEYBOARD_KEY_TAB: u16 = 2;

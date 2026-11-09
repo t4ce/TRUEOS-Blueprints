@@ -916,6 +916,22 @@ impl Frame {
         Ok(Some(event))
     }
 
+    /// Take one physical transition routed to this frame. Kind PHYSICAL carries
+    /// a USB HID usage in key_code, with PRESS clear on release. DEVICE_LOST
+    /// resets held state. This queue is independent of legacy key/text events;
+    /// committed synthetic text remains text and must not be treated as a key.
+    pub fn take_physical_keyboard_event(&mut self) -> Result<Option<TrueosKeyboardOutputEvent>, Error> {
+        let mut event = TrueosKeyboardOutputEvent::default();
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_keyboard_event_take_v1(self.window_id, &mut event)
+        };
+        match result {
+            0 => Ok(Some(event)),
+            1 => Ok(None),
+            result => Err(error_from_status(result)),
+        }
+    }
+
     /// Take the next app-owned middle-button pan event for this frame.
     pub fn take_pan_event(&mut self) -> Result<Option<PanEvent>, Error> {
         let mut raw = v::bp_abi::TrueosUi4PanEvent::default();
@@ -1389,6 +1405,29 @@ impl Frame {
         if ticket == 0 {
             return Err(Error::Invalid);
         }
+        Ok(FontSpriteTicket(ticket))
+    }
+
+    /// Request a native Microfont stroke variant at the same texture extent.
+    /// `extra_stroke_px` adds 0..=8 source pixels to the full stroke width.
+    /// Cold variants return Busy while the font worker prepares their masks.
+    pub fn request_font_sprite_with_stroke(
+        &mut self,
+        request: FontSpriteRequest,
+        extra_stroke_px: f32,
+    ) -> Result<FontSpriteTicket, Error> {
+        if !request.font_pixels.is_finite() || !(11.0..=128.0).contains(&request.font_pixels)
+            || !extra_stroke_px.is_finite() || !(0.0..=8.0).contains(&extra_stroke_px) {
+            return Err(Error::Invalid);
+        }
+        let mut ticket = 0_u64;
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_font_sprite_request_v2(
+                self.window_id, request.font as u32, request.scalar as u32,
+                request.font_pixels, request.color_rgba, extra_stroke_px, &mut ticket,
+            )
+        })?;
+        if ticket == 0 { return Err(Error::Invalid); }
         Ok(FontSpriteTicket(ticket))
     }
 
