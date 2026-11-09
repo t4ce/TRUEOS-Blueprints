@@ -21,43 +21,43 @@
   "files": {
     "filesystem.prm": {
       "bytes": 7897,
-      "sha256": "08ba0583c31aef2dae06e3cdca74e3bfe92edb4b0dc0b255ebd305f22117cd78"
+      "sha256": "fa7e8d85f03ff36a64e54cb25b7cb9298ceed0c9a64fe666c08b10dbddc7b4ca"
     },
     "graphics.prm": {
       "bytes": 27692,
-      "sha256": "4cc42edfdf57875fe518705902b1a7a5cef18cc482bebf5c5c40f93c1425cc4d"
+      "sha256": "9075fb64848dee45dca490dc31ee349ba1b7bb67cf06bd42393c17f268c10059"
     },
     "lifecycle.prm": {
       "bytes": 6228,
-      "sha256": "1d67d85d90215023bd0a5805a5d9dc728db30f1082dce95713b1fbcc7165f008"
+      "sha256": "306a7cfb7e1a8dee4bf05ea6f09f14fb5090038ad9232d0c26017e872f07f13c"
     },
     "logging.prm": {
       "bytes": 1852,
-      "sha256": "1b22bbacc69965e729e3cf952a5561fd19a040e2eb2358f3b254d841619998bc"
+      "sha256": "0b02d4c834930d272a6c7e9800d18b702f7c3efc7d9da450266d11ab5604c1cb"
     },
     "memory.prm": {
       "bytes": 850,
-      "sha256": "bebbd6068ef8c1f6e5449a46b3e3ca42d25a5e6daedf2250289b6f542255158d"
+      "sha256": "69899df37d14dfeb673152a757718936af30954260d67d185c88a0599b533ff7"
     },
     "services.prm": {
       "bytes": 36003,
-      "sha256": "6d33cb0c7a7e06026988ffd2052c0594f16277bdbb48a01625f3bfd7c4826207"
+      "sha256": "d5ec000f4af4b01afb5dd454b038e300979c55cc2e7617b3e43bf8ee38d25ee5"
     },
     "symbols.prm": {
       "bytes": 19968,
-      "sha256": "4e4523cf47c72c40d0939070473a75cbfb1253875b353517211ad4fc508e259e"
+      "sha256": "d1faf3009f3298d6e1a7f0eb6d443df287c6058da47f109e36e709b1bdd490a1"
     },
     "terminal.prm": {
       "bytes": 5391,
-      "sha256": "036f12155ff27b6bf3183261a83adb10d639c08c0c3522998189968ff45fa639"
+      "sha256": "ae0d0d8163417acf27ad3c1dd63292af7b46b65180e88adc3e9b2564d8882ac9"
     },
     "trueos-api.prm": {
       "bytes": 3353,
-      "sha256": "b322e3362e83cada3536fa1fcd6cc842403e09f19feb66b485011d8db3d9d941"
+      "sha256": "4fd970223e5a3f643f0c752e47eaf52c73592751b9ac67535edc0d9b46918634"
     },
     "types.prm": {
       "bytes": 35266,
-      "sha256": "93e84dab2e8f8109d2af4fcfdb96669a13c34bbcd8ab0dc6cfed9856bf31dd64"
+      "sha256": "3ddae1ccd4e7ca44daa64f743b371b94528cf4456a8bda7938429e411e08158b"
     }
   },
   "format_version": 1,
@@ -711,12 +711,12 @@
       "crates/trueos-v/src/worker_abi.rs": "9cd0061371b48bbfaa2095a2068997fe0907935cb28c3ec50925f7cd0132827d",
       "src/hv/blueprint/prebind.rs": "ade35637030deb6aef52b0f98639d4729a80e96fd289fce0f4731437f863bc80",
       "src/r/io/async_fs_cabi.rs": "5f6caf6c886041e1b2ba29a67776a17e1117a7ebbebb28b3459cd656e00cbdf0",
-      "src/r/io/fs_cabi.rs": "70c219cabeafc25a4717d2950b078359e4b9fc89380fe6446cc272676137d128",
+      "src/r/io/fs_cabi.rs": "4992358f8fecde1397913fb10482a15b16a32abca5b32bb9ea7a5fe1ff940d1c",
       "src/r/io/launch_request.rs": "e29e154449594223aeeb12cf39bdf5a4f7264f68ae2a221cfd9ababbfb9cd7e0",
       "src/ui4/blueprint_ui4/native_compute_api.rs": "c4b9a560fa9a22f32909d404f26becc685633b798a80971c71102138e7df3313",
       "tools/api-prm/usage.json": "40e737a5bc0063ed440306fa688eb9ba60c84d6a7f2248cc9ece9783f20b4b32",
       "tools/build_api_prm.py": "54ea90feea2d9dcab56276d50ed6a7a8aa2498e7dc73a1de7e6364b3ca6efc4b"
     },
-    "sha256": "d5bf388ef641765bd07e113e93df897b963be98c5225eba7d9abb2012e95b07e"
+    "sha256": "7d66e95ebdd2525f37e1b1d18df2d7490833038351d8a034825dd3a30f4df15a"
   }
 }

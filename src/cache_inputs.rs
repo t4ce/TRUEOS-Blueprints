@@ -138,6 +138,7 @@ pub(crate) fn base(app: &Path, manifest: &Path, target: &Path) -> Result<Vec<Pat
             "clang",
             "ar",
             "ld",
+            "ld.bfd",
             "ld.lld",
             "lld",
             "llvm-objcopy",

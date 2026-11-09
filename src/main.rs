@@ -17,6 +17,7 @@ mod cli;
 mod codex_artifact;
 mod codex_workload;
 mod legacy_axum_overlay;
+mod legacy_reqwest_overlay;
 mod legacy_tonic_overlay;
 mod lock_overlay_batch;
 mod native_fold;
@@ -41,6 +42,7 @@ mod native_tokio_features;
 mod native_c_dependency_overlays;
 mod native_sqlite_dependency_overlay;
 mod native_openssl_overlay;
+mod relocatable_common;
 #[cfg(test)]
 mod native_staging_order_tests;
 mod codex_native_executable_overlay;
@@ -1008,6 +1010,7 @@ fn build_one_target_to_mode(
     }
 
     run_command(&mut ld, "ld")?;
+    relocatable_common::materialize(&linked)?;
 
     // A relocatable ELF import records only a symbol name, not its C function
     // type. Compare the source contracts while that information is still
@@ -2608,12 +2611,7 @@ fn source_overlay_patches(
         let path = match name.as_str() {
             "axum" | "axum-core" => legacy_axum_overlay::stage(work_dir, &source)?,
             "tonic" => legacy_tonic_overlay::stage(work_dir, &source)?,
-            "reqwest" => {
-                let staged = work_dir.join("source-overlay-crates").join(&source_name);
-                reset_dir(&staged)?;
-                copy_app_tree(&source, &staged)?;
-                staged
-            }
+            "reqwest" => legacy_reqwest_overlay::stage(work_dir, &source)?,
             _ => unreachable!(),
         };
         out.retain(|patch| patch.name != *name);

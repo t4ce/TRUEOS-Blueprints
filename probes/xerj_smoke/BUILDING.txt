@@ -3,6 +3,10 @@ XERJ native integration smoke probe
 Build from the TRUEOS-Blueprints repository:
     cargo bp probes/xerj_smoke
 
+The default crypto-enabled native package requires GNU ld.bfd (or GNU ld).
+The SDK uses it to allocate surviving ELF COMMON storage before import guards
+and packing; LLVM LLD leaves that storage unbound during a relocatable link.
+
 Run xerj-smoke through Shell3 on TRUEOS after installing xerj.bp, codex.bp and
 xerj-smoke.bp in the regular AppDB. Optional launcher arguments:
     xerj-smoke [xerj.bp|/absolute/path/xerj.bp] [existing-state-parent] [codex.bp|/absolute/path/codex.bp]

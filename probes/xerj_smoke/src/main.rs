@@ -295,49 +295,103 @@ struct HttpReply {
     body: Value,
 }
 
-fn parse_http(bytes: &[u8]) -> io::Result<HttpReply> {
-    let split = bytes
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .ok_or_else(|| error("HTTP response has no complete header"))?;
+struct HttpHeader {
+    end: usize,
+    status: u16,
+    length: Option<usize>,
+    chunked: bool,
+    bodyless: bool,
+}
+
+fn http_header(bytes: &[u8]) -> io::Result<Option<HttpHeader>> {
+    let Some(split) = bytes.windows(4).position(|part| part == b"\r\n\r\n") else {
+        return Ok(None);
+    };
     let header = std::str::from_utf8(&bytes[..split]).map_err(io::Error::other)?;
-    let status = header
-        .lines()
-        .next()
+    let status = header.lines().next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|value| value.parse::<u16>().ok())
         .ok_or_else(|| error("HTTP response has no status code"))?;
-    let mut body = bytes[split + 4..].to_vec();
     let mut length = None;
     let mut chunked = false;
     for line in header.lines().skip(1) {
         if let Some((key, value)) = line.split_once(':') {
             if key.eq_ignore_ascii_case("content-length") {
-                length = Some(value.trim().parse::<usize>().map_err(io::Error::other)?);
+                let value = value.trim().parse::<usize>().map_err(io::Error::other)?;
+                require(length.is_none_or(|previous| previous == value), "conflicting HTTP content lengths")?;
+                length = Some(value);
             }
             if key.eq_ignore_ascii_case("transfer-encoding") {
-                chunked = value
-                    .split(',')
-                    .any(|part| part.trim().eq_ignore_ascii_case("chunked"));
+                let encodings = value.split(',').map(str::trim).collect::<Vec<_>>();
+                require(encodings.last().is_some_and(|encoding| encoding.eq_ignore_ascii_case("chunked")), "unsupported HTTP transfer framing")?;
+                chunked = true;
             }
         }
     }
-    if chunked {
+    require(!(chunked && length.is_some()), "ambiguous HTTP response framing")?;
+    Ok(Some(HttpHeader { end: split + 4, status, length, chunked, bodyless: status == 204 || status == 304 }))
+}
+
+// Return the complete wire length without needing the peer to close TCP.
+// Chunk trailers are part of framing even though this fixture does not use them.
+fn chunked_wire_length(bytes: &[u8]) -> io::Result<Option<usize>> {
+    let mut cursor = 0usize;
+    loop {
+        let Some(split) = bytes[cursor..].windows(2).position(|part| part == b"\r\n") else {
+            return Ok(None);
+        };
+        let size = std::str::from_utf8(&bytes[cursor..cursor + split]).map_err(io::Error::other)?
+            .split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size, 16).map_err(io::Error::other)?;
+        cursor += split + 2;
+        if size == 0 {
+            if bytes[cursor..].starts_with(b"\r\n") {
+                return Ok(Some(cursor + 2));
+            }
+            return Ok(bytes[cursor..].windows(4).position(|part| part == b"\r\n\r\n").map(|end| cursor + end + 4));
+        }
+        let end = cursor.checked_add(size).and_then(|end| end.checked_add(2))
+            .ok_or_else(|| error("HTTP chunk length overflow"))?;
+        if end > bytes.len() {
+            return Ok(None);
+        }
+        require(&bytes[end - 2..end] == b"\r\n", "invalid HTTP chunk terminator")?;
+        cursor = end;
+    }
+}
+
+fn complete_http(bytes: &[u8]) -> io::Result<Option<HttpReply>> {
+    let Some(header) = http_header(bytes)? else { return Ok(None) };
+    let body = &bytes[header.end..];
+    let complete = if header.bodyless {
+        true
+    } else if header.chunked {
+        chunked_wire_length(body)?.is_some()
+    } else if let Some(length) = header.length {
+        body.len() >= length
+    } else {
+        false // Only an unframed body requires EOF.
+    };
+    if complete { parse_http(bytes).map(Some) } else { Ok(None) }
+}
+
+fn parse_http(bytes: &[u8]) -> io::Result<HttpReply> {
+    let header = http_header(bytes)?.ok_or_else(|| error("HTTP response has no complete header"))?;
+    let mut body = bytes[header.end..].to_vec();
+    if header.bodyless {
+        require(body.is_empty(), "bodyless HTTP response contains data")?;
+    } else if header.chunked {
+        let end = chunked_wire_length(&body)?.ok_or_else(|| error("truncated HTTP chunked body"))?;
+        require(end == body.len(), "HTTP response contains data after the final chunk")?;
         body = decode_chunks(&body)?;
-    } else if let Some(length) = length {
-        require(
-            body.len() == length,
-            format!("HTTP body length is {}, expected {length}", body.len()),
-        )?;
+    } else if let Some(length) = header.length {
+        require(body.len() == length, format!("HTTP body length is {}, expected {length}", body.len()))?;
     }
     // XERJ's readiness endpoint is plain text; data endpoints return JSON.
-    let body = if body.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()))
+    let body = if body.is_empty() { Value::Null } else {
+        serde_json::from_slice(&body).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()))
     };
-    Ok(HttpReply { status, body })
+    Ok(HttpReply { status: header.status, body })
 }
 
 fn decode_chunks(mut bytes: &[u8]) -> io::Result<Vec<u8>> {
@@ -386,21 +440,34 @@ fn http(
     require(!timeout.is_zero(), "HTTP deadline expired")?;
     let started = Instant::now();
     engine.running()?;
-    let mut stream =
-        TcpStream::connect_timeout(&address(port), timeout.min(Duration::from_millis(250)))?;
+    let mut stream = TcpStream::connect_timeout(&address(port), timeout.min(Duration::from_millis(250)))
+        .map_err(|failure| error(format!(
+            "HTTP connect port={port} error_kind={:?} raw_os_error={:?}: {failure}",
+            failure.kind(), failure.raw_os_error()
+        )))?;
     stream.set_nonblocking(true)?;
     let body = body.map(|value| value.to_string()).unwrap_or_default();
     let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
+    http_exchange(&mut stream, request.as_bytes(), started, timeout, || engine.running())
+}
+
+fn http_exchange(
+    stream: &mut TcpStream,
+    request: &[u8],
+    started: Instant,
+    timeout: Duration,
+    mut running: impl FnMut() -> io::Result<()>,
+) -> io::Result<HttpReply> {
     let mut sent = 0;
     let mut bytes = Vec::new();
     let mut buffer = [0u8; 8192];
     loop {
-        engine.running()?;
+        running()?;
         if sent < request.len() {
-            match stream.write(&request.as_bytes()[sent..]) {
+            match stream.write(&request[sent..]) {
                 Ok(0) => return Err(error("HTTP socket closed during request write")),
                 Ok(size) => sent += size,
                 Err(failure) if failure.kind() == io::ErrorKind::WouldBlock => {}
@@ -410,20 +477,26 @@ fn http(
             match stream.read(&mut buffer) {
                 Ok(0) => return parse_http(&bytes),
                 Ok(size) => {
-                    require(
-                        bytes.len() + size <= MAX_WIRE,
-                        "HTTP response exceeds 2 MiB",
-                    )?;
+                    require(bytes.len() + size <= MAX_WIRE, "HTTP response exceeds 2 MiB")?;
                     bytes.extend_from_slice(&buffer[..size]);
+                    if let Some(reply) = complete_http(&bytes)? {
+                        return Ok(reply);
+                    }
                 }
                 Err(failure) if failure.kind() == io::ErrorKind::WouldBlock => {}
                 Err(failure) => return Err(failure),
             }
         }
-        require(
-            started.elapsed() < timeout,
-            format!("HTTP {method} {path} exceeded {} ms", timeout.as_millis()),
-        )?;
+        if started.elapsed() >= timeout {
+            let header = http_header(&bytes)?;
+            let status = header.as_ref().map_or(0, |header| header.status);
+            let body_expected = header.as_ref().and_then(|header| header.length);
+            let phase = if sent < request.len() { "request_write" } else { "response_read" };
+            return Err(error(format!(
+                "HTTP deadline exceeded timeout_ms={} phase={phase} sent={} request_bytes={} received={} header_complete={} status={} body_expected={body_expected:?}",
+                timeout.as_millis(), sent, request.len(), bytes.len(), header.is_some(), status
+            )));
+        }
         thread::sleep(POLL);
     }
 }
@@ -455,30 +528,24 @@ fn http_json(
 
 fn ready(engine: &mut OwnedChild, port: u16) -> io::Result<()> {
     let started = Instant::now();
+    let mut failure = "no completed readiness attempt".to_owned();
     loop {
         let remaining = READY_TIMEOUT.saturating_sub(started.elapsed());
-        let failure = match http(
-            engine,
-            port,
-            "GET",
-            "/health/ready",
-            None,
-            remaining.min(REQUEST_TIMEOUT),
-        ) {
+        if remaining.is_zero() {
+            break;
+        }
+        failure = match http(engine, port, "GET", "/health/ready", None, remaining.min(REQUEST_TIMEOUT)) {
             Ok(response) if response.status == 200 && response.body == "ready" => return Ok(()),
             Ok(response) => format!("HTTP {}: {}", response.status, response.body),
             Err(failure) => failure.to_string(),
         };
         engine.running()?;
-        require(
-            started.elapsed() < READY_TIMEOUT,
-            format!(
-                "XERJ readiness exceeded 90 seconds: {failure}; stdout tail: {}",
-                engine.tail_text()
-            ),
-        )?;
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100).min(READY_TIMEOUT.saturating_sub(started.elapsed())));
     }
+    Err(error(format!(
+        "XERJ readiness exceeded 90 seconds: {failure}; stdout tail: {}",
+        engine.tail_text()
+    )))
 }
 
 fn verify_search(body: &Value) -> io::Result<()> {
@@ -1159,7 +1226,10 @@ no_proxy = "127.0.0.1,localhost"
         "mcpServer/tool/call",
         json!({
             "threadId":thread_id,"server":"xerj","tool":"xerj_search",
-            "arguments":{"prefix":CORPUS_PREFIX,"query":SQLITE_TOKEN,"size":10}
+            "arguments":{
+                "prefix":CORPUS_PREFIX,"query":SQLITE_TOKEN,"size":10,
+                "_source":["id","text","ax_path","ax_locator"]
+            }
         }),
     )?)?;
     verify_sqlite_fixture(&sqlite)?;
@@ -1936,6 +2006,75 @@ mod tests {
                 .is_err()
         );
         assert!(project_default_service_status(&json!({"content":[{"text":"xerj_status: the node at http://127.0.0.1:9200 is UP\ncluster health: red"}]})).is_err());
+    }
+
+    #[test]
+    fn framed_http_completes_only_after_all_body_bytes_and_chunk_trailers() {
+        for response in [
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nready"[..],
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;proof=yes\r\nready\r\n0\r\nX-Proof: complete\r\n\r\n"[..],
+            &b"HTTP/1.1 204 No Content\r\n\r\n"[..],
+        ] {
+            for prefix in 0..response.len() {
+                assert!(complete_http(&response[..prefix]).unwrap().is_none(), "completed after {prefix} of {} bytes", response.len());
+            }
+            assert!(complete_http(response).unwrap().is_some());
+        }
+        assert!(complete_http(b"HTTP/1.1 200 OK\r\n\r\nEOF-framed body").unwrap().is_none());
+        assert!(complete_http(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nready").is_err());
+        assert!(complete_http(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n").is_err());
+        assert!(complete_http(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nready").is_err());
+    }
+
+    fn response_without_eof(response: &'static [u8]) -> (TcpStream, std::sync::mpsc::Sender<()>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(address(0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (release, held) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                assert_eq!(peer.read(&mut byte).unwrap(), 1);
+                request.push(byte[0]);
+            }
+            peer.write_all(response).unwrap();
+            peer.flush().unwrap();
+            // The client must finish from HTTP framing before EOF is possible.
+            let _ = held.recv_timeout(Duration::from_secs(2));
+        });
+        let stream = TcpStream::connect(addr).unwrap();
+        stream.set_nonblocking(true).unwrap();
+        (stream, release, server)
+    }
+
+    #[test]
+    fn http_reads_complete_length_chunked_and_bodyless_responses_without_eof() {
+        for (wire, expected) in [
+            (&b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nready"[..], Value::String("ready".into())),
+            (&b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nready\r\n0\r\nX-Proof: complete\r\n\r\n"[..], Value::String("ready".into())),
+            (&b"HTTP/1.1 204 No Content\r\n\r\n"[..], Value::Null),
+        ] {
+            let (mut stream, release, server) = response_without_eof(wire);
+            let reply = http_exchange(&mut stream, b"GET /proof HTTP/1.1\r\nHost: loopback\r\n\r\n", Instant::now(), Duration::from_millis(300), || Ok(()));
+            release.send(()).unwrap();
+            server.join().unwrap();
+            assert_eq!(reply.unwrap().body, expected);
+        }
+    }
+
+    #[test]
+    fn http_timeout_diagnostics_report_progress_without_response_contents() {
+        let (mut stream, release, server) = response_without_eof(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nprivate-partial");
+        let result = http_exchange(&mut stream, b"GET /proof HTTP/1.1\r\nHost: loopback\r\n\r\n", Instant::now(), Duration::from_millis(100), || Ok(()));
+        release.send(()).unwrap();
+        server.join().unwrap();
+        let failure = result.err().unwrap().to_string();
+        assert!(failure.contains("phase=response_read"), "{failure}");
+        assert!(failure.contains("header_complete=true status=200 body_expected=Some(20)"), "{failure}");
+        assert!(failure.contains("sent=") && failure.contains("received="), "{failure}");
+        assert!(!failure.contains("private-partial"), "{failure}");
     }
 
     #[test]

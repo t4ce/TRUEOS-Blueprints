@@ -3,6 +3,10 @@ XERJ persistent native launcher
 Build from the TRUEOS-Blueprints repository:
     cargo bp probes/xerj_service
 
+Full engine and crypto-enabled probe builds also require GNU binutils with
+ld.bfd or GNU ld. The SDK materializes retained ELF COMMON storage before
+checking and packaging the native module.
+
 Install xerj.bp and xerj-service.bp through the regular AppDB workflow. Launch
 the exact bare app name in Shell3:
     xerj-service
@@ -22,7 +26,7 @@ closing one Codex session does not stop the engine used by other clients.
 Appbundle installation supplies xerj-service.bp and xerj.bp before that call,
 so it uses AppDB directly and performs no runtime catalog download.
 
-The launcher retains an exclusive /apps/xerj/service.lock before spawning its
+The launcher retains an exclusive /apps/xerj-service/service.lock before spawning its
 engine. A competing launcher exits without another child. `replicatable=false`
 is checkpoint metadata, not singleton admission. The engine also retains its
 own data-directory lock and --no-auto-port fixes the expected endpoint.
