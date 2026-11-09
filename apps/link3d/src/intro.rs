@@ -12,7 +12,7 @@ include!(concat!(env!("OUT_DIR"), "/keyboard.outlines.rs"));
 pub const FLIGHT_MS: u64 = 4_000;
 pub const REVEAL_MS: u64 = 1_500;
 const DELAY_MS: f32 = 200.;
-const LANDING_MS: f32 = 650.;
+pub(crate) const LANDING_MS: f32 = 650.;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stage {
@@ -140,10 +140,11 @@ impl Intro {
         stage: Stage,
         camera: &RetainedCamera,
         half: [f32; 3],
+        live_offsets: &[f32],
     ) -> (Vec<u8>, Vec<LineDraw>) {
         let mut vertices = Vec::new();
         let mut draws = Vec::new();
-        for device in &self.devices {
+        for (index, device) in self.devices.iter().enumerate() {
             let offset = match stage {
                 Stage::Flying { elapsed, .. } => {
                     let Some(offset) =
@@ -156,6 +157,9 @@ impl Intro {
                 Stage::Revealing { .. } => 0.,
                 _ => continue,
             };
+            // A device discovered during the startup sequence still gets a
+            // complete arrival, even if the global fly-in is almost finished.
+            let offset = offset.max(live_offsets.get(index).copied().unwrap_or(0.));
             let first = (vertices.len() / 12) as u32;
             let pointer = [half.map(|v| -v), half];
             let boxes = if device.keyboard {
@@ -214,7 +218,7 @@ pub struct LineDraw {
     pub color: [u8; 4],
 }
 
-fn round_robin(combos: &[u32]) -> Vec<usize> {
+pub(crate) fn round_robin(combos: &[u32]) -> Vec<usize> {
     let mut buckets: Vec<(u32, Vec<usize>)> = Vec::new();
     for (index, &combo) in combos.iter().enumerate() {
         // Unassigned devices have no common combo and each gets its own turn.
@@ -253,7 +257,12 @@ fn fly_offset(elapsed: u64, rank: usize, count: usize, radius: f32) -> Option<f3
     if (elapsed as f32) < start {
         return None;
     }
-    Some(radius * 5. * (1. - ease((elapsed as f32 - start) / LANDING_MS)))
+    Some(slide_offset(elapsed as f32 - start, radius))
+}
+
+/// Shared right-to-left arrival motion for the startup outlines and live devices.
+pub(crate) fn slide_offset(elapsed_ms: f32, radius: f32) -> f32 {
+    radius * 5. * (1. - ease(elapsed_ms / LANDING_MS))
 }
 
 /// Clip in homogeneous space before dividing, including the near plane. This
@@ -384,6 +393,22 @@ mod tests {
         assert!(clip_line(&camera, [f32::NAN, 0., 0.], [0., 0., 1.]).is_none());
     }
     #[test]
+    fn device_added_during_startup_reveal_keeps_its_own_slide_offset() {
+        let keys = keyboards();
+        let row = prepare_row(&keys, 20.);
+        let mut intro = Intro::default();
+        intro.configure(&row, &keys, &[], &[]);
+        intro.start_if_ready(0, true);
+        let camera = OrbitCamera::new(row.radius).retained(800, 600, [0.; 16]);
+        let reveal = intro.stage(4_500);
+        assert_eq!(intro.lines(reveal, &camera, [1.; 3], &[]).1.len(), 2);
+        assert_eq!(
+            intro.lines(reveal, &camera, [1.; 3], &[0., 1_000.]).1.len(),
+            1
+        );
+    }
+
+    #[test]
     fn outline_pass_is_empty_at_start_then_contains_only_clipped_line_pairs() {
         let keys = keyboards();
         let row = prepare_row(&keys, 20.);
@@ -391,8 +416,13 @@ mod tests {
         intro.configure(&row, &keys, &[], &[]);
         intro.start_if_ready(0, true);
         let camera = OrbitCamera::new(row.radius).retained(800, 600, [0.; 16]);
-        assert!(intro.lines(intro.stage(0), &camera, [1.; 3]).0.is_empty());
-        let (vertices, draws) = intro.lines(intro.stage(4_000), &camera, [1.; 3]);
+        assert!(
+            intro
+                .lines(intro.stage(0), &camera, [1.; 3], &[])
+                .0
+                .is_empty()
+        );
+        let (vertices, draws) = intro.lines(intro.stage(4_000), &camera, [1.; 3], &[]);
         assert_eq!(draws.len(), 2);
         assert_eq!(vertices.len() % 24, 0);
         assert_eq!(

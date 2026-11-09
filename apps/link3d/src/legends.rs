@@ -2,6 +2,7 @@ extern crate alloc;
 use crate::scene::{BucketCaption, CaptionKind, row_spacing};
 use alloc::{format, string::String, vec::Vec};
 use trueos::{
+    hid::{InputComboSourceKind, TrueosInputCombo},
     ui4_scene::{
         self, Error, Font, FontSpriteRequest, FontSpriteStatus, FontSpriteTicket, Frame,
         SpriteCorner, SpriteQuad,
@@ -40,20 +41,41 @@ pub const EXTRA_STROKE_PX: f32 = 1.5;
 pub const GLYPH_HEIGHT: f32 = 0.7;
 const KEY_HIGHLIGHT_INNER_SIZE: f32 = 1.34;
 const GLYPH_TOP_INSET: f32 = 0.05;
+// Captions reuse the keyboard's capitals/digits, plus shared service masks for
+// mixed-case source tags. This is only display text; combo IDs remain unchanged.
+const CAPTION_GLYPHS: &str = "abcdefghijklmnopqrstuvwxyz/-._?";
+
+fn glyph_scalars() -> impl Iterator<Item = char> {
+    LEGENDS
+        .iter()
+        .map(|legend| legend.scalar)
+        .chain(CAPTION_GLYPHS.chars())
+}
 
 /// Masks belong to the shared kernel font service. One window-owned glyph
 /// texture is reused for the matching key on every board.
 pub struct Legends {
     glyphs: Vec<(Option<FontSpriteTicket>, Option<u32>)>,
+    bucket_names: Vec<(u32, String)>,
 }
 impl Default for Legends {
     fn default() -> Self {
         Self {
-            glyphs: alloc::vec![(None, None); LEGENDS.len()],
+            glyphs: alloc::vec![(None, None); glyph_scalars().count()],
+            bucket_names: Vec::new(),
         }
     }
 }
 impl Legends {
+    pub fn set_buckets(&mut self, combos: &[TrueosInputCombo]) -> bool {
+        let names = bucket_names(combos);
+        if names == self.bucket_names {
+            return false;
+        }
+        self.bucket_names = names;
+        true
+    }
+
     pub fn ready(&self) -> bool {
         self.glyphs.iter().all(|(_, sprite)| sprite.is_some())
     }
@@ -61,7 +83,7 @@ impl Legends {
     /// Poll outside the writable UI4 lease. Never hold up input or the first mesh frame.
     pub fn poll(&mut self, frame: &mut Frame) -> Result<bool, Error> {
         let mut changed = false;
-        for (legend, (ticket, sprite)) in LEGENDS.iter().zip(&mut self.glyphs) {
+        for (scalar, (ticket, sprite)) in glyph_scalars().zip(&mut self.glyphs) {
             if sprite.is_some() {
                 continue;
             }
@@ -69,7 +91,7 @@ impl Legends {
                 match frame.request_font_sprite_with_stroke(
                     FontSpriteRequest {
                         font: Font::Default,
-                        scalar: legend.scalar,
+                        scalar,
                         font_pixels: TEXTURE_HEIGHT,
                         color_rgba: ui4_scene::rgba(0, 0, 0, 255),
                     },
@@ -103,8 +125,11 @@ impl Legends {
         radius: f32,
         feedback: &crate::feedback::Feedback,
         captions: &[BucketCaption],
+        offsets: &[f32],
     ) -> Result<(), Error> {
-        let quads = self.overlay_quads(camera, width, height, boards, radius, feedback, captions);
+        let quads = self.overlay_quads(
+            camera, width, height, boards, radius, feedback, captions, offsets,
+        );
         if !quads.is_empty() {
             frame.draw_sprite_quads(&quads)?;
         }
@@ -120,6 +145,7 @@ impl Legends {
         radius: f32,
         feedback: &crate::feedback::Feedback,
         captions: &[BucketCaption],
+        offsets: &[f32],
     ) -> Vec<SpriteQuad> {
         // A cold stroke variant is built asynchronously on Render0. In
         // particular, caption backings must not start a Render0 sprite pass
@@ -132,16 +158,19 @@ impl Legends {
         // Constant-color quads use UI4's existing white pixel. Glyph textures
         // remain shared, black, and untinted; blank keys receive feedback too.
         for board in 0..boards {
+            let offset = offsets.get(board).copied().unwrap_or(0.);
             for (index, key) in KEYS.iter().enumerate() {
                 if !feedback.active(board, index) {
                     continue;
                 }
+                let mut center = key.center;
+                center[0] += offset;
                 for (size, color) in [
                     (1.50, ui4_scene::rgba(255, 255, 255, 235)),
                     (KEY_HIGHLIGHT_INNER_SIZE, ui4_scene::rgba(255, 32, 32, 235)),
                 ] {
                     let Some(corners) = project_plane(
-                        key.center,
+                        center,
                         key.normal,
                         camera,
                         width,
@@ -169,8 +198,11 @@ impl Legends {
                 continue;
             };
             for board in 0..boards {
+                let offset = offsets.get(board).copied().unwrap_or(0.);
+                let mut legend = *legend;
+                legend.center[0] += offset;
                 if let Some(corners) = project_quad(
-                    legend,
+                    &legend,
                     camera,
                     width,
                     height,
@@ -188,12 +220,14 @@ impl Legends {
                     });
                 }
                 for word in WORD_LEGENDS {
+                    let mut word = *word;
+                    word.center[0] += offset;
                     for (index, scalar) in word.text.chars().enumerate() {
                         if scalar != legend.scalar {
                             continue;
                         }
                         if let Some(corners) = project_word_quad(
-                            word,
+                            &word,
                             index,
                             camera,
                             width,
@@ -215,26 +249,31 @@ impl Legends {
             }
         }
         for caption in captions {
-            let Some([x, y]) = project_caption_anchor(caption.center, camera, width, height) else {
+            let mut center = caption.center;
+            center[0] += offsets.get(caption.instance).copied().unwrap_or(0.);
+            let Some([x, y]) = project_caption_anchor(center, camera, width, height) else {
                 continue;
             };
-            let text = caption_text(caption.combo_id, caption.kind);
+            let text = caption_text(caption.combo_id, caption.kind, &self.bucket_names);
             const HEIGHT: f32 = 16.;
             const CELL: f32 = HEIGHT * 6. / 11.;
-            let left = x - text.len() as f32 * CELL * 0.5;
+            let left = x - text.chars().count() as f32 * CELL * 0.5;
             let top = y - HEIGHT * 0.5;
             quads.push(screen_quad(
                 0,
                 left - 4.,
                 top - 3.,
-                text.len() as f32 * CELL + 8.,
+                text.chars().count() as f32 * CELL + 8.,
                 HEIGHT + 6.,
                 ui4_scene::rgba(255, 255, 255, 220),
             ));
             for (index, scalar) in text.chars().enumerate() {
-                let Some(sprite) = LEGENDS
-                    .iter()
-                    .position(|legend| legend.scalar == scalar)
+                if scalar == ' ' {
+                    continue;
+                }
+                let Some(sprite) = glyph_scalars()
+                    .position(|glyph| glyph == scalar)
+                    .or_else(|| glyph_scalars().position(|glyph| glyph == '?'))
                     .and_then(|i| self.glyphs[i].1)
                 else {
                     continue;
@@ -253,16 +292,56 @@ impl Legends {
     }
 }
 
-fn caption_text(combo_id: u32, kind: CaptionKind) -> String {
+/// A small presentation-only mapping of the existing combo metadata. The
+/// ordinal distinguishes sources of the same kind in this inventory snapshot.
+fn bucket_names(combos: &[TrueosInputCombo]) -> Vec<(u32, String)> {
+    combos
+        .iter()
+        .enumerate()
+        .map(|(index, combo)| {
+            let kind = match InputComboSourceKind::from_code(combo.source_kind) {
+                InputComboSourceKind::Ai => "AI",
+                InputComboSourceKind::Human => "Human",
+                InputComboSourceKind::Remote => "Remote",
+                InputComboSourceKind::Unknown => "Other",
+            };
+            let number = 1 + combos[..index]
+                .iter()
+                .filter(|c| c.source_kind == combo.source_kind)
+                .count();
+            let length = usize::from(combo.source_tag_len).min(combo.source_tag.len());
+            let tag = core::str::from_utf8(&combo.source_tag[..length])
+                .unwrap_or("")
+                .trim();
+            let label = if tag.is_empty() || matches!(tag, "auto" | "udp" | "ai") {
+                format!("Bucket {kind} {number}")
+            } else {
+                let tag = tag
+                    .split('/')
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(" / ");
+                format!("Bucket {kind} / {tag} {number}")
+            };
+            (combo.combo_id, label)
+        })
+        .collect()
+}
+
+fn caption_text(combo_id: u32, kind: CaptionKind, names: &[(u32, String)]) -> String {
     match kind {
         CaptionKind::Mouse => return String::from("MOUSE"),
         CaptionKind::Tablet => return String::from("TABLET"),
         CaptionKind::Bucket => {}
     }
     if combo_id == 0 {
-        String::from("UNASSIGNED")
+        String::from("Unassigned")
     } else {
-        format!("BUCKET {combo_id}")
+        names
+            .iter()
+            .find(|(id, _)| *id == combo_id)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| String::from("Bucket"))
     }
 }
 
@@ -481,12 +560,12 @@ mod tests {
         );
         let camera = orbit.retained(800, 600, [0.; 16]);
         let feedback = crate::feedback::Feedback::default();
-        let quads = legends.overlay_quads(&camera, 800, 600, 2, 20., &feedback, &[]);
+        let quads = legends.overlay_quads(&camera, 800, 600, 2, 20., &feedback, &[], &[]);
         assert_eq!(
             quads.len(),
             (LEGENDS.len() + WORD_LEGENDS.iter().map(|w| w.text.len()).sum::<usize>()) * 2
         );
-        assert_eq!(legends.glyphs.len(), 36); // Words reuse the resident alphabet.
+        assert_eq!(legends.glyphs.len(), 36 + CAPTION_GLYPHS.chars().count()); // Words reuse the resident alphabet.
     }
 
     #[test]
@@ -516,9 +595,63 @@ mod tests {
     }
 
     #[test]
+    fn arriving_key_legends_words_and_caption_move_with_their_own_instance() {
+        const EPSILON: f32 = 0.001; // Subpixel f32 projection roundoff.
+        let mut legends = Legends::default();
+        for (index, glyph) in legends.glyphs.iter_mut().enumerate() {
+            glyph.1 = Some(index as u32 + 100);
+        }
+        let mut camera = RetainedCamera::default();
+        camera.position_near = [0., 100., 0., 0.01];
+        camera.view_projection[0] = 0.01;
+        camera.view_projection[9] = -0.01;
+        camera.view_projection[14] = 0.5;
+        camera.view_projection[15] = 1.;
+        let captions = [BucketCaption {
+            instance: 1,
+            combo_id: 7,
+            center: [0.; 3],
+            kind: CaptionKind::Mouse,
+        }];
+        let feedback = crate::feedback::Feedback::default();
+        let fixed =
+            legends.overlay_quads(&camera, 800, 800, 2, 20., &feedback, &captions, &[0., 0.]);
+        let sliding =
+            legends.overlay_quads(&camera, 800, 800, 2, 20., &feedback, &captions, &[0., 10.]);
+        assert_eq!(fixed.len(), sliding.len());
+        let mut translated = 0;
+        for (a, b) in fixed.iter().zip(&sliding) {
+            let delta = b.c0.x - a.c0.x;
+            assert!(delta.abs() < EPSILON || (delta - 40.).abs() < EPSILON);
+            if delta > 1. {
+                translated += 1;
+            }
+            for (a, b) in [(a.c0, b.c0), (a.c1, b.c1), (a.c2, b.c2), (a.c3, b.c3)] {
+                assert!(
+                    (b.x - a.x - delta).abs() < EPSILON,
+                    "corner drift: fixed={} moved={} first-delta={} error={}",
+                    a.x,
+                    b.x,
+                    delta,
+                    b.x - a.x - delta
+                );
+                assert!((b.y - a.y).abs() < EPSILON);
+            }
+        }
+        let per_board = LEGENDS.len()
+            + WORD_LEGENDS
+                .iter()
+                .map(|word| word.text.len())
+                .sum::<usize>();
+        assert_eq!(translated, per_board + 1 + "MOUSE".len());
+        assert_eq!(fixed.len() - translated, per_board);
+    }
+
+    #[test]
     fn cold_and_partial_font_readiness_cannot_submit_caption_backings() {
         let camera = OrbitCamera::new(20.).retained(800, 600, [0.; 16]);
         let captions = [BucketCaption {
+            instance: 0,
             combo_id: 7,
             center: [0.; 3],
             kind: CaptionKind::Bucket,
@@ -527,37 +660,128 @@ mod tests {
         let mut legends = Legends::default();
         assert!(
             legends
-                .overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions)
+                .overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions, &[])
                 .is_empty()
         );
-        for glyph in legends.glyphs.iter_mut().take(LEGENDS.len() - 1) {
+        let waiting = legends.glyphs.len() - 1;
+        for glyph in legends.glyphs.iter_mut().take(waiting) {
             glyph.1 = Some(100);
         }
         assert!(
             legends
-                .overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions)
+                .overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions, &[])
                 .is_empty()
         );
         legends.glyphs.last_mut().unwrap().1 = Some(100);
-        let warm = legends.overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions);
+        let warm = legends.overlay_quads(&camera, 800, 600, 1, 20., &feedback, &captions, &[]);
         assert!(warm.iter().any(|quad| quad.sprite_id == 0)); // Caption backing.
         assert!(warm.iter().filter(|quad| quad.sprite_id == 100).count() >= LEGENDS.len());
-        assert_eq!(caption_text(7, CaptionKind::Mouse), "MOUSE");
-        assert_eq!(caption_text(7, CaptionKind::Tablet), "TABLET");
+        assert_eq!(caption_text(7, CaptionKind::Mouse, &[]), "MOUSE");
+        assert_eq!(caption_text(7, CaptionKind::Tablet, &[]), "TABLET");
+    }
+
+    #[test]
+    fn friendly_bucket_names_use_metadata_and_refresh_without_changing_ids() {
+        fn combo(id: u32, kind: InputComboSourceKind, tag: &str) -> TrueosInputCombo {
+            let mut combo = TrueosInputCombo {
+                combo_id: id,
+                source_kind: kind as u8,
+                source_tag_len: tag.len() as u8,
+                ..Default::default()
+            };
+            combo.source_tag[..tag.len()].copy_from_slice(tag.as_bytes());
+            combo
+        }
+        let mut combos = [
+            combo(1279872089, InputComboSourceKind::Ai, "Spirit/Lilly"),
+            combo(1229127681, InputComboSourceKind::Human, "auto"),
+            combo(1229127682, InputComboSourceKind::Human, "Alice"),
+        ];
+        let mut legends = Legends::default();
+        assert!(legends.set_buckets(&combos));
+        assert!(!legends.set_buckets(&combos));
+        assert_eq!(
+            caption_text(
+                combos[0].combo_id,
+                CaptionKind::Bucket,
+                &legends.bucket_names
+            ),
+            "Bucket AI / Spirit / Lilly 1"
+        );
+        assert_eq!(
+            caption_text(
+                combos[1].combo_id,
+                CaptionKind::Bucket,
+                &legends.bucket_names
+            ),
+            "Bucket Human 1"
+        );
+        assert_eq!(
+            caption_text(
+                combos[2].combo_id,
+                CaptionKind::Bucket,
+                &legends.bucket_names
+            ),
+            "Bucket Human / Alice 2"
+        );
+        for (id, name) in &legends.bucket_names {
+            assert!(!name.contains(&format!("{id}")));
+            assert!(
+                name.chars()
+                    .all(|scalar| scalar == ' ' || glyph_scalars().any(|glyph| glyph == scalar))
+            );
+        }
+        // Caption-only lowercase and separators get real shared font sprites.
+        for (index, glyph) in legends.glyphs.iter_mut().enumerate() {
+            glyph.1 = Some(index as u32 + 100);
+        }
+        let camera = OrbitCamera::new(20.).retained(800, 600, [0.; 16]);
+        let captions = [BucketCaption {
+            instance: 0,
+            combo_id: combos[0].combo_id,
+            center: [0.; 3],
+            kind: CaptionKind::Bucket,
+        }];
+        let quads = legends.overlay_quads(
+            &camera,
+            800,
+            600,
+            0,
+            20.,
+            &crate::feedback::Feedback::default(),
+            &captions,
+            &[],
+        );
+        assert_eq!(
+            quads.len(),
+            1 + legends.bucket_names[0]
+                .1
+                .chars()
+                .filter(|&ch| ch != ' ')
+                .count()
+        );
+        let slash = glyph_scalars().position(|ch| ch == '/').unwrap() as u32 + 100;
+        assert_eq!(
+            quads.iter().filter(|quad| quad.sprite_id == slash).count(),
+            2
+        );
+        combos[2] = combo(combos[2].combo_id, InputComboSourceKind::Human, "Bob");
+        assert!(legends.set_buckets(&combos));
+        assert_eq!(
+            legends.bucket_names[2],
+            (1229127682, String::from("Bucket Human / Bob 2"))
+        );
     }
 
     #[test]
     fn bucket_captions_reuse_loaded_glyphs_and_reject_clipped_anchors() {
-        assert_eq!(caption_text(0, CaptionKind::Bucket), "UNASSIGNED");
-        assert_eq!(
-            caption_text(u32::MAX, CaptionKind::Bucket),
-            "BUCKET 4294967295"
-        );
-        for scalar in caption_text(u32::MAX, CaptionKind::Bucket)
+        assert_eq!(caption_text(0, CaptionKind::Bucket, &[]), "Unassigned");
+        assert_eq!(caption_text(u32::MAX, CaptionKind::Bucket, &[]), "Bucket");
+        for scalar in caption_text(u32::MAX, CaptionKind::Bucket, &[])
             .chars()
-            .chain(caption_text(0, CaptionKind::Bucket).chars())
+            .chain(caption_text(0, CaptionKind::Bucket, &[]).chars())
         {
-            assert!(scalar == ' ' || LEGENDS.iter().any(|legend| legend.scalar == scalar));
+            assert!(scalar == ' ' || glyph_scalars().any(|glyph| glyph == scalar));
         }
         let mut camera = OrbitCamera::new(20.).retained(800, 600, [0.; 16]);
         let anchor = project_caption_anchor([0.; 3], &camera, 800, 600).unwrap();

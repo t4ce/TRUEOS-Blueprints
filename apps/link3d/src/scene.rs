@@ -185,6 +185,8 @@ pub struct RowInstances {
 }
 
 pub struct BucketCaption {
+    /// Global instance owning this anchor (keyboard, then mouse, then tablet).
+    pub instance: usize,
     pub combo_id: u32,
     pub center: [f32; 3],
     pub kind: CaptionKind,
@@ -241,6 +243,7 @@ pub fn prepare_scene(
             let mut center = mouse.keyboard_caption;
             center[2] += index as f32 * row_spacing(radius);
             row.captions.push(BucketCaption {
+                instance: index,
                 combo_id: keyboard.combo_id,
                 center,
                 kind: CaptionKind::Bucket,
@@ -288,12 +291,14 @@ pub fn prepare_scene(
             center[0] = x;
             center[2] += slot as f32 * row_spacing(radius);
             row.captions.push(BucketCaption {
+                instance: keyboards.len() + index,
                 combo_id: device.combo_id,
                 center,
                 kind: CaptionKind::Bucket,
             });
         }
         row.captions.push(BucketCaption {
+            instance: keyboards.len() + index,
             combo_id: device.combo_id,
             center: [x, y + mouse.half_size[1] + 0.025, z],
             kind: CaptionKind::Mouse,
@@ -329,12 +334,14 @@ pub fn prepare_scene(
             center[0] = x;
             center[2] += slot as f32 * row_spacing(radius);
             row.captions.push(BucketCaption {
+                instance: keyboards.len() + mice.len() + index,
                 combo_id: device.combo_id,
                 center,
                 kind: CaptionKind::Bucket,
             });
         }
         row.captions.push(BucketCaption {
+            instance: keyboards.len() + mice.len() + index,
             combo_id: device.combo_id,
             center: [x, y + mouse.half_size[1] * 0.25 + 0.025, z],
             kind: CaptionKind::Tablet,
@@ -481,6 +488,11 @@ mod tests {
             let row = prepare_scene(&keyboards, &mice, &tablets, 20., &geometry.mouse);
             let colors = palette_bmp(&keyboards, &mice, &tablets);
             assert_eq!(row.count, count as u32 * 3);
+            for caption in &row.captions {
+                assert!(caption.instance < row.count as usize);
+                let seed = &row.seeds[caption.instance * 64..][..64];
+                assert_eq!(caption.center[0], read_f32(seed, 0));
+            }
             for (index, tablet) in tablets.iter().enumerate() {
                 let mouse_seed = &row.seeds[(keyboards.len() + index) * 64..][..64];
                 let tablet_seed = &row.seeds[(keyboards.len() + mice.len() + index) * 64..][..64];

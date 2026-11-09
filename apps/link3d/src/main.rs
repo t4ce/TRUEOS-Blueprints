@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use link3d::{
     OrbitCamera,
+    arrivals::{Arrivals, translated_seeds},
     intro::{Intro, Stage},
     presentation::LayerPublications,
     roster,
@@ -125,6 +126,9 @@ fn run() -> Result<(), Error> {
     let mut intro = Intro::default();
     let mut outline_renderer = None;
     let mut layers = LayerPublications::default();
+    let mut arrivals = Arrivals::default();
+    let mut scene_seeds = Vec::new();
+    let mut slide_offsets = Vec::new();
     loop {
         let now = clock::monotonic_millis();
         if feedback.expire(now) {
@@ -139,6 +143,9 @@ fn run() -> Result<(), Error> {
             let mouse_devices = hid::hid_hut_mice();
             let tablet_devices = hid::hid_hut_tablets();
             let combos = hid::input_combos();
+            if legends.set_buckets(&combos) {
+                redraws_pending = redraws_pending.max(1);
+            }
             let current = roster::keyboards(&devices, &combos);
             let current_mice = roster::mice(&mouse_devices, &combos);
             let current_tablets = roster::tablets(&tablet_devices, &combos);
@@ -153,7 +160,16 @@ fn run() -> Result<(), Error> {
                     &mouse_shape,
                 );
                 renderer.update_instances(&row, &current, &current_mice, &current_tablets)?;
+                arrivals.configure(
+                    &current,
+                    &current_mice,
+                    &current_tablets,
+                    clock::monotonic_millis(),
+                    inventory_initialized,
+                );
                 intro.configure(&row, &current, &current_mice, &current_tablets);
+                scene_seeds = row.seeds;
+                slide_offsets = alloc::vec![0.; row.count as usize];
                 feedback.set_roster(&current);
                 scene_center = row.center;
                 scene_radius = row.radius;
@@ -238,6 +254,7 @@ fn run() -> Result<(), Error> {
                 && event.key_code == input::KEYBOARD_KEY_HOME
             {
                 intro.skip();
+                arrivals.skip();
                 orbit = OrbitCamera::new(RADIUS);
                 tilt.clear();
                 orbit.set_scene(scene_center, scene_radius);
@@ -254,6 +271,11 @@ fn run() -> Result<(), Error> {
             redraws_pending = redraws_pending.max(1);
         }
         if orbit.hover_tilt(tilt.reconcile(&routes, [frame.width(), frame.height()])) {
+            redraws_pending = redraws_pending.max(1);
+        }
+        if let Some(offsets) = arrivals.sample(now, scene_radius) {
+            renderer.update_transforms(&translated_seeds(&scene_seeds, &offsets))?;
+            slide_offsets = offsets;
             redraws_pending = redraws_pending.max(1);
         }
         let stage = intro.stage(now);
@@ -334,7 +356,8 @@ fn run() -> Result<(), Error> {
             let rendered = if stage == Stage::Complete {
                 renderer.render(queue, surface, camera)
             } else if let Some(outlines) = &outline_renderer {
-                let (vertices, draws) = intro.lines(stage, &camera, mouse_shape.half_size());
+                let (vertices, draws) =
+                    intro.lines(stage, &camera, mouse_shape.half_size(), &slide_offsets);
                 outlines.render(queue, surface, &vertices, &draws)
             } else {
                 device.submit_ui4_clear(queue, surface, u32::from_le_bytes([128, 128, 128, 0]))
@@ -361,6 +384,7 @@ fn run() -> Result<(), Error> {
                     RADIUS,
                     &feedback,
                     &captions,
+                    &slide_offsets,
                 )
             } else {
                 Ok(())

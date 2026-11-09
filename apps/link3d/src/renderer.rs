@@ -112,6 +112,17 @@ impl Renderer {
         Ok(())
     }
 
+    /// Animate transforms without decoding a palette or uploading mesh geometry.
+    pub fn update_transforms(&self, seeds: &[u8]) -> Result<(), i32> {
+        if seeds.len() != self.count as usize * 64 {
+            return Err(vgpu::ERR_UNSUPPORTED);
+        }
+        if !seeds.is_empty() && self.device.write_buffer(self.seeds, 0, seeds)? != seeds.len() {
+            return Err(vgpu::ERR_IO);
+        }
+        Ok(())
+    }
+
     pub fn render(
         &self,
         queue: Queue,

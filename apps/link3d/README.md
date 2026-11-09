@@ -31,8 +31,17 @@ Both UI4 layers publish an initial front (transparent for the background), so
 outline-only startup is visible. Every resize also publishes both replacements,
 even after the background becomes hidden. A ready background replacement waits
 for any foreground retry before accepting another animated update.
-Later inventory polls do not replay it. This addition requires only the Blueprint
-update, with no new kernel API or kernel deployment.
+Later inventory polls keep the startup camera sequence finished. Devices created
+on demand, including remote input sources, slide in from the right using the same
+650 ms easing on their shared PBR instances. New devices take turns between
+buckets with a short stagger; existing devices stay visible. Key legends, control
+words, feedback and device captions follow their device throughout the slide.
+Endpoint identity is tracked separately for keyboards, mice and tablets, so color
+or bucket edits and roster reordering do not replay an arrival. Removed devices
+are forgotten; reconnecting one animates again. Home also finishes active slides.
+Only small instance transforms update during a slide; geometry and font textures
+remain shared. This requires only the Blueprint update, with no new kernel API
+or kernel deployment.
 
 Physical and virtual HID-HUT mice appear as palette-colored cuboids. Each is four
 regular key pitches wide and matches the GLB keyboard's height and front-to-back
@@ -55,10 +64,13 @@ host-backed mouse and tablet snapshots in the Blueprint HUT bridge (kinds 3 and
 kernel, then reopen Link3D. All three device classes share the same resident
 geometry buffers, with up to 32 instances of each class.
 
-Each visible bucket has a `BUCKET <combo_id>` caption anchored above its row;
-unassigned devices show `UNASSIGNED`. Captions face the viewer and reuse the same
-kernel Microfont glyph textures as the key legends, with a light backing for
-readability. A paired keyboard and mouse share one caption.
+Each visible bucket has a friendly caption from its existing combo source and
+optional tag, such as `Bucket AI / Spirit / Lilly 1` or `Bucket Human 1`. A small
+number distinguishes buckets of the same source kind in the current inventory;
+UIDs stay internal. These are presentation labels, with no new identity registry
+or stored naming policy. Unassigned devices show `Unassigned`. Captions face the
+viewer and reuse kernel Microfont masks, adding shared lowercase and punctuation
+sprites for names. A paired keyboard and mouse share one caption.
 
 Cold styled Microfont rasterization owns Render0. The entrance waits in its
 empty frame until all glyph textures are ready before starting native lines on

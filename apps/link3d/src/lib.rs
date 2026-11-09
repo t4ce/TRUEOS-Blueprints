@@ -3,6 +3,7 @@
 mod orbit;
 pub use orbit::OrbitCamera;
 
+pub mod arrivals;
 pub mod feedback;
 pub mod intro;
 pub mod legends;
