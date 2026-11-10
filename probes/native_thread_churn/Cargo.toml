@@ -1,0 +1,17 @@
+[package]
+name = "thread-churn"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+filesystem-independent = true
+rewrite-std-imports = false
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

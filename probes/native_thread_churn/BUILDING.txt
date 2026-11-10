@@ -1,0 +1,46 @@
+Finite native thread lifetime probe
+
+Build and publish through the usual on-demand Blueprint workflow, from the
+TRUEOS-Blueprints repository root:
+    cargo bp probes/native_thread_churn
+
+The artifact is dist/thread-churn.bp. This adds no buildin or kernel classifier.
+Install it through the regular AppDB workflow and launch the exact Shell3 name:
+    thread-churn
+
+The default launches and joins 200 workers serially, each requesting the same
+16 MiB native stack size as Codex's blocking workers. At most one worker is
+alive alongside the entry thread. Each worker performs a small deterministic
+calculation, which the entry thread verifies after joining. A 1 ms suspension
+between iterations allows the native carrier to retire the previous stack.
+No runtime, GUI, filesystem reads, network, credentials or model are involved.
+The ordinary unknown-app private heap is sufficient for this one-stack peak.
+
+Optional argv-v1 argument "2m" runs the same 200 lifetimes with 2 MiB stacks as
+a smaller-stack control. "16m" explicitly selects the default. Shell3 accepts
+the bare name only; use an existing SDK child-Hull launcher to supply argv.
+
+Markers contain only fixed fields and numeric counters. stage=begin identifies
+the backend and stack size. stage=progress is flushed every 16 successful
+joins. stage=done pass=1 completed=200 means all workers ran and joined.
+Iterations 1, 2, 16, 112, 120 and 128 also flush stage=before_spawn,
+stage=after_spawn, stage=after_join and stage=after_retire. These entry-thread
+markers localize a stalled operation without introducing another worker.
+stage=spawn_failed pass=0 includes the completed count and raw_errno (or -1
+when absent), then exits normally instead of panicking. Other failure markers
+also exit normally. The result marker, not the process exit code, is the proof.
+
+A failing 16 MiB native run after many successful joins, while only one worker
+can be live, distinguishes lifetime pressure from concurrent-thread capacity.
+Correlate its counter with native stack mapping diagnostics before assigning a
+specific cause. A 2 MiB control can distinguish stack-size-dependent exhaustion.
+Neither this probe nor a passing host run proves the interactive stall fixed.
+
+Host control (from /tmp to avoid the Blueprint build-std configuration):
+    cargo +nightly-2026-07-10 run --offline --manifest-path /absolute/path/to/TRUEOS-Blueprints/probes/native_thread_churn/Cargo.toml --target x86_64-unknown-linux-gnu
+    cargo +nightly-2026-07-10 run --offline --manifest-path /absolute/path/to/TRUEOS-Blueprints/probes/native_thread_churn/Cargo.toml --target x86_64-unknown-linux-gnu -- 2m
+
+Host output is labelled backend=host-model. It validates the bounded workload
+using host OS threads, not TRUEOS guarded aliases or page-table retention.
+
+After flushing the numeric final result, the probe waits 250 ms before returning so Shell3 can render it before console backend retirement.
