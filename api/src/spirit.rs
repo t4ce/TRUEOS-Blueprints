@@ -57,7 +57,10 @@ fn result(code: i32) -> Result<(), Error> {
     if code == 0 { Ok(()) } else { Err(Error(code)) }
 }
 
-/// Queue a model-facing emotion: anger, disgust, fear, joy, sadness, or surprise.
+/// Queue an expression family. Spirit selects variants and prepares arm posture.
+/// Families: anger, disgust, fear, joy, sadness, surprise, affection, blush,
+/// confused, disapprove, eat, facepalm, finger_guns, pout, flirt, idle, agree,
+/// idea, silly, talk, taunt, tired, wave, wink. Transition/static assets are internal.
 pub fn play_emotion(idea: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(idea.as_ptr(), idea.len()) })
 }
