@@ -30,6 +30,7 @@ members = [
     "apps/swarm",
     "apps/cubesrv",
     "apps/webmail",
+    "apps/robomcp",
 ]
 exclude = [
     "probes/alloc_probe",

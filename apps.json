@@ -4,6 +4,7 @@
     { "name": "xerj-server", "path": "../xerj/engine/crates/xerj-server", "optional": true },
     { "name": "xerj-service", "path": "probes/xerj_service", "optional": true },
     "idedit_htmlbuild_srv",
+    "robomcp",
     "rebsky",
     "calculator",
     "ruler",
