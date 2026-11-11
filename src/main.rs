@@ -4829,7 +4829,8 @@ fn source_overlay_version_alignment_from_metadata(
                 continue;
             }
 
-            let (parent_version, declarations) = replacement_dependencies.get(&node.id)
+            let replacement = replacement_dependencies.get(&node.id);
+            let (parent_version, declarations) = replacement
                 .map(|(version, declarations)| (version, declarations.as_slice()))
                 .unwrap_or((&parent_package.version, parent_package.dependencies.as_slice()));
             for declaration in declarations.iter().filter(|declaration| {
@@ -4841,6 +4842,18 @@ fn source_overlay_version_alignment_from_metadata(
             }) {
                 if declaration.req.is_empty() {
                     unparsed_requirements += 1;
+                    continue;
+                }
+                // A replacement can move a dependency to another version
+                // line (for example getrandom 0.4 -> 0.3). The original
+                // resolve edge then no longer identifies its selected child.
+                // Let the staged Cargo resolver and lock guard validate that
+                // new edge instead of forcing the old child's overlay on it.
+                if replacement.is_some()
+                    && let Ok(current_version) = SimpleVersion::parse(&dep_package.version)
+                    && matches!(version_req_matches(&declaration.req, &current_version), Ok(false))
+                {
+                    unresolved_edges += 1;
                     continue;
                 }
                 match version_req_matches(&declaration.req, &target.parsed_overlay_version) {
@@ -5002,6 +5015,48 @@ mod selected_overlay_version_alignment_tests {
             assert_eq!(result.incompatible.len(), 1);
             assert_eq!(result.incompatible[0].parent_version, if replacement.is_some() { "0.11.9" } else { "0.11.12" });
         }
+    }
+
+    #[test]
+    fn replaced_depender_can_move_to_another_existing_dependency_version_line() {
+        let root = env::temp_dir().join(format!("trueos-overlay-version-line-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(root.join("replacement")).unwrap();
+        let manifest = root.join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname=\"app\"\nversion=\"0.1.0\"\n").unwrap();
+        fs::write(root.join("replacement/Cargo.toml"),
+            "[package]\nname=\"quinn-proto\"\nversion=\"0.11.14\"\n[dependencies.getrandom]\nversion=\"0.3\"\n").unwrap();
+        let metadata: CargoMetadata = serde_json::from_value(serde_json::json!({
+            "packages":[
+                {"id":"app", "name":"app", "version":"0.1.0", "manifest_path":manifest,
+                 "dependencies":[
+                    {"name":"quinn-proto", "req":"0.11", "rename":null},
+                    {"name":"getrandom", "req":"0.3", "rename":"getrandom_03"},
+                    {"name":"getrandom", "req":"0.4", "rename":"getrandom_04"}
+                 ]},
+                {"id":"proto", "name":"quinn-proto", "version":"0.11.19",
+                 "dependencies":[{"name":"getrandom", "req":"0.4", "rename":null}]},
+                {"id":"random03", "name":"getrandom", "version":"0.3.4", "dependencies":[]},
+                {"id":"random04", "name":"getrandom", "version":"0.4.2", "dependencies":[]}
+            ],
+            "resolve":{"root":"app", "nodes":[
+                {"id":"app", "deps":[
+                    {"name":"quinn_proto", "pkg":"proto", "dep_kinds":[]},
+                    {"name":"getrandom_03", "pkg":"random03", "dep_kinds":[]},
+                    {"name":"getrandom_04", "pkg":"random04", "dep_kinds":[]}
+                ]},
+                {"id":"proto", "deps":[{"name":"getrandom", "pkg":"random04", "dep_kinds":[]}]},
+                {"id":"random03", "deps":[]}, {"id":"random04", "deps":[]}
+            ]}
+        })).unwrap();
+        let result = source_overlay_version_alignment_from_metadata(metadata, &manifest, &[
+            LockMismatch { name:"quinn-proto".into(), locked_version:"0.11.19".into(), overlay_version:"0.11.14".into() },
+            LockMismatch { name:"getrandom".into(), locked_version:"0.4.2".into(), overlay_version:"0.4.3".into() }
+        ], &[CratePatch::new("quinn-proto", root.join("replacement"))]).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(result.incompatible.is_empty(), "selected getrandom 0.3 must not be checked against the old 0.4 edge");
+        assert_eq!(result.compatible_edges, 2);
+        assert_eq!(result.unresolved_edges, 1);
     }
 
     #[test]

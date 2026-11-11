@@ -39,6 +39,15 @@ live sources can resume before any MCP tool is used.
 Appbundle installation supplies xerj-service.bp and xerj.bp before that call,
 so it uses AppDB directly and performs no runtime catalog download.
 
+When updating the packaged Codex MCP arguments, rebuild and publish the matching
+engine as well as Codex:
+    cargo bp xerj-server
+    cargo bp codex
+Named builds refresh only the selected app; appbundle dependencies control
+download/install order, not source builds. An older xerj.bp without --lazy-local
+exits before MCP initialize if a newer Codex passes that flag. Refresh XERJ in
+AppDB after publication, then reconnect the MCP client.
+
 The launcher retains an exclusive /apps/xerj-service/service.lock before spawning its
 engine. A competing launcher exits without another child. `replicatable=false`
 is checkpoint metadata, not singleton admission. The engine also retains its
