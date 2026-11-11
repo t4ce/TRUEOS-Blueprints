@@ -256,6 +256,31 @@ pub fn output_dimensions() -> Result<(u32, u32), Error> {
     }
 }
 
+/// Maximum admitted frame backing, independent of the physical output size.
+/// Query before sizing a scene from the output: scanout may be larger than the
+/// renderer's retained target storage. A successful query does not reserve it.
+pub fn frame_max_extent() -> Result<(u32, u32), Error> {
+    let packed = unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_max_extent_v1() };
+    let extent = ((packed >> 32) as u32, packed as u32);
+    // A kernel/transport without this optional query reports zero. Keep the
+    // historical admitted backing in that case; never treat output size as a
+    // substitute for renderer storage capacity.
+    if extent.0 == 0 || extent.1 == 0 { Ok((2560, 1440)) } else { Ok(extent) }
+}
+
+/// Shrink a preferred frame extent to the advertised bounds, preserving its
+/// aspect ratio to pixel precision. Already admitted sizes are unchanged.
+pub fn fit_frame_extent(width: u32, height: u32) -> Result<(u32, u32), Error> {
+    if width == 0 || height == 0 { return Err(Error::Invalid); }
+    let (max_width, max_height) = frame_max_extent()?;
+    if width <= max_width && height <= max_height { return Ok((width, height)); }
+    if u64::from(max_width) * u64::from(height) <= u64::from(max_height) * u64::from(width) {
+        Ok((max_width, (u64::from(height) * u64::from(max_width) / u64::from(width)).max(1) as u32))
+    } else {
+        Ok(((u64::from(width) * u64::from(max_height) / u64::from(height)).max(1) as u32, max_height))
+    }
+}
+
 /// Kernel-provided slot-4 cursor presentations for a UI4 frame.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u32)]

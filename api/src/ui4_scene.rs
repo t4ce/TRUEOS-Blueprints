@@ -17,7 +17,7 @@ pub use crate::ui4_solara_text::{
     SHADERTOY_PALETTE_GRID, SHADERTOY_PARAMS_VERSION, SHADERTOY_PARTICLE_CRAFT,
     SHADERTOY_PROTEAN_CLOUDS, SHADERTOY_RETRO_SUN, SHADERTOY_SDF, SHADERTOY_VORONOI, SceneTextRow,
     ShadertoyParamsV1, Shell2FontScaleStep, SkyboxRenderParams, SpriteCorner, SpriteQuad,
-    UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba, set_display_gamma_ramp,
+    UI4_VISUAL_SOFT_CAP_HZ, fit_frame_extent, font_sizes, frame_max_extent, output_dimensions, rgba, set_display_gamma_ramp,
     shell2_font_scale_steps, worker_slot,
 };
 

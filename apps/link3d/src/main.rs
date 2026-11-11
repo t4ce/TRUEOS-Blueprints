@@ -68,18 +68,14 @@ fn run() -> Result<(), Error> {
         .embedded_asset("keyboard/metallic-roughness.bmp")?
         .ok_or(Error::Asset)?;
 
-    let (x, y, width, height) = ui4_scene::output_dimensions()
-        .map(|(w, h)| {
-            let width = (w * 3 / 4).max(1);
-            let height = (h * 3 / 4).max(1);
-            (
-                ((w - width) / 2) as i32,
-                ((h - height) / 2) as i32,
-                width,
-                height,
-            )
-        })
-        .unwrap_or((80, 64, 800, 600));
+    let output = ui4_scene::output_dimensions().ok();
+    let (preferred_width, preferred_height) = output.map(|(w, h)| (
+        ((u64::from(w) * 3 / 4) as u32).max(1),
+        ((u64::from(h) * 3 / 4) as u32).max(1),
+    )).unwrap_or((800, 600));
+    let (width, height) = ui4_scene::fit_frame_extent(preferred_width, preferred_height)?;
+    let (x, y) = output.map(|(w, h)| (((w - width) / 2) as i32, ((h - height) / 2) as i32))
+        .unwrap_or((80, 64));
     let mut frame = Frame::open_layered(x, y, width, height, 60)?;
     let mut reveal_layer = frame.background()?;
     reveal_layer.set_opacity(0)?;
