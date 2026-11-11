@@ -263,6 +263,18 @@ fn address(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
+// A transport-only observation: do not call a tool or a readiness endpoint
+// before testing that MCP discovery leaves the default engine stopped.
+fn tcp_listener_present(endpoint: &SocketAddr) -> io::Result<bool> {
+    match TcpStream::connect_timeout(endpoint, Duration::from_millis(250)) {
+        Ok(_) => Ok(true),
+        Err(failure) if failure.kind() == io::ErrorKind::ConnectionRefused => Ok(false),
+        Err(failure) => Err(error(format!(
+            "cannot observe XERJ listener at {endpoint}: {failure}"
+        ))),
+    }
+}
+
 fn reserve_ports(seed: u128) -> io::Result<(u16, Vec<TcpListener>)> {
     for offset in 0..128u128 {
         let base = 24000 + ((seed + offset * 3) % 24000) as u16;
@@ -1268,6 +1280,7 @@ no_proxy = "127.0.0.1,localhost"
     // The production lifecycle deliberately discovers only its fixed service key.
     default_env.push(("XERJ_AUTH", String::new()));
     let default_request = OwnedChild::launch_request(codex_program, &args, run_root, &default_env)?;
+    let service_before_discovery = tcp_listener_present(&address(9200))?;
     // Child STATUS_EXITED precedes the final native-job/carrier drain. The
     // launcher intentionally retains admission until that offline milestone.
     let admission_started = Instant::now();
@@ -1338,6 +1351,15 @@ no_proxy = "127.0.0.1,localhost"
         "packaged direct XERJ MCP did not initialize with search/status tools",
     )?;
     mark("codex_default_mcp_tools");
+    let service_after_discovery = tcp_listener_present(&address(9200))?;
+    require(
+        service_before_discovery || !service_after_discovery,
+        "MCP discovery started the normal XERJ service before its first tool call",
+    )?;
+    let cold_discovery_verified = !service_before_discovery && !service_after_discovery;
+    marker(format!(
+        "xerj-smoke v=1 stage=codex_default_mcp_idle ok=true cold_discovery_verified={cold_discovery_verified}"
+    ));
     let default_status = app_server_rpc(
         &mut relaunched,
         engine,
@@ -1352,7 +1374,12 @@ no_proxy = "127.0.0.1,localhost"
         "status":"PASS","initialize":reinitialized,"mcpOverridePresent":false,
         "serverInfo":default_server["serverInfo"],"pluginId":default_server["pluginId"],
         "toolNames":default_server["tools"].as_object().map(|tools| tools.keys().collect::<Vec<_>>()),
-        "serviceStatus":default_health,"modelTurnSubmitted":false
+        "serviceStatus":default_health,"modelTurnSubmitted":false,
+        "lazyActivation":{
+            "serviceListeningBeforeCodex":service_before_discovery,
+            "serviceListeningAfterDiscovery":service_after_discovery,
+            "coldDiscoveryVerified":cold_discovery_verified
+        }
     });
     mark("codex_default_service_ready");
     relaunched.stop()?;
@@ -1790,6 +1817,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_observation_distinguishes_listening_and_stopped_endpoints() {
+        let listener = TcpListener::bind(address(0)).unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        assert!(tcp_listener_present(&endpoint).unwrap());
+        drop(listener);
+        assert!(!tcp_listener_present(&endpoint).unwrap());
+    }
 
     #[test]
     fn grpc_health_requires_a_healthy_nonempty_engine() {

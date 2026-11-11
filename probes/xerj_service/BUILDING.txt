@@ -21,8 +21,21 @@ It does not claim readiness or successful indexing from lifecycle status;
 check the engine's readiness/API responses through its normal clients.
 
 `xerj mcp --ensure-local` starts this installed Blueprint headlessly when the
-authenticated node is absent. This launch is independent of the MCP client;
-closing one Codex session does not stop the engine used by other clients.
+authenticated node is absent, before accepting MCP requests. The packaged
+Codex default instead uses `xerj mcp --lazy-local`: initialize, tools/list and
+ping need only the MCP helper Hull; the first node-backed tool starts or reuses
+this service and waits for authenticated readiness. The launcher and its engine
+therefore occupy no Hulls before that first use when the service is stopped.
+The first tool call has a 90-second activation deadline in addition to its normal
+node request deadline; Codex supplies a 150-second tool timeout.
+
+This launch is independent of the MCP client; closing one Codex session does
+not stop the engine used by other clients. The service remains running after
+first use. It does not automatically index the editor workspace or start a
+filesystem watcher. Folder indexing and `autoindex --watch` are separate jobs;
+an EDIT integration can request them when that workspace needs them.
+For continuous database ingestion, explicitly launch xerj-service so configured
+live sources can resume before any MCP tool is used.
 Appbundle installation supplies xerj-service.bp and xerj.bp before that call,
 so it uses AppDB directly and performs no runtime catalog download.
 

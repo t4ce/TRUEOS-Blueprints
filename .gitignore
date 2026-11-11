@@ -1,2 +1,5 @@
 target/
 dist/
+
+# Original local archive; the two smaller archives are tracked.
+/probes.zip

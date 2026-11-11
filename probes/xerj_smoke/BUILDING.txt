@@ -63,10 +63,14 @@ Checks:
     The child exit marker precedes the final carrier drain, so relaunch retries
     only ERR_UNAVAILABLE for at most 90 seconds while admission remains held.
     Before relaunch, remove the fixture's MCP override. The second process must
-    discover direct XERJ through the native packaged defaults, activate or reuse
-    the normal authenticated xerj-service via --ensure-local, and call read-only
-    xerj_status through Codex. Save only projected health facts and tool names
-    in codex-default-mcp-evidence.json. Leave that independent service running.
+    discover direct XERJ through the native packaged defaults using --lazy-local.
+    Observe loopback TCP port 9200 before launching that process and after tool
+    discovery, without issuing any HTTP readiness request or tool call. If the
+    port was initially stopped, require that discovery leaves it stopped. Then
+    call read-only xerj_status through Codex to activate or reuse the normal
+    authenticated xerj-service. Save projected health facts, tool names and the
+    two listener observations in codex-default-mcp-evidence.json. Leave that
+    independent service running.
   * Flush acknowledged writes, terminate owned children, restart the same
     engine/data directory, and retrieve the document, corpus files and both
     memory records.
@@ -93,7 +97,14 @@ configuration or credentials. The first phase uses an explicit synthetic auth
 header against its own insecure engine, preventing local credential discovery.
 The subsequent packaged-default phase intentionally uses the normal XERJ
 service and resolves that service's key inside the MCP process; key material is
-never returned to the probe. This verifies native Codex's real MCP runtime
+never returned to the probe. With the normal service stopped before the probe,
+this phase also verifies discovery without engine activation followed by
+successful activation on the first node-backed tool. Do not activate the normal
+service from another client during this observation. An already running service
+is reused; that run reports coldDiscoveryVerified=false and establishes reuse,
+not a cold lazy-start result. The probe never stops an existing normal service.
+One MCP helper Hull remains available for discovery; the two service/backend
+Hulls are deferred until first use. This verifies native Codex's real MCP runtime
 and retrieval; it does not claim a model chose the tools or returned an answer.
 The normal private SQLite service may be reused; CODEX_SQLITE_HOME points at the
 fresh run directory, and its complete database paths select separate database
@@ -101,7 +112,7 @@ names. No live Codex database is queried by the probe.
 Codex stages are codex_initialize, codex_second_rejected, codex_mcp_tools,
 codex_mcp_search, codex_mcp_code_fixture, codex_mcp_sqlite_fixture,
 codex_mcp_memory, codex_stopped,
-codex_default_mcp_tools, codex_default_service_ready, codex_relaunch and
+codex_default_mcp_tools, codex_default_mcp_idle, codex_default_service_ready, codex_relaunch and
 codex_default_service_retained.
 
 Evidence is stdout and structured IMPORTANT stage markers under xerj-smoke:
@@ -126,3 +137,6 @@ fully indexed without junk, missing datasets or skipped inputs.
 
 Host validation (does not launch XERJ or pretend to exercise the kernel ABI):
     cargo test --manifest-path probes/xerj_smoke/Cargo.toml
+
+The lazy-start check requires rebuilding and rerunning the native packages;
+host checks alone do not establish cold activation or native Hull counts.

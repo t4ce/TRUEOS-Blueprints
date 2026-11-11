@@ -621,7 +621,7 @@ fn build_one_target_to_mode(
         )?;
     }
     let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
-    preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
+    preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches, &source_overlay)?;
     let codex_cli_before_staging = codex_workload_sdk
         .as_ref()
         .map(|_| codex_workload::snapshot_cli(app_dir))
@@ -4560,6 +4560,10 @@ struct MetadataDependency {
     req: String,
     #[serde(default)]
     path: Option<PathBuf>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -4587,6 +4591,8 @@ struct MetadataNodeDep {
 #[derive(Deserialize)]
 struct MetadataDepKind {
     kind: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -4641,12 +4647,13 @@ fn preflight_source_overlay_version_alignment(
     app_dir: &Path,
     manifest_path: &Path,
     lock_mismatches: &[LockMismatch],
+    source_overlay: &[CratePatch],
 ) -> Result<(), String> {
     if lock_mismatches.is_empty() {
         return Ok(());
     }
 
-    let report = match source_overlay_version_alignment(app_dir, manifest_path, lock_mismatches) {
+    let report = match source_overlay_version_alignment(app_dir, manifest_path, lock_mismatches, source_overlay) {
         Ok(report) => report,
         Err(err) => {
             println!("trueos-blueprint: version alignment skipped: {err}");
@@ -4691,8 +4698,18 @@ fn source_overlay_version_alignment(
     app_dir: &Path,
     manifest_path: &Path,
     lock_mismatches: &[LockMismatch],
+    source_overlay: &[CratePatch],
 ) -> Result<VersionAlignmentReport, String> {
     let metadata = cargo_metadata(app_dir, manifest_path)?;
+    source_overlay_version_alignment_from_metadata(metadata, manifest_path, lock_mismatches, source_overlay)
+}
+
+fn source_overlay_version_alignment_from_metadata(
+    metadata: CargoMetadata,
+    manifest_path: &Path,
+    lock_mismatches: &[LockMismatch],
+    source_overlay: &[CratePatch],
+) -> Result<VersionAlignmentReport, String> {
     let resolve = metadata
         .resolve
         .ok_or_else(|| "cargo metadata returned no resolve graph".to_string())?;
@@ -4775,6 +4792,23 @@ fn source_overlay_version_alignment(
     let mut unparsed_requirements = 0usize;
     let mut incompatible = Vec::new();
 
+    // The original resolve graph identifies active edges, but a selected source
+    // replacement supplies its own dependency requirements. Checking the old
+    // parent's requirements against a replaced child can falsely reject a pair
+    // of compatible overlays (for example quinn + quinn-proto).
+    let mut replacement_dependencies = HashMap::new();
+    for package in metadata.packages.iter().filter(|package| reachable.contains(&package.id)) {
+        for patch in source_overlay.iter().filter(|patch| patch.name == package.name) {
+            let manifest = patch.path.join("Cargo.toml");
+            let Some(version) = package_version(&manifest)? else { continue };
+            if cargo_semver_same_line(&package.version, &version) {
+                let source = fs::read_to_string(&manifest).map_err(io_string)?;
+                replacement_dependencies.insert(package.id.clone(), (version, overlay_dependency_declarations(&source)));
+                break;
+            }
+        }
+    }
+
     for node in resolve.nodes {
         if !reachable.contains(&node.id) {
             continue;
@@ -4795,36 +4829,38 @@ fn source_overlay_version_alignment(
                 continue;
             }
 
-            let Some(declared_dependency) =
-                declared_dependency_for_resolved_edge(&parent_package.dependencies, &dep.name)
-            else {
-                unresolved_edges += 1;
-                continue;
-            };
-
-            let req_matches =
-                match version_req_matches(&declared_dependency.req, &target.parsed_overlay_version)
-                {
-                    Ok(matches) => matches,
-                    Err(_) => {
-                        unparsed_requirements += 1;
-                        continue;
-                    }
-                };
-
-            if req_matches {
-                compatible_edges += 1;
-                continue;
+            let (parent_version, declarations) = replacement_dependencies.get(&node.id)
+                .map(|(version, declarations)| (version, declarations.as_slice()))
+                .unwrap_or((&parent_package.version, parent_package.dependencies.as_slice()));
+            for declaration in declarations.iter().filter(|declaration| {
+                dependency_display_name(declaration).replace('-', "_") == dep.name
+                    && declaration.name == dep_package.name
+                    && (dep.dep_kinds.is_empty() || dep.dep_kinds.iter().any(|kind| {
+                        kind.kind == declaration.kind && kind.target == declaration.target
+                    }))
+            }) {
+                if declaration.req.is_empty() {
+                    unparsed_requirements += 1;
+                    continue;
+                }
+                match version_req_matches(&declaration.req, &target.parsed_overlay_version) {
+                    Ok(true) => compatible_edges += 1,
+                    Err(_) => unparsed_requirements += 1,
+                    Ok(false) => incompatible.push(VersionAlignmentFinding {
+                        package_name: dep_package.name.clone(),
+                        current_version: dep_package.version.clone(),
+                        overlay_version: target.overlay_version.clone(),
+                        parent_name: parent_package.name.clone(),
+                        parent_version: parent_version.clone(),
+                        req: declaration.req.clone(),
+                    }),
+                }
             }
-
-            incompatible.push(VersionAlignmentFinding {
-                package_name: dep_package.name.clone(),
-                current_version: dep_package.version.clone(),
-                overlay_version: target.overlay_version.clone(),
-                parent_name: parent_package.name.clone(),
-                parent_version: parent_package.version.clone(),
-                req: declared_dependency.req.clone(),
-            });
+            if declared_dependency_for_resolved_edge(declarations, &dep.name).is_none() {
+                // A replacement may remove an old edge. New edges are checked
+                // by the subsequent staged Cargo resolver and lock verifier.
+                unresolved_edges += 1;
+            }
         }
     }
 
@@ -4850,6 +4886,137 @@ fn source_overlay_version_alignment(
         unparsed_requirements,
         incompatible,
     })
+}
+
+/// Read dependency declarations from normalized Cargo manifests, preserving
+/// renamed packages, dependency kinds and target tables. Unmaterialized
+/// workspace requirements stay unparsed; Cargo still validates the full staged
+/// graph after this diagnostic preflight.
+fn overlay_dependency_declarations(source: &str) -> Vec<MetadataDependency> {
+    fn string(value: &str) -> Option<String> {
+        toml_string_value(value).or_else(|| value.trim().strip_prefix('\'')?.strip_suffix('\'').map(str::to_owned))
+    }
+    fn section(table: &str) -> Option<(Option<String>, Option<String>, Option<String>)> {
+        let table = table.strip_prefix('[')?.strip_suffix(']')?;
+        for (name, kind) in [("dependencies", None), ("build-dependencies", Some("build")), ("dev-dependencies", Some("dev"))] {
+            let (rest, target) = if let Some(rest) = table.strip_prefix(name) {
+                (rest, None)
+            } else if let Some(target_table) = table.strip_prefix("target.") {
+                let marker = format!(".{name}");
+                let Some((target, rest)) = target_table.rsplit_once(&marker) else { continue };
+                (rest, Some(string(target)?))
+            } else { continue };
+            let alias = if rest.is_empty() { None } else {
+                let alias = rest.strip_prefix('.')?;
+                Some(string(alias).unwrap_or_else(|| alias.to_owned()))
+            };
+            return Some((kind.map(str::to_owned), target, alias));
+        }
+        None
+    }
+    let mut tables: Vec<(String, BTreeMap<String, String>)> = Vec::new();
+    for line in source.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            tables.push((line.to_owned(), BTreeMap::new()));
+        } else if let Some((_, values)) = tables.last_mut()
+            && let Some((name, value)) = line.split_once('=') {
+            values.insert(name.trim().to_owned(), value.trim().to_owned());
+        }
+    }
+    let mut dependencies = Vec::new();
+    for (table, values) in tables {
+        let Some((kind, target, alias)) = section(&table) else { continue };
+        let entries = if let Some(alias) = alias {
+            vec![(alias, values.get("version").and_then(|value| string(value)),
+                values.get("package").and_then(|value| string(value)),
+                values.get("path").and_then(|value| string(value)).map(PathBuf::from))]
+        } else {
+            values.into_iter().map(|(alias, value)| {
+                let alias = string(&alias).unwrap_or(alias);
+                let version = string(&value).or_else(|| inline_table_string(&value, "version"));
+                let package = inline_table_string(&value, "package");
+                let path = inline_table_path(&value).map(PathBuf::from);
+                (alias, version, package, path)
+            }).collect()
+        };
+        for (alias, version, package, path) in entries {
+            let name = package.unwrap_or_else(|| alias.clone());
+            dependencies.push(MetadataDependency {
+                rename: (name != alias).then_some(alias), name,
+                req: version.unwrap_or_else(|| if path.is_some() { "*".into() } else { String::new() }),
+                path, kind: kind.clone(), target: target.clone(),
+            });
+        }
+    }
+    dependencies
+}
+
+#[cfg(test)]
+mod selected_overlay_version_alignment_tests {
+    use super::*;
+
+    fn report(replacement_req: Option<&str>) -> VersionAlignmentReport {
+        let root = env::temp_dir().join(format!("trueos-overlay-alignment-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(root.join("replacement")).unwrap();
+        let manifest = root.join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname=\"quinn\"\nversion=\"0.11.12\"\n").unwrap();
+        let metadata: CargoMetadata = serde_json::from_value(serde_json::json!({
+            "packages":[
+                {"id":"quinn", "name":"quinn", "version":"0.11.12", "manifest_path":manifest,
+                 "dependencies":[{"name":"quinn-proto","rename":"proto","req":"^0.11.18","kind":null,"target":null}]},
+                {"id":"proto", "name":"quinn-proto", "version":"0.11.19", "dependencies":[]}
+            ],
+            "resolve":{"root":"quinn","nodes":[
+                {"id":"quinn", "deps":[{"name":"proto","pkg":"proto","dep_kinds":[{"kind":null,"target":null}]}]},
+                {"id":"proto","deps":[]}
+            ]}
+        })).unwrap();
+        let overlays = replacement_req.map(|req| {
+            fs::write(root.join("replacement/Cargo.toml"), format!(
+                "[package]\nname=\"quinn\"\nversion=\"0.11.9\"\n[dependencies.proto]\npackage=\"quinn-proto\"\nversion=\"{req}\"\n\
+                 [build-dependencies.proto]\npackage=\"quinn-proto\"\nversion=\"=99.0.0\"\n\
+                 [target.'cfg(windows)'.dependencies.proto]\npackage=\"quinn-proto\"\nversion=\"=98.0.0\"\n"
+            )).unwrap();
+            CratePatch::new("quinn", root.join("replacement"))
+        }).into_iter().collect::<Vec<_>>();
+        let result = source_overlay_version_alignment_from_metadata(metadata, &manifest, &[
+            LockMismatch { name:"quinn-proto".into(), locked_version:"0.11.19".into(), overlay_version:"0.11.14".into() }
+        ], &overlays).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        result
+    }
+
+    #[test]
+    fn replaced_depender_uses_selected_manifest_and_only_matching_kind_and_target() {
+        let result = report(Some("0.11.12"));
+        assert_eq!(result.compatible_edges, 1);
+        assert!(result.incompatible.is_empty());
+    }
+
+    #[test]
+    fn genuine_incompatibility_in_selected_or_original_depender_still_rejects() {
+        for replacement in [None, Some("0.11.18")] {
+            let result = report(replacement);
+            assert_eq!(result.incompatible.len(), 1);
+            assert_eq!(result.incompatible[0].parent_version, if replacement.is_some() { "0.11.9" } else { "0.11.12" });
+        }
+    }
+
+    #[test]
+    fn declarations_cover_inline_aliases_and_normal_build_dev_target_tables() {
+        let declarations = overlay_dependency_declarations(
+            "[dependencies]\nproto_alias={package=\"quinn-proto\",version=\"0.11.12\"}\n\
+             [build-dependencies.proto]\npackage=\"quinn-proto\"\nversion=\"0.11.13\"\n\
+             [target.'cfg(unix)'.dev-dependencies.proto]\npackage=\"quinn-proto\"\nversion=\"0.11.14\"\n"
+        );
+        assert_eq!(declarations.len(), 3);
+        assert_eq!(declarations[0].rename.as_deref(), Some("proto_alias"));
+        assert_eq!(declarations[1].kind.as_deref(), Some("build"));
+        assert_eq!(declarations[2].kind.as_deref(), Some("dev"));
+        assert_eq!(declarations[2].target.as_deref(), Some("cfg(unix)"));
+    }
 }
 
 fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata, String> {

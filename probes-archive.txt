@@ -1,0 +1,12 @@
+Preserved experiment archive
+
+probes-part-1.zip and probes-part-2.zip together contain every entry
+from the original probes.zip, with the original paths and contents.
+
+To restore the complete archive, extract both ZIPs into the same directory:
+
+    unzip probes-part-1.zip -d restored-probes
+    unzip probes-part-2.zip -d restored-probes
+
+Each ZIP can also be opened individually. Some experiment directories span
+both archives, so extract both for the complete collection.

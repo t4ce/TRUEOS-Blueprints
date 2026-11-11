@@ -589,12 +589,12 @@ mod external_path_overlay_tests {
         }];
         let selected = root.join("selected");
         let selected_manifest = selected.join("Cargo.toml");
-        let report = source_overlay_version_alignment(&selected, &selected_manifest, &mismatches).unwrap();
+        let report = source_overlay_version_alignment(&selected, &selected_manifest, &mismatches, &[]).unwrap();
         assert!(report.incompatible.is_empty());
         assert_eq!(report.compatible_edges, 1);
 
         let unrelated = root.join("unrelated");
-        let report = source_overlay_version_alignment(&unrelated, &unrelated.join("Cargo.toml"), &mismatches).unwrap();
+        let report = source_overlay_version_alignment(&unrelated, &unrelated.join("Cargo.toml"), &mismatches, &[]).unwrap();
         assert_eq!(report.incompatible.len(), 1);
         assert_eq!(report.incompatible[0].parent_name, "unrelated");
 
@@ -603,7 +603,7 @@ mod external_path_overlay_tests {
         manifest.push_str("\n[build-dependencies]\nhost-helper = { path = \"../host-helper\" }\n");
         fs::write(&selected_manifest, manifest).unwrap();
         generate_lock();
-        let report = source_overlay_version_alignment(&selected, &selected_manifest, &mismatches).unwrap();
+        let report = source_overlay_version_alignment(&selected, &selected_manifest, &mismatches, &[]).unwrap();
         assert_eq!(report.incompatible.len(), 1);
         assert_eq!(report.incompatible[0].parent_name, "host-helper");
         fs::remove_dir_all(root).unwrap();
@@ -813,6 +813,7 @@ mod rustc_payload_tests {
             pkg: package_id.to_owned(),
             dep_kinds: vec![MetadataDepKind {
                 kind: kind.map(str::to_owned),
+                target: None,
             }],
         }
     }
@@ -941,6 +942,8 @@ mod rustc_payload_tests {
                         rename: None,
                         req: "*".to_owned(),
                         path: Some(PathBuf::from("/sdk/api")),
+                        kind: None,
+                        target: None,
                     }],
                     features: BTreeMap::new(),
                 },
@@ -998,6 +1001,8 @@ mod version_alignment_tests {
             rename: rename.map(str::to_string),
             req: req.to_string(),
             path: None,
+            kind: None,
+            target: None,
         }
     }
 
