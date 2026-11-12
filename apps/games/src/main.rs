@@ -1,7 +1,8 @@
-// trueos-blueprint: features = ["tokio-runtime"]
+#![no_std]
 
 extern crate alloc;
 
+mod app_shader_packages;
 mod audio;
 mod chess;
 mod chess_assets;

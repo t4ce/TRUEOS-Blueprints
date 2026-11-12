@@ -17,7 +17,8 @@ rand = { version = "0.10.1", default-features = false }
 sudokitty-core = { git = "https://github.com/eduardorittner/sudokitty", rev = "e68b088df1f13df6523928c4c679108313a4450a" }
 cozy-chess = { git = "https://github.com/analog-hors/cozy-chess", rev = "1d8a04d1510071931132ce11e988ced0d41807c8", default-features = false }
 microgames = { path = "../../vendor/microgames" }
-trueos = { path = "../../api", features = ["ui4-scene", "tokio-runtime", "default-global-allocator"] }
+trueos = { path = "../../api", features = ["ui4-scene", "default-global-allocator"] }
+v = { path = "../../crates/trueos-v" }
 trueos-picasso = { path = "../../../TRUEOS-Picasso", default-features = false, features = ["blueprint"] }
 
 [workspace]

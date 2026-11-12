@@ -571,6 +571,8 @@ fn build_one_target_to_mode(
         cache.watch(Vec::new())
     });
 
+    ensure_app_lockfile(app_dir, manifest_path)?;
+
     let std_sysroot = if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         let sdk =
             blueprint_root(app_dir).ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
@@ -5075,6 +5077,32 @@ mod selected_overlay_version_alignment_tests {
 }
 
 fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata, String> {
+    cargo_metadata_with_lock_policy(app_dir, manifest_path, true)
+}
+
+/// Overlay selection needs the resolved versions, including on a first build.
+/// Resolve only an absent lock; existing pins must reach the normal locked
+/// metadata checks without being updated or replaced by this preparation step.
+fn ensure_app_lockfile(app_dir: &Path, manifest_path: &Path) -> Result<(), String> {
+    let lock = app_lockfile(app_dir);
+    match fs::metadata(&lock) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("cannot inspect app lockfile {}: {error}", lock.display())),
+    }
+    cargo_metadata_with_lock_policy(app_dir, manifest_path, false)
+        .map_err(|error| format!("cannot prepare app lockfile {}: {error}", lock.display()))?;
+    if !lock.is_file() {
+        return Err(format!("cargo metadata did not create app lockfile {}", lock.display()));
+    }
+    Ok(())
+}
+
+fn cargo_metadata_with_lock_policy(
+    app_dir: &Path,
+    manifest_path: &Path,
+    locked: bool,
+) -> Result<CargoMetadata, String> {
     let mut metadata = toolchain::cargo_command();
     if let Some(manifest_dir) = manifest_path.parent() {
         metadata.current_dir(manifest_dir);
@@ -5085,9 +5113,11 @@ fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata,
         .arg("metadata")
         .arg("--format-version")
         .arg("1")
-        .arg("--locked")
         .arg("--manifest-path")
         .arg(manifest_path);
+    if locked {
+        metadata.arg("--locked");
+    }
     let output = metadata
         .output()
         .map_err(|err| format!("cargo metadata failed to start: {err}"))?;
@@ -5104,6 +5134,75 @@ fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata,
 
     serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("failed to parse cargo metadata JSON: {err}"))
+}
+
+#[cfg(test)]
+mod app_lock_bootstrap_tests {
+    use super::*;
+
+    fn fixture(name: &str, workspace_member: bool) -> (PathBuf, PathBuf) {
+        let root = env::temp_dir().join(format!("blueprint-lock-bootstrap-{name}-{}", std::process::id()));
+        reset_dir(&root).unwrap();
+        let app = if workspace_member { root.join("app") } else { root.clone() };
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::write(app.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(app.join("Cargo.toml"), "[package]\nname=\"bootstrap-app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n").unwrap();
+        if workspace_member {
+            fs::write(root.join("Cargo.toml"), "[workspace]\nmembers=[\"app\"]\nresolver=\"3\"\n").unwrap();
+        }
+        (root, app)
+    }
+
+    #[test]
+    fn first_build_resolves_versions_before_overlay_selection() {
+        let (root, app) = fixture("standalone", false);
+        let manifest = app.join("Cargo.toml");
+        assert!(!app_lockfile(&app).exists());
+        ensure_app_lockfile(&app, &manifest).unwrap();
+        let packages = lock_packages(&app_lockfile(&app)).unwrap();
+        assert!(packages.iter().any(|package| package.name == "bootstrap-app" && package.version == "0.1.0"));
+        assert!(!cargo_metadata(&app, &manifest).unwrap().packages.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn member_bootstrap_uses_owning_workspace_lock() {
+        let (root, app) = fixture("member", true);
+        let manifest = app.join("Cargo.toml");
+        ensure_app_lockfile(&app, &manifest).unwrap();
+        assert_eq!(app_lockfile(&app), root.join("Cargo.lock"));
+        assert!(root.join("Cargo.lock").is_file());
+        assert!(!app.join("Cargo.lock").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn existing_pins_are_not_updated_even_if_manifest_needs_resolution() {
+        let (root, app) = fixture("pins", false);
+        let manifest = app.join("Cargo.toml");
+        ensure_app_lockfile(&app, &manifest).unwrap();
+        let lock = fs::read(app_lockfile(&app)).unwrap();
+        fs::write(&manifest, "[package]\nname=\"bootstrap-app\"\nversion=\"0.2.0\"\nedition=\"2024\"\n").unwrap();
+        ensure_app_lockfile(&app, &manifest).unwrap();
+        assert_eq!(fs::read(app_lockfile(&app)).unwrap(), lock);
+        let error = cargo_metadata(&app, &manifest).err().expect("locked metadata must reject stale pins");
+        assert!(error.contains("lock"), "{error}");
+        assert_eq!(fs::read(app_lockfile(&app)).unwrap(), lock);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_initial_resolution_names_the_missing_lock_and_manifest_error() {
+        let (root, app) = fixture("failure", false);
+        let manifest = app.join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname=\"bootstrap-app\"\nversion=\"0.1.0\"\n[dependencies]\nmissing={path=\"absent\"}\n").unwrap();
+        let error = ensure_app_lockfile(&app, &manifest).unwrap_err();
+        assert!(error.contains("cannot prepare app lockfile"), "{error}");
+        assert!(error.contains(app_lockfile(&app).to_str().unwrap()), "{error}");
+        assert!(error.contains("absent"), "{error}");
+        assert!(!app_lockfile(&app).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 fn cargo_metadata_for_rustc_payload(

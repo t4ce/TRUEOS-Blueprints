@@ -1,11 +1,11 @@
 //! Procedural Games soundscape, adapted from the supplied Garden Collective
 //! studio's F warm-horizon palette. All clocks advance in rendered audio frames,
 //! so stream backpressure also pauses the composition clock.
-use alloc::sync::Arc;
+use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicBool, Ordering};
 use trueos::audio::{self, PlaybackParams, Stream};
 use trueos::logl::{self, level};
-use trueos::{clock, runtime, time, worker};
+use trueos::{clock, vsys};
 
 const RATE: u64 = 48_000;
 const RATE_F: f32 = RATE as f32;
@@ -27,7 +27,7 @@ const CHORDS: [[i32; 5]; 4] = [
 const BELLS: [i32; 5] = [19, 21, 24, 26, 28];
 
 pub struct Audio {
-    worker: Option<worker::JoinHandle<()>>,
+    worker: Option<Arc<AtomicBool>>,
     stop: Arc<AtomicBool>,
     inline: Option<AudioPump>,
 }
@@ -36,9 +36,18 @@ impl Audio {
     pub fn new() -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
-        let worker = match worker::spawn(move || run_audio_worker(worker_stop)) {
-            Ok(handle) => Some(handle),
-            Err(error) => {
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_finished = Arc::clone(&finished);
+        // The canonical native worker ABI consumes the closure on acceptance
+        // and rejection. Its captured state stays in this Blueprint's realm.
+        let job = Box::new(move || {
+            let _completion = WorkerCompletion(worker_finished);
+            run_audio_worker(worker_stop);
+        });
+        let code = unsafe { v::worker_abi::trueos_service_lane_submit_job(job) };
+        let worker = match code {
+            0 => Some(finished),
+            error => {
                 logl::log(
                     level::WARN,
                     format_args!("Games: audio worker unavailable ({error}); using inline pump"),
@@ -57,8 +66,8 @@ impl Audio {
     pub fn update(&mut self, now_ms: u64) {
         if self
             .worker
-            .as_mut()
-            .is_some_and(|handle| handle.try_take().is_some())
+            .as_ref()
+            .is_some_and(|finished| finished.load(Ordering::Acquire))
         {
             logl::log(
                 level::WARN,
@@ -80,23 +89,21 @@ impl Drop for Audio {
 }
 
 fn run_audio_worker(stop: Arc<AtomicBool>) {
-    let runtime = match runtime::current_thread().build() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            logl::log(
-                level::WARN,
-                format_args!("Games: audio worker runtime failed ({error})"),
-            );
-            return;
-        }
-    };
-    runtime.block_on(async {
-        let mut pump = AudioPump::new();
-        while !stop.load(Ordering::Acquire) && !worker::cancellation_requested() {
-            pump.update(clock::monotonic_millis());
-            time::sleep(time::Duration::from_millis(WORKER_TICK_MS)).await;
-        }
-    });
+    let mut pump = AudioPump::new();
+    while !stop.load(Ordering::Acquire)
+        && !unsafe { v::worker_abi::trueos_service_lane_cancellation_requested() }
+    {
+        pump.update(clock::monotonic_millis());
+        vsys::sleep_ms(WORKER_TICK_MS);
+    }
+}
+
+struct WorkerCompletion(Arc<AtomicBool>);
+
+impl Drop for WorkerCompletion {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
 }
 
 struct AudioPump {

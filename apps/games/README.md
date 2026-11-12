@@ -27,7 +27,7 @@ from 25% to 65% over ten seconds, holds for five, then falls over five.
 Distant chimes use a 75% layer level and cycle through 60%, 70%, and 80%
 note intensity every three notes; a chime has a one-third chance of a quick
 repeat. Warmth is 95%, drift is 15%, and the tone setting is 100%. The mix
-is peak bounded before PCM output. A Tokio audio task runs on a separate
+is peak bounded before PCM output. A sound pump runs on a separate
 TRUEOS native worker and keeps one second of PCM queued to absorb long
 shader frames. Games retries the TRUEOS audio device if it is temporarily
 unavailable and uses the main loop if no native worker lane is available.
@@ -54,11 +54,20 @@ chooses a queen. Escape closes the frame. The first Minesweeper reveal is safe, 
 switching modes preserves each game.
 
 Initialize the library with `git submodule update --init vendor/microgames`.
-Build locally from the TRUEOS-Blueprints root with
-`TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp games`. The source depends on
+Build and refresh the apps share from the TRUEOS-Blueprints root with
+`cargo bp games`. Games uses the native `core`/`alloc` target with no std,
+Tokio, Unix or POSIX runtime; its audio worker uses the native worker service
+and TRUEOS sleep API. The source depends on
 the `vendor/microgames` submodule, the sibling TRUEOS-Picasso repo, and the pinned t4ce/gamie
 crate's Minesweeper and Tic-Tac-Toe modules, the pinned Sudokitty core
 crate, and pinned cozy-chess.
+
+Games carries the authenticated four-stage cube patch shader in
+`assets/cube-patch.apshader`; Picasso supplies its shared retained-rendering
+stages. The kernel contains their trust hashes and pipeline metadata. After an
+approved cube shader update, copy the canonical
+`Cubes/shaders/trueos/cube-patch.apshader` here and verify both publications with
+`python3 ../tools/app-shaders/package.py --blueprint dist/games.bp`.
 
 The six Deco chess sculptures are stored in this Blueprint's
 `assets/chess_{pawn,knight,bishop,rook,queen,king}.cubes` files and embedded in
