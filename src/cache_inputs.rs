@@ -75,12 +75,8 @@ pub(crate) fn base(app: &Path, manifest: &Path, target: &Path) -> Result<Vec<Pat
         let buildins = sdk.join("../TRUEOS-Buildins");
         roots.push(buildins.join("tools"));
         if let Some(kernel) = crate::abi_guard::locate_kernel_repo(&sdk)? {
-            roots.extend([
-                kernel.join("tools/rust-std"),
-                kernel.join("tools/testpy"),
-                kernel.join("crates/trueos-v/src/bp_abi.rs"),
-                kernel.join("abi/portal-cabi-v2.sha256"),
-            ]);
+            roots.extend([kernel.join("tools/rust-std"), kernel.join("tools/testpy")]);
+            roots.extend(kernel_contract_inputs(&kernel));
         }
         // This asset is read by cubesrv's build script outside its Cargo package.
         if crate::package_name(manifest)? == "cubesrv" {
@@ -172,6 +168,17 @@ pub(crate) fn base(app: &Path, manifest: &Path, target: &Path) -> Result<Vec<Pat
         }
     }
     Ok(roots.into_iter().map(|path| absolute(&path)).collect())
+}
+
+fn kernel_contract_inputs(kernel: &Path) -> [PathBuf; 4] {
+    [
+        kernel.join("crates/trueos-v/src/bp_abi.rs"),
+        kernel.join("abi/portal-cabi-v2.sha256"),
+        // Import retirement can change without altering CABI declarations.
+        // Cached packages must pass the current loader policy on the next build.
+        kernel.join("src/hv/blueprint/prebind.rs"),
+        kernel.join("src/unix_compat.rs"),
+    ]
 }
 
 fn add_ancestor_config(directory: &Path, roots: &mut Vec<PathBuf>) {
@@ -433,6 +440,49 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn kernel_retirement_rules_invalidate_a_successful_blueprint_cache() {
+        for retired_policy in ["src/hv/blueprint/prebind.rs", "src/unix_compat.rs"] {
+            let fixture = Fixture::new();
+            let kernel = fixture.0.join("TRUEOS");
+            let roots = kernel_contract_inputs(&kernel).to_vec();
+            for input in &roots {
+                fs::create_dir_all(input.parent().unwrap()).unwrap();
+                fs::write(input, "unchanged kernel contract\n").unwrap();
+            }
+            let output = fixture.0.join("app/games.bp");
+            fs::write(&output, "previously validated package").unwrap();
+            let stamp = fixture.0.join("cache.json");
+            let new_cache = || {
+                crate::build_cache::BuildCache::new(
+                    stamp.clone(),
+                    "games".into(),
+                    roots.clone(),
+                    "same environment".into(),
+                )
+                .unwrap()
+            };
+            let mut cache = new_cache();
+            cache.watch(Vec::new()).unwrap();
+            assert!(cache.record(vec![output.clone()], Vec::new()).unwrap());
+            assert!(new_cache().is_fresh().unwrap());
+
+            fs::write(
+                kernel.join(retired_policy),
+                "new retirement: old native import is now rejected\n",
+            )
+            .unwrap();
+            assert!(
+                !new_cache().is_fresh().unwrap(),
+                "retirement update was missed: {retired_policy}"
+            );
+            assert_eq!(
+                fs::read_to_string(&output).unwrap(),
+                "previously validated package"
+            );
         }
     }
 

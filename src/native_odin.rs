@@ -48,6 +48,10 @@ pub(crate) fn build(blueprints_root: &Path) -> Result<PathBuf, String> {
         .current_dir(&source)
         .env("ODIN", compiler);
     crate::run_command(&mut command, "upstream Odin native Blueprint build")?;
+    crate::abi_guard::verify_before_pack(
+        Some(blueprints_root),
+        &source.join("trueos/build/odin-son.o"),
+    )?;
     let dist = blueprints_root.join("dist");
     fs::create_dir_all(&dist).map_err(|error| format!("create {}: {error}", dist.display()))?;
     let destination = dist.join("odin-son.bp");
