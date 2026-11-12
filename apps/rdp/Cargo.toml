@@ -1,0 +1,26 @@
+[package]
+name = "rdp"
+version = "0.1.0"
+edition = "2024"
+description = "View one Ubuntu window in a native TRUEOS UI4 video frame"
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+argv-entry-v1 = true
+filesystem-independent = true
+
+[dependencies]
+crossterm = { path = "../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
+trueos-rdp-protocol = { path = "../../../TRUEOS-RDP/server/protocol" }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+mio = { version = "=1.2.0", default-features = false, features = ["std-compat", "native-net"] }
+trueos = { path = "../../api" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[workspace]
+
+[patch.crates-io]
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }
