@@ -1,0 +1,68 @@
+[
+  {
+    "id": "8m",
+    "repo": "minishlab/potion-base-8M",
+    "revision": "bf8b056651a2c21b8d2565580b8569da283cab23",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 202,
+        "sha256": "2a6ac0e9aaa356a68a5688070db78fc3a464fefe85d2f06a1905ce3718687553"
+      },
+      {
+        "name": "model.safetensors",
+        "size": 30236760,
+        "sha256": "f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2"
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 683666,
+        "sha256": "e67e803f624fb4d67dea1c730d06e1067e1b14d830e2c2202569e3ef0f70bb50"
+      }
+    ]
+  },
+  {
+    "id": "32m",
+    "repo": "minishlab/potion-base-32M",
+    "revision": "1e5a03f8eeb2c98b928fbbd846f22f816360919f",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 202,
+        "sha256": "63c00d90824c832c04ec1d02b6a983fb90489bf049f29fbff15ba481b8a432ee"
+      },
+      {
+        "name": "model.safetensors",
+        "size": 129210456,
+        "sha256": "99f6c33204c9231a7391871b7a3c91409b532c8f587a9ea44fc282303d8dec28"
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 1493150,
+        "sha256": "7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18"
+      }
+    ]
+  },
+  {
+    "id": "4m",
+    "repo": "minishlab/potion-base-4M",
+    "revision": "9b3cff412d30be9ae8603fe10224c224f3401869",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 202,
+        "sha256": "90a28f209637bea10a440b69c1b41b72a24c4cb7d378030172f89c671c254c80"
+      },
+      {
+        "name": "model.safetensors",
+        "size": 15118424,
+        "sha256": "8a7140edd17ffab30ddcff1135eda127df57abfae856203dbd7b3d061295c31a"
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 683666,
+        "sha256": "e67e803f624fb4d67dea1c730d06e1067e1b14d830e2c2202569e3ef0f70bb50"
+      }
+    ]
+  }
+]
