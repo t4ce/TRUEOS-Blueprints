@@ -95,7 +95,7 @@ impl ImageDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use redb::{ReadableDatabase, TableDefinition};
+    use redb::{ReadableDatabase, ReadableTable, TableDefinition};
     const VALUES: TableDefinition<u64, u64> = TableDefinition::new("values");
 
     #[test]

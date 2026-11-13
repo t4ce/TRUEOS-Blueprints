@@ -7,8 +7,9 @@ use aes::cipher::Unsigned;
 use aes::cipher::block_padding::Pkcs7;
 use cbc::cipher::BlockEncryptMut;
 use cbc::cipher::KeyIvInit;
-use crypto_common::{IvSizeUser, KeySizeUser, OutputSizeUser};
-use hmac::{Hmac, Mac};
+use crypto_common::{IvSizeUser, KeySizeUser};
+use hmac::digest::OutputSizeUser;
+use hmac::{Hmac, KeyInit, Mac};
 use rand_core::CryptoRngCore;
 use sha2::Sha256;
 
@@ -142,7 +143,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 
         out_len += chiper_len;
 
-        let mut hmac = <HmacSha256 as Mac>::new_from_slice(&self.sign_key)
+        let mut hmac = <HmacSha256 as KeyInit>::new_from_slice(&self.sign_key)
             .map_err(|_| RnsError::InvalidArgument)?;
 
         hmac.update(&out_buf[..out_len]);
@@ -164,7 +165,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 
         let expected_tag = &token_data[token_data.len() - HMAC_OUT_SIZE..];
 
-        let mut hmac = <HmacSha256 as Mac>::new_from_slice(&self.sign_key)
+        let mut hmac = <HmacSha256 as KeyInit>::new_from_slice(&self.sign_key)
             .map_err(|_| RnsError::InvalidArgument)?;
 
         hmac.update(&token_data[..token_data.len() - HMAC_OUT_SIZE]);

@@ -137,7 +137,7 @@ fn artifact_record(path: &Path) -> Result<ArtifactRecord<'_>, String> {
     Ok(ArtifactRecord {
         path,
         bytes,
-        sha256: format!("{:x}", digest.finalize()),
+        sha256: crate::cache_inputs::digest_hex(&digest.finalize()),
     })
 }
 

@@ -300,14 +300,13 @@ fn prepare_legends(
     geometry: &Geometry,
     out: &std::path::Path,
 ) {
-    use sha2::{Digest, Sha256};
     let path = source.parent().unwrap().join("keyfarm/mapping.json");
     println!("cargo:rerun-if-changed={}", path.display());
     let map: serde_json::Value =
         serde_json::from_slice(&fs::read(path).expect("read audited key map")).unwrap();
     assert_eq!(
         map["model_sha256"].as_str().unwrap(),
-        format!("{:x}", Sha256::digest(bytes))
+        sha256_hex(bytes)
     );
     let mut legends = String::from("pub const LEGENDS: &[Legend] = &[\n");
     let mut keys = String::from("pub const KEYS: &[Key] = &[\n");
@@ -421,4 +420,9 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a.into_iter().zip(b).map(|(left, right)| left * right).sum()
+}
+
+fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes.as_ref()).iter().map(|byte| format!("{byte:02x}")).collect()
 }

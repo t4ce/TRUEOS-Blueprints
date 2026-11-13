@@ -221,7 +221,15 @@ impl BuildTracker {
     }
 }
 
-pub fn sha256(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+pub fn sha256(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(64);
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for byte in Sha256::digest(bytes) {
+        hex.push(DIGITS[(byte >> 4) as usize] as char);
+        hex.push(DIGITS[(byte & 0xf) as usize] as char);
+    }
+    hex
+}
 
 #[cfg(feature = "std")]
 pub fn validate_request(request: &BuildRequest) -> io::Result<()> {

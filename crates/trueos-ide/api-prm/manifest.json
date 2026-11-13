@@ -21,43 +21,43 @@
   "files": {
     "filesystem.prm": {
       "bytes": 7897,
-      "sha256": "f5ca7e069d81903353cf064fc57cf8d759f17eb9d4214474f54b0ca21ada1bd6"
+      "sha256": "c1ef26f3449ef2e7369e251828b36216b8755470d6dfa75a00aa2d7e1ce38fd1"
     },
     "graphics.prm": {
       "bytes": 28725,
-      "sha256": "ebae18352f38b912bef48ac7aadb3e66cab6144f6d7d5320bd8e06568e39f22f"
+      "sha256": "c53e597f03568f479e449f9469353e7670fc0344d3988229b83ed5864ca5ea4b"
     },
     "lifecycle.prm": {
       "bytes": 6228,
-      "sha256": "a690d892aaff52879b1c4a8edff8aed5a91e21925cdaf42165620972f96f6cc1"
+      "sha256": "dc5ec4030c2d72dc614dd7a407355599f74c714136cc1c5056c7952bcd5c617b"
     },
     "logging.prm": {
       "bytes": 1852,
-      "sha256": "9ad87157be63132354ddb0e4182f2caa03c71d551e97d24fdbc2927df6d4346d"
+      "sha256": "b1a3fc50621a673adb65e93d52d83b3ce386f1816cd57f9a4a077716dcf0ede3"
     },
     "memory.prm": {
       "bytes": 850,
-      "sha256": "316a5df8749a46f09eb0058ea996a80346b6ad4d9929af4e678e019424370687"
+      "sha256": "7bad5034166cb117eddb025e286c86247a98e40a3d106b654f1676a5e32a7cf6"
     },
     "services.prm": {
       "bytes": 36003,
-      "sha256": "a8166369bad5c243fa8a90b7a7f93e1e608348e41b38675f7d040457102de408"
+      "sha256": "e7ddabd10982b1c9f0ea86c631c1cc796a3391120e05738a5d6fbb89f935a448"
     },
     "symbols.prm": {
       "bytes": 20208,
-      "sha256": "8937700c37ca523572378fdb6a0da65463d02806421e6f555ef4f6ea54ee9d24"
+      "sha256": "d7f406c9a5caea70534abac55b084916373b9d6c63cc9466beb30de7ad5d4164"
     },
     "terminal.prm": {
       "bytes": 5391,
-      "sha256": "a436a16c50df5a06457a3234ff446fac9f210ce0d18dcd50b5235006f34e6326"
+      "sha256": "930bdab68319cc31149d4d742246e17ec2b428d4c3b18a7006f25a2b5cf35d44"
     },
     "trueos-api.prm": {
       "bytes": 3353,
-      "sha256": "1a30ec45f8949be56db50a416506a1a76bcd4d43588f8fd7e9985ccb23da8e8d"
+      "sha256": "1ec85c83522906c7b5d4e7f0fb3908d7ea8d3b59c9e6bd46ce062d8426f73438"
     },
     "types.prm": {
       "bytes": 35266,
-      "sha256": "1d63cf25569bdbebdecab133657cbb227707b26010ba548504d086ca23dd27bb"
+      "sha256": "184ab24478335155e6c283256541b85e910f628c0ad17c02bf4a30b4c4299f73"
     }
   },
   "format_version": 1,
@@ -669,7 +669,7 @@
   "scope": "public v::bp_abi C declarations and data layouts; not every Rust facade or libc export",
   "source": {
     "files": {
-      "Cargo.lock": "2a4acbae789f08db3aacfbd8d64ddeebd945bbd8e064df2788b79ab327517d96",
+      "Cargo.lock": "aa3c5bc8e36d0238fe95ae6f8572a657c4e1a8079596bfdc582f8d5c59c75bd4",
       "crates/trueos-v/Cargo.toml": "f9832472bc903ecff72fc94e12bbd4b5a25f2db839c921b204edd3a722dbacb0",
       "crates/trueos-v/src/alsa_compat.rs": "40e09f104a1342234824a27d406441013fbaf08cf4b5a4e15168d2da4d93ba0a",
       "crates/trueos-v/src/borrow.rs": "45dd92e1a88d00d3f62b1cc296bc5700651001f1215971314f2af589e0115492",
@@ -717,6 +717,6 @@
       "tools/api-prm/usage.json": "40e737a5bc0063ed440306fa688eb9ba60c84d6a7f2248cc9ece9783f20b4b32",
       "tools/build_api_prm.py": "54ea90feea2d9dcab56276d50ed6a7a8aa2498e7dc73a1de7e6364b3ca6efc4b"
     },
-    "sha256": "b82016b1b6c7bada8427ccdbafdde4b484a3f24e3783b0395a3e99031bc9bd94"
+    "sha256": "ef46c6ccf84b15366d403888fea02fd888121b7bd70f86ebe51b78d125cf09e8"
   }
 }

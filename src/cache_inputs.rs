@@ -33,7 +33,7 @@ fn environment_hash(
             hash.update(bytes);
         }
     }
-    format!("{:x}", hash.finalize())
+    digest_hex(&hash.finalize())
 }
 
 pub(crate) fn base(app: &Path, manifest: &Path, target: &Path) -> Result<Vec<PathBuf>, String> {
@@ -622,4 +622,9 @@ mod tests {
             PathBuf::from("/external/source")
         );
     }
+}
+
+/// Stable lowercase encoding shared by build receipts and cache keys.
+pub(crate) fn digest_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

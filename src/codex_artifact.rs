@@ -119,7 +119,7 @@ pub(crate) fn sha256(path: &Path) -> Result<String, String> {
         }
         digest.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(crate::cache_inputs::digest_hex(&digest.finalize()))
 }
 
 /// Verify the actual container on cache hits without expanding its ELF again.

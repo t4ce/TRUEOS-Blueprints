@@ -203,7 +203,7 @@ fn cache_revision_for_library(library: &Path, target_spec: &Path) -> Result<Stri
     hash.update(b"target-spec");
     hash.update((target.len() as u64).to_le_bytes());
     hash.update(target);
-    Ok(format!("{:x}", hash.finalize())[..16].to_owned())
+    Ok(crate::cache_inputs::digest_hex(&hash.finalize())[..16].to_owned())
 }
 
 #[cfg(test)]

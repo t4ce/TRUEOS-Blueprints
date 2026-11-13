@@ -111,12 +111,12 @@ fn main() {
     use sha2::{Digest, Sha256};
     assert_eq!(
         receipt["manifest_sha256"].as_str().unwrap(),
-        format!("{:x}", Sha256::digest(&manifest)),
+        sha256_hex(&manifest),
         "sources.json changed; run tools/prepare_slides.py"
     );
     assert_eq!(
         receipt["package_sha256"].as_str().unwrap(),
-        format!("{:x}", Sha256::digest(&bytes)),
+        sha256_hex(&bytes),
         "gallery package changed; run tools/prepare_slides.py"
     );
     assert!(
@@ -139,7 +139,10 @@ fn main() {
         let bytes = &bundle[start..end];
         assert!(vfx::Sequence::parse(bytes).is_some(), "invalid VFX {name}");
         let digest = Sha256::digest(bytes);
-        assert_eq!(effect["sha256"].as_str().unwrap(), format!("{digest:x}"));
+        assert_eq!(
+            effect["sha256"].as_str().unwrap(),
+            digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        );
         let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());
         source.push_str(&format!(
             "Vfx {{ name: {name:?}, start: {start}, end: {end}, revision: {revision} }},\n"
@@ -151,4 +154,9 @@ fn main() {
         source,
     )
     .expect("write embedded catalog");
+}
+
+fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes.as_ref()).iter().map(|byte| format!("{byte:02x}")).collect()
 }

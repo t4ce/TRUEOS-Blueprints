@@ -369,7 +369,7 @@ fn snapshot(roots: &[PathBuf], memo: &BTreeMap<String, Entry>) -> Result<Snapsho
         );
     }
     Ok(Snapshot {
-        digest: format!("{:x}", hash.finalize()),
+        digest: crate::cache_inputs::digest_hex(&hash.finalize()),
         entries: walker.entries,
         stable: walker.stable,
     })
@@ -521,11 +521,11 @@ fn hash_file(path: &Path) -> io::Result<String> {
             Err(error) => return Err(error),
         }
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::cache_inputs::digest_hex(&hash.finalize()))
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::cache_inputs::digest_hex(&Sha256::digest(bytes))
 }
 
 fn hash_field(hash: &mut Sha256, bytes: &[u8]) {
