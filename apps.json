@@ -32,6 +32,7 @@
     "monaco",
     "sqlite",
     "emomodel",
+    { "name": "lily2vec", "path": "apps/lily2Vec" },
     "Frog",
     "osm",
     "maxpix",

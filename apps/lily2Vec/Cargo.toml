@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 default-run = "lily2vec"
 
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+replicatable = false
+rewrite-std-imports = false
+
 [features]
 potion = ["dep:model2vec-rs"]
 

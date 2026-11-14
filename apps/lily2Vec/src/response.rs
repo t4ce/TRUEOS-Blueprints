@@ -173,6 +173,26 @@ mod tests {
         }
     }
     #[test]
+    fn transport_fragmentation_never_splices_noncontiguous_text() {
+        let text = format!("small prefix {} tail", "🙂 some words ".repeat(1000));
+        for width in [1, 3, 99, 1000, 20_000] {
+            let mut sampler = ResponseSampler::default();
+            let mut seen = String::new();
+            let chars: Vec<_> = text.chars().collect();
+            for (i, chunk) in chars.chunks(width).enumerate() {
+                let delta: String = chunk.iter().collect();
+                seen.push_str(&delta);
+                if let Some(sample) = sampler.push(&delta, ms(i as u64 * 100)) {
+                    assert!(seen.ends_with(&sample));
+                    assert!(sample.chars().count() <= RETAIN_CHARS);
+                }
+                assert!(seen.ends_with(&sampler.pending));
+                assert!(sampler.pending.chars().count() <= RETAIN_CHARS);
+            }
+        }
+    }
+
+    #[test]
     fn deltas_are_coalesced_and_completion_obeys_cadence() {
         let mut sampler = ResponseSampler::default();
         assert!(sampler.push("Hello", ms(0)).is_none());

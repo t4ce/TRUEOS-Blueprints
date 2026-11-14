@@ -1,7 +1,6 @@
-// One shared instruction wrapper, also compiled by the TRUEOS kernel.
-#[cfg(target_arch = "x86_64")]
-#[path = "../../../../TRUEOS/src/turbo/vnni.rs"]
-pub mod vnni;
+// The generated declaration references the one authored kernel helper, even
+// when this package is copied into the Blueprint SDK's private staging tree.
+include!(concat!(env!("OUT_DIR"), "/vnni_module.rs"));
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
