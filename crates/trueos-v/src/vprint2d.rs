@@ -1,5 +1,11 @@
 //! Compact producer API for the kernel-owned asynchronous 2D print queue.
 
+extern crate alloc;
+use alloc::vec::Vec;
+
+#[path = "vprint2d/a4.rs"]
+pub mod a4;
+
 const DOCUMENT_GRIDPAPER_A4: u32 = 1;
 const DOCUMENT_GRIDPAPER_REQUEST: u32 = 2;
 
@@ -122,4 +128,39 @@ fn error_from_code(code: i32) -> Error {
         -5 => Error::Transport,
         other => Error::Unknown(other),
     }
+}
+
+/// Submit an app-rendered A4 PWG document through the existing bounded ABI.
+/// Uploads are invisible to the spooler until the final commit succeeds.
+pub fn submit_a4_pwg(document: &[u8]) -> Result<JobId, Error> {
+    if document.is_empty() || document.len() > a4::MAX_DOCUMENT_BYTES {
+        return Err(Error::InvalidDocument);
+    }
+    let mut begin = [0u8; 8];
+    begin[..4].copy_from_slice(&1u32.to_le_bytes());
+    begin[4..].copy_from_slice(&(document.len() as u32).to_le_bytes());
+    let id = submit(3, 0, &begin)?;
+    let result = (|| {
+        let mut payload = Vec::with_capacity(64 * 1024 + 4);
+        let mut offset = 0u32;
+        for chunk in document.chunks(64 * 1024) {
+            payload.clear();
+            payload.extend_from_slice(&offset.to_le_bytes());
+            payload.extend_from_slice(chunk);
+            let appended = submit(4, u64::from(id.get()), &payload)?;
+            if appended != id {
+                return Err(Error::Transport);
+            }
+            offset += chunk.len() as u32;
+        }
+        let committed = submit(5, u64::from(id.get()), &[])?;
+        if committed != id {
+            return Err(Error::Transport);
+        }
+        Ok(id)
+    })();
+    if result.is_err() {
+        let _ = submit(6, u64::from(id.get()), &[]);
+    }
+    result
 }
