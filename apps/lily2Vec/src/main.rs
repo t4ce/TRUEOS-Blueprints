@@ -1,3 +1,5 @@
+mod service;
+
 use anyhow::{Context, Result, bail};
 use lily2vec::{Model, vnni_available};
 use std::{
@@ -84,6 +86,13 @@ fn bench(model: &Model, iterations: u32) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    let service_args: Vec<_> = std::env::args().skip(1).collect();
+    if service_args.iter().any(|arg| arg == "--serve")
+        || (cfg!(target_os = "trueos") && service_args.is_empty())
+    {
+        return service::entry(&service_args);
+    }
+
     let mut guide = include_str!("../vibes.json").to_owned();
     let mut detail = false;
     let mut benchmark = None;
@@ -93,7 +102,7 @@ fn main() -> Result<()> {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "lily2vec [--scores] [--guide FILE] [--bench ITERATIONS] [TEXT...]\n\nCPU AVX-VNNI vibe classifier. No downloads or pretrained model.\nWithout TEXT, type one input per line; Ctrl-D exits. Stdout is one vibe token.\n--scores prints integer scores and backend to stderr.\n--bench compares VNNI scoring with its integer reference and times the whole selector.\nAVX-VNNI hardware and OS vector state are required. No fallback backend.\nThe previous Potion experiment is available with: cargo run --release --features potion --bin lily2vec-potion"
+                    "lily2vec [--scores] [--guide FILE] [--bench ITERATIONS] [TEXT...]\n\nService: --serve [--port 9771] [--dry-run] (host requires --dry-run). Native bare launch serves.\nCPU AVX-VNNI vibe classifier. No downloads or pretrained model.\nWithout TEXT, type one input per line; Ctrl-D exits. Stdout is one vibe token.\n--scores prints integer scores and backend to stderr.\n--bench compares VNNI scoring with its integer reference and times the whole selector.\nAVX-VNNI hardware and OS vector state are required. No fallback backend.\nThe previous Potion experiment is available with: cargo run --release --features potion --bin lily2vec-potion"
                 );
                 return Ok(());
             }

@@ -1,159 +1,112 @@
-# lily2Vec — VNNI vibe classifier
+# lily2Vec — VNNI vibe service
 
-Words in, one of ten expression tokens out. CPU AVX-VNNI performs the actual
-classification scores. This version has no model download, Python, GPU, or
-pretrained embedding dependency in its default build.
+Lily is an on-demand Blueprint service in its own TRUEOS VMX/Hull. Codex tees
+recent assistant-response text to its loopback input queue. Lily's VM owns the
+warm integer model, AVX-VNNI inference, and native Spirit signaling.
 
-```sh
-cd /home/t4ce/Repositories/TRUEOS-Blueprints/apps/lily2Vec
-cargo build --release
-./target/release/lily2vec
+```text
+Codex response stream ──→ terminal UI
+                    └──→ snapshot mailbox ──→ Lily VMX
+                                                 ├─ VNNI classification
+                                                 └─ Spirit clip queue
 ```
 
-Type text, press Enter, get one token. Repeat; Ctrl-D exits. The interface also
-accepts one-shot arguments or piped lines:
+The terminal path does not wait for inference or Spirit. Codex contains the
+text sampler and asynchronous transport client; it does not contain the Lily
+model, VNNI classifier, or calls that choose and signal avatar expressions.
+
+## TRUEOS deployment
+
+From `TRUEOS-Blueprints`:
 
 ```sh
-./target/release/lily2vec "i love you"
-# affection
-./target/release/lily2vec --scores "not angry, just explaining"
-# neutral (backend, integer scores, timing go to stderr)
+cargo bp lily2Vec
+cargo bp codex
 ```
 
-## The model we own
+The resolver is case-insensitive; the registered package is `lily2vec` at
+`apps/lily2Vec`, producing `dist/lily2vec.bp`. Codex's AppDB bundle requires
+Lily alongside SQLite and xerj-service. Apps fetches, verifies and atomically
+installs every required archive before Codex launches. A missing/invalid Lily
+archive prevents a partial Codex installation. Installing Lily alone does not
+request Codex.
 
-`vibes.json` is the entire model: ten labels, biases, and guided word/phrase
-associations with signed integer weights. It is embedded in the binary.
-For live adjustments without rebuilding:
+Codex starts or reuses Lily through the native Blueprint launch path. Bare
+launch of Lily on TRUEOS starts the service on `127.0.0.1:9771`, rather than an
+interactive test loop. This is a separate VMX execution boundary, not a Codex
+thread running the model. Multiple Codex sessions share the ready service. The service uses its own
+current-thread Tokio runtime and LocalSet under normal Hull scheduling. No
+whole-Hull P-core affinity policy is imposed by this change.
 
-```sh
-./target/release/lily2vec --guide vibes.json --scores
+The AppDB bundle metadata is embedded in the seed, so bundle changes require
+the normal kernel/builtins preparation and boot/update cycle. The updated kernel
+must also support the reserved Spirit presentation vocabulary below. No app was
+promoted to a buildin by this integration.
+
+## Snapshot transport
+
+The service accepts HTTP only on loopback:
+
+- `GET /health` reports `protocol: "lily2vec-v1"`, `backend: "avx-vnni"`, and
+  `ready: true` only after the model and required CPU features are ready.
+- `POST /v1/snapshots` enqueues work and returns HTTP 202. Its JSON body contains
+  `source`, monotonically increasing `sequence`, and `text`. A unique source
+  identifies the initiating Codex presentation stream.
+- `{ "source": "...", "sequence": 42, "clear": true }` advances the source
+  sequence and discards that source's pending text.
+
+The ingress is bounded to 32 source records, 8192 bytes per HTTP body, source
+IDs of at most 128 bytes without whitespace/control characters, nonzero
+sequence numbers, and nonempty snapshots of at most 4096 UTF-8 bytes
+and 768 Unicode characters. Each source has one pending slot: a newer snapshot
+replaces its unprocessed predecessor. Older/retried sequences are acknowledged
+with `accepted: false` and `stale: true`; capacity pressure returns 429 rather
+than growing an unbounded queue. Invalid input returns 400; oversized HTTP
+bodies return 413.
+
+The worker checks queued snapshots on a 50 ms tick and presents at most one
+cue globally every 2.5 seconds. The same label is suppressed for five seconds.
+Unprocessed snapshots expire after ten seconds; inactive source records expire
+after 120 seconds. Cancellation clears pending text. These are bounded
+presentation policies, not a new sprite-transition state machine.
+
+Codex samples only live assistant text being sent to its terminal UI, including
+its original Markdown. User input, reasoning, tool output, and replayed history
+do not enter the tee. The sampler targets 384 characters and retains at most
+768, preferring recent contiguous verbatim sections. Fast output coalesces into
+recent text; it is not a backlog of every token or terminal redraw.
+
+## Matrix activity output
+
+Lily appends compact activity lines to its own ShellIO Matrix slot through the
+existing log stream. It never claims a terminal UI or switches focus. Each
+decoded snapshot request gets a service-wide counter and a UTC timestamp:
+
+```text
+lily2vec #1 17:49:02.123Z recv seq=1 chars=125 queued
+lily2vec #1 17:49:02.125Z result=happy spirit=queued
 ```
 
-Labels: `neutral`, `wave`, `happy`, `sad`, `affection`, `disapprove`, `agree`,
-`confused`, `idea`, `angry`. Labels can be added up to 256; the same scorer
-handles ten or a hundred. No training step is required to edit this guide.
+The matching counter connects receipt to the single winning label. `result`
+is exactly one of the ten supported words. `spirit=queued` confirms admission
+to Spirit; `spirit=held-repeat` shows classification succeeded but the existing
+repeat limit held the animation. Host dry-run uses `spirit=dry-run`. UTC times
+have a `Z` suffix; an unavailable native wall clock is shown explicitly as
+`time=unavailable`.
 
-1. Lowercase text, normalize punctuation, retain whole-word boundaries.
-2. Mark guided word/phrase matches as unsigned byte features (0 or 1).
-3. Multiply features by each label's signed byte weight row and accumulate
-   with **AVX-VNNI VPDPBUSD**, then add its bias.
-4. Return the highest-scoring label. First label wins ties; neutral has a bias
-   of one, so unknown text selects neutral with this guide.
+Receipt lines also show `clear`, `stale`, or `rejected` as appropriate. A queued
+snapshot replaced by newer text or cleared before classification has no result
+line. Input text is not printed. `/health` exposes `received`, counting requests
+that reached JSON admission, including clears, stale sequences, and semantic
+rejections. Malformed JSON and oversized bodies rejected before admission do
+not increment it.
 
-Phrase features provide explicit corrections: `not angry` subtracts anger
-weight and adds neutral weight. This is a guided association model, not a
-parser or pretrained general-language model. Its behavior comes entirely from
-our editable guide. Repeated words do not multiply their influence.
+## Spirit signaling
 
-Feature rows are padded to 32 bytes, matching one 256-bit VNNI dot-product
-step. Each instruction accumulates 32 unsigned-byte × signed-byte products
-into eight i32 lanes. We horizontally sum those lanes for the label score.
-Negative guide weights are genuine inhibitory contributions, not a second
-floating-point scoring path. The default matrix is only a few kilobytes.
-The score chooses the output; VNNI is not a demonstration run alongside some
-other classifier.
-
-The eight raw instruction wrappers live in one canonical file:
-`../../../TRUEOS/src/turbo/vnni.rs`. The kernel registers that module, and this
-experiment imports the same source file through `#[path]`; it does not keep
-a duplicate implementation. Lily's dot-product loop calls `dpbusd_256`.
-All four instruction families are exposed at both 128 and 256 bits, with
-wrapping and saturating variants. The wrapper is a reconstruction, not a
-recovered historical file. Keep the TRUEOS and TRUEOS-Blueprints repository layout when
-building this experiment.
-
-Runtime detection requires AVX2 + AVX-VNNI and OS-enabled vector state. The
-CLI errors if unavailable, rather than silently using another backend.
-`score_reference` exists for correctness tests and benchmarks only. Inputs
-are bounded to 16384 UTF-8 bytes; guides to 4096 features, with i8 weights and
-i16 biases to keep i32 accumulation in range. Blank interactive lines are skipped.
-
-## Evidence
-
-```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
-./target/release/lily2vec --bench 1000000
-objdump -d -C target/release/lily2vec | rg -B3 -A3 vpdpbusd
-```
-
-Verified on the development i9-13900K:
-
-- VNNI execution matched integer reference scores, including negative weights,
-  unsigned feature values through 255, and dimensions 32 through 4096.
-- All eight shared wrappers passed hardware arithmetic checks, including
-  overflowing accumulators and full-range byte/word operands.
-- Twelve guided phrase/label cases passed; CLI line input was checked separately.
-- Disassembly identifies VEX `vpdpbusd` in `lily2vec::dot_vnni`, using YMM registers.
-- Default release executable was 782 KiB; the editable JSON guide 12151 bytes.
-
-One measured release run, 1,000,000 iterations, seven rotating queries:
-
-| Work | Time per selection |
-| --- | ---: |
-| Reference integer scoring + bias + winner | 215.4 ns |
-| VNNI integer scoring + bias + winner | 29.0 ns |
-| Text features + VNNI scoring + winner | 1406.8 ns |
-
-Both scoring paths produced checksum 24999983. Scoring includes output-vector
-allocation. Whole-selector timing excludes terminal IO. The scoring speedup
-was about 7.4× in this run; this is not a claim of 7.4× whole-selector speedup.
-The reference is ordinary optimized Rust, not deliberately disabled SIMD.
-
-Observed outputs:
-
-| Input | Token |
-| --- | --- |
-| hi | wave |
-| i dont feel well | sad |
-| i love you | affection |
-| lets go and have a nice talk because you cute | happy |
-| cute | affection |
-| sweet | happy |
-| NO | disapprove |
-| yes that will do | agree |
-| not angry, just explaining | neutral |
-| what if we tried it | idea |
-| i have no clue | confused |
-| i am furious | angry |
-
-The host CLI remains available. Native Codex response presentation is described
-below; it uses this same classifier. The separate emomodel Blueprint installs
-Potion assets and is not required by this integer classifier.
-
-## Previous Potion experiment
-
-The embedding implementation remains available as a comparison, behind an
-optional feature. Its guide is `emotions.json`; see `POTION.md` for the previous
-experiment's notes (use the binary name below instead of its old command).
-
-```sh
-cargo run --release --features potion --bin lily2vec-potion -- "i love you"
-```
-
-The default classifier does not load its weights or include its dependencies.
-
-
-## Live Codex response presentation
-
-TRUEOS Codex feeds live assistant-message text to `response::ResponsePresenter`.
-The immutable VNNI model is initialized once per process and stays warm. No
-model download, subprocess, SQLite, or AI tool call participates.
-
-Snapshots contain recent contiguous verbatim response text, including Markdown.
-User input, reasoning, tool output, and replayed history do not feed the sampler.
-It aims for 384 Unicode characters with natural boundaries and retains at most
-768. Large deltas replace older pending text rather than fabricating adjacency.
-It samples at most once every 2.5 seconds; identical labels are suppressed for
-five seconds. Short replies can be sampled on completion; authoritative item
-completion can supply the final response tail. Cancellation, turn start, and
-new assistant items discard pending text. Snapshots are coalesced rather than
-queued. A failed native admission is not remembered as a successful cue.
-
-The Blueprint API `trueos::spirit::play_expression` validates the ten labels and
-sends a reserved `vibe:` word through the existing emotion ABI (under 16 bytes).
-The matching kernel maps it to an existing resident clip:
+Inside Lily's VM, the classifier scores the snapshot and calls
+`trueos::spirit::play_expression(label)`. This crosses the native Spirit ABI
+using a reserved `vibe:` word, then enters the existing clip queue. The kernel
+maps the ten supported labels to already resident clips:
 
 | Label | Existing clip |
 | --- | --- |
@@ -168,48 +121,137 @@ The matching kernel maps it to an existing resident clip:
 | idea | idea.finger_up |
 | angry | angry.fists_clenched |
 
-Requests enter the original package queue and clip-boundary sequencer.
-Playback priorities, frames, pose transitions, and idle behavior are unchanged.
-Unprefixed emotion requests retain their original randomized variants.
+Frame sequences, pose transitions, playback priorities, and idle behavior stay
+with Spirit's existing sequencer. Ordinary unprefixed emotion requests retain
+their existing randomized variants. Lily records successful native admission,
+not proof that a GPU frame has reached the display.
 
-Both the updated kernel and Codex Blueprint are required. An older kernel can
-reject these reserved presentation words. If VNNI is unavailable, Codex logs
-once and disables expression cues; terminal output continues without an
-alternate arithmetic backend. The `emomodel` asset installer is not required.
+## The integer model
 
-Checks cover the sampler/VNNI classifier, Blueprint API, and all ten mappings
-through the real resident catalog/sequencer harness. The kernel check uses the
-normal hardware features without embedding app payloads. Build native Codex
-with `cargo bp codex` from the Blueprint repository.
+`vibes.json` is the model: guided word/phrase associations, ten labels, signed
+byte weights, and small biases. It is embedded and loaded once by the service.
+No pretrained embedding download, Python runtime, GPU inference, SQLite model
+storage, or main-agent tool call participates.
+
+Text becomes unsigned byte features, currently zero or one for each guided
+whole-word/phrase match. Each label receives a signed-byte weight row. The
+classifier uses **VEX AVX-VNNI `VPDPBUSD`** to multiply and accumulate the rows,
+adds each label's bias, then chooses the highest score. Neutral's small bias
+handles unmatched text. Phrase guidance can counter word evidence: `not angry`
+subtracts anger weight and adds neutral weight.
+
+Feature rows are padded to 32 bytes. Each 256-bit instruction computes 32
+unsigned-byte × signed-byte products into eight i32 accumulation lanes. VNNI
+computes the actual scores selecting the label; it is not a demonstration
+executed beside another classifier. The default matrix occupies only a few
+kilobytes. The guide supports up to 4096 features and 256 labels, although the
+native Spirit mapping currently exposes the ten above.
+
+The raw instruction wrappers are shared with the kernel in
+`../../../TRUEOS/src/turbo/vnni.rs`. The build script emits a module reference
+to that authored file, including during private SDK staging; it does not keep
+a copied helper implementation. Set `LILY2VEC_VNNI_SOURCE` for another checkout
+layout. All four AVX-VNNI families have 128/256-bit wrapping/saturating wrappers.
+The original historical file was not recovered; this wrapper was reconstructed.
+
+AVX2 + AVX-VNNI and OS-enabled XMM/YMM state are required. Unsupported CPUs do
+not receive a scalar inference fallback or a ready service advertisement.
+`score_reference` is for correctness tests and benchmarks only.
+
+## Host CLI and service checks
+
+The host defaults to the original text-in, vibe-out CLI. Use Cargo from the
+Blueprint repository so the target directory is unambiguous:
+
+```sh
+cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- "i love you"
+# affection
+cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- --scores "not angry, just explaining"
+# neutral, with backend/scores on stderr
+```
+
+Without text arguments the host CLI accepts one line at a time until Ctrl-D.
+`--guide FILE` loads adjusted associations. Production inputs need no training
+step merely to edit this guide.
+
+Run the host service without live Spirit side effects:
+
+```sh
+cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- \
+  --serve --dry-run --port 9771
+```
+
+Dry-run still uses the production HTTP ingress, queue, cadence and VNNI
+classifier. It substitutes only the final Spirit call and writes one JSON line
+per presented classification to stdout:
+
+```json
+{"source":"example","sequence":1,"label":"affection","accepted":true}
+```
+
+Diagnostics go to stderr. Test it with Python's standard library:
+
+```sh
+cargo build --release --manifest-path apps/lily2Vec/Cargo.toml
+python3 apps/lily2Vec/tests/service_http.py
+# Or pass --binary /absolute/path/to/the/host/lily2vec
+```
+
+The HTTP harness checks actual VNNI results, latest-wins coalescing, stale
+sequence rejection, cancellation, malformed/oversized ingress, and timestamped
+receipt/result correlation including held repeats. It does not claim to verify
+native Sprite/GPU display completion.
+
+Additional focused checks:
+
+```sh
+cargo test --manifest-path apps/lily2Vec/Cargo.toml
+cargo clippy --manifest-path apps/lily2Vec/Cargo.toml --all-targets -- -D warnings
+cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- --bench 1000000
+```
+
+Earlier host classifier measurements on the i9-13900K found 215.4 ns for
+reference scoring, 29.0 ns for VNNI scoring, and 1406.8 ns including text
+features and label selection. Those are historical in-process measurements,
+not end-to-end HTTP/VMX latency or throughput guarantees. Full-range signed
+weights, unsigned features through 255, saturation/wrapping operations, and
+integer-reference equivalence have dedicated hardware tests.
+
+The earlier Potion embedding experiment remains behind the optional `potion`
+feature, documented in `POTION.md`. Its assets and the separate `emomodel`
+installer are not required by this service.
 
 
-Native build verification: `cargo bp codex` completed and published `codex.bp`
-with SHA256 `2dcb52a39bc90216e372d633606e95e69d80737c7e186ed89f544e003cd7b28e`.
-Loader and CABI compatibility checks passed. The matching kernel needs its
-normal build/boot cycle. No machine was rebooted; live sprite playback from
-this new Codex path has not been verified on hardware.
+The host HTTP integration harness passed all five checks against the real
+AVX-VNNI backend. Its final native Spirit submission was dry-run, so this does
+not establish native VMX-to-sprite display completion or end-to-end latency.
 
 
-## Standalone Blueprint build
+## Native verification for the separated service
 
-From `TRUEOS-Blueprints`, run `cargo bp lily2Vec` (lookup is case-insensitive).
-The registered package is `lily2vec`, at `apps/lily2Vec`; the output is
-`dist/lily2vec.bp`. The native CLI retains the same text-in, vibe-out interface.
-The build script locates the canonical kernel VNNI helper and emits a module
-reference that also works inside SDK staging. It does not copy the helper.
-For a different checkout layout, set `LILY2VEC_VNNI_SOURCE` to the authored
-`TRUEOS/src/turbo/vnni.rs` file before building.
+Both native Blueprints built and published successfully:
 
+- `lily2vec.bp`: `3ce8af56b123a0c39b2cddee5621ca24c5bbc058bd9fdd06fcc080d0d3c06a7b`
+- `codex.bp`: `2765e3ec041b14ae3b3c78adf1d100a7badf35f783841fd9c879c1e3fe977495`
 
-## Codex AppDB bundle
+The service was launched over SSH on `192.168.178.94` and reported
+`READY http://127.0.0.1:9771 protocol=lily2vec-v1 backend=avx-vnni` in its own
+native VM. Startup keeps the warmup scoring result observable before readiness.
+No kernel reboot or explicit core placement was performed. Physical sprite
+playback from a new Codex response has not yet been observed in this check.
 
-`appbundle.json` now declares `lily2vec.bp` as a requirement of `codex.bp`,
-alongside SQLite and xerj-service. The normal Apps download/install flow resolves
-all members, fetches and verifies them, and imports the complete bundle in one
-AppDB transaction before launching Codex. Missing or invalid Lily prevents a
-partial Codex installation. Installing Lily by itself does not request Codex.
+Final focused checks passed: classifier/shared VNNI tests, queue admission and
+expiry tests, five HTTP tests using the real VNNI service through the native
+socket-adapter pattern on the host (only Spirit dry-run), and seven production
+Codex client sampling/transport/cancellation tests. Both focused Clippy runs
+passed. Native loader/CABI compatibility checks passed for both packages.
 
-Bundle membership installs the standalone CLI; it does not launch it as a
-service. Codex's automatic response presentation continues to use the in-process
-warm classifier. The bundle metadata is embedded in the AppDB seed and takes
-effect after the normal kernel/builtins preparation and boot/update cycle.
+The updated native Codex archive was also launched through `§§codex` on `.94`;
+its terminal UI identified build `2765e3ec` and reached the normal idle prompt.
+No AI prompt was submitted during this startup check.
+
+The subsequent Matrix activity notification build (`0ad0e368`) was published
+and reloaded on `.94`, again reaching native VNNI readiness. Six host HTTP
+checks passed, including receipt/result correlation and visible repeat
+suppression. Native request notification lines still await a fresh Codex reply;
+only the Lily service was restarted for this update.

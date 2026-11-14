@@ -194,6 +194,9 @@ unsafe fn dot_vnni(query: &[u8], weights: &[i8]) -> i32 {
     lanes.into_iter().sum()
 }
 
+/// The guided integer model owned by the Lily service and standalone test CLI.
+pub const DEFAULT_GUIDE: &str = include_str!("../vibes.json");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,7 +250,3 @@ mod tests {
         }
     }
 }
-
-/// The same guided integer model used by the CLI and response presentation.
-pub const DEFAULT_GUIDE: &str = include_str!("../vibes.json");
-pub mod response;

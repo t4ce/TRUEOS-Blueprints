@@ -10,6 +10,7 @@ replicatable = false
 rewrite-std-imports = false
 
 [features]
+native-transport = []
 potion = ["dep:model2vec-rs"]
 
 [[bin]]
@@ -22,9 +23,27 @@ path = "src/potion.rs"
 required-features = ["potion"]
 
 [dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["json"] }
+hyper = { version = "=1.10.0", default-features = false, features = ["server", "http1"] }
+tower = { version = "=0.5.3", default-features = false, features = ["util"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net", "time", "sync", "io-util"] }
 anyhow = "1"
 model2vec-rs = { version = "=0.4.0", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [workspace]
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos = { path = "../../api", features = ["spirit", "tokio-runtime"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }
+
+[target.'cfg(not(target_os = "trueos"))'.dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
+
+[patch.crates-io]
+tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1" }
+mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }

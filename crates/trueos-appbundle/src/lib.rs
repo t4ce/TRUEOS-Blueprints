@@ -8,6 +8,8 @@ use serde::Deserialize;
 pub const METADATA_KEY: &str = "appbundle.json";
 pub const VFILE: &[u8] = b"vFile:appbundle.json";
 pub const MAX_MEMBERS: usize = 64;
+mod ram_install;
+pub use ram_install::{RAM_INSTALL_VFILE, MAX_INSTALL_BYTES, append_ram_install, decode_ram_install};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
