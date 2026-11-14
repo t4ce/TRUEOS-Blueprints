@@ -15,6 +15,31 @@ The terminal path does not wait for inference or Spirit. Codex contains the
 text sampler and asynchronous transport client; it does not contain the Lily
 model, VNNI classifier, or calls that choose and signal avatar expressions.
 
+## Current classifier experiment
+
+The current vocabulary is the user's 22 names in `tokens.txt`, one per line.
+The default `vibes.json` omits `labels` and reads that embedded vocabulary;
+custom guides can still provide their own explicit `labels`. `Static` has the
+small fallback bias for text with no matching phrase. The CLI returns exactly
+one token with the spelling/case from `tokens.txt`.
+
+This iteration is classification only. The new vocabulary has not been wired
+to Spirit's legacy ten-word animation API or deployed to the running native
+service. Use the CLI or `--serve --dry-run` to try it. Sprite mappings and
+transitions are separate work.
+
+The guide retains the original associations under the revised token names and
+adds short context cues. For example, `the bug was a typo` selects `Silly`,
+`silently drops errors` selects `Disapprove`, `untangle the source code` selects
+`Idea`, and `build passed` selects `Happy`. These are editable weighted phrase
+associations; the ranker does not perform language-model reasoning. Exact token
+names are also recognized so every listed output can be exercised directly.
+
+```sh
+cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- "the bug was a typo"
+# Silly
+```
+
 ## TRUEOS deployment
 
 From `TRUEOS-Blueprints`:
@@ -84,11 +109,11 @@ decoded snapshot request gets a service-wide counter and a UTC timestamp:
 
 ```text
 lily2vec #1 17:49:02.123Z recv seq=1 chars=125 queued
-lily2vec #1 17:49:02.125Z result=happy spirit=queued
+lily2vec #1 17:49:02.125Z result=Happy spirit=dry-run
 ```
 
 The matching counter connects receipt to the single winning label. `result`
-is exactly one of the ten supported words. `spirit=queued` confirms admission
+is exactly one of the 22 classifier words. `spirit=queued` confirms admission
 to Spirit; `spirit=held-repeat` shows classification succeeded but the existing
 repeat limit held the animation. Host dry-run uses `spirit=dry-run`. UTC times
 have a `Z` suffix; an unavailable native wall clock is shown explicitly as
@@ -101,12 +126,13 @@ that reached JSON admission, including clears, stale sequences, and semantic
 rejections. Malformed JSON and oversized bodies rejected before admission do
 not increment it.
 
-## Spirit signaling
+## Legacy Spirit signaling
 
-Inside Lily's VM, the classifier scores the snapshot and calls
+The previously deployed ten-word integration scores the snapshot and calls
 `trueos::spirit::play_expression(label)`. This crosses the native Spirit ABI
 using a reserved `vibe:` word, then enters the existing clip queue. The kernel
-maps the ten supported labels to already resident clips:
+maps its legacy ten labels to already resident clips (these are not the current
+22 classifier output names):
 
 | Label | Existing clip |
 | --- | --- |
@@ -128,24 +154,25 @@ not proof that a GPU frame has reached the display.
 
 ## The integer model
 
-`vibes.json` is the model: guided word/phrase associations, ten labels, signed
-byte weights, and small biases. It is embedded and loaded once by the service.
+`vibes.json` holds the guided word/phrase associations and `tokens.txt` lists
+the 22 labels. The model uses signed byte weights and small biases. It is
+embedded and loaded once by the service.
 No pretrained embedding download, Python runtime, GPU inference, SQLite model
 storage, or main-agent tool call participates.
 
 Text becomes unsigned byte features, currently zero or one for each guided
 whole-word/phrase match. Each label receives a signed-byte weight row. The
 classifier uses **VEX AVX-VNNI `VPDPBUSD`** to multiply and accumulate the rows,
-adds each label's bias, then chooses the highest score. Neutral's small bias
+adds each label's bias, then chooses the highest score. Static's small bias
 handles unmatched text. Phrase guidance can counter word evidence: `not angry`
-subtracts anger weight and adds neutral weight.
+subtracts `Angry` weight and adds `Static` weight.
 
 Feature rows are padded to 32 bytes. Each 256-bit instruction computes 32
 unsigned-byte × signed-byte products into eight i32 accumulation lanes. VNNI
 computes the actual scores selecting the label; it is not a demonstration
 executed beside another classifier. The default matrix occupies only a few
 kilobytes. The guide supports up to 4096 features and 256 labels, although the
-native Spirit mapping currently exposes the ten above.
+native Spirit mapping still accepts only the legacy ten words above.
 
 The raw instruction wrappers are shared with the kernel in
 `../../../TRUEOS/src/turbo/vnni.rs`. The build script emits a module reference
@@ -165,9 +192,9 @@ Blueprint repository so the target directory is unambiguous:
 
 ```sh
 cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- "i love you"
-# affection
+# Flirt
 cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- --scores "not angry, just explaining"
-# neutral, with backend/scores on stderr
+# Static, with backend/scores on stderr
 ```
 
 Without text arguments the host CLI accepts one line at a time until Ctrl-D.
@@ -186,7 +213,7 @@ classifier. It substitutes only the final Spirit call and writes one JSON line
 per presented classification to stdout:
 
 ```json
-{"source":"example","sequence":1,"label":"affection","accepted":true}
+{"source":"example","sequence":1,"label":"Flirt","accepted":true}
 ```
 
 Diagnostics go to stderr. Test it with Python's standard library:

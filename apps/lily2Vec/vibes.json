@@ -1,846 +1,1484 @@
 {
-  "labels": [
-    "neutral",
-    "wave",
-    "happy",
-    "sad",
-    "affection",
-    "disapprove",
-    "agree",
-    "confused",
-    "idea",
-    "angry"
-  ],
   "bias": {
-    "neutral": 1
+    "Static": 1
   },
   "features": [
     {
       "text": "hi",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "hello",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "hey",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "greetings",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "welcome",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "bye",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "goodbye",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "wave",
       "weights": {
-        "wave": 8
+        "Waving": 8
       }
     },
     {
       "text": "waving",
       "weights": {
-        "wave": 8
+        "Waving": 12
       }
     },
     {
       "text": "see you",
       "weights": {
-        "wave": 20
+        "Waving": 20
       }
     },
     {
       "text": "good morning",
       "weights": {
-        "wave": 20
+        "Waving": 20
       }
     },
     {
       "text": "good evening",
       "weights": {
-        "wave": 20
+        "Waving": 20
       }
     },
     {
       "text": "happy",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "sweet",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "awesome",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "wonderful",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "great",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "yay",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "hooray",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "congratulations",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "congrats",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "nice",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "excited",
       "weights": {
-        "happy": 8
+        "Happy": 8
       }
     },
     {
       "text": "we did it",
       "weights": {
-        "happy": 20
+        "Happy": 20
       }
     },
     {
       "text": "it works",
       "weights": {
-        "happy": 20
+        "Happy": 20
       }
     },
     {
       "text": "finally fixed",
       "weights": {
-        "happy": 20
+        "Happy": 20
       }
     },
     {
       "text": "well done",
       "weights": {
-        "happy": 20
+        "Happy": 20
       }
     },
     {
       "text": "good job",
       "weights": {
-        "happy": 20
+        "Happy": 20
       }
     },
     {
       "text": "sad",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "cry",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "crying",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "heartbroken",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "heartbreaking",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "lonely",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "miserable",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "unhappy",
       "weights": {
-        "sad": 8
+        "Cry": 8
       }
     },
     {
       "text": "sorry for your loss",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "dont feel well",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "do not feel well",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "not feeling well",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "feel bad",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "feel awful",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "miss you",
       "weights": {
-        "sad": 20
+        "Cry": 20
       }
     },
     {
       "text": "love",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "hug",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "hugs",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "kiss",
       "weights": {
-        "affection": 8
+        "Flirt": 8,
+        "Kiss": 12
       }
     },
     {
       "text": "kisses",
       "weights": {
-        "affection": 8
+        "Flirt": 8,
+        "Kiss": 12
       }
     },
     {
       "text": "cute",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "adorable",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "darling",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "sweetheart",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "dear",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "cuddles",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "lovely",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "beautiful",
       "weights": {
-        "affection": 8
+        "Flirt": 8
       }
     },
     {
       "text": "love you",
       "weights": {
-        "affection": 20
+        "Flirt": 20
       }
     },
     {
       "text": "sending love",
       "weights": {
-        "affection": 20
+        "Flirt": 20
       }
     },
     {
       "text": "no",
       "weights": {
-        "disapprove": 8
+        "Disapprove": 8
       }
     },
     {
       "text": "nope",
       "weights": {
-        "disapprove": 8
+        "Disapprove": 8
       }
     },
     {
       "text": "nah",
       "weights": {
-        "disapprove": 8
+        "Disapprove": 8
       }
     },
     {
       "text": "disagree",
       "weights": {
-        "disapprove": 8
+        "Disapprove": 8
       }
     },
     {
       "text": "disapprove",
       "weights": {
-        "disapprove": 8
+        "Disapprove": 8
       }
     },
     {
       "text": "unacceptable",
       "weights": {
-        "disapprove": 8
+        "Disapprove": 8
       }
     },
     {
       "text": "bad idea",
       "weights": {
-        "disapprove": 20
+        "Disapprove": 20
       }
     },
     {
       "text": "not okay",
       "weights": {
-        "disapprove": 20
+        "Disapprove": 20
       }
     },
     {
       "text": "not ok",
       "weights": {
-        "disapprove": 20
+        "Disapprove": 20
       }
     },
     {
       "text": "should not",
       "weights": {
-        "disapprove": 20
+        "Disapprove": 20
       }
     },
     {
       "text": "dont do that",
       "weights": {
-        "disapprove": 20
+        "Disapprove": 20
       }
     },
     {
       "text": "stop that",
       "weights": {
-        "disapprove": 20
+        "Disapprove": 20
       }
     },
     {
       "text": "yes",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "yeah",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "yep",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "sure",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "okay",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "ok",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "agreed",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "agree",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "exactly",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "correct",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "right",
       "weights": {
-        "agree": 8
+        "Nod": 8
       }
     },
     {
       "text": "that will do",
       "weights": {
-        "agree": 20
+        "Nod": 20
       }
     },
     {
       "text": "sounds good",
       "weights": {
-        "agree": 20
+        "Nod": 20
       }
     },
     {
       "text": "you are right",
       "weights": {
-        "agree": 20
+        "Nod": 20
       }
     },
     {
       "text": "confused",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "confusing",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "huh",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "what",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "why",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "unclear",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "puzzled",
       "weights": {
-        "confused": 8
+        "Confused": 8
       }
     },
     {
       "text": "dont understand",
       "weights": {
-        "confused": 20
+        "Confused": 20
       }
     },
     {
       "text": "do not understand",
       "weights": {
-        "confused": 20
+        "Confused": 20
       }
     },
     {
       "text": "no clue",
       "weights": {
-        "confused": 20
+        "Confused": 20
       }
     },
     {
       "text": "what do you mean",
       "weights": {
-        "confused": 20
+        "Confused": 20
       }
     },
     {
       "text": "doesnt make sense",
       "weights": {
-        "confused": 20
+        "Confused": 20
       }
     },
     {
       "text": "does not make sense",
       "weights": {
-        "confused": 20
+        "Confused": 20
       }
     },
     {
       "text": "idea",
       "weights": {
-        "idea": 8
+        "Idea": 8
       }
     },
     {
       "text": "aha",
       "weights": {
-        "idea": 8
+        "Idea": 8
       }
     },
     {
       "text": "solution",
       "weights": {
-        "idea": 8
+        "Idea": 8
       }
     },
     {
       "text": "figured it out",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "what if",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "lets try",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "try this",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "we could",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "how about",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "different approach",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "smaller model",
       "weights": {
-        "idea": 20
+        "Idea": 20
       }
     },
     {
       "text": "suggestion",
       "weights": {
-        "idea": 8
+        "Idea": 8
       }
     },
     {
       "text": "angry",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "furious",
       "weights": {
-        "angry": 8
+        "Angry": 12
       }
     },
     {
       "text": "outrageous",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "hate",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "damn",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "fuck",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "annoyed",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "frustrated",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "enough",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "pissed",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "fucking",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "rage",
       "weights": {
-        "angry": 8
+        "Angry": 8
       }
     },
     {
       "text": "information",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "file",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "folder",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "listening",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "here",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "explaining",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "ordinary",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "calm",
       "weights": {
-        "neutral": 8
+        "Static": 8
       }
     },
     {
       "text": "not sure",
       "weights": {
-        "neutral": 20
+        "Static": 20
       }
     },
     {
       "text": "not angry",
       "weights": {
-        "angry": -32,
-        "neutral": 24
+        "Angry": -32,
+        "Static": 24
       }
     },
     {
       "text": "not sad",
       "weights": {
-        "sad": -32,
-        "neutral": 24
+        "Cry": -32,
+        "Static": 24
       }
     },
     {
       "text": "not happy",
       "weights": {
-        "happy": -32,
-        "sad": 20
+        "Happy": -32,
+        "Cry": 20
       }
     },
     {
       "text": "not cute",
       "weights": {
-        "affection": -24,
-        "disapprove": 20
+        "Flirt": -24,
+        "Disapprove": 20
       }
     },
     {
       "text": "no problem",
       "weights": {
-        "disapprove": -24,
-        "agree": 20
+        "Disapprove": -24,
+        "Nod": 20
       }
     },
     {
       "text": "not bad",
       "weights": {
-        "disapprove": -24,
-        "happy": 20
+        "Disapprove": -24,
+        "Happy": 20
       }
     },
     {
       "text": "i love you",
       "weights": {
-        "affection": 30
+        "Flirt": 30
+      }
+    },
+    {
+      "text": "infuriating",
+      "weights": {
+        "Angry": 12
+      }
+    },
+    {
+      "text": "makes me angry",
+      "weights": {
+        "Angry": 24
+      }
+    },
+    {
+      "text": "blowing a kiss",
+      "weights": {
+        "Kiss": 24
+      }
+    },
+    {
+      "text": "sending a kiss",
+      "weights": {
+        "Kiss": 24
+      }
+    },
+    {
+      "text": "blush",
+      "weights": {
+        "Blush": 12
+      }
+    },
+    {
+      "text": "blushing",
+      "weights": {
+        "Blush": 12
+      }
+    },
+    {
+      "text": "you flatter me",
+      "weights": {
+        "Blush": 24
+      }
+    },
+    {
+      "text": "making me blush",
+      "weights": {
+        "Blush": 24
+      }
+    },
+    {
+      "text": "a little embarrassed",
+      "weights": {
+        "Blush": 24
+      }
+    },
+    {
+      "text": "puzzling behavior",
+      "weights": {
+        "Confused": 24
+      }
+    },
+    {
+      "text": "unexpected result",
+      "weights": {
+        "Confused": 24
+      }
+    },
+    {
+      "text": "does not add up",
+      "weights": {
+        "Confused": 24
+      }
+    },
+    {
+      "text": "that is heartbreaking",
+      "weights": {
+        "Cry": 24
+      }
+    },
+    {
+      "text": "such a loss",
+      "weights": {
+        "Cry": 24
+      }
+    },
+    {
+      "text": "really hurts",
+      "weights": {
+        "Cry": 24
+      }
+    },
+    {
+      "text": "that is incorrect",
+      "weights": {
+        "Disapprove": 24
+      }
+    },
+    {
+      "text": "unsafe approach",
+      "weights": {
+        "Disapprove": 24
+      }
+    },
+    {
+      "text": "should not do that",
+      "weights": {
+        "Disapprove": 24
+      }
+    },
+    {
+      "text": "silently drops errors",
+      "weights": {
+        "Disapprove": 24
+      }
+    },
+    {
+      "text": "hides the failure",
+      "weights": {
+        "Disapprove": 24
+      }
+    },
+    {
+      "text": "eat",
+      "weights": {
+        "Eat": 12
+      }
+    },
+    {
+      "text": "eating",
+      "weights": {
+        "Eat": 12
+      }
+    },
+    {
+      "text": "hungry",
+      "weights": {
+        "Eat": 12
+      }
+    },
+    {
+      "text": "snack break",
+      "weights": {
+        "Eat": 24
+      }
+    },
+    {
+      "text": "time for lunch",
+      "weights": {
+        "Eat": 24
+      }
+    },
+    {
+      "text": "grab a bite",
+      "weights": {
+        "Eat": 24
+      }
+    },
+    {
+      "text": "facepalm",
+      "weights": {
+        "Facepalm": 12
+      }
+    },
+    {
+      "text": "forgot the semicolon",
+      "weights": {
+        "Facepalm": 24
+      }
+    },
+    {
+      "text": "wrong directory again",
+      "weights": {
+        "Facepalm": 24
+      }
+    },
+    {
+      "text": "my mistake",
+      "weights": {
+        "Facepalm": 24
+      }
+    },
+    {
+      "text": "off by one",
+      "weights": {
+        "Facepalm": 24
+      }
+    },
+    {
+      "text": "missed the obvious",
+      "weights": {
+        "Facepalm": 24
+      }
+    },
+    {
+      "text": "finger guns",
+      "weights": {
+        "Gun": 24
+      }
+    },
+    {
+      "text": "finger gun",
+      "weights": {
+        "Gun": 24
+      }
+    },
+    {
+      "text": "nailed it",
+      "weights": {
+        "Gun": 24
+      }
+    },
+    {
+      "text": "you got this",
+      "weights": {
+        "Gun": 24
+      }
+    },
+    {
+      "text": "right on target",
+      "weights": {
+        "Gun": 24
+      }
+    },
+    {
+      "text": "fish face",
+      "weights": {
+        "FishFace": 24
+      }
+    },
+    {
+      "text": "fishface",
+      "weights": {
+        "FishFace": 12
+      }
+    },
+    {
+      "text": "pouting",
+      "weights": {
+        "FishFace": 12
+      }
+    },
+    {
+      "text": "puffed cheeks",
+      "weights": {
+        "FishFace": 24
+      }
+    },
+    {
+      "text": "not amused",
+      "weights": {
+        "FishFace": 24
+      }
+    },
+    {
+      "text": "being stubborn",
+      "weights": {
+        "FishFace": 24
+      }
+    },
+    {
+      "text": "flirting",
+      "weights": {
+        "Flirt": 12
+      }
+    },
+    {
+      "text": "you are cute",
+      "weights": {
+        "Flirt": 24
+      }
+    },
+    {
+      "text": "playful teasing",
+      "weights": {
+        "Flirt": 24
+      }
+    },
+    {
+      "text": "build passed",
+      "weights": {
+        "Happy": 24
+      }
+    },
+    {
+      "text": "tests passed",
+      "weights": {
+        "Happy": 24
+      }
+    },
+    {
+      "text": "build succeeded",
+      "weights": {
+        "Happy": 24
+      }
+    },
+    {
+      "text": "finally working",
+      "weights": {
+        "Happy": 24
+      }
+    },
+    {
+      "text": "untangle the source code",
+      "weights": {
+        "Idea": 24
+      }
+    },
+    {
+      "text": "untangling the code",
+      "weights": {
+        "Idea": 24
+      }
+    },
+    {
+      "text": "found the cause",
+      "weights": {
+        "Idea": 24
+      }
+    },
+    {
+      "text": "simplify the implementation",
+      "weights": {
+        "Idea": 24
+      }
+    },
+    {
+      "text": "here is a solution",
+      "weights": {
+        "Idea": 24
+      }
+    },
+    {
+      "text": "that checks out",
+      "weights": {
+        "Nod": 24
+      }
+    },
+    {
+      "text": "that is correct",
+      "weights": {
+        "Nod": 24
+      }
+    },
+    {
+      "text": "makes sense",
+      "weights": {
+        "Nod": 24
+      }
+    },
+    {
+      "text": "scared",
+      "weights": {
+        "Scared": 12
+      }
+    },
+    {
+      "text": "frightened",
+      "weights": {
+        "Scared": 12
+      }
+    },
+    {
+      "text": "terrifying",
+      "weights": {
+        "Scared": 12
+      }
+    },
+    {
+      "text": "that is alarming",
+      "weights": {
+        "Scared": 24
+      }
+    },
+    {
+      "text": "risk of data loss",
+      "weights": {
+        "Scared": 24
+      }
+    },
+    {
+      "text": "might delete everything",
+      "weights": {
+        "Scared": 24
+      }
+    },
+    {
+      "text": "silly",
+      "weights": {
+        "Silly": 12
+      }
+    },
+    {
+      "text": "goofy",
+      "weights": {
+        "Silly": 12
+      }
+    },
+    {
+      "text": "haha",
+      "weights": {
+        "Silly": 12
+      }
+    },
+    {
+      "text": "that was ridiculous",
+      "weights": {
+        "Silly": 24
+      }
+    },
+    {
+      "text": "well that was silly",
+      "weights": {
+        "Silly": 24
+      }
+    },
+    {
+      "text": "the bug was a typo",
+      "weights": {
+        "Silly": 24
+      }
+    },
+    {
+      "text": "rubber duck debugging",
+      "weights": {
+        "Silly": 24
+      }
+    },
+    {
+      "text": "static",
+      "weights": {
+        "Static": 12
+      }
+    },
+    {
+      "text": "quiet moment",
+      "weights": {
+        "Static": 24
+      }
+    },
+    {
+      "text": "just waiting",
+      "weights": {
+        "Static": 24
+      }
+    },
+    {
+      "text": "nothing to add",
+      "weights": {
+        "Static": 24
+      }
+    },
+    {
+      "text": "taunt",
+      "weights": {
+        "Taunt": 12
+      }
+    },
+    {
+      "text": "bet you cant",
+      "weights": {
+        "Taunt": 24
+      }
+    },
+    {
+      "text": "catch me if you can",
+      "weights": {
+        "Taunt": 24
+      }
+    },
+    {
+      "text": "too easy",
+      "weights": {
+        "Taunt": 24
+      }
+    },
+    {
+      "text": "nice try",
+      "weights": {
+        "Taunt": 24
+      }
+    },
+    {
+      "text": "threaten",
+      "weights": {
+        "Threaten": 12
+      }
+    },
+    {
+      "text": "threatening",
+      "weights": {
+        "Threaten": 12
+      }
+    },
+    {
+      "text": "you will regret",
+      "weights": {
+        "Threaten": 24
+      }
+    },
+    {
+      "text": "last warning",
+      "weights": {
+        "Threaten": 24
+      }
+    },
+    {
+      "text": "dont test me",
+      "weights": {
+        "Threaten": 24
+      }
+    },
+    {
+      "text": "tired",
+      "weights": {
+        "Tired": 12
+      }
+    },
+    {
+      "text": "exhausted",
+      "weights": {
+        "Tired": 12
+      }
+    },
+    {
+      "text": "sleepy",
+      "weights": {
+        "Tired": 12
+      }
+    },
+    {
+      "text": "need a break",
+      "weights": {
+        "Tired": 24
+      }
+    },
+    {
+      "text": "long day",
+      "weights": {
+        "Tired": 24
+      }
+    },
+    {
+      "text": "running out of steam",
+      "weights": {
+        "Tired": 24
+      }
+    },
+    {
+      "text": "see you later",
+      "weights": {
+        "Waving": 24
+      }
+    },
+    {
+      "text": "welcome back",
+      "weights": {
+        "Waving": 24
+      }
+    },
+    {
+      "text": "wink",
+      "weights": {
+        "Wink": 12
+      }
+    },
+    {
+      "text": "winking",
+      "weights": {
+        "Wink": 12
+      }
+    },
+    {
+      "text": "our little secret",
+      "weights": {
+        "Wink": 24
+      }
+    },
+    {
+      "text": "you know what i mean",
+      "weights": {
+        "Wink": 24
+      }
+    },
+    {
+      "text": "just kidding",
+      "weights": {
+        "Wink": 24
+      }
+    },
+    {
+      "text": "no errors",
+      "weights": {
+        "Disapprove": -20,
+        "Nod": 18
+      }
+    },
+    {
+      "text": "not a problem",
+      "weights": {
+        "Disapprove": -20,
+        "Static": 18
+      }
+    },
+    {
+      "text": "no risk of data loss",
+      "weights": {
+        "Scared": -40,
+        "Static": 30
+      }
+    },
+    {
+      "text": "not scared",
+      "weights": {
+        "Scared": -30,
+        "Static": 24
+      }
+    },
+    {
+      "text": "not tired",
+      "weights": {
+        "Tired": -30,
+        "Static": 24
+      }
+    },
+    {
+      "text": "not threatening",
+      "weights": {
+        "Threaten": -30,
+        "Static": 24
+      }
+    },
+    {
+      "text": "gun",
+      "weights": {
+        "Gun": 12
+      }
+    },
+    {
+      "text": "flirt",
+      "weights": {
+        "Flirt": 12
+      }
+    },
+    {
+      "text": "nod",
+      "weights": {
+        "Nod": 12
       }
     }
   ]

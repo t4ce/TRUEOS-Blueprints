@@ -20,7 +20,7 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 REPO = APP.parents[1]
-LABELS = {"neutral", "wave", "happy", "sad", "affection", "disapprove", "agree", "confused", "idea", "angry"}
+LABELS = set((APP / "tokens.txt").read_text().splitlines())
 
 
 class Events:
@@ -171,16 +171,16 @@ def main():
             return reply
 
         assert post(1, "hi")["accepted"] is True
-        assert events.wait(source, 1)["label"] == "wave"
-        notifications.wait(received, "result=wave spirit=dry-run")
+        assert events.wait(source, 1)["label"] == "Waving"
+        notifications.wait(received, "result=Waving spirit=dry-run")
         print("PASS: a queued snapshot reaches the real VNNI classifier")
 
         # A fresh cue starts the global cadence window. All three network
         # submissions fit inside it, so only the newest pending text wins.
         for sequence, text in [(2, "i love you"), (3, "NO"), (4, "i dont feel well")]:
             assert post(sequence, text)["accepted"] is True
-        assert events.wait(source, 4)["label"] == "sad"
-        notifications.wait(received, "result=sad spirit=dry-run")
+        assert events.wait(source, 4)["label"] == "Cry"
+        notifications.wait(received, "result=Cry spirit=dry-run")
         events.assert_absent(source, {2, 3}, 0)
         print("PASS: the bounded mailbox coalesces rapid snapshots to the latest")
 
@@ -190,8 +190,8 @@ def main():
         assert post(6, clear=True)["accepted"] is True
         events.assert_absent(source, {2, 3, 5, 6}, 2.8)
         assert post(7, "yes that will do")["accepted"] is True
-        assert events.wait(source, 7)["label"] == "agree"
-        notifications.wait(received, "result=agree spirit=dry-run")
+        assert events.wait(source, 7)["label"] == "Nod"
+        notifications.wait(received, "result=Nod spirit=dry-run")
         print("PASS: stale sequences are ignored and cancellation clears pending work")
 
         invalid = [
@@ -216,13 +216,13 @@ def main():
         assert 400 <= status < 500, status
         events.assert_absent(source, {8}, 0.1)
         assert post(8, "i love you")["accepted"] is True
-        assert events.wait(source, 8)["label"] == "affection"
-        notifications.wait(received, "result=affection spirit=dry-run")
+        assert events.wait(source, 8)["label"] == "Flirt"
+        notifications.wait(received, "result=Flirt spirit=dry-run")
         print("PASS: malformed/oversized requests neither queue work nor consume a valid sequence")
 
         # Repeat suppression affects Spirit, not observability of classification.
         assert post(9, "i love you")["accepted"] is True
-        notifications.wait(received, "result=affection spirit=held-repeat")
+        notifications.wait(received, "result=Flirt spirit=held-repeat")
         events.assert_absent(source, {9}, 0)
         status, health = request(base, "/health")
         assert status == 200 and health["received"] == received, (status, health, received)

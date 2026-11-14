@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Deserialize)]
 struct Guide {
+    #[serde(default)]
     labels: Vec<String>,
     #[serde(default)]
     bias: HashMap<String, i16>,
@@ -44,7 +45,10 @@ fn normalize(text: &str) -> String {
 
 impl Model {
     pub fn load(json: &str) -> Result<Self> {
-        let guide: Guide = serde_json::from_str(json)?;
+        let mut guide: Guide = serde_json::from_str(json)?;
+        if guide.labels.is_empty() {
+            guide.labels = DEFAULT_TOKENS.lines().map(str::to_owned).collect();
+        }
         if guide.labels.is_empty()
             || guide.labels.len() > 256
             || guide.features.is_empty()
@@ -113,7 +117,7 @@ impl Model {
     }
 
     pub fn winner(&self, scores: &[i32]) -> usize {
-        // First label wins ties. Neutral's small bias handles unknown words.
+        // First label wins ties. The default guide biases Static for unknown words.
         let mut best = 0;
         for index in 1..scores.len() {
             if scores[index] > scores[best] {
@@ -196,6 +200,8 @@ unsafe fn dot_vnni(query: &[u8], weights: &[i8]) -> i32 {
 
 /// The guided integer model owned by the Lily service and standalone test CLI.
 pub const DEFAULT_GUIDE: &str = include_str!("../vibes.json");
+/// The editable classifier vocabulary, independent of Spirit's animation mapping.
+pub const DEFAULT_TOKENS: &str = include_str!("../tokens.txt");
 
 #[cfg(test)]
 mod tests {
@@ -228,24 +234,52 @@ mod tests {
     fn guided_labels_and_phrase_corrections() {
         let model = Model::load(include_str!("../vibes.json")).unwrap();
         for (text, expected) in [
-            ("hi", "wave"),
-            ("i don't feel well", "sad"),
-            ("i love you", "affection"),
-            ("cute", "affection"),
-            ("sweet", "happy"),
-            ("NO", "disapprove"),
-            ("yes that will do", "agree"),
-            ("not angry, just explaining", "neutral"),
-            ("what if we try it", "idea"),
-            ("no clue", "confused"),
-            ("unrecognizablexyz", "neutral"),
-            ("this", "neutral"),
+            ("hi", "Waving"),
+            ("i don't feel well", "Cry"),
+            ("i love you", "Flirt"),
+            ("cute", "Flirt"),
+            ("sweet", "Happy"),
+            ("NO", "Disapprove"),
+            ("yes that will do", "Nod"),
+            ("not angry, just explaining", "Static"),
+            ("what if we try it", "Idea"),
+            ("no clue", "Confused"),
+            ("unrecognizablexyz", "Static"),
+            ("this", "Static"),
         ] {
             let q = model.encode(text).unwrap();
             let reference = model.score_reference(&q);
             assert_eq!(model.labels[model.winner(&reference)], expected, "{text}");
             if vnni_available() {
                 assert_eq!(model.score_vnni(&q).unwrap(), reference);
+            }
+        }
+    }
+
+    #[test]
+    fn revised_vocabulary_and_context_cues_use_the_same_vnni_scores() {
+        let model = Model::load(DEFAULT_GUIDE).unwrap();
+        assert_eq!(model.labels, DEFAULT_TOKENS.lines().collect::<Vec<_>>());
+        let cases = model
+            .labels
+            .iter()
+            .map(|label| (label.as_str(), label.as_str()))
+            .chain([
+                ("The bug was a typo", "Silly"),
+                ("This approach silently drops errors", "Disapprove"),
+                ("We can untangle the source code", "Idea"),
+                ("The build passed", "Happy"),
+                ("I forgot the semicolon", "Facepalm"),
+                ("No errors", "Nod"),
+                ("There is no risk of data loss", "Static"),
+                ("I need a break", "Tired"),
+            ]);
+        for (text, expected) in cases {
+            let query = model.encode(text).unwrap();
+            let scores = model.score_reference(&query);
+            assert_eq!(model.labels[model.winner(&scores)], expected, "{text}");
+            if vnni_available() {
+                assert_eq!(model.score_vnni(&query).unwrap(), scores, "{text}");
             }
         }
     }
