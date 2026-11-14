@@ -1,0 +1,17 @@
+[
+  {"token":"neutral","examples":["Here is the information you requested.","Okay, I am here listening.","The file is in that folder.","An ordinary calm conversation."]},
+  {"token":"wave","examples":["Hello! Nice to see you!","Hi there, waving at you!","Waves back at you.","Goodbye, see you later!"]},
+  {"token":"happy","examples":["That is wonderful! I am so happy!","We did it! It works!","Hooray, congratulations!"]},
+  {"token":"sad","examples":["I feel sad and want to cry.","I am sorry for your loss.","That is heartbreaking."]},
+  {"token":"angry","examples":["I am furious! This makes me angry!","That is outrageous and unacceptable!","Stop it! I have had enough!"]},
+  {"token":"confused","examples":["I am confused. What do you mean?","I do not understand this.","Huh? That does not make sense."]},
+  {"token":"idea","examples":["Aha! I have an idea!","I figured it out! Here is the solution.","What if we tried a different approach?"]},
+  {"token":"agree","examples":["Yes, exactly. You are right.","I agree with you.","Sure, that sounds good to me."]},
+  {"token":"disapprove","examples":["No, I disagree with that.","That is a bad idea.","I disapprove. You should not do that."]},
+  {"token":"shy","examples":["You are making me blush.","I feel shy and embarrassed.","Oh, thank you for the compliment."]},
+  {"token":"affection","examples":["Sending you a hug and a kiss.","I love you!","You are dear to me. Lots of love."]},
+  {"token":"playful","examples":["Hehe, just teasing you!","I am being silly! Bleh!","Wink! Gotcha, just kidding."]},
+  {"token":"scared","examples":["I am scared! Help!","That is terrifying!","I am afraid something terrible will happen."]},
+  {"token":"tired","examples":["I am sleepy. Time for bed.","Yawning, I am exhausted.","I need some rest."]},
+  {"token":"facepalm","examples":["Oops, that was such an obvious mistake.","Oh no, I forgot again. Facepalm.","Well, that was embarrassing. I messed up."]}
+]

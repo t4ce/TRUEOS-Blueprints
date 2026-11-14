@@ -1,0 +1,25 @@
+[package]
+name = "lily2vec"
+version = "0.1.0"
+edition = "2024"
+default-run = "lily2vec"
+
+[features]
+potion = ["dep:model2vec-rs"]
+
+[[bin]]
+name = "lily2vec"
+path = "src/main.rs"
+
+[[bin]]
+name = "lily2vec-potion"
+path = "src/potion.rs"
+required-features = ["potion"]
+
+[dependencies]
+anyhow = "1"
+model2vec-rs = { version = "=0.4.0", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]

@@ -15,6 +15,7 @@ static FIXTURE: Mutex<Fixture> = Mutex::new(Fixture {
     focused: 0,
     chunks: Vec::new(),
 });
+static EXPRESSION_WORD: Mutex<String> = Mutex::new(String::new());
 static SERIAL: Mutex<()> = Mutex::new(());
 struct Fixture {
     read_error: isize,
@@ -50,7 +51,9 @@ mod native {
         crate::SNAPSHOT_ERROR.load(std::sync::atomic::Ordering::Relaxed)
     }
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn trueos_cabi_spirit_emotion_play(_: *const u8, _: usize) -> i32 {
+    pub unsafe extern "C" fn trueos_cabi_spirit_emotion_play(ptr: *const u8, len: usize) -> i32 {
+        let word = unsafe { core::slice::from_raw_parts(ptr, len) };
+        *crate::EXPRESSION_WORD.lock().unwrap() = String::from_utf8(word.to_vec()).unwrap();
         0
     }
     #[unsafe(no_mangle)]
@@ -304,4 +307,18 @@ fn invalid_pointer_coordinates_do_not_reach_native_input() {
         Err(spirit::UI4_BAD_INPUT)
     );
     assert_eq!(FIXTURE.lock().unwrap().pointer, None);
+}
+
+#[test]
+fn expressions_use_reserved_words_within_existing_transport_limit() {
+    let _serial = SERIAL.lock().unwrap();
+    for label in ["neutral", "wave", "happy", "sad", "affection", "disapprove", "agree", "confused", "idea", "angry"] {
+        spirit::play_expression(label).unwrap();
+        let word = EXPRESSION_WORD.lock().unwrap().clone();
+        assert_eq!(word, format!("vibe:{label}"));
+        assert!(word.len() <= 16);
+    }
+    let previous = EXPRESSION_WORD.lock().unwrap().clone();
+    assert_eq!(spirit::play_expression("arbitrary.tag"), Err(spirit::Error(-3)));
+    assert_eq!(*EXPRESSION_WORD.lock().unwrap(), previous);
 }

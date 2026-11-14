@@ -62,6 +62,18 @@ pub fn play_emotion(idea: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(idea.as_ptr(), idea.len()) })
 }
 
+/// Queue one existing Lilly clip from the response classifier's presentation
+/// vocabulary. This uses the existing emotion transport with a reserved prefix;
+/// old emotion requests and animation transition policy are unchanged.
+pub fn play_expression(vibe: &str) -> Result<(), Error> {
+    if !matches!(vibe, "neutral" | "wave" | "happy" | "sad" | "affection"
+        | "disapprove" | "agree" | "confused" | "idea" | "angry") {
+        return Err(Error(-3));
+    }
+    let word = alloc::format!("vibe:{vibe}");
+    result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(word.as_ptr(), word.len()) })
+}
+
 /// Request display-safe UTF-8 without invoking a local inference or voice path.
 /// Returns an error when the kernel's general text presenter is unavailable.
 pub fn present_text_silent(turn: u64, text: &str) -> Result<(), Error> {
