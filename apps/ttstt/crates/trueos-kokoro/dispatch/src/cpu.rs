@@ -169,6 +169,9 @@ impl<'a> CpuWorkspace<'a> {
 /// cursor: there is deliberately no success fallback for a missing kernel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchError {
+    /// An owned host operation is staged; await it before retrying this cursor.
+    #[cfg(feature = "async-convolution")]
+    AsyncPending,
     Allocation,
     MissingAttributes,
     Attribute(AttributeError),
@@ -324,6 +327,15 @@ pub struct CpuDispatcher<
 #[derive(Default)]
 pub struct CpuExecutionState<'artifact> {
     convolution: Option<RetainedConvolution<'artifact>>,
+    #[cfg(feature = "async-convolution")]
+    asynchronous: crate::async_conv::State,
+}
+
+#[cfg(feature = "async-convolution")]
+impl CpuExecutionState<'_> {
+    pub async fn wait_ready(&mut self) -> Result<(), &'static str> {
+        self.asynchronous.wait_ready().await
+    }
 }
 
 struct RetainedConvolution<'artifact> {
@@ -1914,7 +1926,14 @@ impl<
     ) -> Result<DispatchResult, Self::Error> {
         #[cfg(feature = "profile-inference")]
         let started = self.profile.as_deref().map(|profile| (profile.clock())());
+        #[cfg(feature = "occupancy-trace")]
+        let _dispatch_span = crate::occupancy::start(crate::occupancy::DISPATCH, work.op_index());
         let result = self.dispatch_inner(program, work);
+        #[cfg(feature = "async-convolution")]
+        let result = match result {
+            Err(DispatchError::AsyncPending) => Ok(DispatchResult::Pending),
+            other => other,
+        };
         #[cfg(feature = "profile-inference")]
         if let (Some(profile), Some(started)) = (self.profile.as_deref_mut(), started) {
             profile.record_total(work.op_index(), (profile.clock())().saturating_sub(started));
@@ -2021,6 +2040,10 @@ fn execute<'artifact, const BINDINGS: usize>(
                 quant,
                 require_workspace(workspace, OpCode::DynamicQuantizedConv1d)?,
                 prepared.and_then(|p| p.quant(work.op_index())),
+                #[cfg(feature = "async-convolution")]
+                execution.map(|state| &mut state.asynchronous),
+                #[cfg(feature = "async-convolution")]
+                (work.op_index(), *program.artifact_sha256()),
             )?;
         }
         Attributes::BiLstm256(value) => {
@@ -2665,6 +2688,8 @@ fn execute_quant_conv<const BINDINGS: usize>(
     dispatcher: trueos_ttstt_cpu::Dispatcher,
     workspace: &mut CpuWorkspace<'_>,
     prepared: Option<&QuantWeights>,
+    #[cfg(feature = "async-convolution")] asynchronous: Option<&mut crate::async_conv::State>,
+    #[cfg(feature = "async-convolution")] operation_key: (u32, [u8; 32]),
 ) -> Result<(), DispatchError> {
     let has_bias = attributes.bias_mode == BiasMode::QuantizedInt32;
     require_arity(access, if has_bias { 5 } else { 4 }, 1)?;
@@ -2778,6 +2803,55 @@ fn execute_quant_conv<const BINDINGS: usize>(
     if output.len() != expected_output {
         return Err(DispatchError::ShapeConversion);
     }
+    #[cfg(feature = "async-convolution")]
+    if let Some(state) = asynchronous {
+        if let Some(pool) = state.pool.clone() {
+            if let Some(pending) = state.pending.as_mut() {
+                if pending.op != operation_key.0 {
+                    return Err(DispatchError::InvalidWorkContract { opcode: OpCode::DynamicQuantizedConv1d });
+                }
+                if let Some(values) = pending.output.take() {
+                    if values.len() != output.len() { return Err(DispatchError::ShapeConversion); }
+                    #[cfg(feature = "occupancy-trace")]
+                    let _commit_span = crate::occupancy::start(crate::occupancy::ARENA_COMMIT, operation_key.0);
+                    output.copy_from_slice(&values);
+                    state.pending = None;
+                    return Ok(());
+                }
+                return Err(DispatchError::AsyncPending);
+            }
+            let shared_weights = pool.cached_weights(operation_key.1, operation_key.0, packed, row_sums);
+            let mut quantized_bias = alloc::vec![0; if has_bias { output_channels } else { 0 }];
+            #[cfg(feature = "occupancy-trace")]
+            let prepare_span = crate::occupancy::start(crate::occupancy::QUANT_PREPARE, operation_key.0);
+            let preparation = trueos_ttstt_cpu::prepare_qconv1d(
+                &input, params, weight_scale[0], bias.as_deref(), &mut quantized_bias,
+            )?;
+            #[cfg(feature = "occupancy-trace")]
+            drop(prepare_span);
+            #[cfg(feature = "occupancy-trace")]
+            let snapshot_span = crate::occupancy::start(crate::occupancy::SNAPSHOT, operation_key.0);
+            let input_snapshot = alloc::sync::Arc::from(&*input);
+            #[cfg(feature = "occupancy-trace")]
+            drop(snapshot_span);
+            pool.counters.snapshot_bytes.fetch_add((input.len() * 4) as u64,
+                core::sync::atomic::Ordering::Relaxed);
+            state.stage(operation_key.0, crate::async_conv::Operation {
+                op_index: operation_key.0, input: input_snapshot, weights: shared_weights,
+                geometry: crate::async_conv::Geometry {
+                    batch, input_channels, input_width, output_channels, kernel_width,
+                    stride: attributes.stride as usize, dilation: attributes.dilation as usize,
+                    pad_left: attributes.pad_left as usize, pad_right: attributes.pad_right as usize,
+                    weight_zero: trueos_ttstt_cpu::signed_u8_zero_point(weight_zero[0]),
+                },
+                prepared: preparation,
+                bias: has_bias.then(|| alloc::sync::Arc::from(quantized_bias)),
+            });
+            return Err(DispatchError::AsyncPending);
+        }
+    }
+    #[cfg(feature = "occupancy-trace")]
+    let _kernel_span = crate::occupancy::start(crate::occupancy::SERIAL_CONV, operation_key.0);
     dispatcher.qconv1d_dequantized(
         &input,
         packed,

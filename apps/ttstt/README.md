@@ -93,6 +93,12 @@ name-specific speech or audio memory exception.
 
 ## CPU performance
 
+The Ubuntu-only [async convolution experiment](tools/ASYNC_CONVOLUTION.md)
+uses smol with bounded compute workers and awaited operator completion. It is
+opt-in and does not enable native worker placement. The quality audition's
+pruned vocoder variants were rejected after listening; the full three-branch
+Heart graph remains the reference for this experiment.
+
 The package requests a performance core for the VMX carrier with
 `vm-core-preference = "performance"` in its Blueprint metadata. The kernel
 tries eligible P cores first and falls back to another eligible core when

@@ -101,6 +101,11 @@ pub enum JobProgress {
 pub trait InferenceJob: Send {
     fn direction(&self) -> Direction;
     fn run_slice(&mut self, models: &'static ModelSet, worker: WorkerContext) -> JobProgress;
+
+    #[cfg(feature = "async-convolution")]
+    fn wait_ready(&mut self) -> core::pin::Pin<Box<dyn core::future::Future<Output = Result<(), &'static str>> + '_>> {
+        Box::pin(async { smol::future::yield_now().await; Ok(()) })
+    }
 }
 
 pub struct TtsAudioChunk {
@@ -259,6 +264,10 @@ impl Engine {
         })
     }
     pub fn synthesize(&mut self, request: TtsRequest, sink: AudioSink) -> Result<(), String> {
+        #[cfg(feature = "async-convolution")]
+        if trueos_kokoro_dispatch::async_conv::installed() {
+            return Err("async convolution pool requires synthesize_async".into());
+        }
         request.validate()?;
         let job_id = self.next_job;
         self.next_job += 1;
@@ -323,6 +332,73 @@ impl Engine {
         );
         result
     }
+    /// Ubuntu experiment: await owned compute jobs without blocking the coordinator.
+    #[cfg(feature = "async-convolution")]
+    pub async fn synthesize_async(&mut self, request: TtsRequest, sink: AudioSink) -> Result<(), String> {
+        request.validate()?;
+        let job_id = self.next_job;
+        self.next_job += 1;
+        let text_bytes = request.text.len();
+        crate::diagnostics::record(
+            false,
+            format_args!("ttstt: job={job_id} submitted bytes={text_bytes}"),
+        );
+        let output = TtsOutput::new(sink);
+        let mut timing = JobTiming::default();
+        // All admission, inference and output errors share the completion path,
+        // so every submitted job gets one short done or failed notice.
+        let result: Result<(), String> = (async {
+            let mut job = BACKEND
+                .get()
+                .ok_or("speech-backend-missing")?
+                .create_tts_job(BackendTtsRequest {
+                    request,
+                    output: output.clone(),
+                })?;
+            let result = run_job_async(job.as_mut(), self.models, &mut timing).await;
+            let state = output.0.lock().unwrap();
+            if let Some(reason) = state.error {
+                return Err(reason.into());
+            }
+            result?;
+            if !state.finished {
+                return Err("speech ended without completion".into());
+            }
+            Ok(())
+        }).await;
+        let state = output.0.lock().unwrap();
+        let compute_us = timing.slice_us.saturating_sub(state.sink_us);
+        let compute_ms = compute_us / 1000;
+        match &result {
+            Ok(()) => crate::diagnostics::record(
+                false,
+                format_args!("ttstt: job={job_id} done compute_ms={compute_ms}"),
+            ),
+            Err(error) => crate::diagnostics::record(
+                true,
+                format_args!("ttstt: job={job_id} failed compute_ms={compute_ms} error={error}"),
+            ),
+        }
+        crate::diagnostics::detail(
+            result.is_err(),
+            format_args!(
+                "ttstt: synthesis job={} text_bytes={} total_us={} first_pcm_us={} synth_work_us={} sink_us={} audio_ms={} frames={} slices={} status={}",
+                job_id,
+                text_bytes,
+                state.started.elapsed().as_micros(),
+                state
+                    .first_pcm_us
+                    .map_or_else(|| "none".into(), |v| v.to_string()),
+                compute_us,
+                state.sink_us,
+                state.frames * 1000 / 48_000,
+                state.frames,
+                timing.slices,
+                if result.is_ok() { "ok" } else { "failed" }
+            ),
+        );
+        result
+    }
 }
 #[derive(Default)]
 struct JobTiming {
@@ -349,6 +425,34 @@ fn run_job(
             JobProgress::Complete => return Ok(()),
             JobProgress::Failed(reason) => return Err(reason.into()),
         }
+    }
+}
+
+#[cfg(feature = "async-convolution")]
+async fn run_job_async(
+    job: &mut dyn InferenceJob, models: &'static ModelSet, timing: &mut JobTiming,
+) -> Result<(), String> {
+    let deadline = Instant::now() + SYNTHESIS_TIMEOUT;
+    loop {
+        if Instant::now() >= deadline { return Err("speech-inference-timeout".into()); }
+        let started = Instant::now();
+        let progress = job.run_slice(models, WorkerContext);
+        timing.slices += 1;
+        let result = match progress {
+            JobProgress::Pending => smol::future::or(job.wait_ready(), async {
+                smol::Timer::after(deadline.saturating_duration_since(Instant::now())).await;
+                Err("speech-inference-timeout")
+            }).await.map_err(String::from),
+            JobProgress::Complete => {
+                timing.slice_us += started.elapsed().as_micros();
+                return Ok(());
+            }
+            JobProgress::Failed(reason) => Err(reason.into()),
+        };
+        // Calculation elapsed includes time parked awaiting compute workers.
+        // Counting coordinator polls alone would falsely report a speedup.
+        timing.slice_us += started.elapsed().as_micros();
+        result?;
     }
 }
 

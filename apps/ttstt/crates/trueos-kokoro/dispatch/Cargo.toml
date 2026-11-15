@@ -12,6 +12,17 @@ path = "src/lib.rs"
 default = []
 blocked-gemm = []
 profile-inference = []
+async-convolution = ["dep:smol", "dep:core_affinity", "trueos-kokoro-exec/async-execution"]
+occupancy-trace = ["async-convolution", "dep:cpu-time", "dep:serde"]
+
+[target.'cfg(not(target_os = "trueos"))'.dependencies]
+smol = { version = "=2.0.2", optional = true }
+core_affinity = { version = "=0.8.3", optional = true }
+cpu-time = { version = "=1.0.0", optional = true }
+serde = { version = "=1.0.228", optional = true, features = ["derive"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
 
 [dependencies]
 trueos-kokoro-aot = { path = "../aot", default-features = false }

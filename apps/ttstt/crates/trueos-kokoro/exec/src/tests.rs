@@ -184,6 +184,112 @@ fn runtime_completion_skips_only_the_proven_sealed_suffix() {
     }
 }
 
+#[cfg(feature = "async-execution")]
+#[test]
+fn pending_work_preserves_the_cursor_and_retry_commits_control_and_data_once() {
+    struct PendingDispatcher {
+        recording: RecordingDispatcher,
+        pending_next: bool,
+        frame_results: u32,
+        committed_add_units: u32,
+    }
+    impl Dispatcher for PendingDispatcher {
+        type Error = &'static str;
+
+        fn dispatch(
+            &mut self,
+            program: &Program<'_>,
+            work: WorkSlice,
+        ) -> Result<DispatchResult, Self::Error> {
+            if self.pending_next {
+                self.pending_next = false;
+                self.recording.calls.push(Call {
+                    artifact_sha256: *program.artifact_sha256(),
+                    op_index: work.op_index(),
+                    unit_start: work.unit_start(),
+                    unit_count: work.unit_count(),
+                });
+                return Ok(DispatchResult::Pending);
+            }
+            let result = self.recording.dispatch(program, work)?;
+            if matches!(result, DispatchResult::FrameCount(_)) {
+                self.frame_results += 1;
+            }
+            if work.op().opcode == OpCode::Add {
+                self.committed_add_units += work.unit_count();
+            }
+            Ok(result)
+        }
+    }
+
+    let artifact = fixture(64, 0x11, 1);
+    let program = Program::parse(&artifact).unwrap();
+    let mut executor = Executor::<1>::new();
+    let mut dispatcher = PendingDispatcher {
+        recording: RecordingDispatcher::with_frame_count(Some(4)),
+        pending_next: false,
+        frame_results: 0,
+        committed_add_units: 0,
+    };
+    let mut budget = WorkBudget::new(1).unwrap();
+    assert_eq!(executor.run_slice(&program, &mut dispatcher, &mut budget).event,
+        SliceEvent::BudgetExhausted);
+    assert_eq!((executor.cursor().op_index(), executor.cursor().unit_offset()), (0, 1));
+
+    // Park on the final resolver slice: no frame scalar is published yet.
+    dispatcher.pending_next = true;
+    let before = executor.cursor();
+    let mut budget = WorkBudget::new(1).unwrap();
+    let report = executor.run_slice(&program, &mut dispatcher, &mut budget);
+    assert_eq!(report.event, SliceEvent::PendingWork);
+    assert_eq!((report.consumed, report.remaining), (1, 0));
+    assert_eq!(executor.cursor(), before);
+    assert_eq!(executor.state(), ExecutorState::Phase0);
+    assert_eq!(executor.resolved_phase(), None);
+    assert_eq!(dispatcher.frame_results, 0);
+    let pending_control = *dispatcher.recording.calls.last().unwrap();
+
+    let mut budget = WorkBudget::new(1).unwrap();
+    let report = executor.run_slice(&program, &mut dispatcher, &mut budget);
+    let admission = match report.event {
+        SliceEvent::PhaseAdmitted(admission) => admission,
+        event => panic!("expected one admission after retry, got {event:?}"),
+    };
+    assert_eq!(*dispatcher.recording.calls.last().unwrap(), pending_control);
+    assert_eq!(dispatcher.frame_results, 1);
+    assert_eq!(admission.frame_count(), 4);
+
+    // A pending material slice also leaves the admitted plan and cursor intact.
+    dispatcher.pending_next = true;
+    let before = executor.cursor();
+    let mut budget = WorkBudget::new(2).unwrap();
+    let report = executor.run_slice(&program, &mut dispatcher, &mut budget);
+    assert_eq!(report.event, SliceEvent::PendingWork);
+    assert_eq!((report.consumed, report.remaining), (2, 0));
+    assert_eq!(executor.cursor(), before);
+    assert_eq!(executor.state(), ExecutorState::Phase1);
+    assert_eq!(executor.resolved_phase(), Some(admission));
+    assert_eq!(dispatcher.committed_add_units, 0);
+    let pending_data = *dispatcher.recording.calls.last().unwrap();
+
+    let mut budget = WorkBudget::new(2).unwrap();
+    assert_eq!(executor.run_slice(&program, &mut dispatcher, &mut budget).event,
+        SliceEvent::BudgetExhausted);
+    assert_eq!(*dispatcher.recording.calls.last().unwrap(), pending_data);
+    assert_eq!((executor.cursor().op_index(), executor.cursor().unit_offset()), (1, 2));
+    assert_eq!(dispatcher.committed_add_units, 2);
+    let mut budget = WorkBudget::new(3).unwrap();
+    assert_eq!(executor.run_slice(&program, &mut dispatcher, &mut budget).event,
+        SliceEvent::Complete);
+    assert_eq!(dispatcher.committed_add_units, 5);
+    assert_eq!(dispatcher.frame_results, 1);
+    let calls = dispatcher.recording.calls.len();
+    let mut budget = WorkBudget::new(7).unwrap();
+    assert_eq!(executor.run_slice(&program, &mut dispatcher, &mut budget).event,
+        SliceEvent::Complete);
+    assert_eq!(dispatcher.recording.calls.len(), calls);
+}
+
 #[test]
 fn runtime_completion_rejects_a_boundary_beyond_the_executed_slice() {
     let artifact = fixture_with_phase_one_operation(64, 0x11, 1, OpCode::Resize, 1_000_000);

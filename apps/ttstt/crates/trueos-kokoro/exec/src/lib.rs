@@ -330,6 +330,10 @@ fn validate_phase(tensor_phase: Phase, operation_phase: Phase) -> Result<(), Sha
 /// Successful result of dispatching one cooperative work slice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchResult {
+    /// Backend owns work in flight. Await readiness before retrying the same
+    /// slice; no operation units or output are committed yet.
+    #[cfg(feature = "async-execution")]
+    Pending,
     /// The requested units completed without producing control-plane data.
     Completed,
     /// The requested units completed and reached the invocation's live work
@@ -419,6 +423,8 @@ impl ResolvedPhase {
 /// Why a call to [`Executor::run_slice`] returned to its scheduler.
 #[derive(Debug, Eq, PartialEq)]
 pub enum SliceEvent<E> {
+    #[cfg(feature = "async-execution")]
+    PendingWork,
     BudgetExhausted,
     PhaseAdmitted(ResolvedPhase),
     Complete,
@@ -596,6 +602,10 @@ impl<const SLOT_CAPACITY: usize> Executor<SLOT_CAPACITY> {
                         }
                     };
                     let (frame_count, runtime_completion) = match dispatch_result {
+                        #[cfg(feature = "async-execution")]
+                        DispatchResult::Pending => {
+                            return report(SliceEvent::PendingWork, initial_remaining, budget);
+                        }
                         DispatchResult::Completed => (None, None),
                         DispatchResult::CompletedOperation { runtime_work_units } => {
                             if !supports_runtime_completion(work.op().opcode) {

@@ -102,6 +102,9 @@ pub enum Error {
     InvalidScale,
     InvalidQuantization,
     InvalidConvolutionShape,
+    InvalidOutputChannelRange,
+    InvalidOutputTimeRange,
+    PreparedConvolutionMismatch,
     UnsupportedLane,
 }
 
@@ -285,6 +288,98 @@ pub struct QConv1dScratchRequirements {
     pub four_patch_bytes: usize,
     /// Number of `i32` elements needed when a convolution has f32 bias.
     pub bias_elements: usize,
+}
+
+/// Owned metadata for independent output-channel work on one dense convolution.
+///
+/// Preparation reduces the complete input once and writes optional quantized
+/// bias into caller-owned storage. This value borrows neither buffer, so an
+/// upper layer can own immutable input, weights, bias and metadata together.
+/// Keep that input and quantized bias unchanged until all shards complete.
+#[derive(Clone, Copy, Debug)]
+pub struct PreparedQConv1d {
+    quantization: DynamicQuantization,
+    combined_scale: f32,
+    output_width: usize,
+    geometry: [usize; 9],
+    has_bias: bool,
+}
+
+impl PreparedQConv1d {
+    pub const fn quantization(self) -> DynamicQuantization {
+        self.quantization
+    }
+
+    pub const fn combined_scale(self) -> f32 {
+        self.combined_scale
+    }
+
+    pub const fn output_width(self) -> usize {
+        self.output_width
+    }
+}
+
+fn qconv1d_geometry(params: QConv1dParams<'_>) -> [usize; 9] {
+    [
+        params.batch,
+        params.input_channels,
+        params.input_width,
+        params.output_channels,
+        params.kernel_width,
+        params.stride,
+        params.dilation,
+        params.pad_left,
+        params.pad_right,
+    ]
+}
+
+/// Prepare global activation quantization and optional floor-quantized bias.
+///
+/// This dense (groups=1) operation performs no allocation and does not inspect
+/// or copy weights. `bias_scratch`, when needed, has one element per full output
+/// channel; share it immutably with subsequent channel-range calls.
+pub fn prepare_qconv1d(
+    input_ncl: &[f32],
+    params: QConv1dParams<'_>,
+    weight_scale: f32,
+    bias: Option<&[f32]>,
+    bias_scratch: &mut [i32],
+) -> Result<PreparedQConv1d, Error> {
+    let requirements = params.dequantized_scratch_requirements(bias.is_some())?;
+    let output_width = params.output_width()?;
+    let input_len = params
+        .batch
+        .checked_mul(params.input_channels)
+        .and_then(|elements| elements.checked_mul(params.input_width))
+        .ok_or(Error::ShapeOverflow)?;
+    if input_ncl.len() < input_len {
+        return Err(Error::LhsTooSmall);
+    }
+    if bias.is_some_and(|values| values.len() < params.output_channels)
+        || bias_scratch.len() < requirements.bias_elements
+    {
+        return Err(Error::BiasTooSmall);
+    }
+    let quantization =
+        dynamic_quantization_parameters(&input_ncl[..input_len]).map_err(map_quantization_error)?;
+    let combined_scale = if let Some(values) = bias {
+        quantize_conv_bias_floor(
+            &values[..params.output_channels],
+            quantization.scale,
+            weight_scale,
+            &mut bias_scratch[..params.output_channels],
+        )
+        .map_err(map_quantization_error)?
+    } else {
+        conv_integer_scale(quantization.scale, weight_scale).map_err(map_quantization_error)?
+    };
+    Ok(PreparedQConv1d {
+        quantization,
+        combined_scale,
+        output_width,
+        geometry: qconv1d_geometry(params),
+        has_bias: bias.is_some(),
+    })
 }
 
 impl QConv1dParams<'_> {
@@ -508,7 +603,14 @@ impl Dispatcher {
             return Err(Error::UnsupportedLane);
         }
         let (raw, lhs_sum, rhs_sum) = raw_dot_and_sums(lhs, rhs, lane);
-        Ok(apply_zero_points(raw, lhs_sum, rhs_sum, lhs.len(), lhs_zero_point, rhs_zero_point))
+        Ok(apply_zero_points(
+            raw,
+            lhs_sum,
+            rhs_sum,
+            lhs.len(),
+            lhs_zero_point,
+            rhs_zero_point,
+        ))
     }
 
     /// Run row-major `u8 x i8 -> i32` QGEMM on the best available lane.
@@ -597,7 +699,14 @@ impl Dispatcher {
         params: QConv1dParams<'_>,
     ) -> Result<Lane, Error> {
         let lane = self.best_lane();
-        self.qconv1d_with_lane(input_ncl, weights_oki, output_ncl, patch_scratch, params, lane)?;
+        self.qconv1d_with_lane(
+            input_ncl,
+            weights_oki,
+            output_ncl,
+            patch_scratch,
+            params,
+            lane,
+        )?;
         Ok(lane)
     }
 
@@ -650,7 +759,7 @@ impl Dispatcher {
         bias: Option<&[f32]>,
         lane: Lane,
     ) -> Result<DynamicQuantization, Error> {
-        let (output_width, input_len) = params.validate_dequantized(
+        let (output_width, _) = params.validate_dequantized(
             input_ncl,
             weights_oki,
             output_ncl,
@@ -661,27 +770,196 @@ impl Dispatcher {
         if !self.supports(lane) {
             return Err(Error::UnsupportedLane);
         }
-        let activation_quantization = dynamic_quantization_parameters(&input_ncl[..input_len])
-            .map_err(map_quantization_error)?;
-        let params = QConv1dParams {
-            input_zero_point: activation_quantization.zero_point,
-            ..params
-        };
-        let combined_scale;
-        let bias_quantized = if let Some(values) = bias {
-            combined_scale = quantize_conv_bias_floor(
-                &values[..params.output_channels],
-                activation_quantization.scale,
-                weight_scale,
-                &mut bias_scratch[..params.output_channels],
-            )
-            .map_err(map_quantization_error)?;
+        let prepared = prepare_qconv1d(input_ncl, params, weight_scale, bias, bias_scratch)?;
+        let bias_quantized = if bias.is_some() {
             Some(&bias_scratch[..params.output_channels])
         } else {
-            combined_scale = conv_integer_scale(activation_quantization.scale, weight_scale)
-                .map_err(map_quantization_error)?;
             None
         };
+        self.qconv1d_dequantized_prepared_core(
+            input_ncl,
+            weights_oki,
+            output_ncl,
+            patch_scratch,
+            QConv1dParams {
+                input_zero_point: prepared.quantization.zero_point,
+                ..params
+            },
+            prepared,
+            bias_quantized,
+            lane,
+            0,
+            output_width,
+        )?;
+        Ok(prepared.quantization)
+    }
+
+    /// Compute a contiguous range of full convolution output channels.
+    ///
+    /// `weights_oki`, zero points, row sums and optional quantized bias describe
+    /// the complete convolution. They are sliced here using `channel_start`;
+    /// workers need only private patch scratch and an output of at least
+    /// `batch * channel_count * prepared.output_width()` f32 elements. The shard
+    /// layout is `[batch, channel_count, output_width]`, not a strided view into
+    /// a complete multi-batch output. No global reduction or bias quantization
+    /// is repeated. Use the same immutable input passed to [`prepare_qconv1d`].
+    ///
+    /// This API handles dense groups=1 convolution. Grouped adapters must keep
+    /// their existing serial path or explicitly supply independent group data.
+    #[allow(clippy::too_many_arguments)]
+    pub fn qconv1d_prepared_channel_range_with_lane(
+        self,
+        input_ncl: &[f32],
+        weights_oki: &[i8],
+        output_shard_ncl: &mut [f32],
+        patch_scratch: &mut [u8],
+        params: QConv1dParams<'_>,
+        prepared: PreparedQConv1d,
+        bias_quantized: Option<&[i32]>,
+        channel_start: usize,
+        channel_count: usize,
+        lane: Lane,
+    ) -> Result<(), Error> {
+        self.qconv1d_prepared_window_with_lane(
+            input_ncl,
+            weights_oki,
+            output_shard_ncl,
+            patch_scratch,
+            params,
+            prepared,
+            bias_quantized,
+            channel_start,
+            channel_count,
+            0,
+            prepared.output_width,
+            lane,
+        )
+    }
+
+    /// Compute a channel range over an absolute output-time window.
+    ///
+    /// Output is compact `[batch, channel_count, time_count]`. Input and
+    /// convolution geometry remain complete: the window does not create new
+    /// padding boundaries or change global quantization. Independent windows
+    /// can therefore yield between bounded compute units and concatenate into
+    /// the same output bits as a complete convolution. Cache scratch is private
+    /// to each worker, just as for the channel-range API.
+    #[allow(clippy::too_many_arguments)]
+    pub fn qconv1d_prepared_window_with_lane(
+        self,
+        input_ncl: &[f32],
+        weights_oki: &[i8],
+        output_shard_ncl: &mut [f32],
+        patch_scratch: &mut [u8],
+        params: QConv1dParams<'_>,
+        prepared: PreparedQConv1d,
+        bias_quantized: Option<&[i32]>,
+        channel_start: usize,
+        channel_count: usize,
+        time_start: usize,
+        time_count: usize,
+        lane: Lane,
+    ) -> Result<(), Error> {
+        if prepared.geometry != qconv1d_geometry(params)
+            || prepared.has_bias != bias_quantized.is_some()
+        {
+            return Err(Error::PreparedConvolutionMismatch);
+        }
+        let channel_end = channel_start
+            .checked_add(channel_count)
+            .ok_or(Error::InvalidOutputChannelRange)?;
+        if channel_count == 0 || channel_end > params.output_channels {
+            return Err(Error::InvalidOutputChannelRange);
+        }
+        let time_end = time_start
+            .checked_add(time_count)
+            .ok_or(Error::InvalidOutputTimeRange)?;
+        if time_count == 0 || time_end > prepared.output_width {
+            return Err(Error::InvalidOutputTimeRange);
+        }
+        params.dequantized_scratch_requirements(prepared.has_bias)?;
+        let reduction = params
+            .input_channels
+            .checked_mul(params.kernel_width)
+            .ok_or(Error::ShapeOverflow)?;
+        let weights_len = params
+            .output_channels
+            .checked_mul(reduction)
+            .ok_or(Error::ShapeOverflow)?;
+        if weights_oki.len() < weights_len {
+            return Err(Error::RhsTooSmall);
+        }
+        if bias_quantized.is_some_and(|values| values.len() < params.output_channels) {
+            return Err(Error::BiasTooSmall);
+        }
+        let input_len = params
+            .batch
+            .checked_mul(params.input_channels)
+            .and_then(|elements| elements.checked_mul(params.input_width))
+            .ok_or(Error::ShapeOverflow)?;
+        let output_len = params
+            .batch
+            .checked_mul(channel_count)
+            .and_then(|elements| elements.checked_mul(time_count))
+            .ok_or(Error::ShapeOverflow)?;
+        if input_ncl.len() < input_len {
+            return Err(Error::LhsTooSmall);
+        }
+        if output_shard_ncl.len() < output_len {
+            return Err(Error::OutputTooSmall);
+        }
+        if patch_scratch.len() < reduction {
+            return Err(Error::ScratchTooSmall);
+        }
+        let weights = &weights_oki[channel_start * reduction..channel_end * reduction];
+        let local_params = QConv1dParams {
+            output_channels: channel_count,
+            input_zero_point: prepared.quantization.zero_point,
+            weight_zero_points: match params.weight_zero_points {
+                RhsZeroPoints::Scalar(value) => RhsZeroPoints::Scalar(value),
+                RhsZeroPoints::PerOutput(values) => {
+                    RhsZeroPoints::PerOutput(&values[channel_start..channel_end])
+                }
+            },
+            weight_row_sums: params
+                .weight_row_sums
+                .map(|values| &values[channel_start..channel_end]),
+            ..params
+        };
+        if !self.supports(lane) {
+            return Err(Error::UnsupportedLane);
+        }
+        let bias = bias_quantized.map(|values| &values[channel_start..channel_end]);
+        self.qconv1d_dequantized_prepared_core(
+            input_ncl,
+            weights,
+            output_shard_ncl,
+            patch_scratch,
+            local_params,
+            prepared,
+            bias,
+            lane,
+            time_start,
+            time_count,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn qconv1d_dequantized_prepared_core(
+        self,
+        input_ncl: &[f32],
+        weights_oki: &[i8],
+        output_ncl: &mut [f32],
+        patch_scratch: &mut [u8],
+        params: QConv1dParams<'_>,
+        prepared: PreparedQConv1d,
+        bias_quantized: Option<&[i32]>,
+        lane: Lane,
+        time_start: usize,
+        output_width: usize,
+    ) -> Result<(), Error> {
+        let activation_quantization = prepared.quantization;
+        let combined_scale = prepared.combined_scale;
         let reduction = params
             .input_channels
             .checked_mul(params.kernel_width)
@@ -702,10 +980,11 @@ impl Dispatcher {
                 activation_quantization,
                 combined_scale,
                 bias_quantized,
+                time_start,
                 output_width,
             )?
         {
-            return Ok(activation_quantization);
+            return Ok(());
         }
 
         for batch in 0..params.batch {
@@ -724,7 +1003,7 @@ impl Dispatcher {
                             params,
                             activation_quantization,
                             batch,
-                            output_x + position,
+                            time_start + output_x + position,
                         )?;
                     }
                     let lhs_sums = [
@@ -771,7 +1050,7 @@ impl Dispatcher {
                     params,
                     activation_quantization,
                     batch,
-                    output_x,
+                    time_start + output_x,
                 )?;
                 let lhs_sum = sum_u8(patch);
                 for output_channel in 0..params.output_channels {
@@ -796,7 +1075,7 @@ impl Dispatcher {
                 output_x += 1;
             }
         }
-        Ok(activation_quantization)
+        Ok(())
     }
 
     /// Run allocation-free 1-D ConvInteger on an explicitly selected lane.
@@ -982,6 +1261,7 @@ fn qconv1d_dequantized_cached_avx_vnni(
     quantization: DynamicQuantization,
     combined_scale: f32,
     bias_quantized: Option<&[i32]>,
+    time_start: usize,
     output_width: usize,
 ) -> Result<bool, Error> {
     let effective_kernel = params
@@ -1020,7 +1300,7 @@ fn qconv1d_dequantized_cached_avx_vnni(
                 params,
                 quantization,
                 batch,
-                tile_output_x,
+                time_start + tile_output_x,
             )?;
 
             let mut tile_position = 0usize;
@@ -1488,7 +1768,9 @@ fn raw_dot_scalar(lhs: &[u8], rhs: &[i8]) -> i32 {
     lhs.iter()
         .copied()
         .zip(rhs.iter().copied())
-        .fold(0i32, |sum, (lhs, rhs)| sum.wrapping_add(i32::from(lhs).wrapping_mul(i32::from(rhs))))
+        .fold(0i32, |sum, (lhs, rhs)| {
+            sum.wrapping_add(i32::from(lhs).wrapping_mul(i32::from(rhs)))
+        })
 }
 
 fn raw_dot_and_sums_scalar(lhs: &[u8], rhs: &[i8]) -> (i32, i32, i32) {
@@ -1649,11 +1931,17 @@ unsafe fn raw_dot_and_sums_avx2(lhs: &[u8], rhs: &[i8]) -> (i32, i32, i32) {
         );
         lhs_accumulator = _mm256_add_epi32(
             lhs_accumulator,
-            _mm256_add_epi32(_mm256_madd_epi16(lhs_low, ones), _mm256_madd_epi16(lhs_high, ones)),
+            _mm256_add_epi32(
+                _mm256_madd_epi16(lhs_low, ones),
+                _mm256_madd_epi16(lhs_high, ones),
+            ),
         );
         rhs_accumulator = _mm256_add_epi32(
             rhs_accumulator,
-            _mm256_add_epi32(_mm256_madd_epi16(rhs_low, ones), _mm256_madd_epi16(rhs_high, ones)),
+            _mm256_add_epi32(
+                _mm256_madd_epi16(rhs_low, ones),
+                _mm256_madd_epi16(rhs_high, ones),
+            ),
         );
         index += 32;
     }
@@ -1742,9 +2030,8 @@ unsafe fn qgemm4_avx_vnni(
     while params.m - first_row >= 4 {
         let lhs_start = first_row * params.k;
         let lhs_block = &lhs[lhs_start..lhs_start + 4 * params.k];
-        let lhs_sums: [i32; 4] = core::array::from_fn(|row| {
-            sum_u8(&lhs_block[row * params.k..(row + 1) * params.k])
-        });
+        let lhs_sums: [i32; 4] =
+            core::array::from_fn(|row| sum_u8(&lhs_block[row * params.k..(row + 1) * params.k]));
         for n in 0..params.n {
             let rhs_start = n * params.k;
             let rhs_row = &rhs_transposed[rhs_start..rhs_start + params.k];
@@ -1916,11 +2203,17 @@ unsafe fn raw_dot_and_sums_avx_vnni(lhs: &[u8], rhs: &[i8]) -> (i32, i32, i32) {
         let rhs_high = _mm256_cvtepi8_epi16(_mm256_extracti128_si256::<1>(rhs_bytes));
         lhs_accumulator = _mm256_add_epi32(
             lhs_accumulator,
-            _mm256_add_epi32(_mm256_madd_epi16(lhs_low, ones), _mm256_madd_epi16(lhs_high, ones)),
+            _mm256_add_epi32(
+                _mm256_madd_epi16(lhs_low, ones),
+                _mm256_madd_epi16(lhs_high, ones),
+            ),
         );
         rhs_accumulator = _mm256_add_epi32(
             rhs_accumulator,
-            _mm256_add_epi32(_mm256_madd_epi16(rhs_low, ones), _mm256_madd_epi16(rhs_high, ones)),
+            _mm256_add_epi32(
+                _mm256_madd_epi16(rhs_low, ones),
+                _mm256_madd_epi16(rhs_high, ones),
+            ),
         );
         index += 32;
     }
@@ -2216,8 +2509,16 @@ mod tests {
     fn dequantization_applies_per_output_scale_and_bias() {
         let input = [100i32, -200, 300, -400];
         let mut output = [0.0f32; 4];
-        dequantize_per_output(&input, 2, 2, 0.25, &[0.5, 2.0], Some(&[1.0, -3.0]), &mut output)
-            .unwrap();
+        dequantize_per_output(
+            &input,
+            2,
+            2,
+            0.25,
+            &[0.5, 2.0],
+            Some(&[1.0, -3.0]),
+            &mut output,
+        )
+        .unwrap();
         assert_eq!(output, [13.5, -103.0, 38.5, -203.0]);
     }
 
@@ -2225,7 +2526,10 @@ mod tests {
     fn validation_rejects_bad_shapes_and_unavailable_lanes() {
         let dispatcher = Dispatcher::detect();
         assert_eq!(dispatcher.dot(&[], &[], 0, 0), Err(Error::EmptyReduction));
-        assert_eq!(dispatcher.dot(&[1, 2], &[1], 0, 0), Err(Error::LengthMismatch));
+        assert_eq!(
+            dispatcher.dot(&[1, 2], &[1], 0, 0),
+            Err(Error::LengthMismatch)
+        );
 
         let params = QGemmParams {
             m: 1,
@@ -2286,7 +2590,10 @@ mod tests {
         let mut row_sums = [0i32; N];
         pack_matmul_weights_i8(&weights_kn, K, N, &mut packed_nk, &mut row_sums).unwrap();
 
-        assert_eq!(packed_nk, [-7, 5, -29, 2, -17, 31, 11, 19, -37, -13, 23, 41]);
+        assert_eq!(
+            packed_nk,
+            [-7, 5, -29, 2, -17, 31, 11, 19, -37, -13, 23, 41]
+        );
         assert_eq!(row_sums, [-31, 16, -7, 51]);
 
         let input = [3u8, 127, 251];
@@ -2382,7 +2689,10 @@ mod tests {
                         (output_channel * INPUT_CHANNELS + input_channel) * KERNEL_WIDTH + kernel_x;
                     let destination =
                         (output_channel * KERNEL_WIDTH + kernel_x) * INPUT_CHANNELS + input_channel;
-                    assert_eq!(packed[destination], signed_u8_zero_point(weights_ock[source]));
+                    assert_eq!(
+                        packed[destination],
+                        signed_u8_zero_point(weights_ock[source])
+                    );
                 }
             }
         }
@@ -2470,7 +2780,14 @@ mod tests {
                 ..params
             };
             dispatcher
-                .qconv1d_with_lane(&input, &packed, &mut inline, &mut scratch, inline_params, lane)
+                .qconv1d_with_lane(
+                    &input,
+                    &packed,
+                    &mut inline,
+                    &mut scratch,
+                    inline_params,
+                    lane,
+                )
                 .unwrap();
             assert_eq!(inline, expected, "inline lane={lane:?}");
         }
@@ -2621,6 +2938,494 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prepared_channel_shards_match_full_convolution_bits_on_every_lane() {
+        let dispatcher = Dispatcher::detect();
+        // Batches, SIMD channel tails, output-position tails, small widths,
+        // stride, dilation, and both admitted/rejected time-cache geometries.
+        for (batch, ci, width, co, kernel, stride, dilation, left, right) in [
+            (2, 3, 11, 7, 3, 2, 2, 2, 3),
+            (1, 32, 23, 5, 11, 1, 1, 5, 5),
+            (1, 35, 17, 7, 11, 1, 5, 25, 25),
+            (1, 22, 9, 2, 3, 1, 3, 3, 3),
+            (2, 1, 1, 1, 1, 1, 1, 0, 0),
+        ] {
+            let input: Vec<_> = (0..batch * ci * width)
+                .map(|i| ((i * 37 % 89) as f32 - 47.0) * 0.023)
+                .collect();
+            let weights: Vec<_> = (0..co * ci * kernel)
+                .map(|i| (i as u8).wrapping_mul(47).wrapping_add(173) as i8)
+                .collect();
+            let sums: Vec<_> = weights.chunks_exact(ci * kernel).map(sum_i8).collect();
+            let zeros: Vec<_> = (0..co)
+                .map(|i| (i as i8).wrapping_mul(39).wrapping_sub(101))
+                .collect();
+            let bias: Vec<_> = (0..co).map(|i| i as f32 * 0.07 - 0.18).collect();
+            for has_bias in [false, true] {
+                for per_output in [false, true] {
+                    for have_sums in [false, true] {
+                        let params = QConv1dParams {
+                            batch,
+                            input_channels: ci,
+                            input_width: width,
+                            output_channels: co,
+                            kernel_width: kernel,
+                            stride,
+                            dilation,
+                            pad_left: left,
+                            pad_right: right,
+                            input_zero_point: 19,
+                            weight_zero_points: if per_output {
+                                RhsZeroPoints::PerOutput(&zeros)
+                            } else {
+                                RhsZeroPoints::Scalar(93)
+                            },
+                            weight_row_sums: have_sums.then_some(sums.as_slice()),
+                        };
+                        let bias = has_bias.then_some(bias.as_slice());
+                        let mut quantized_bias = vec![0; co];
+                        let prepared =
+                            prepare_qconv1d(&input, params, 0.03125, bias, &mut quantized_bias)
+                                .unwrap();
+                        let output_width = prepared.output_width();
+                        assert_eq!(output_width, params.output_width().unwrap());
+                        assert_eq!(
+                            prepared.quantization(),
+                            dynamic_quantization_parameters(&input).unwrap()
+                        );
+                        for lane in available_lanes(dispatcher) {
+                            let mut expected = vec![0.0; batch * co * output_width];
+                            let mut full_patch = vec![0; ci * kernel * 4];
+                            let mut full_bias = vec![0; co];
+                            dispatcher
+                                .qconv1d_dequantized_with_lane(
+                                    &input,
+                                    &weights,
+                                    &mut expected,
+                                    &mut full_patch,
+                                    &mut full_bias,
+                                    params,
+                                    0.03125,
+                                    bias,
+                                    lane,
+                                )
+                                .unwrap();
+                            assert_eq!(full_bias, quantized_bias);
+                            for workers in [2usize, 3] {
+                                for patch_len in [
+                                    ci * kernel,
+                                    ci * kernel * 4,
+                                    ci * ((kernel - 1) * dilation + 1 + stride * 3),
+                                ] {
+                                    let mut combined = vec![f32::NAN; expected.len()];
+                                    let channels = co.div_ceil(workers);
+                                    for first in (0..co).step_by(channels) {
+                                        let count = channels.min(co - first);
+                                        // Each worker owns exactly one compact channel shard.
+                                        let mut output = vec![0.0; batch * count * output_width];
+                                        let mut patch = vec![0; patch_len];
+                                        dispatcher
+                                            .qconv1d_prepared_channel_range_with_lane(
+                                                &input,
+                                                &weights,
+                                                &mut output,
+                                                &mut patch,
+                                                params,
+                                                prepared,
+                                                has_bias.then_some(quantized_bias.as_slice()),
+                                                first,
+                                                count,
+                                                lane,
+                                            )
+                                            .unwrap();
+                                        for b in 0..batch {
+                                            let destination = (b * co + first) * output_width;
+                                            let source = b * count * output_width;
+                                            combined
+                                                [destination..destination + count * output_width]
+                                                .copy_from_slice(
+                                                    &output[source..source + count * output_width],
+                                                );
+                                        }
+                                    }
+                                    assert_eq!(
+                                        combined.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                                        expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                                        "lane={lane:?} workers={workers} ci={ci} co={co} kernel={kernel} dilation={dilation} patch={patch_len} bias={has_bias} per_output={per_output} sums={have_sums}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_time_windows_preserve_full_input_boundaries_and_output_bits() {
+        let dispatcher = Dispatcher::detect();
+        for (batch, ci, width, co, kernel, stride, dilation, pad) in [
+            (2, 35, 37, 7, 7, 1, 1, 3),
+            (1, 32, 29, 5, 11, 1, 5, 25),
+            (2, 3, 13, 5, 3, 2, 3, 3),
+        ] {
+            let input: Vec<_> = (0..batch * ci * width)
+                .map(|i| ((i * 67 % 131) as f32 - 73.0) * 0.019)
+                .collect();
+            let weights: Vec<_> = (0..co * ci * kernel)
+                .map(|i| (i as u8).wrapping_mul(31).wrapping_add(71) as i8)
+                .collect();
+            let sums: Vec<_> = weights.chunks_exact(ci * kernel).map(sum_i8).collect();
+            let zeros: Vec<_> = (0..co)
+                .map(|i| (i as i8).wrapping_mul(53).wrapping_sub(99))
+                .collect();
+            let bias: Vec<_> = (0..co).map(|i| i as f32 * 0.04 - 0.11).collect();
+            let params = QConv1dParams {
+                batch,
+                input_channels: ci,
+                input_width: width,
+                output_channels: co,
+                kernel_width: kernel,
+                stride,
+                dilation,
+                pad_left: pad,
+                pad_right: pad,
+                input_zero_point: 0,
+                weight_zero_points: RhsZeroPoints::PerOutput(&zeros),
+                weight_row_sums: Some(&sums),
+            };
+            let output_width = params.output_width().unwrap();
+            for has_bias in [false, true] {
+                let bias = has_bias.then_some(bias.as_slice());
+                let mut quantized_bias = vec![0; co];
+                let prepared =
+                    prepare_qconv1d(&input, params, 0.0625, bias, &mut quantized_bias).unwrap();
+                for lane in available_lanes(dispatcher) {
+                    let mut expected = vec![0.0; batch * co * output_width];
+                    let mut patch = vec![0; ci * kernel * 4];
+                    let mut full_bias = vec![0; co];
+                    dispatcher
+                        .qconv1d_dequantized_with_lane(
+                            &input,
+                            &weights,
+                            &mut expected,
+                            &mut patch,
+                            &mut full_bias,
+                            params,
+                            0.0625,
+                            bias,
+                            lane,
+                        )
+                        .unwrap();
+                    for workers in [2usize, 3] {
+                        for time_quantum in [1usize, 4, 7, 64] {
+                            for patch_len in [
+                                ci * kernel * 4,
+                                ci * ((kernel - 1) * dilation + 1 + stride * 3),
+                            ] {
+                                let mut combined = vec![f32::NAN; expected.len()];
+                                let channels = co.div_ceil(workers);
+                                for first in (0..co).step_by(channels) {
+                                    let count = channels.min(co - first);
+                                    for time_start in (0..output_width).step_by(time_quantum) {
+                                        let time_count =
+                                            time_quantum.min(output_width - time_start);
+                                        let elements = batch * count * time_count;
+                                        let mut output = vec![123.5; elements + 3];
+                                        let mut patch = vec![0; patch_len];
+                                        dispatcher
+                                            .qconv1d_prepared_window_with_lane(
+                                                &input,
+                                                &weights,
+                                                &mut output,
+                                                &mut patch,
+                                                params,
+                                                prepared,
+                                                has_bias.then_some(quantized_bias.as_slice()),
+                                                first,
+                                                count,
+                                                time_start,
+                                                time_count,
+                                                lane,
+                                            )
+                                            .unwrap();
+                                        assert_eq!(&output[elements..], &[123.5; 3]);
+                                        for b in 0..batch {
+                                            for c in 0..count {
+                                                let source = (b * count + c) * time_count;
+                                                let destination = (b * co + first + c)
+                                                    * output_width
+                                                    + time_start;
+                                                combined[destination..destination + time_count]
+                                                    .copy_from_slice(
+                                                        &output[source..source + time_count],
+                                                    );
+                                            }
+                                        }
+                                    }
+                                }
+                                assert_eq!(
+                                    combined.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                                    expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                                    "lane={lane:?} workers={workers} time_quantum={time_quantum} dilation={dilation} stride={stride} patch={patch_len} bias={has_bias}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_channel_range_rejects_invalid_inputs_before_writing_output() {
+        let dispatcher = Dispatcher::detect();
+        let input = [-1.0, 0.0, 1.0, 2.0];
+        let weights = [1i8, 2, 3, 4, 5, 6];
+        let zeros = [17, -21];
+        let sums = [6, 15];
+        let params = QConv1dParams {
+            batch: 1,
+            input_channels: 1,
+            input_width: 4,
+            output_channels: 2,
+            kernel_width: 3,
+            stride: 1,
+            dilation: 1,
+            pad_left: 1,
+            pad_right: 1,
+            input_zero_point: 0,
+            weight_zero_points: RhsZeroPoints::PerOutput(&zeros),
+            weight_row_sums: Some(&sums),
+        };
+        let mut bias = [0; 2];
+        let prepared =
+            prepare_qconv1d(&input, params, 0.25, Some(&[0.1, -0.2]), &mut bias).unwrap();
+        macro_rules! rejects {
+            ($input:expr, $weights:expr, $params:expr, $bias:expr, $start:expr, $count:expr, $patch:expr, $out:expr, $lane:expr, $error:expr) => {{
+                let mut output = vec![123.5; $out];
+                let mut patch = vec![73; $patch];
+                assert_eq!(
+                    dispatcher.qconv1d_prepared_channel_range_with_lane(
+                        $input,
+                        $weights,
+                        &mut output,
+                        &mut patch,
+                        $params,
+                        prepared,
+                        $bias,
+                        $start,
+                        $count,
+                        $lane,
+                    ),
+                    Err($error)
+                );
+                assert!(output.iter().all(|v| v.to_bits() == 123.5f32.to_bits()));
+                assert!(patch.iter().all(|&v| v == 73));
+            }};
+        }
+        for (first, count) in [(0, 0), (2, 1), (1, 2), (usize::MAX, 2)] {
+            rejects!(
+                &input,
+                &weights,
+                params,
+                Some(&bias),
+                first,
+                count,
+                12,
+                8,
+                Lane::Scalar,
+                Error::InvalidOutputChannelRange
+            );
+        }
+        rejects!(
+            &input,
+            &weights,
+            QConv1dParams {
+                stride: 2,
+                ..params
+            },
+            Some(&bias),
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::PreparedConvolutionMismatch
+        );
+        rejects!(
+            &input,
+            &weights,
+            params,
+            None,
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::PreparedConvolutionMismatch
+        );
+        rejects!(
+            &input,
+            &weights,
+            params,
+            Some(&bias[..1]),
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::BiasTooSmall
+        );
+        rejects!(
+            &input,
+            &weights[..5],
+            params,
+            Some(&bias),
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::RhsTooSmall
+        );
+        rejects!(
+            &input[..3],
+            &weights,
+            params,
+            Some(&bias),
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::LhsTooSmall
+        );
+        rejects!(
+            &input,
+            &weights,
+            params,
+            Some(&bias),
+            0,
+            1,
+            2,
+            8,
+            Lane::Scalar,
+            Error::ScratchTooSmall
+        );
+        rejects!(
+            &input,
+            &weights,
+            params,
+            Some(&bias),
+            0,
+            2,
+            12,
+            7,
+            Lane::Scalar,
+            Error::OutputTooSmall
+        );
+        rejects!(
+            &input,
+            &weights,
+            QConv1dParams {
+                weight_row_sums: Some(&sums[..1]),
+                ..params
+            },
+            Some(&bias),
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::RowSumsTooSmall
+        );
+        rejects!(
+            &input,
+            &weights,
+            QConv1dParams {
+                weight_zero_points: RhsZeroPoints::PerOutput(&zeros[..1]),
+                ..params
+            },
+            Some(&bias),
+            0,
+            1,
+            12,
+            8,
+            Lane::Scalar,
+            Error::ZeroPointsTooSmall
+        );
+        let unsupported = Dispatcher {
+            capabilities: CpuCapabilities::default(),
+        };
+        let mut output = [123.5; 8];
+        let mut patch = [73; 12];
+        assert_eq!(
+            unsupported.qconv1d_prepared_channel_range_with_lane(
+                &input,
+                &weights,
+                &mut output,
+                &mut patch,
+                params,
+                prepared,
+                Some(&bias),
+                0,
+                2,
+                Lane::AvxVnni,
+            ),
+            Err(Error::UnsupportedLane)
+        );
+        assert_eq!(output, [123.5; 8]);
+        for (time_start, time_count) in [(0, 0), (4, 1), (3, 2), (usize::MAX, 2)] {
+            let mut output = [123.5; 8];
+            let mut patch = [73; 12];
+            assert_eq!(
+                dispatcher.qconv1d_prepared_window_with_lane(
+                    &input,
+                    &weights,
+                    &mut output,
+                    &mut patch,
+                    params,
+                    prepared,
+                    Some(&bias),
+                    0,
+                    2,
+                    time_start,
+                    time_count,
+                    Lane::Scalar,
+                ),
+                Err(Error::InvalidOutputTimeRange)
+            );
+            assert_eq!(output, [123.5; 8]);
+            assert_eq!(patch, [73; 12]);
+        }
+        let mut short_output = [123.5; 3];
+        assert_eq!(
+            dispatcher.qconv1d_prepared_window_with_lane(
+                &input,
+                &weights,
+                &mut short_output,
+                &mut patch,
+                params,
+                prepared,
+                Some(&bias),
+                0,
+                2,
+                1,
+                2,
+                Lane::Scalar,
+            ),
+            Err(Error::OutputTooSmall)
+        );
+        assert_eq!(short_output, [123.5; 3]);
+        let mut scratch = [991; 2];
+        assert!(
+            prepare_qconv1d(&[f32::NAN; 4], params, 0.25, Some(&[0.0; 2]), &mut scratch).is_err()
+        );
+        assert_eq!(scratch, [991; 2]);
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn avx2_strided_column_quantization_matches_scalar_ties_and_tail() {
@@ -2690,6 +3495,9 @@ mod tests {
     fn prepared_row_sum_validation_is_explicit() {
         let rhs = vec![1i8; 12];
         let mut too_short = [0i32; 2];
-        assert_eq!(prepare_rhs_row_sums(&rhs, 3, 4, &mut too_short), Err(Error::OutputTooSmall));
+        assert_eq!(
+            prepare_rhs_row_sums(&rhs, 3, 4, &mut too_short),
+            Err(Error::OutputTooSmall)
+        );
     }
 }

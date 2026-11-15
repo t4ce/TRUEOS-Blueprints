@@ -8,6 +8,12 @@
 //! kernel can observe tensor memory.
 
 extern crate alloc;
+#[cfg(all(feature = "async-convolution", target_os = "trueos"))]
+compile_error!("async-convolution is an Ubuntu experiment; native placement is not implemented");
+#[cfg(feature = "async-convolution")]
+pub mod async_conv;
+#[cfg(feature = "occupancy-trace")]
+pub mod occupancy;
 pub mod attributes;
 mod cpu;
 mod prepared;
@@ -26,7 +32,7 @@ pub use cpu::{
     native_dispatch_supported,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "async-convolution"))]
 extern crate std;
 
 #[cfg(test)]

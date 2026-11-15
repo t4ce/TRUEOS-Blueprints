@@ -37,6 +37,15 @@ retained-convolution = []
 prepared-weights = []
 blocked-gemm = ["trueos-kokoro-dispatch/blocked-gemm"]
 profile-inference = ["trueos-kokoro-dispatch/profile-inference"]
+async-convolution = ["trueos-kokoro-dispatch/async-convolution", "dep:smol"]
+occupancy-trace = ["async-convolution", "trueos-kokoro-dispatch/occupancy-trace"]
+
+[target.'cfg(not(target_os = "trueos"))'.dependencies]
+smol = { version = "=2.0.2", optional = true }
+
+[[example]]
+name = "async_convolution"
+required-features = ["async-convolution"]
 
 [target.'cfg(target_os = "trueos")'.dependencies]
 trueos = { path = "../../api" }

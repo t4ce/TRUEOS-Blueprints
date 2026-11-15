@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+async-execution = []
 
 [dependencies]
 trueos-kokoro-aot = { path = "../aot", default-features = false }

@@ -99,6 +99,11 @@ const MAX_OP_BINDINGS: usize = 16;
 /// remaining records are whole-operation adapters with one sealed unit each.
 const SEALED_WORK_UNITS: u64 = 97_778_896;
 /// Preserve short scheduling checkpoints while walking atomic graph records.
+// Async coordinator yields between atomic operators; workers yield between
+// bounded time windows. Native/default cooperative budgets are unchanged.
+#[cfg(feature = "async-convolution")]
+const ATOMIC_WORK_UNITS_PER_SLICE: u32 = 1;
+#[cfg(not(feature = "async-convolution"))]
 const ATOMIC_WORK_UNITS_PER_SLICE: u32 = 64;
 /// Coordinate cap selected from the slowest pinned float-convolution profile.
 /// On the i9-13900K oracle it bounds a cooperative tile to about 15 ms; the
@@ -777,6 +782,18 @@ const fn retry_boundary_token(token: u8) -> bool {
 }
 
 impl InferenceJob for KokoroTtsJob {
+    #[cfg(feature = "async-convolution")]
+    fn wait_ready(&mut self) -> core::pin::Pin<Box<dyn core::future::Future<Output = Result<(), &'static str>> + '_>> {
+        Box::pin(async move {
+            if let Some(invocation) = self.invocation.as_mut() {
+                invocation.execution_state.wait_ready().await
+            } else {
+                smol::future::yield_now().await;
+                Ok(())
+            }
+        })
+    }
+
     fn direction(&self) -> Direction {
         Direction::TextToSpeech
     }
@@ -1401,7 +1418,7 @@ impl InvocationScaffold {
             &mut cpu_workspace,
             *cpu_dispatch_plan,
         );
-        #[cfg(feature = "retained-convolution")]
+        #[cfg(any(feature = "retained-convolution", feature = "async-convolution"))]
         let dispatcher = dispatcher.with_execution_state(execution_state);
         let dispatcher = if let Some(prepared) = prepared {
             dispatcher.with_prepared_weights(prepared)
@@ -1441,6 +1458,8 @@ impl InvocationScaffold {
                     Err(reason) => InvocationProgress::Failed(reason),
                 }
             }
+            #[cfg(feature = "async-convolution")]
+            SliceEvent::PendingWork => InvocationProgress::Pending,
             SliceEvent::DispatchFailed(error) => {
                 Self::log_execution_failure(program, executor, "phase0-dispatch", Some(&error));
                 InvocationProgress::Failed("kokoro-phase0-dispatch-failed")
@@ -1600,7 +1619,7 @@ impl InvocationScaffold {
             &mut cpu_workspace,
             *cpu_dispatch_plan,
         );
-        #[cfg(feature = "retained-convolution")]
+        #[cfg(any(feature = "retained-convolution", feature = "async-convolution"))]
         let dispatcher = dispatcher.with_execution_state(execution_state);
         let dispatcher = if let Some(prepared) = prepared {
             dispatcher.with_prepared_weights(prepared)
@@ -1635,6 +1654,8 @@ impl InvocationScaffold {
                 *stage = InvocationStage::Complete;
                 InvocationProgress::Complete
             }
+            #[cfg(feature = "async-convolution")]
+            SliceEvent::PendingWork => InvocationProgress::Pending,
             SliceEvent::DispatchFailed(error) => {
                 Self::log_execution_failure(program, executor, "phase1-dispatch", Some(&error));
                 InvocationProgress::Failed("kokoro-phase1-dispatch-failed")
