@@ -1,0 +1,37 @@
+[package]
+name = "ttstt"
+version = "0.1.0"
+edition = "2024"
+license-file = "LICENSE"
+
+[workspace]
+members = ["crates/trueos-kokoro/*", "crates/trueos-ttstt-cpu"]
+resolver = "3"
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+fs-scope = "trueosfs"
+replicatable = false
+rewrite-std-imports = false
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+spin = "0.10"
+trueos-kokoro-aot = { path = "crates/trueos-kokoro/aot" }
+trueos-kokoro-audio = { path = "crates/trueos-kokoro/audio" }
+trueos-kokoro-dispatch = { path = "crates/trueos-kokoro/dispatch" }
+trueos-kokoro-exec = { path = "crates/trueos-kokoro/exec" }
+trueos-kokoro-g2p = { path = "crates/trueos-kokoro/g2p" }
+trueos-kokoro-lexicon = { path = "crates/trueos-kokoro/lexicon" }
+trueos-kokoro-memory = { path = "crates/trueos-kokoro/memory" }
+trueos-kokoro-voice = { path = "crates/trueos-kokoro/voice" }
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos = { path = "../../api" }
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
