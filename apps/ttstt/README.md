@@ -88,6 +88,13 @@ and inference arenas. The generic playback-only budget is insufficient.
 
 ## CPU performance
 
+The package requests a performance core for the VMX carrier with
+`vm-core-preference = "performance"` in its Blueprint metadata. The kernel
+tries eligible P cores first and falls back to another eligible core when
+none is available. This applies during VM admission, before the carrier task
+is spawned, and needs no launch arguments. Other packages retain their usual
+placement unless they opt in. See [the metadata contract](../../BLUEPRINT_METADATA.md).
+
 The normal build enables retained convolution validation, prepared constant
 weights (including the packed AVX2 LSTM layout), and four-row AVX-VNNI GEMM.
 Convolution owns an immutable input snapshot until its operation completes;

@@ -5,10 +5,10 @@ This is measured from the active optimized Blueprint, after model warmup.
 
 ## Native hardware measurements
 
-All three requests reported an **efficiency core**, CPUID core type `0x20`,
-APIC ID **50**, at both request boundaries. AVX-VNNI was selected. The VM lane
-picker uses round-robin selection across eligible APs rather than preferring
-performance cores (`TRUEOS/src/hv/lane.rs`). The earlier native before/after
+The original capture's three requests reported an **efficiency core**, CPUID
+core type `0x20`, APIC ID **50**, at both request boundaries. AVX-VNNI was
+selected. At that point the VM lane picker used round-robin selection across
+eligible APs without a core-type preference (`TRUEOS/src/hv/lane.rs`). The earlier native before/after
 experiments did not control AP identity; their observed differences cannot be
 fully attributed to individual code changes. The pinned host comparisons
 remain separate evidence.
@@ -43,6 +43,53 @@ The two highest-cost quantized nodes were generator
 `resblocks.5/convs1.2` (op 2127, 6.564 s) and `noise_res.1/convs1.2`
 (op 1572, 6.303 s). Both mix 128 input/output channels with kernel width 11
 and dilation 5. They are dense vocoder convolutions, not text processing.
+
+## Soft P-core placement comparison
+
+The Blueprint now sets `vm-core-preference = "performance"` in package
+metadata. Packaging carries this as TRBP flag `0x1000`. The kernel applies
+the hint before spawning the VMX carrier, trying eligible P-core leases first,
+then falling back to E/unknown cores. Other packages default to ordinary
+selection. This is VM placement, independent of userspace thread scheduling.
+
+After `cargo rigreal` and a fresh boot, the same warmed profiled service
+selected **slot 9 / P core / APIC 33**, with no fallback. Every request reported
+CPUID core type `0x40` at both boundaries and `core_changed=0`.
+
+| Passage | E-core calculation | P-core calculation | Less calculation time | P-core request wall time |
+|---|---:|---:|---:|---:|
+| Short | 7.592 s | 4.988 s | 34.30% | 5.693 s |
+| Medium | 43.506 s | 28.604 s | 34.25% | 37.026 s |
+| Long | 140.084 s | 91.725 s | 34.52% | 120.018 s |
+
+This is one pass per core type on the same rig and corpus, about **1.52x**
+calculation throughput. Clearing only the new hint bit in the P-core package
+reproduces the E-core package's SHA-256 exactly: executable, model and
+compressed payload bytes are identical. Generated audio durations/frame
+counts also match; this native probe does not capture PCM hashes.
+
+On the P core, long-request quantized Conv1d still accounts for **55.048 s /
+60.57%** of operator time. Floating-point transposed convolution takes
+8.844 s / 9.73%. Sink backpressure adds 28.239 s outside calculation.
+P-core placement helps, but calculation remains about 2.70 times audio duration.
+
+[Intel's datasheet](https://cdrdv2-public.intel.com/655258/655258-011.pdf)
+documents possible AVX frequency reductions. These elapsed measurements show
+that core type matters here; no APERF/MPERF frequency counters were sampled,
+so they do not isolate clock speed, throttling or instruction throughput.
+
+The kernel's six carrier-selection regression tests cover preferred/free,
+busy/absent P cores, tier fairness, existing default placement, and leases.
+Three Blueprint tests cover metadata validation and actual flag serialization
+without changing payload bytes. `cargo rigreal` and both normal/profiled
+`cargo bp ttstt` builds passed and published through their normal workflows.
+
+P-core evidence is in `/tmp/ttstt-pcore-profile/native/`, including
+`records.log`, `comparison.json`, `profile-summary.json`, placement/warmup and
+artifact metadata. The profiled hash is
+`3a8b53810656742f78db0b688a5ffd213c54c311413036c1587750383fb8918d`.
+The normal build has profiling disabled and retains the placement hint:
+`19651313b7d5fd6759d2580448fdd5ebdca228ef1130aa68509bf30b25e83a8f`.
 
 ## What the convolution measurement includes
 

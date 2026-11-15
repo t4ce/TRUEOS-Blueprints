@@ -673,6 +673,44 @@ pub(crate) fn package_blueprint_trueosfs_scope(manifest_path: &Path) -> Result<b
     Ok(false)
 }
 
+/// Prefer a P core for the VM carrier without requiring one. An omitted value
+/// or `"any"` keeps the ordinary, unbiased carrier selection policy.
+pub(crate) fn package_blueprint_prefer_performance_core(
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "vm-core-preference" {
+            continue;
+        }
+        return match toml_string_value(value.trim()).as_deref() {
+            Some("any") => Ok(false),
+            Some("performance") => Ok(true),
+            Some(other) => Err(format!(
+                "unsupported trueos-blueprint vm-core-preference `{other}` in {}; expected any or performance",
+                manifest_path.display()
+            )),
+            None => Err(format!(
+                "bad trueos-blueprint vm-core-preference in {}; expected a string: any or performance",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(false)
+}
+
 pub(crate) fn manifest_declared_features(manifest_path: &Path) -> Result<Vec<String>, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_features = false;
@@ -962,6 +1000,38 @@ filesystem-independent = true
     fn reads_trueosfs_scope_from_blueprint_metadata() {
         let path = temporary_manifest("fs-scope", "trueosfs");
         assert!(package_blueprint_trueosfs_scope(&path).unwrap());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn vm_core_preference_defaults_to_any_and_accepts_performance() {
+        let path = temporary_manifest("vm-core-preference", "performance");
+        for (metadata, expected) in [
+            ("", false),
+            ("[package.metadata.other]\nvm-core-preference = \"performance\"\n", false),
+            ("[package.metadata.trueos-blueprint.build-env]\nvm-core-preference = \"performance\"\n", false),
+            ("[package.metadata.trueos-blueprint]\nvm-core-preference = \"any\"\n", false),
+            ("[package.metadata.trueos-blueprint]\nvm-core-preference = \"performance\" # soft placement\n", true),
+        ] {
+            fs::write(&path, format!("[package]\nname = \"probe\"\n{metadata}")).unwrap();
+            assert_eq!(package_blueprint_prefer_performance_core(&path).unwrap(), expected);
+        }
+        fs::remove_file(path).unwrap();
+        let ttstt = Path::new(env!("CARGO_MANIFEST_DIR")).join("apps/ttstt/Cargo.toml");
+        assert!(package_blueprint_prefer_performance_core(&ttstt).unwrap());
+    }
+
+    #[test]
+    fn vm_core_preference_rejects_unknown_or_non_string_values() {
+        let path = temporary_manifest("vm-core-preference", "invalid");
+        for value in ["\"efficiency\"", "\"Performance\"", "true", "1", "[]"] {
+            fs::write(&path, format!(
+                "[package.metadata.trueos-blueprint]\nvm-core-preference = {value}\n"
+            )).unwrap();
+            let error = package_blueprint_prefer_performance_core(&path).unwrap_err();
+            assert!(error.contains("vm-core-preference"), "{error}");
+            assert!(error.contains("any or performance"), "{error}");
+        }
         fs::remove_file(path).unwrap();
     }
 

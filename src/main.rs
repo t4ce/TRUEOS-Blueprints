@@ -62,10 +62,12 @@ use app_catalog::{
     package_blueprint_stack_capture,
     package_blueprint_rustc_embed_sysroot, package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier,
     package_blueprint_trueosfs_scope, package_name, push_app_or_trueos_feature,
+    package_blueprint_prefer_performance_core,
 };
 use artifact::{
     AssetBundleEntry, BLUEPRINT_CAP_ARGV_ENTRY_V1, BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT,
     BLUEPRINT_CAP_REPLICATABLE, BLUEPRINT_CAP_TRUEOSFS_SCOPE, attach_trueos_asset_bundle,
+    BLUEPRINT_CAP_PREFER_PERFORMANCE_CORE,
     cargo_artifact_stem, collect_rlibs_for_rlink, entry_hint_hex, entry_symbol_name,
     latest_cargo_root_artifacts, tool_command, verify_selected_panic_runtime, write_blueprint,
 };
@@ -497,6 +499,11 @@ fn build_one_target_to_mode(
         && package_blueprint_trueosfs_scope(manifest_path)?
     {
         capability_flags |= BLUEPRINT_CAP_TRUEOSFS_SCOPE;
+    }
+    if matches!(build_target, BuildTarget::Package)
+        && package_blueprint_prefer_performance_core(manifest_path)?
+    {
+        capability_flags |= BLUEPRINT_CAP_PREFER_PERFORMANCE_CORE;
     }
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
         package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)

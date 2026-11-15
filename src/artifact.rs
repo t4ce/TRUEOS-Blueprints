@@ -13,6 +13,7 @@ pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
 pub(crate) const BLUEPRINT_CAP_ARGV_ENTRY_V1: u16 = 1 << 9;
 pub(crate) const BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT: u16 = 1 << 10;
 pub(crate) const BLUEPRINT_CAP_TRUEOSFS_SCOPE: u16 = 1 << 11;
+pub(crate) const BLUEPRINT_CAP_PREFER_PERFORMANCE_CORE: u16 = 1 << 12;
 const TRUEOS_ASSET_BUNDLE_MAGIC: &[u8; 4] = b"TRAS";
 const TRUEOS_ASSET_BUNDLE_VERSION: u16 = 1;
 const TRUEOS_ASSET_BUNDLE_FLAGS: u16 = 0;
@@ -917,6 +918,33 @@ mod tests {
     #[test]
     fn trueosfs_scope_capability_keeps_the_payload_encoding() {
         assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_TRUEOSFS_SCOPE), 0x0803);
+    }
+
+    #[test]
+    fn vm_core_preference_serializes_without_changing_payload_or_other_capabilities() {
+        let directory = test_directory("vm-core-preference");
+        let module = directory.join("module.elf");
+        let ordinary = directory.join("ordinary.bp");
+        let preferred = directory.join("preferred.bp");
+        let raw = b"\x7fELF-test-module";
+        fs::write(&module, raw).unwrap();
+        let other_capabilities = BLUEPRINT_CAP_REPLICATABLE | BLUEPRINT_CAP_ARGV_ENTRY_V1
+            | BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT | BLUEPRINT_CAP_TRUEOSFS_SCOPE;
+        write_blueprint(&ordinary, &module, "12345678", other_capabilities).unwrap();
+        write_blueprint(&preferred, &module, "12345678", other_capabilities
+            | BLUEPRINT_CAP_PREFER_PERFORMANCE_CORE).unwrap();
+        let ordinary = fs::read(ordinary).unwrap();
+        let preferred = fs::read(preferred).unwrap();
+        assert_eq!(&preferred[..4], b"TRBP");
+        assert_eq!(u16_at(&preferred, 4), 1);
+        assert_eq!(u16_at(&ordinary, 6), 0x0f03);
+        assert_eq!(u16_at(&preferred, 6), 0x1f03);
+        assert_eq!(u16_at(&preferred, 6) & 0x00ff, BLUEPRINT_PAYLOAD_TAR_LZ4);
+        assert_eq!(u64_at(&preferred, 8), 0x12345678);
+        assert_eq!(u32_at(&preferred, 16) as usize, preferred.len() - 24);
+        assert_eq!(u32_at(&preferred, 20) as usize, raw.len());
+        assert_eq!(&ordinary[8..], &preferred[8..]);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -13,6 +13,7 @@ entry-abi = "argv-v1"
 fs-scope = "trueosfs"
 replicatable = false
 rewrite-std-imports = false
+vm-core-preference = "performance"
 
 [dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
