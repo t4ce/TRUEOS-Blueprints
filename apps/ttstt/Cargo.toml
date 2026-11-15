@@ -30,6 +30,13 @@ trueos-kokoro-voice = { path = "crates/trueos-kokoro/voice" }
 sha2 = { version = "=0.10.9", default-features = false }
 trueos-kokoro-voice = { path = "crates/trueos-kokoro/voice" }
 
+[features]
+default = ["retained-convolution", "prepared-weights", "blocked-gemm"]
+retained-convolution = []
+prepared-weights = []
+blocked-gemm = ["trueos-kokoro-dispatch/blocked-gemm"]
+profile-inference = ["trueos-kokoro-dispatch/profile-inference"]
+
 [target.'cfg(target_os = "trueos")'.dependencies]
 trueos = { path = "../../api" }
 

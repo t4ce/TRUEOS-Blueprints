@@ -15,6 +15,7 @@ use crate::attributes::{
     TransposeAttributes, UnaryAttributes, ViewAttributes,
 };
 use crate::decode;
+use crate::prepared::{PreparedWeights, QuantWeights};
 
 /// Return whether the concrete CPU dispatcher has a real execution adapter
 /// for this decoded attribute contract. This is the single warm-audit source
@@ -83,7 +84,11 @@ pub struct CpuWorkspaceRequirements {
 pub const KOKORO_CPU_WORKSPACE_REQUIREMENTS: CpuWorkspaceRequirements = CpuWorkspaceRequirements {
     quant_u8: 13_080,
     packed_i8: 3_348_480,
-    accum_i32: 2_180,
+    accum_i32: if cfg!(feature = "blocked-gemm") {
+        4 * 2_180
+    } else {
+        2_180
+    },
     row_sums_i32: 2_180,
     bias_i32: 1_024,
     lstm_gates_f32: 1_024,
@@ -164,6 +169,7 @@ impl<'a> CpuWorkspace<'a> {
 /// cursor: there is deliberately no success fallback for a missing kernel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchError {
+    Allocation,
     MissingAttributes,
     Attribute(AttributeError),
     Memory(MemoryError),
@@ -308,6 +314,23 @@ pub struct CpuDispatcher<
     conv: trueos_kokoro_conv::Dispatcher,
     gemm: trueos_kokoro_gemm::Dispatcher,
     quant: trueos_ttstt_cpu::Dispatcher,
+    execution: Option<&'dispatch mut CpuExecutionState<'artifact>>,
+    prepared: Option<&'dispatch PreparedWeights<'artifact>>,
+    #[cfg(feature = "profile-inference")]
+    profile: Option<&'dispatch mut crate::ExecutionProfile>,
+}
+
+/// Per-invocation state; never shared between independent graph executions.
+#[derive(Default)]
+pub struct CpuExecutionState<'artifact> {
+    convolution: Option<RetainedConvolution<'artifact>>,
+}
+
+struct RetainedConvolution<'artifact> {
+    artifact_sha256: [u8; 32],
+    op_index: u32,
+    next_unit: u32,
+    problem: trueos_kokoro_conv::PreparedProblem<'artifact>,
 }
 
 /// Reusable host-kernel selection for cooperatively sliced CPU execution.
@@ -380,6 +403,10 @@ impl<
             conv: plan.conv,
             gemm: plan.gemm,
             quant: plan.quant,
+            execution: None,
+            prepared: None,
+            #[cfg(feature = "profile-inference")]
+            profile: None,
         }
     }
 
@@ -416,13 +443,108 @@ impl<
             conv: plan.conv,
             gemm: plan.gemm,
             quant: plan.quant,
+            execution: None,
+            prepared: None,
+            #[cfg(feature = "profile-inference")]
+            profile: None,
         }
     }
+
+    #[cfg(feature = "profile-inference")]
+    pub fn with_profile(mut self, profile: &'dispatch mut crate::ExecutionProfile) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
+    fn dispatch_inner(
+        &mut self,
+        program: &Program<'_>,
+        work: WorkSlice,
+    ) -> Result<DispatchResult, DispatchError> {
+        if program.artifact_sha256() != self.memory.program().artifact_sha256() {
+            return Err(DispatchError::Memory(MemoryError::ForeignShapeTable));
+        }
+        let bound_program = *self.memory.program();
+        let program = &bound_program;
+        if self
+            .prepared
+            .is_some_and(|prepared| !prepared.matches(program))
+        {
+            return Err(DispatchError::Memory(MemoryError::ForeignShapeTable));
+        }
+        let record = program
+            .op_attributes(work.op())
+            .ok_or(DispatchError::MissingAttributes)?;
+        let attributes = decode(record, work.op().opcode)?;
+        if !native_dispatch_supported(attributes) {
+            return Err(DispatchError::UnsupportedOpcode {
+                opcode: attributes.opcode(),
+            });
+        }
+        if native_dispatch_requires_workspace(attributes) && self.workspace.is_none() {
+            return Err(DispatchError::WorkspaceRequired {
+                opcode: attributes.opcode(),
+            });
+        }
+        let output_shapes = infer_output_shapes(self.memory, program, work, attributes)?;
+        self.memory
+            .declare_op_outputs(work.op_index(), output_shapes.as_slice())?;
+        if let Attributes::View(view) = attributes {
+            validate_view_storage(self.memory, program, work, view, output_shapes.values[0])?;
+            return Ok(DispatchResult::Completed);
+        }
+        let conv = self.conv;
+        let gemm = self.gemm;
+        let quant = self.quant;
+        let workspace = self.workspace.as_deref_mut();
+        let execution = self.execution.as_deref_mut();
+        let prepared = self.prepared;
+        #[cfg(feature = "profile-inference")]
+        let clock = self.profile.as_deref().map(|profile| profile.clock());
+        #[cfg(feature = "profile-inference")]
+        let mut kernel_us = 0;
+        let result = self.memory
+            .with_op(work.op_index(), |access| {
+                #[cfg(feature = "profile-inference")]
+                let started = clock.map(|clock| clock());
+                let result = execute(
+                    access, program, work, attributes, conv, gemm, quant, workspace, execution,
+                    prepared,
+                );
+                #[cfg(feature = "profile-inference")]
+                if let (Some(clock), Some(started)) = (clock, started) {
+                    kernel_us = clock().saturating_sub(started);
+                }
+                result
+            })
+            .map_err(DispatchError::Memory)?;
+        #[cfg(feature = "profile-inference")]
+        if let Some(profile) = self.profile.as_deref_mut() {
+            profile.record_kernel(work.op_index(), kernel_us);
+        }
+        result
+        }
 
     pub fn memory(
         &self,
     ) -> &TensorMemory<'memory, 'artifact, 'buffers, SHAPES, EXTERNALS, BINDINGS> {
         self.memory
+    }
+
+    pub fn with_execution_state(
+        mut self,
+        state: &'dispatch mut CpuExecutionState<'artifact>,
+    ) -> Self {
+        self.execution = Some(state);
+        self
+    }
+
+    pub fn with_prepared_weights(
+        mut self,
+        prepared: &'dispatch PreparedWeights<'artifact>,
+    ) -> Self {
+        self.prepared = Some(prepared);
+        self
     }
 }
 
@@ -1790,48 +1912,28 @@ impl<
         program: &Program<'_>,
         work: WorkSlice,
     ) -> Result<DispatchResult, Self::Error> {
-        let record = program
-            .op_attributes(work.op())
-            .ok_or(DispatchError::MissingAttributes)?;
-        let attributes = decode(record, work.op().opcode)?;
-        if !native_dispatch_supported(attributes) {
-            return Err(DispatchError::UnsupportedOpcode {
-                opcode: attributes.opcode(),
-            });
+        #[cfg(feature = "profile-inference")]
+        let started = self.profile.as_deref().map(|profile| (profile.clock())());
+        let result = self.dispatch_inner(program, work);
+        #[cfg(feature = "profile-inference")]
+        if let (Some(profile), Some(started)) = (self.profile.as_deref_mut(), started) {
+            profile.record_total(work.op_index(), (profile.clock())().saturating_sub(started));
         }
-        if native_dispatch_requires_workspace(attributes) && self.workspace.is_none() {
-            return Err(DispatchError::WorkspaceRequired {
-                opcode: attributes.opcode(),
-            });
-        }
-        let output_shapes = infer_output_shapes(self.memory, program, work, attributes)?;
-        self.memory
-            .declare_op_outputs(work.op_index(), output_shapes.as_slice())?;
-        if let Attributes::View(view) = attributes {
-            validate_view_storage(self.memory, program, work, view, output_shapes.values[0])?;
-            return Ok(DispatchResult::Completed);
-        }
-        let conv = self.conv;
-        let gemm = self.gemm;
-        let quant = self.quant;
-        let workspace = self.workspace.as_deref_mut();
-        self.memory
-            .with_op(work.op_index(), |access| {
-                execute(access, program, work, attributes, conv, gemm, quant, workspace)
-            })
-            .map_err(DispatchError::Memory)?
+        result
     }
 }
 
-fn execute<const BINDINGS: usize>(
+fn execute<'artifact, const BINDINGS: usize>(
     access: &OpAccess<BINDINGS>,
-    program: &Program<'_>,
+    program: &Program<'artifact>,
     work: WorkSlice,
     attributes: Attributes,
     conv: trueos_kokoro_conv::Dispatcher,
     gemm: trueos_kokoro_gemm::Dispatcher,
     quant: trueos_ttstt_cpu::Dispatcher,
     workspace: Option<&mut CpuWorkspace<'_>>,
+    execution: Option<&mut CpuExecutionState<'artifact>>,
+    prepared: Option<&PreparedWeights<'artifact>>,
 ) -> Result<DispatchResult, DispatchError> {
     match attributes {
         Attributes::Binary(value) => {
@@ -1908,6 +2010,7 @@ fn execute<const BINDINGS: usize>(
                 value,
                 quant,
                 require_workspace(workspace, OpCode::DynamicQuantizedGemm)?,
+                prepared.and_then(|p| p.quant(work.op_index())),
             )?;
         }
         Attributes::DynamicQuantizedConv1d(value) => {
@@ -1917,11 +2020,17 @@ fn execute<const BINDINGS: usize>(
                 value,
                 quant,
                 require_workspace(workspace, OpCode::DynamicQuantizedConv1d)?,
+                prepared.and_then(|p| p.quant(work.op_index())),
             )?;
         }
         Attributes::BiLstm256(value) => {
             require_whole_unit(work)?;
-            execute_bilstm(access, value, require_workspace(workspace, OpCode::BiLstm256)?)?;
+            execute_bilstm(
+                access,
+                value,
+                require_workspace(workspace, OpCode::BiLstm256)?,
+                prepared.and_then(|p| p.lstm(work.op_index())),
+            )?;
         }
         Attributes::Pow(_) => {
             require_whole_unit(work)?;
@@ -1950,7 +2059,7 @@ fn execute<const BINDINGS: usize>(
         }
         Attributes::Resize(value) => return execute_resize(access, work, value),
         Attributes::FloatConv(value) => {
-            return execute_float_conv(access, work, value, conv);
+            return execute_float_conv(access, program, work, value, conv, execution);
         }
         Attributes::Unary(value) => {
             require_whole_unit(work)?;
@@ -2427,6 +2536,7 @@ fn execute_quant_gemm<const BINDINGS: usize>(
     attributes: QuantGemmAttributes,
     dispatcher: trueos_ttstt_cpu::Dispatcher,
     workspace: &mut CpuWorkspace<'_>,
+    prepared: Option<&QuantWeights>,
 ) -> Result<(), DispatchError> {
     let has_bias = attributes.bias_mode == BiasMode::Float;
     require_arity(access, if has_bias { 5 } else { 4 }, 1)?;
@@ -2476,33 +2586,51 @@ fn execute_quant_gemm<const BINDINGS: usize>(
         .row_sums_i32
         .get_mut(..n)
         .ok_or(WorkspaceError::RowSumsI32TooSmall)?;
-    let quantized_row = workspace
+    let tile_rows = if cfg!(feature = "blocked-gemm") {
+        4.min(workspace.quant_u8.len() / k)
+            .min(workspace.accum_i32.len() / n)
+    } else {
+        1
+    };
+    if tile_rows == 0 {
+        return Err(DispatchError::ShapeConversion);
+    }
+    let quantized_rows = workspace
         .quant_u8
-        .get_mut(..k)
+        .get_mut(..tile_rows * k)
         .ok_or(WorkspaceError::QuantU8TooSmall)?;
     let accumulators = workspace
         .accum_i32
-        .get_mut(..n)
+        .get_mut(..tile_rows * n)
         .ok_or(WorkspaceError::AccumI32TooSmall)?;
-    trueos_ttstt_cpu::pack_matmul_weights_i8(&weights, k, n, packed, row_sums)?;
-
+    let (packed, row_sums) = if let Some(prepared) = prepared {
+        if prepared.packed.len() != packed_elements || prepared.sums.len() != n {
+            return Err(DispatchError::ShapeConversion);
+        }
+        (prepared.packed.as_slice(), prepared.sums.as_slice())
+    } else {
+        trueos_ttstt_cpu::pack_matmul_weights_i8(&weights, k, n, packed, row_sums)?;
+        (&*packed, &*row_sums)
+    };
     let mut output = access.output::<f32>(0)?;
     if output.len() != output_elements {
         return Err(DispatchError::ShapeConversion);
     }
-    for row in 0..rows {
+    for row in (0..rows).step_by(tile_rows) {
+        let count = tile_rows.min(rows - row);
         let input_start = row * k;
+        // Preserve the original whole-activation quantization parameters.
         trueos_ttstt_cpu::quantize_linear_u8_with_parameters(
-            &activation[input_start..input_start + k],
+            &activation[input_start..input_start + count * k],
             quantization,
-            quantized_row,
+            &mut quantized_rows[..count * k],
         )?;
         dispatcher.qgemm(
-            quantized_row,
+            &quantized_rows[..count * k],
             packed,
-            accumulators,
+            &mut accumulators[..count * n],
             trueos_ttstt_cpu::QGemmParams {
-                m: 1,
+                m: count,
                 n,
                 k,
                 lhs_zero_point: quantization.zero_point,
@@ -2511,20 +2639,20 @@ fn execute_quant_gemm<const BINDINGS: usize>(
             },
         )?;
         let output_start = row * n;
+        let destinations = &mut output[output_start..output_start + count * n];
         trueos_ttstt_cpu::dequantize_matmul_integer_per_output(
-            accumulators,
-            1,
+            &accumulators[..count * n],
+            count,
             n,
             quantization.scale,
             &weight_scales,
-            &mut output[output_start..output_start + n],
+            destinations,
         )?;
         if let Some(values) = bias.as_ref() {
-            for (destination, &value) in output[output_start..output_start + n]
-                .iter_mut()
-                .zip(values.iter())
-            {
-                *destination += value;
+            for destination_row in destinations.chunks_exact_mut(n) {
+                for (destination, &value) in destination_row.iter_mut().zip(values.iter()) {
+                    *destination += value;
+                }
             }
         }
     }
@@ -2536,6 +2664,7 @@ fn execute_quant_conv<const BINDINGS: usize>(
     attributes: QuantConvAttributes,
     dispatcher: trueos_ttstt_cpu::Dispatcher,
     workspace: &mut CpuWorkspace<'_>,
+    prepared: Option<&QuantWeights>,
 ) -> Result<(), DispatchError> {
     let has_bias = attributes.bias_mode == BiasMode::QuantizedInt32;
     require_arity(access, if has_bias { 5 } else { 4 }, 1)?;
@@ -2608,14 +2737,22 @@ fn execute_quant_conv<const BINDINGS: usize>(
     } else {
         &mut workspace.bias_i32[..0]
     };
-    trueos_ttstt_cpu::pack_conv1d_weights_u8(
-        &weights,
-        output_channels,
-        input_channels,
-        kernel_width,
-        packed,
-        row_sums,
-    )?;
+    let (packed, row_sums) = if let Some(prepared) = prepared {
+        if prepared.packed.len() != packed_elements || prepared.sums.len() != output_channels {
+            return Err(DispatchError::ShapeConversion);
+        }
+        (prepared.packed.as_slice(), prepared.sums.as_slice())
+    } else {
+        trueos_ttstt_cpu::pack_conv1d_weights_u8(
+            &weights,
+            output_channels,
+            input_channels,
+            kernel_width,
+            packed,
+            row_sums,
+        )?;
+        (&*packed, &*row_sums)
+    };
     let params = trueos_ttstt_cpu::QConv1dParams {
         batch,
         input_channels,
@@ -2658,6 +2795,7 @@ fn execute_bilstm<const BINDINGS: usize>(
     access: &OpAccess<BINDINGS>,
     attributes: BiLstmAttributes,
     workspace: &mut CpuWorkspace<'_>,
+    prepared: Option<&[trueos_kokoro_lstm::PreparedMatrix<'_>; 4]>,
 ) -> Result<(), DispatchError> {
     require_arity(access, 6, 3)?;
     let input_width = match (attributes.profile, attributes.input_width) {
@@ -2703,7 +2841,19 @@ fn execute_bilstm<const BINDINGS: usize>(
         &initial_hidden,
         &initial_cell,
     )?;
-    let mut dense = trueos_kokoro_lstm::DispatchedDense::detect();
+    let views = prepared.map(|matrices| {
+        [
+            matrices[0].view(),
+            matrices[1].view(),
+            matrices[2].view(),
+            matrices[3].view(),
+        ]
+    });
+    let mut dense = if let Some(views) = views.as_ref() {
+        trueos_kokoro_lstm::DispatchedDense::detect_with_prepacked(views)
+    } else {
+        trueos_kokoro_lstm::DispatchedDense::detect()
+    };
     while !invocation.is_complete() {
         invocation.advance(&mut dense)?;
     }
@@ -2787,12 +2937,22 @@ fn execute_binary<const BINDINGS: usize>(
     let mut output = access.output::<f32>(0)?;
     let output_layout = contiguous_f32(output.shape())?;
     match attributes.opcode {
-        OpCode::Add => {
-            trueos_kokoro_f32::add(&lhs, lhs_layout, &rhs, rhs_layout, &mut output, output_layout)?
-        }
-        OpCode::Mul => {
-            trueos_kokoro_f32::mul(&lhs, lhs_layout, &rhs, rhs_layout, &mut output, output_layout)?
-        }
+        OpCode::Add => trueos_kokoro_f32::add(
+            &lhs,
+            lhs_layout,
+            &rhs,
+            rhs_layout,
+            &mut output,
+            output_layout,
+        )?,
+        OpCode::Mul => trueos_kokoro_f32::mul(
+            &lhs,
+            lhs_layout,
+            &rhs,
+            rhs_layout,
+            &mut output,
+            output_layout,
+        )?,
         OpCode::Div => {
             if work.op_index() == KOKORO_STFT_PHASE_DIV_OP_INDEX {
                 trueos_kokoro_f32::div_ieee(
@@ -2814,9 +2974,14 @@ fn execute_binary<const BINDINGS: usize>(
                 )?
             }
         }
-        OpCode::Sub => {
-            trueos_kokoro_f32::sub(&lhs, lhs_layout, &rhs, rhs_layout, &mut output, output_layout)?
-        }
+        OpCode::Sub => trueos_kokoro_f32::sub(
+            &lhs,
+            lhs_layout,
+            &rhs,
+            rhs_layout,
+            &mut output,
+            output_layout,
+        )?,
         opcode => return Err(DispatchError::UnsupportedOpcode { opcode }),
     }
     Ok(())
@@ -3068,11 +3233,13 @@ fn execute_resize<const BINDINGS: usize>(
     Ok(completion)
 }
 
-fn execute_float_conv<const BINDINGS: usize>(
+fn execute_float_conv<'artifact, const BINDINGS: usize>(
     access: &OpAccess<BINDINGS>,
+    program: &Program<'artifact>,
     work: WorkSlice,
     attributes: FloatConvAttributes,
     dispatcher: trueos_kokoro_conv::Dispatcher,
+    mut execution: Option<&mut CpuExecutionState<'artifact>>,
 ) -> Result<DispatchResult, DispatchError> {
     require_arity(access, if attributes.has_bias { 3 } else { 2 }, 1)?;
     let input = access.input::<f32>(0)?;
@@ -3129,7 +3296,55 @@ fn execute_float_conv<const BINDINGS: usize>(
             opcode: attributes.opcode,
         });
     }
-    let problem = trueos_kokoro_conv::Problem::new(profile, &input, &weights, bias.as_deref())?;
+    let problem = if let Some(state) = execution.as_deref_mut() {
+        if work.unit_start() == 0 {
+            state.convolution = None;
+            let weight_id = access
+                .input_tensor_id(1)
+                .ok_or(DispatchError::InvalidArity)?;
+            let retained_weights =
+                trueos_kokoro_memory::constant_tensor::<f32>(program, weight_id)?;
+            let retained_bias = if attributes.has_bias {
+                let bias_id = access
+                    .input_tensor_id(2)
+                    .ok_or(DispatchError::InvalidArity)?;
+                Some(trueos_kokoro_memory::constant_tensor::<f32>(
+                    program, bias_id,
+                )?)
+            } else {
+                None
+            };
+            state.convolution = Some(RetainedConvolution {
+                artifact_sha256: *program.artifact_sha256(),
+                op_index: work.op_index(),
+                next_unit: 0,
+                problem: trueos_kokoro_conv::PreparedProblem::copy_input(
+                    profile,
+                    &input,
+                    retained_weights,
+                    retained_bias,
+                )?,
+            });
+        }
+        let retained = state
+            .convolution
+            .as_mut()
+            .ok_or(DispatchError::InvalidWorkContract {
+                opcode: attributes.opcode,
+            })?;
+        if retained.artifact_sha256 != *program.artifact_sha256()
+            || retained.op_index != work.op_index()
+            || retained.next_unit != work.unit_start()
+            || retained.problem.problem().profile() != profile
+        {
+            return Err(DispatchError::InvalidWorkContract {
+                opcode: attributes.opcode,
+            });
+        }
+        retained.problem.problem()
+    } else {
+        trueos_kokoro_conv::Problem::new(profile, &input, &weights, bias.as_deref())?
+    };
     let dimensions = problem.dimensions();
     let mut output = access.output::<f32>(0)?;
     if output.len() != dimensions.output_elements()? {
@@ -3156,6 +3371,13 @@ fn execute_float_conv<const BINDINGS: usize>(
             dispatcher.best_lane(),
         )?;
         linear += count;
+    }
+    if let Some(state) = execution {
+        if end == output.len() {
+            state.convolution = None;
+        } else if let Some(retained) = state.convolution.as_mut() {
+            retained.next_unit = work.unit_end();
+        }
     }
     Ok(completion)
 }

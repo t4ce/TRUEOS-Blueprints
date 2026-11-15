@@ -85,3 +85,22 @@ also reports drain and total request time.
 The kernel admits this model-bearing service with its speech-inference memory
 profile: 2 GiB for retained packed/unpacked/relocated images, model indexes,
 and inference arenas. The generic playback-only budget is insufficient.
+
+## CPU performance
+
+The normal build enables retained convolution validation, prepared constant
+weights (including the packed AVX2 LSTM layout), and four-row AVX-VNNI GEMM.
+Convolution owns an immutable input snapshot until its operation completes;
+the existing numerical checks and cooperative scheduling boundaries remain.
+Prepared weights use 110,385,966 additional resident bytes for the pinned model,
+within the existing 2 GiB VM budget; the embedded model bundle is unchanged.
+
+See [the experiment results](tools/PERFORMANCE.md) and
+[the host comparator](tools/benchmark_cpu.py) for exact-output checks and
+reproduction. The Cargo features `retained-convolution`, `prepared-weights`
+and `blocked-gemm` permit separate host experiments; all three are enabled by
+default. Codex and TRUEOS launches need no additional arguments.
+
+The [warm operator profile](tools/OPERATOR_PROFILE.md) identifies the dominant
+generation costs and records actual core placement. Its optional
+`profile-inference` diagnostic is disabled in normal builds.

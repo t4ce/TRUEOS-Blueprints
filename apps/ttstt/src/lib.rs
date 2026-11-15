@@ -16,5 +16,7 @@ pub mod bundle;
 pub mod diagnostics;
 pub mod http;
 pub mod playback;
+#[cfg(feature = "profile-inference")]
+mod profiling;
 mod ttstt_kokoro;
 pub mod ttstt_service;

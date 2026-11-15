@@ -481,6 +481,103 @@ fn prepacked_adapter_preserves_full_text_and_prosody_outputs() {
 }
 
 #[test]
+fn prepared_matrix_repeated_views_preserve_checked_pack_and_source_identity() {
+    for columns in [HIDDEN_SIZE, 512, 640] {
+        let mut source: Vec<_> = (0..GATE_ELEMENTS * columns)
+            .map(|index| (((index * 17) % 37) as i32 - 18) as f32 / 10.0)
+            .collect();
+        // Packing is a bit-preserving permutation, including exceptional bits.
+        source[0] = -0.0;
+        source[columns + 3] = f32::from_bits(0x7fc0_1234);
+        source[GATE_ELEMENTS * columns - 1] = f32::INFINITY;
+        let mut expected_storage = vec![0.0; source.len()];
+        let expected =
+            PrepackedMatrix::pack(&source, GATE_ELEMENTS, columns, &mut expected_storage).unwrap();
+        let owner = PreparedMatrix::new(&source, GATE_ELEMENTS, columns).unwrap();
+        let packed_pointer = owner.view().packed().as_ptr();
+        let moved = [owner];
+        for _ in 0..3 {
+            let view = moved[0].view();
+            assert_eq!(view.rows(), GATE_ELEMENTS);
+            assert_eq!(view.columns(), columns);
+            assert_eq!(view.source().as_ptr(), source.as_ptr());
+            assert_eq!(view.packed().as_ptr(), packed_pointer);
+            assert_bits_equal("owned packing", view.packed(), expected.packed());
+        }
+    }
+}
+
+#[test]
+fn prepared_matrix_reused_views_preserve_full_recurrent_outputs() {
+    for width in [InputWidth::Text512, InputWidth::Prosody640] {
+        let model = OwnedProblem::fixture(3, width);
+        let expected = run_to_completion(model.problem(), &mut ScalarDense);
+        let input_elements = GATE_ELEMENTS * width.channels();
+        let recurrent_elements = GATE_ELEMENTS * HIDDEN_SIZE;
+        let prepared = [
+            PreparedMatrix::new(
+                &model.weights[..input_elements],
+                GATE_ELEMENTS,
+                width.channels(),
+            )
+            .unwrap(),
+            PreparedMatrix::new(
+                &model.weights[input_elements..],
+                GATE_ELEMENTS,
+                width.channels(),
+            )
+            .unwrap(),
+            PreparedMatrix::new(
+                &model.recurrent[..recurrent_elements],
+                GATE_ELEMENTS,
+                HIDDEN_SIZE,
+            )
+            .unwrap(),
+            PreparedMatrix::new(
+                &model.recurrent[recurrent_elements..],
+                GATE_ELEMENTS,
+                HIDDEN_SIZE,
+            )
+            .unwrap(),
+        ];
+        for _ in 0..2 {
+            let views = prepared.each_ref().map(PreparedMatrix::view);
+            let mut dispatched = DispatchedDense::detect_with_prepacked(&views);
+            let actual = run_to_completion(model.problem(), &mut dispatched);
+            assert_bits_equal("owned full Y", &actual.0, &expected.0);
+            assert_bits_equal("owned full Y_h", &actual.1, &expected.1);
+            assert_bits_equal("owned full Y_c", &actual.2, &expected.2);
+            if dispatched.supports(DenseLane::Avx2Fma) {
+                assert_eq!(dispatched.last_path(), Some(DensePath::Avx2Prepacked));
+            }
+        }
+    }
+}
+
+#[test]
+fn prepared_matrix_rejects_invalid_shapes_and_source_lengths() {
+    assert_eq!(
+        PreparedMatrix::new(&[], 0, HIDDEN_SIZE).unwrap_err(),
+        DenseError::UnsupportedShape
+    );
+    assert_eq!(
+        PreparedMatrix::new(&[], GATE_ELEMENTS, 1).unwrap_err(),
+        DenseError::UnsupportedShape
+    );
+    assert_eq!(
+        PreparedMatrix::new(&[], GATE_ELEMENTS, HIDDEN_SIZE).unwrap_err(),
+        DenseError::MatrixLengthMismatch
+    );
+    let source = vec![0.0; GATE_ELEMENTS * HIDDEN_SIZE + 1];
+    for length in [source.len() - 2, source.len()] {
+        assert_eq!(
+            PreparedMatrix::new(&source[..length], GATE_ELEMENTS, HIDDEN_SIZE).unwrap_err(),
+            DenseError::MatrixLengthMismatch,
+        );
+    }
+}
+
+#[test]
 fn dispatched_validation_and_capability_contract_fail_closed() {
     let dispatcher = DispatchedDense::detect();
     let capabilities = dispatcher.capabilities();

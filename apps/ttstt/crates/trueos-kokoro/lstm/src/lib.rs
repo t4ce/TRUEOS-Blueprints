@@ -33,6 +33,9 @@
 //! 1.784 ms, 0.071 ms (25.17x), and 0.052 ms (34.31x), respectively. One-time
 //! packing cost 0.410 ms for K=512 and 0.548 ms for K=640.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::convert::Infallible;
 
 /// LSTM nodes admitted from the pinned Kokoro graph.
@@ -327,6 +330,7 @@ pub enum DensePath {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DenseError {
+    Allocation,
     UnsupportedShape,
     ShapeOverflow,
     MatrixLengthMismatch,
@@ -440,6 +444,49 @@ impl<'a> PrepackedMatrix<'a> {
             && columns == self.columns
             && matrix.len() == self.source.len()
             && core::ptr::eq(matrix.as_ptr(), self.source.as_ptr())
+    }
+}
+
+/// Retained weight packing that owns its allocation and borrows the source.
+///
+/// Construct once during model preparation, then borrow short-lived views for
+/// each dispatcher. Moving this owner does not move either matrix's elements;
+/// views cannot outlive the owner or its immutable source.
+#[derive(Debug)]
+pub struct PreparedMatrix<'source> {
+    source: &'source [f32],
+    packed: Vec<f32>,
+    columns: usize,
+}
+
+impl<'source> PreparedMatrix<'source> {
+    /// Allocate and pack one supported matrix, rejecting invalid sources before
+    /// allocating. Allocation failure is reported without leaking storage.
+    pub fn new(source: &'source [f32], rows: usize, columns: usize) -> Result<Self, DenseError> {
+        let elements = validate_dense_shape(rows, columns)?;
+        if source.len() != elements {
+            return Err(DenseError::MatrixLengthMismatch);
+        }
+        let mut packed = Vec::new();
+        packed
+            .try_reserve_exact(elements)
+            .map_err(|_| DenseError::Allocation)?;
+        packed.resize(elements, 0.0);
+        PrepackedMatrix::pack(source, rows, columns, &mut packed)?;
+        Ok(Self {
+            source,
+            packed,
+            columns,
+        })
+    }
+
+    /// Borrow the already checked packing without allocating or packing again.
+    pub fn view(&self) -> PrepackedMatrix<'_> {
+        PrepackedMatrix {
+            source: self.source,
+            packed: &self.packed,
+            columns: self.columns,
+        }
     }
 }
 

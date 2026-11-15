@@ -529,6 +529,24 @@ fn maps_data_fixed_views_externals_zero_size_and_every_dtype() {
 }
 
 #[test]
+fn constant_views_outlive_program_wrapper_and_reject_untyped_or_mutable_data() {
+    let (artifact, len) = aligned_fixture();
+    let values = {
+        let program = Program::parse(&artifact.0[..len]).unwrap();
+        assert_eq!(constant_tensor::<f32>(&program, 0), Err(MemoryError::InvalidStorage));
+        assert_eq!(constant_tensor::<f32>(&program, 2), Err(MemoryError::InvalidStorage));
+        assert_eq!(constant_tensor::<i32>(&program, 1), Err(MemoryError::DTypeMismatch));
+        assert_eq!(constant_tensor::<bool>(&program, 15), Err(MemoryError::InvalidBoolValue));
+        constant_tensor::<f32>(&program, 1).unwrap()
+    };
+    assert_eq!(values, &[1.0, -2.0, 3.5, 4.0]);
+    let mut unaligned = vec![0_u8];
+    unaligned.extend_from_slice(&artifact.0[..len]);
+    let program = Program::parse(&unaligned[1..]).unwrap();
+    assert_eq!(constant_tensor::<f32>(&program, 1), Err(MemoryError::TensorMisaligned));
+}
+
+#[test]
 fn operation_leases_enforce_aliases_and_exact_in_place_identity() {
     let (artifact, len) = aligned_fixture();
     let program = Program::parse(&artifact.0[..len]).unwrap();

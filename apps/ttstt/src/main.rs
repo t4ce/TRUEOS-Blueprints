@@ -82,6 +82,7 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 fn main() {
+    ttstt::log_info!(target: "ttstt"; "ttstt: optimizations retained_conv={} prepared_weights={} blocked_gemm={}", cfg!(feature = "retained-convolution") as u8, cfg!(feature = "prepared-weights") as u8, cfg!(feature = "blocked-gemm") as u8);
     ttstt::log_info!(target: "ttstt"; "ttstt: startup phase=entry bundle_bytes={} language=en voice=af_heart", ttstt::bundle::TOTAL_BYTES);
     if let Err(e) = run() {
         ttstt::log_warn!(target: "ttstt"; "ttstt: startup-or-request failed error={e}");

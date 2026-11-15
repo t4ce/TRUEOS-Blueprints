@@ -18,8 +18,9 @@ use trueos_kokoro_aot::{
 };
 use trueos_kokoro_audio::{convert_frame_range, fade_in_frame_range, output_frames};
 use trueos_kokoro_dispatch::{
-    CpuDispatchPlan, CpuDispatcher, CpuWorkspace, KOKORO_CPU_WORKSPACE_REQUIREMENTS, decode,
-    native_dispatch_requires_workspace, native_dispatch_supported,
+    CpuDispatchPlan, CpuDispatcher, CpuExecutionState, CpuWorkspace,
+    KOKORO_CPU_WORKSPACE_REQUIREMENTS, PreparedWeights, decode, native_dispatch_requires_workspace,
+    native_dispatch_supported,
 };
 use trueos_kokoro_exec::{
     Executor, ExecutorFault, ResolvedPhase, RuntimeShape, SliceEvent, TensorShapeTable,
@@ -143,6 +144,8 @@ struct WarmAssets {
     voice: Voice<'static>,
     g2p: G2pModel<'static>,
     coverage: DispatchCoverage,
+    #[cfg(feature = "prepared-weights")]
+    prepared: PreparedWeights<'static>,
 }
 
 #[derive(Clone, Copy)]
@@ -260,7 +263,10 @@ impl SpeechBackend for KokoroBackend {
         // The constructor is present so the frontend/memory ownership boundary
         // is sealed before numerical completion. The explicit gates above make
         // this unreachable until execution and waveform parity are complete.
-        Ok(Box::new(KokoroTtsJob::new(request)))
+        let job = KokoroTtsJob::new(request);
+        #[cfg(feature = "profile-inference")]
+        let job = job.with_profile(assets.program)?;
+        Ok(Box::new(job))
     }
 
     fn create_stt_job(&self, _request: SttRequest) -> Result<Box<dyn InferenceJob>, &'static str> {
@@ -418,11 +424,23 @@ impl InferenceJob for KokoroWarmJob {
                     Err(reason) => return self.reject(reason),
                 };
                 let memory = g2p.memory_usage();
+                #[cfg(feature = "prepared-weights")]
+                let prepared = match PreparedWeights::new(&program) {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        crate::log_warn!(target: "ttstt"; "ttstt: weight preparation failed: {error:?}");
+                        return self.reject("kokoro-weight-preparation-failed");
+                    }
+                };
+                #[cfg(feature = "prepared-weights")]
+                crate::log_info!(target: "ttstt"; "ttstt: prepared_weights bytes={}", prepared.packed_bytes());
                 let assets = WarmAssets {
                     program,
                     voice,
                     g2p,
                     coverage,
+                    #[cfg(feature = "prepared-weights")]
+                    prepared,
                 };
                 let tts_ready = runtime_blocker(&assets).is_none();
                 let blocker = runtime_blocker(&assets).unwrap_or("none");
@@ -651,6 +669,19 @@ enum TtsStage {
     Finish,
 }
 
+#[cfg(feature = "profile-inference")]
+impl TtsStage {
+    fn profile_index(&self) -> usize {
+        match self {
+            Self::Frontend => 0,
+            Self::PrepareChunk => 1,
+            Self::Execute => 2,
+            Self::EmitPcm => 3,
+            Self::Finish => 4,
+        }
+    }
+}
+
 /// Cooperative ownership for one serialized speech request. Factory admission
 /// remains fail-closed until the native waveform parity gate is sealed, but the
 /// complete execution and PCM path lives here rather than behind a host shim.
@@ -661,6 +692,8 @@ struct KokoroTtsJob {
     model_chunk_index: usize,
     invocation: Option<InvocationScaffold>,
     emission: Option<PcmEmission>,
+    #[cfg(feature = "profile-inference")]
+    profile: Option<crate::profiling::JobProfile>,
 }
 
 impl KokoroTtsJob {
@@ -672,7 +705,18 @@ impl KokoroTtsJob {
             model_chunk_index: 0,
             invocation: None,
             emission: None,
+            #[cfg(feature = "profile-inference")]
+            profile: None,
         }
+    }
+
+    #[cfg(feature = "profile-inference")]
+    fn with_profile(mut self, program: Program<'static>) -> Result<Self, &'static str> {
+        self.profile = Some(
+            crate::profiling::JobProfile::new(program, self.request.request.text.len())
+                .map_err(|_| "kokoro-profiling-allocation-failed")?,
+        );
+        Ok(self)
     }
 
     fn fail(&mut self, reason: &'static str) -> JobProgress {
@@ -738,6 +782,24 @@ impl InferenceJob for KokoroTtsJob {
     }
 
     fn run_slice(&mut self, _models: &'static ModelSet, _worker: WorkerContext) -> JobProgress {
+        #[cfg(feature = "profile-inference")]
+        let (stage, started) = (self.stage.profile_index(), crate::profiling::clock_us());
+        let progress = self.advance_inner();
+        #[cfg(feature = "profile-inference")]
+        if let Some(profile) = self.profile.as_mut() {
+            profile.record_stage(stage, started);
+            match &progress {
+                JobProgress::Complete => profile.finish("ok"),
+                JobProgress::Failed(reason) => profile.finish(reason),
+                JobProgress::Pending => {}
+            }
+        }
+        progress
+    }
+}
+
+impl KokoroTtsJob {
+    fn advance_inner(&mut self) -> JobProgress {
         if self.request.output.cancelled() {
             return self.fail("tts-stream-cancelled");
         }
@@ -802,7 +864,18 @@ impl InferenceJob for KokoroTtsJob {
                 let Some(invocation) = self.invocation.as_mut() else {
                     return self.fail("kokoro-invocation-state-lost");
                 };
-                match invocation.run_slice(&assets.program) {
+                #[cfg(feature = "prepared-weights")]
+                let prepared = Some(&assets.prepared);
+                #[cfg(not(feature = "prepared-weights"))]
+                let prepared = None;
+                #[cfg(feature = "profile-inference")]
+                let profile = self.profile.as_mut().map(|profile| profile.execution());
+                match invocation.run_slice(
+                    &assets.program,
+                    prepared,
+                    #[cfg(feature = "profile-inference")]
+                    profile,
+                ) {
                     InvocationProgress::Pending => JobProgress::Pending,
                     InvocationProgress::SplitRequired(frame_count) => {
                         crate::log_info!(
@@ -1093,6 +1166,7 @@ struct InvocationScaffold {
     waveform: Vec<f32>,
     workspace: WorkspaceBuffers,
     cpu_dispatch_plan: CpuDispatchPlan,
+    execution_state: CpuExecutionState<'static>,
     executor: Executor<SLOT_CAPACITY>,
     stage: InvocationStage,
 }
@@ -1183,6 +1257,7 @@ impl InvocationScaffold {
             waveform: Vec::new(),
             workspace,
             cpu_dispatch_plan: CpuDispatchPlan::detect(),
+            execution_state: CpuExecutionState::default(),
             executor: Executor::new(),
             stage: InvocationStage::PhaseZero,
         };
@@ -1232,15 +1307,40 @@ impl InvocationScaffold {
         Ok(())
     }
 
-    fn run_slice(&mut self, program: &Program<'static>) -> InvocationProgress {
+    fn run_slice(
+        &mut self,
+        program: &Program<'static>,
+        prepared: Option<&PreparedWeights<'static>>,
+        #[cfg(feature = "profile-inference")]
+        profile: Option<&mut trueos_kokoro_dispatch::ExecutionProfile>,
+    ) -> InvocationProgress {
         match self.stage {
-            InvocationStage::PhaseZero => self.run_phase_zero_slice(program),
-            InvocationStage::PhaseOne(admission) => self.run_phase_one_slice(program, admission),
+            InvocationStage::PhaseZero => self.run_phase_zero_slice(
+                program,
+                prepared,
+                #[cfg(feature = "profile-inference")]
+                profile,
+            ),
+            InvocationStage::PhaseOne(admission) => {
+                self.run_phase_one_slice(
+                    program,
+                    admission,
+                    prepared,
+                    #[cfg(feature = "profile-inference")]
+                    profile,
+                )
+            }
             InvocationStage::Complete => InvocationProgress::Complete,
         }
     }
 
-    fn run_phase_zero_slice(&mut self, program: &Program<'static>) -> InvocationProgress {
+    fn run_phase_zero_slice(
+        &mut self,
+        program: &Program<'static>,
+        prepared: Option<&PreparedWeights<'static>>,
+        #[cfg(feature = "profile-inference")]
+        profile: Option<&mut trueos_kokoro_dispatch::ExecutionProfile>,
+    ) -> InvocationProgress {
         let Self {
             shapes,
             padded_tokens,
@@ -1249,6 +1349,7 @@ impl InvocationScaffold {
             phase_zero_arena,
             workspace,
             cpu_dispatch_plan,
+            execution_state,
             executor,
             ..
         } = self;
@@ -1295,11 +1396,26 @@ impl InvocationScaffold {
             Ok(workspace) => workspace,
             Err(reason) => return InvocationProgress::Failed(reason),
         };
-        let mut dispatcher = CpuDispatcher::new_with_workspace_and_plan(
+        let dispatcher = CpuDispatcher::new_with_workspace_and_plan(
             &mut memory,
             &mut cpu_workspace,
             *cpu_dispatch_plan,
         );
+        #[cfg(feature = "retained-convolution")]
+        let dispatcher = dispatcher.with_execution_state(execution_state);
+        let dispatcher = if let Some(prepared) = prepared {
+            dispatcher.with_prepared_weights(prepared)
+        } else {
+            dispatcher
+        };
+        #[cfg(feature = "profile-inference")]
+        let mut dispatcher = if let Some(profile) = profile {
+            dispatcher.with_profile(profile)
+        } else {
+            dispatcher
+        };
+        #[cfg(not(feature = "profile-inference"))]
+        let mut dispatcher = dispatcher;
         let mut budget = match WorkBudget::new(executor_work_units_per_slice(program, executor)) {
             Ok(budget) => budget,
             Err(_) => return InvocationProgress::Failed("kokoro-executor-budget-invalid"),
@@ -1425,6 +1541,9 @@ impl InvocationScaffold {
         &mut self,
         _program: &Program<'static>,
         admission: ResolvedPhase,
+        prepared: Option<&PreparedWeights<'static>>,
+        #[cfg(feature = "profile-inference")]
+        profile: Option<&mut trueos_kokoro_dispatch::ExecutionProfile>,
     ) -> InvocationProgress {
         let Self {
             shapes,
@@ -1433,6 +1552,7 @@ impl InvocationScaffold {
             waveform,
             workspace,
             cpu_dispatch_plan,
+            execution_state,
             executor,
             stage,
             ..
@@ -1475,11 +1595,26 @@ impl InvocationScaffold {
             Ok(workspace) => workspace,
             Err(reason) => return InvocationProgress::Failed(reason),
         };
-        let mut dispatcher = CpuDispatcher::new_with_workspace_and_plan(
+        let dispatcher = CpuDispatcher::new_with_workspace_and_plan(
             &mut memory,
             &mut cpu_workspace,
             *cpu_dispatch_plan,
         );
+        #[cfg(feature = "retained-convolution")]
+        let dispatcher = dispatcher.with_execution_state(execution_state);
+        let dispatcher = if let Some(prepared) = prepared {
+            dispatcher.with_prepared_weights(prepared)
+        } else {
+            dispatcher
+        };
+        #[cfg(feature = "profile-inference")]
+        let mut dispatcher = if let Some(profile) = profile {
+            dispatcher.with_profile(profile)
+        } else {
+            dispatcher
+        };
+        #[cfg(not(feature = "profile-inference"))]
+        let mut dispatcher = dispatcher;
         let mut budget = match WorkBudget::new(executor_work_units_per_slice(program, executor)) {
             Ok(budget) => budget,
             Err(_) => return InvocationProgress::Failed("kokoro-executor-budget-invalid"),

@@ -525,6 +525,10 @@ impl Dispatcher {
     }
 
     /// Run QGEMM on an explicitly selected, runtime-checked lane.
+    ///
+    /// AVX-VNNI evaluates four activation rows together, reusing each weight
+    /// load across four independent accumulators. Remaining rows and other
+    /// CPU lanes retain the single-row implementation.
     pub fn qgemm_with_lane(
         self,
         lhs: &[u8],
@@ -538,7 +542,14 @@ impl Dispatcher {
             return Err(Error::UnsupportedLane);
         }
 
-        for m in 0..params.m {
+        let mut first_row = 0usize;
+        #[cfg(target_arch = "x86_64")]
+        if lane == Lane::AvxVnni && params.m >= 4 {
+            // SAFETY: lane and complete matrix bounds were checked above.
+            first_row = unsafe { qgemm4_avx_vnni(lhs, rhs_transposed, output, params) };
+        }
+
+        for m in first_row..params.m {
             let lhs_start = m * params.k;
             let lhs_row = &lhs[lhs_start..lhs_start + params.k];
             let prepared_lhs_sum = params.rhs_row_sums.map(|_| sum_u8(lhs_row));
@@ -1721,6 +1732,47 @@ unsafe fn raw_dot_avx_vnni(lhs: &[u8], rhs: &[i8]) -> i32 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,avxvnni")]
+unsafe fn qgemm4_avx_vnni(
+    lhs: &[u8],
+    rhs_transposed: &[i8],
+    output: &mut [i32],
+    params: QGemmParams<'_>,
+) -> usize {
+    let mut first_row = 0usize;
+    while params.m - first_row >= 4 {
+        let lhs_start = first_row * params.k;
+        let lhs_block = &lhs[lhs_start..lhs_start + 4 * params.k];
+        let lhs_sums: [i32; 4] = core::array::from_fn(|row| {
+            sum_u8(&lhs_block[row * params.k..(row + 1) * params.k])
+        });
+        for n in 0..params.n {
+            let rhs_start = n * params.k;
+            let rhs_row = &rhs_transposed[rhs_start..rhs_start + params.k];
+            // SAFETY: caller validation proves four complete activation rows
+            // and one complete weight row; this function enables AVX-VNNI.
+            let raw = unsafe { raw_dot4_avx_vnni(lhs_block, params.k, rhs_row) };
+            let rhs_sum = params
+                .rhs_row_sums
+                .map_or_else(|| sum_i8(rhs_row), |sums| sums[n]);
+            let rhs_zero_point = params.rhs_zero_points.get(n);
+            for row in 0..4 {
+                output[(first_row + row) * params.n + n] = apply_zero_points(
+                    raw[row],
+                    lhs_sums[row],
+                    rhs_sum,
+                    params.k,
+                    params.lhs_zero_point,
+                    rhs_zero_point,
+                );
+            }
+        }
+        first_row += 4;
+    }
+    first_row
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,avxvnni")]
 unsafe fn raw_dot4_avx_vnni(patches: &[u8], patch_stride: usize, rhs: &[i8]) -> [i32; 4] {
     use core::arch::x86_64::{
         __m256i, _mm256_dpbusd_avx_epi32, _mm256_loadu_si256, _mm256_setzero_si256,
@@ -2001,6 +2053,137 @@ mod tests {
                 .qgemm_with_lane(&lhs, &rhs, &mut inline, inline_params, lane)
                 .unwrap();
             assert_eq!(inline, expected, "inline lane={lane:?}");
+        }
+    }
+
+    fn centered_qgemm(lhs: &[u8], rhs: &[i8], params: QGemmParams<'_>) -> Vec<i32> {
+        (0..params.m * params.n)
+            .map(|index| {
+                let row = index / params.n;
+                let column = index % params.n;
+                (0..params.k).fold(0i32, |sum, reduction| {
+                    let activation = i32::from(lhs[row * params.k + reduction])
+                        - i32::from(params.lhs_zero_point);
+                    let weight = i32::from(rhs[column * params.k + reduction])
+                        - i32::from(params.rhs_zero_points.get(column));
+                    sum.wrapping_add(activation.wrapping_mul(weight))
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn qgemm_multirow_blocks_and_tails_match_centered_integer_arithmetic() {
+        const N: usize = 5;
+        let dispatcher = Dispatcher::detect();
+        let per_output_zero_points = [-128, -17, 0, 29, 127];
+        for m in [1, 2, 3, 4, 5, 6, 7, 8, 9, 11] {
+            for k in [
+                1, 3, 15, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257, 768, 2048,
+            ] {
+                let (lhs, _) = vectors(m * k);
+                let (_, rhs) = vectors(N * k);
+                let mut rhs_sums = [0; N];
+                prepare_rhs_row_sums(&rhs, N, k, &mut rhs_sums).unwrap();
+                for lhs_zero_point in [0, 128, 255] {
+                    for rhs_zero_points in [
+                        RhsZeroPoints::Scalar(-128),
+                        RhsZeroPoints::Scalar(0),
+                        RhsZeroPoints::Scalar(127),
+                        RhsZeroPoints::PerOutput(&per_output_zero_points),
+                    ] {
+                        let params = QGemmParams {
+                            m,
+                            n: N,
+                            k,
+                            lhs_zero_point,
+                            rhs_zero_points,
+                            rhs_row_sums: None,
+                        };
+                        let expected = centered_qgemm(&lhs, &rhs, params);
+                        for rhs_row_sums in [None, Some(rhs_sums.as_slice())] {
+                            for lane in available_lanes(dispatcher) {
+                                let mut output = vec![i32::MIN; m * N + 3];
+                                dispatcher
+                                    .qgemm_with_lane(
+                                        &lhs,
+                                        &rhs,
+                                        &mut output,
+                                        QGemmParams {
+                                            rhs_row_sums,
+                                            ..params
+                                        },
+                                        lane,
+                                    )
+                                    .unwrap();
+                                assert_eq!(
+                                    &output[..m * N],
+                                    expected,
+                                    "lane={lane:?} m={m} k={k} lhs_zp={lhs_zero_point} rhs_zp={rhs_zero_points:?} prepared={}",
+                                    rhs_row_sums.is_some()
+                                );
+                                assert_eq!(&output[m * N..], &[i32::MIN; 3]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn qgemm_multirow_preserves_wrapping_accumulators_and_validation() {
+        const M: usize = 5;
+        const N: usize = 3;
+        const K: usize = 131_073;
+        let dispatcher = Dispatcher::detect();
+        let lhs = (0..M * K)
+            .map(|index| [255, 0, 128, 1, 254][index / K])
+            .collect::<Vec<u8>>();
+        let rhs = (0..N * K)
+            .map(|index| [-128, 127, -1][index / K])
+            .collect::<Vec<i8>>();
+        let zero_points = [127, -128, 31];
+        let mut rhs_sums = [0; N];
+        prepare_rhs_row_sums(&rhs, N, K, &mut rhs_sums).unwrap();
+        let params = QGemmParams {
+            m: M,
+            n: N,
+            k: K,
+            lhs_zero_point: 129,
+            rhs_zero_points: RhsZeroPoints::PerOutput(&zero_points),
+            rhs_row_sums: None,
+        };
+        let expected = centered_qgemm(&lhs, &rhs, params);
+        for rhs_row_sums in [None, Some(rhs_sums.as_slice())] {
+            for lane in available_lanes(dispatcher) {
+                let mut output = [99; M * N];
+                let params = QGemmParams {
+                    rhs_row_sums,
+                    ..params
+                };
+                dispatcher
+                    .qgemm_with_lane(&lhs, &rhs, &mut output, params, lane)
+                    .unwrap();
+                assert_eq!(output.as_slice(), expected, "lane={lane:?}");
+                output.fill(99);
+                assert_eq!(
+                    dispatcher.qgemm_with_lane(
+                        &lhs[..lhs.len() - 1],
+                        &rhs,
+                        &mut output,
+                        params,
+                        lane
+                    ),
+                    Err(Error::LhsTooSmall)
+                );
+                assert_eq!(output, [99; M * N]);
+                assert_eq!(
+                    dispatcher.qgemm_with_lane(&lhs, &rhs, &mut output[..M * N - 1], params, lane),
+                    Err(Error::OutputTooSmall)
+                );
+                assert_eq!(output, [99; M * N]);
+            }
         }
     }
 

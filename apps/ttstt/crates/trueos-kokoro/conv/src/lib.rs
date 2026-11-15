@@ -14,6 +14,9 @@
 //! arithmetic order.
 
 pub const PINNED_NODE_COVERAGE: usize = 7;
+
+extern crate alloc;
+use alloc::vec::Vec;
 pub const SIMD_TIME_TILE: usize = 8;
 pub const DEFAULT_CHANNEL_TILE: usize = 8;
 pub const DEFAULT_TIME_TILE: usize = 64;
@@ -50,6 +53,7 @@ const fn ort_post_conv_panel_width(input_width: usize, reduction_width: usize) -
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
+    Allocation,
     EmptyInput,
     ShapeOverflow,
     InputLengthMismatch,
@@ -338,6 +342,53 @@ pub struct Problem<'a> {
     input: &'a [f32],
     weights: &'a [f32],
     bias: Option<&'a [f32]>,
+}
+
+/// One operation's immutable input snapshot and validated constant weights.
+/// Ownership keeps validation valid across scheduler slices without assuming
+/// that an arena pointer still contains the same values after a lease ends.
+pub struct PreparedProblem<'weights> {
+    profile: Profile,
+    parameters: Parameters,
+    dimensions: Dimensions,
+    input: Vec<f32>,
+    weights: &'weights [f32],
+    bias: Option<&'weights [f32]>,
+}
+
+impl<'weights> PreparedProblem<'weights> {
+    pub fn copy_input(
+        profile: Profile,
+        input: &[f32],
+        weights: &'weights [f32],
+        bias: Option<&'weights [f32]>,
+    ) -> Result<Self, Error> {
+        let checked = Problem::new(profile, input, weights, bias)?;
+        let mut retained = Vec::new();
+        retained
+            .try_reserve_exact(input.len())
+            .map_err(|_| Error::Allocation)?;
+        retained.extend_from_slice(input);
+        Ok(Self {
+            profile,
+            parameters: checked.parameters,
+            dimensions: checked.dimensions,
+            input: retained,
+            weights,
+            bias,
+        })
+    }
+
+    pub fn problem(&self) -> Problem<'_> {
+        Problem {
+            profile: self.profile,
+            parameters: self.parameters,
+            dimensions: self.dimensions,
+            input: &self.input,
+            weights: self.weights,
+            bias: self.bias,
+        }
+    }
 }
 
 impl<'a> Problem<'a> {
@@ -1719,6 +1770,61 @@ mod tests {
             .has_bias
             .then(|| pattern(dimensions.output_channels, 3, 7, 3, divisor * 4.0));
         (input, weights, bias)
+    }
+
+    #[test]
+    fn retained_input_preserves_validation_and_exact_output_across_tiles() {
+        let dispatcher = Dispatcher::detect();
+        for profile in [
+            Profile::EncoderDepthwise512 { input_width: 5 },
+            Profile::DecoderDepthwise1090 { input_width: 5 },
+            Profile::Upsample512To256 { input_width: 3 },
+            Profile::Upsample256To128 { input_width: 3 },
+            Profile::PostConv128To22 { input_width: 5 },
+            Profile::Istft22To1 { input_width: 5 },
+        ] {
+            let (mut input, weights, bias) = fixture_tensors(profile, 64.0);
+            let reference = Problem::new(profile, &input, &weights, bias.as_deref()).unwrap();
+            let mut expected = vec![0.0; reference.dimensions().output_elements().unwrap()];
+            dispatcher.convolve(reference, &mut expected).unwrap();
+            let retained =
+                PreparedProblem::copy_input(profile, &input, &weights, bias.as_deref()).unwrap();
+            input.fill(f32::NAN);
+            assert!(matches!(
+                Problem::new(profile, &input, &weights, bias.as_deref()),
+                Err(Error::NonFiniteInput)
+            ));
+            let mut actual = vec![0.0; expected.len()];
+            let dimensions = retained.problem().dimensions();
+            for channel in 0..dimensions.output_channels {
+                for time in (0..dimensions.output_width).step_by(7) {
+                    dispatcher
+                        .convolve_tile_with_lane(
+                            retained.problem(),
+                            &mut actual,
+                            Tile {
+                                channel_start: channel,
+                                channel_count: 1,
+                                time_start: time,
+                                time_count: 7.min(dimensions.output_width - time),
+                            },
+                            dispatcher.best_lane(),
+                        )
+                        .unwrap();
+                }
+            }
+            assert!(
+                actual
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{profile:?}"
+            );
+            assert!(matches!(
+                PreparedProblem::copy_input(profile, &input, &weights, bias.as_deref()),
+                Err(Error::NonFiniteInput)
+            ));
+        }
     }
 
     fn run_ort_fixture(

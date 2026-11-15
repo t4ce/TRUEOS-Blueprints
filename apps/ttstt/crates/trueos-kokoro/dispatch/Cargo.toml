@@ -10,6 +10,8 @@ path = "src/lib.rs"
 
 [features]
 default = []
+blocked-gemm = []
+profile-inference = []
 
 [dependencies]
 trueos-kokoro-aot = { path = "../aot", default-features = false }

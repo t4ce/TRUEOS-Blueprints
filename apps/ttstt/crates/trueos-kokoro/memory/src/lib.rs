@@ -89,6 +89,53 @@ pub trait TensorElement: element_seal::Sealed + Copy + 'static {
     const VALIDATE_BOOL: bool = false;
 }
 
+/// Borrow a constant directly from the immutable, parser-validated artifact.
+/// This view cannot refer to an arena or external input and remains read-only.
+pub fn constant_tensor<'artifact, T: TensorElement>(
+    program: &Program<'artifact>,
+    tensor_id: u32,
+) -> Result<&'artifact [T], MemoryError> {
+    let descriptor = program
+        .tensor(tensor_id)
+        .ok_or(MemoryError::TensorOutOfBounds)?;
+    if descriptor.storage != StorageKind::Constant || descriptor.is_dynamic() {
+        return Err(MemoryError::InvalidStorage);
+    }
+    let shape = RuntimeShape::new(&descriptor.max_dims[..usize::from(descriptor.rank)])
+        .map_err(MemoryError::Shape)?;
+    let bytes = usize::try_from(
+        shape
+            .logical_bytes(descriptor.dtype)
+            .map_err(MemoryError::Shape)?,
+    )
+    .map_err(|_| MemoryError::AddressSpaceOverflow)?;
+    if bytes as u64 > descriptor.byte_capacity {
+        return Err(MemoryError::LogicalSpanExceedsCapacity);
+    }
+    let start = usize::try_from(descriptor.storage_offset)
+        .map_err(|_| MemoryError::AddressSpaceOverflow)?;
+    let end = start
+        .checked_add(bytes)
+        .ok_or(MemoryError::AddressSpaceOverflow)?;
+    let data = program
+        .data()
+        .get(start..end)
+        .ok_or(MemoryError::LogicalSpanExceedsCapacity)?;
+    let region = Region {
+        pointer: NonNull::from(data).cast(),
+        bytes,
+        elements: usize::try_from(shape.element_count().map_err(MemoryError::Shape)?)
+            .map_err(|_| MemoryError::AddressSpaceOverflow)?,
+        dtype: descriptor.dtype,
+        shape,
+        writable: false,
+    };
+    validate_typed_region::<T>(region)?;
+    // SAFETY: this in-bounds typed region borrows only immutable artifact DATA
+    // for 'artifact, independently of the temporary Program reference.
+    Ok(unsafe { region_slice::<T>(region) })
+}
+
 impl TensorElement for f32 {
     const DTYPE: DType = DType::F32;
 }
@@ -523,6 +570,10 @@ impl<
 
     pub const fn phase(&self) -> Phase {
         self.phase
+    }
+
+    pub const fn program(&self) -> &Program<'artifact> {
+        self.program
     }
 
     pub const fn frame_count(&self) -> u32 {
