@@ -12,6 +12,7 @@ macro_rules! log_info {
     (target: $target:literal; $($args:tt)*) => { eprint!($($args)*); };
 }
 
+pub mod bundle;
 pub mod http;
 pub mod playback;
 mod ttstt_kokoro;

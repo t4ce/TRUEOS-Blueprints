@@ -1,21 +1,22 @@
 use std::io::{Seek, Write};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use ttstt::ttstt_service::{Engine, TtsRequest};
 
 fn run() -> Result<(), String> {
-    let mut root = PathBuf::from("/models/kokoro");
     let mut text = None;
-    let mut wav = None;
+    let mut wav: Option<std::path::PathBuf> = None;
     let mut voice = "af_heart".to_string();
     let mut speed = 1.0;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "serve" => {}
-            "--model-dir" => root = args.next().ok_or("missing model directory")?.into(),
             "--text" => text = Some(args.next().ok_or("missing text")?),
-            "--wav" => wav = Some(PathBuf::from(args.next().ok_or("missing WAV filename")?)),
+            "--wav" => {
+                wav = Some(std::path::PathBuf::from(
+                    args.next().ok_or("missing WAV filename")?,
+                ))
+            }
             "--voice" => voice = args.next().ok_or("missing voice")?,
             "--speed" => {
                 speed = args
@@ -24,9 +25,13 @@ fn run() -> Result<(), String> {
                     .parse::<f32>()
                     .map_err(|e| e.to_string())?
             }
+            "--licenses" => {
+                println!("{}", ttstt::bundle::LICENSES);
+                return Ok(());
+            }
             "--help" | "-h" => {
                 println!(
-                    "ttstt [serve] [--model-dir /models/kokoro]\nttstt --text TEXT --wav FILE [--voice af_heart] [--speed 1.0] [--model-dir DIR]\nTTS only; STT is unavailable."
+                    "ttstt [serve]\nttstt --text TEXT --wav FILE [--speed 1.0]\nttstt --licenses\nEnglish + Heart TTS, all model assets embedded. No setup or downloads. STT is unavailable."
                 );
                 return Ok(());
             }
@@ -37,11 +42,11 @@ fn run() -> Result<(), String> {
         if wav.is_some() {
             return Err("--wav requires --text".into());
         }
-        return ttstt::http::serve(&root);
+        return ttstt::http::serve();
     };
     let request = TtsRequest { text, voice, speed };
     request.validate()?;
-    let mut engine = Engine::load(&root)?;
+    let mut engine = Engine::load()?;
     if let Some(path) = wav {
         let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
         let state = Arc::new(Mutex::new((file, 0u32)));

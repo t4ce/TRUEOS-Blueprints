@@ -474,6 +474,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "spin",
  "trueos",
  "trueos-kokoro-aot",
@@ -481,7 +482,6 @@ dependencies = [
  "trueos-kokoro-dispatch",
  "trueos-kokoro-exec",
  "trueos-kokoro-g2p",
- "trueos-kokoro-lexicon",
  "trueos-kokoro-memory",
  "trueos-kokoro-voice",
 ]

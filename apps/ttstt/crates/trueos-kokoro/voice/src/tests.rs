@@ -226,3 +226,27 @@ fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
 fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
+
+#[test]
+fn extracted_heart_retains_every_style_row_and_rejects_corruption() {
+    let Some(bytes) = pinned_archive_bytes() else {
+        return;
+    };
+    let archive = VoiceArchive::parse(bytes).unwrap();
+    let original = archive.lookup("af_heart").unwrap();
+    let heart = Voice::parse_heart_npy(original.npy_bytes()).unwrap();
+    assert_eq!(heart.name(), "af_heart");
+    assert_eq!(heart.npy_bytes().len(), 522_368);
+    for count in 0..=510 {
+        let mut expected = [0.0; STYLE_WIDTH];
+        let mut actual = [0.0; STYLE_WIDTH];
+        assert_eq!(
+            original.decode_style(count, &mut expected),
+            heart.decode_style(count, &mut actual)
+        );
+        assert_eq!(actual, expected);
+    }
+    let mut corrupt = original.npy_bytes().to_vec();
+    corrupt[NPY_HEADER_BYTES] ^= 1;
+    assert!(Voice::parse_heart_npy(&corrupt).is_err());
+}

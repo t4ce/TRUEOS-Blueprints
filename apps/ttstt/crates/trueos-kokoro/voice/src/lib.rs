@@ -264,6 +264,27 @@ pub struct Voice<'a> {
 }
 
 impl<'a> Voice<'a> {
+    /// Validate the exact Heart entry extracted from the pinned upstream
+    /// archive. This permits shipping Heart without the other 53 voices.
+    pub fn parse_heart_npy(bytes: &'a [u8]) -> Result<Self, Error> {
+        validate_npy(bytes)?;
+        let expected = [
+            0x02, 0x12, 0x41, 0x8a, 0xaf, 0xaf, 0xb1, 0xe9, 0x87, 0x8f, 0x33, 0x00, 0x78, 0x79,
+            0x37, 0xaa, 0x40, 0x1a, 0xc9, 0x37, 0xcf, 0xf8, 0xc0, 0x31, 0x0f, 0xfa, 0x32, 0x96,
+            0x3d, 0x96, 0xc7, 0x7b,
+        ];
+        let digest: [u8; 32] = Sha256::digest(bytes).into();
+        if digest != expected {
+            return Err(Error::ArchiveDigestMismatch);
+        }
+        Ok(Self {
+            name: "af_heart",
+            npy: bytes,
+            payload: &bytes[NPY_HEADER_BYTES..],
+            crc32: crc32(bytes),
+        })
+    }
+
     pub const fn name(self) -> &'a str {
         self.name
     }

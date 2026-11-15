@@ -1,7 +1,4 @@
 //! Single-owner, cooperative TTS runner. No Whisper asset or STT startup.
-use std::fs::File;
-use std::io::{self, Read};
-use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -10,8 +7,6 @@ use serde::{Deserialize, Serialize};
 pub const TTS_PCM_CHANNELS: usize = 2;
 pub const TTS_PCM_CHUNK_MAX_FRAMES: usize = 12_000;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
-const MODEL_FILE_MAX_BYTES: u64 = 512 * 1024 * 1024;
-const MODEL_SET_MAX_BYTES: usize = 768 * 1024 * 1024;
 const SYNTHESIS_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -34,8 +29,8 @@ impl TtsRequest {
         if self.text.trim().is_empty() || self.text.len() > MAX_TEXT_BYTES {
             return Err("text must contain 1..16384 UTF-8 bytes");
         }
-        if self.voice.is_empty() || self.voice.len() > 64 {
-            return Err("invalid voice");
+        if self.voice != "af_heart" {
+            return Err("this bundle supports only the Heart voice (af_heart)");
         }
         if !self.speed.is_finite() || !(0.5..=2.0).contains(&self.speed) {
             return Err("speed must be between 0.5 and 2.0");
@@ -44,103 +39,50 @@ impl TtsRequest {
     }
 }
 
-#[repr(C, align(64))]
-#[derive(Clone, Copy, Debug)]
-struct ModelImageLine([u8; 64]);
-
-#[derive(Debug)]
+/// Borrow aligned static bundle data without opening TRUEOSFS or copying weights.
 pub struct ModelImage {
-    path: String,
-    lines: Vec<ModelImageLine>,
-    len: usize,
+    path: &'static str,
+    bytes: &'static [u8],
 }
 impl ModelImage {
-    fn load(root: &Path, name: &str) -> io::Result<Self> {
-        let path = root.join(name);
-        let mut file = File::open(&path)?;
-        let len = file.metadata()?.len();
-        if len == 0 || len > MODEL_FILE_MAX_BYTES {
-            return Err(io::Error::other(format!(
-                "invalid model size: {} ({len})",
-                path.display()
-            )));
-        }
-        let len = usize::try_from(len).map_err(io::Error::other)?;
-        let count = len.div_ceil(64);
-        let mut lines = Vec::new();
-        lines.try_reserve_exact(count).map_err(io::Error::other)?;
-        lines.resize(count, ModelImageLine([0; 64]));
-        let mut image = Self {
-            path: format!("models/kokoro/{name}"),
-            lines,
-            len,
-        };
-        // SAFETY: each aligned line contains exactly 64 initialized bytes;
-        // len never exceeds their combined size, and the borrow is exclusive.
-        let bytes =
-            unsafe { std::slice::from_raw_parts_mut(image.lines.as_mut_ptr().cast::<u8>(), len) };
-        file.read_exact(bytes)?;
-        let mut extra = [0];
-        if file.read(&mut extra)? != 0 {
-            return Err(io::Error::other("model changed while loading"));
-        }
-        Ok(image)
-    }
     pub fn path(&self) -> &str {
-        &self.path
+        self.path
     }
-    pub fn bytes(&self) -> &[u8] {
-        // SAFETY: same aligned storage and bounds proof as load().
-        unsafe { std::slice::from_raw_parts(self.lines.as_ptr().cast::<u8>(), self.len) }
+    pub fn bytes(&self) -> &'static [u8] {
+        self.bytes
     }
 }
 
 pub struct ModelSet {
     kokoro: ModelImage,
-    voices: ModelImage,
+    heart: ModelImage,
     g2p: ModelImage,
-    lexicon: ModelImage,
 }
 impl ModelSet {
-    fn load(root: &Path) -> io::Result<Self> {
-        // Preflight all assets before bulk reads. TTS never waits for Whisper.
-        let names = [
-            "kokoro.kkaot",
-            "voices-v1.0.bin",
-            "en.g2p",
-            "misaki-us.klex",
-        ];
-        let mut total = 0usize;
-        for name in names {
-            let len = std::fs::metadata(root.join(name))?.len();
-            if len == 0 || len > MODEL_FILE_MAX_BYTES {
-                return Err(io::Error::other("invalid model size"));
-            }
-            total = total
-                .checked_add(usize::try_from(len).map_err(io::Error::other)?)
-                .ok_or_else(|| io::Error::other("model set size overflow"))?;
+    fn bundled() -> Self {
+        Self {
+            kokoro: ModelImage {
+                path: "models/kokoro/kokoro.kkaot",
+                bytes: crate::bundle::model(),
+            },
+            heart: ModelImage {
+                path: "models/kokoro/af_heart.npy",
+                bytes: crate::bundle::heart(),
+            },
+            g2p: ModelImage {
+                path: "models/kokoro/en.g2p",
+                bytes: crate::bundle::g2p(),
+            },
         }
-        if total > MODEL_SET_MAX_BYTES {
-            return Err(io::Error::other("model set too large"));
-        }
-        Ok(Self {
-            kokoro: ModelImage::load(root, names[0])?,
-            voices: ModelImage::load(root, names[1])?,
-            g2p: ModelImage::load(root, names[2])?,
-            lexicon: ModelImage::load(root, names[3])?,
-        })
     }
     pub fn kokoro(&self) -> &ModelImage {
         &self.kokoro
     }
-    pub fn kokoro_voices(&self) -> &ModelImage {
-        &self.voices
+    pub fn kokoro_heart(&self) -> &ModelImage {
+        &self.heart
     }
-    pub fn kokoro_g2p(&self) -> Option<&ModelImage> {
-        Some(&self.g2p)
-    }
-    pub fn kokoro_lexicon(&self) -> Option<&ModelImage> {
-        Some(&self.lexicon)
+    pub fn kokoro_g2p(&self) -> &ModelImage {
+        &self.g2p
     }
 }
 
@@ -264,10 +206,10 @@ pub struct Engine {
     models: &'static ModelSet,
 }
 impl Engine {
-    pub fn load(root: &Path) -> Result<Self, String> {
+    pub fn load() -> Result<Self, String> {
         let models = INITIALIZED
             .get_or_init(|| {
-                let models = ModelSet::load(root).map_err(|e| e.to_string())?;
+                let models = ModelSet::bundled();
                 let models = Box::leak(Box::new(models));
                 crate::ttstt_kokoro::install();
                 let backend = *BACKEND.get().ok_or("speech-backend-missing")?;
@@ -356,13 +298,25 @@ mod tests {
         ));
     }
     #[test]
-    fn model_image_is_aligned_and_preserves_exact_bytes() {
-        let dir = std::env::temp_dir().join(format!("ttstt-image-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("test"), [7u8; 65]).unwrap();
-        let image = ModelImage::load(&dir, "test").unwrap();
-        assert_eq!(image.bytes(), &[7u8; 65]);
-        assert_eq!(image.bytes().as_ptr() as usize % 64, 0);
-        std::fs::remove_dir_all(dir).unwrap();
+    fn model_views_borrow_the_embedded_assets_without_copying() {
+        let models = ModelSet::bundled();
+        assert_eq!(
+            models.kokoro().bytes().as_ptr(),
+            crate::bundle::model().as_ptr()
+        );
+        assert_eq!(
+            models.kokoro_heart().bytes().as_ptr(),
+            crate::bundle::heart().as_ptr()
+        );
+        assert_eq!(
+            models.kokoro_g2p().bytes().as_ptr(),
+            crate::bundle::g2p().as_ptr()
+        );
+    }
+    #[test]
+    fn rejects_other_voices_instead_of_claiming_them_available() {
+        let request: TtsRequest =
+            serde_json::from_str(r#"{"text":"Hello","voice":"am_michael"}"#).unwrap();
+        assert!(request.validate().is_err());
     }
 }

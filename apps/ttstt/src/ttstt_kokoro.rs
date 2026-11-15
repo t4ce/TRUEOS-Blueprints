@@ -25,9 +25,8 @@ use trueos_kokoro_exec::{
     Executor, ExecutorFault, ResolvedPhase, RuntimeShape, SliceEvent, TensorShapeTable,
 };
 use trueos_kokoro_g2p::{FrontendOutput, Model as G2pModel, prepare_english_with};
-use trueos_kokoro_lexicon::Lexicon;
 use trueos_kokoro_memory::{ExternalBindings, PhaseOneMemoryPlan, TensorMemory};
-use trueos_kokoro_voice::{PINNED_ARCHIVE_SHA256, STYLE_WIDTH, VoiceArchive};
+use trueos_kokoro_voice::{PINNED_ARCHIVE_SHA256, STYLE_WIDTH, Voice};
 
 use super::ttstt_service::{
     BackendTtsRequest, Direction, InferenceJob, JobProgress, ModelSet, SpeechBackend, SttRequest,
@@ -141,9 +140,8 @@ struct KokoroBackend;
 
 struct WarmAssets {
     program: Program<'static>,
-    voices: VoiceArchive<'static>,
+    voice: Voice<'static>,
     g2p: G2pModel<'static>,
-    lexicon: Lexicon<'static>,
     coverage: DispatchCoverage,
 }
 
@@ -290,16 +288,14 @@ enum WarmStage {
     Program,
     Voices,
     G2p,
-    Lexicon,
     Seal,
 }
 
 struct KokoroWarmJob {
     stage: WarmStage,
     program: Option<Program<'static>>,
-    voices: Option<VoiceArchive<'static>>,
+    voice: Option<Voice<'static>>,
     g2p: Option<G2pModel<'static>>,
-    lexicon: Option<Lexicon<'static>>,
 }
 
 impl KokoroWarmJob {
@@ -307,9 +303,8 @@ impl KokoroWarmJob {
         Self {
             stage: WarmStage::Program,
             program: None,
-            voices: None,
+            voice: None,
             g2p: None,
-            lexicon: None,
         }
     }
 
@@ -376,8 +371,8 @@ impl InferenceJob for KokoroWarmJob {
                 JobProgress::Pending
             }
             WarmStage::Voices => {
-                let voices = match VoiceArchive::parse(models.kokoro_voices().bytes()) {
-                    Ok(voices) => voices,
+                let voice = match Voice::parse_heart_npy(models.kokoro_heart().bytes()) {
+                    Ok(voice) => voice,
                     Err(error) => {
                         crate::log_warn!(
                             target: "ttstt";
@@ -387,14 +382,12 @@ impl InferenceJob for KokoroWarmJob {
                         return self.reject("kokoro-voices-rejected");
                     }
                 };
-                self.voices = Some(voices);
+                self.voice = Some(voice);
                 self.stage = WarmStage::G2p;
                 JobProgress::Pending
             }
             WarmStage::G2p => {
-                let Some(image) = models.kokoro_g2p() else {
-                    return self.reject("kokoro-g2p-not-resident");
-                };
+                let image = models.kokoro_g2p();
                 let g2p = match G2pModel::parse_pinned_english(image.bytes()) {
                     Ok(g2p) => g2p,
                     Err(error) => {
@@ -407,25 +400,6 @@ impl InferenceJob for KokoroWarmJob {
                     }
                 };
                 self.g2p = Some(g2p);
-                self.stage = WarmStage::Lexicon;
-                JobProgress::Pending
-            }
-            WarmStage::Lexicon => {
-                let Some(image) = models.kokoro_lexicon() else {
-                    return self.reject("kokoro-misaki-lexicon-not-resident");
-                };
-                let lexicon = match Lexicon::parse_pinned_us(image.bytes()) {
-                    Ok(lexicon) => lexicon,
-                    Err(error) => {
-                        crate::log_warn!(
-                            target: "ttstt";
-                            "ttstt: kokoro Misaki lexicon rejected error={:?}\n",
-                            error
-                        );
-                        return self.reject("kokoro-misaki-lexicon-rejected");
-                    }
-                };
-                self.lexicon = Some(lexicon);
                 self.stage = WarmStage::Seal;
                 JobProgress::Pending
             }
@@ -433,14 +407,11 @@ impl InferenceJob for KokoroWarmJob {
                 let Some(program) = self.program.take() else {
                     return self.reject("kokoro-warm-program-state-lost");
                 };
-                let Some(voices) = self.voices.take() else {
+                let Some(voice) = self.voice.take() else {
                     return self.reject("kokoro-warm-voices-state-lost");
                 };
                 let Some(g2p) = self.g2p.take() else {
                     return self.reject("kokoro-warm-g2p-state-lost");
-                };
-                let Some(lexicon) = self.lexicon.take() else {
-                    return self.reject("kokoro-warm-lexicon-state-lost");
                 };
                 let coverage = match DispatchCoverage::scan(&program) {
                     Ok(coverage) => coverage,
@@ -449,16 +420,15 @@ impl InferenceJob for KokoroWarmJob {
                 let memory = g2p.memory_usage();
                 let assets = WarmAssets {
                     program,
-                    voices,
+                    voice,
                     g2p,
-                    lexicon,
                     coverage,
                 };
                 let tts_ready = runtime_blocker(&assets).is_none();
                 let blocker = runtime_blocker(&assets).unwrap_or("none");
                 crate::log_info!(
                     target: "ttstt";
-                    "ttstt: kokoro native warm authenticated artifact_bytes={} tensors={} slots={} ops={} bindings={} sealed_work_units={} atomic_slice_units={} cooperative_slice_units={} phase0_arena_bytes={} phase1_arena_min_bytes={} phase1_arena_max_bytes={} frame_proof_max={} service_frame_cap={} waveform_max_samples_24k={} voices={} g2p_borrowed_bytes={} g2p_index_bytes={} lexicon_bytes={} lexicon_entries={} lexicon_variants={} dispatch_missing_ops={} dispatch_workspace_ops={} first_missing={:?} asset_ready=1 tts_ready={} blocker={}\n",
+                    "ttstt: kokoro native warm authenticated artifact_bytes={} tensors={} slots={} ops={} bindings={} sealed_work_units={} atomic_slice_units={} cooperative_slice_units={} phase0_arena_bytes={} phase1_arena_min_bytes={} phase1_arena_max_bytes={} frame_proof_max={} service_frame_cap={} waveform_max_samples_24k={} voice=af_heart language=en bundle=embedded g2p_borrowed_bytes={} g2p_index_bytes={} dispatch_missing_ops={} dispatch_workspace_ops={} first_missing={:?} asset_ready=1 tts_ready={} blocker={}\n",
                     assets.program.artifact().len(),
                     assets.program.tensor_count(),
                     assets.program.slot_count(),
@@ -473,12 +443,8 @@ impl InferenceJob for KokoroWarmJob {
                     COMPILER_FRAME_CEILING,
                     SERVICE_FRAME_CEILING,
                     COMPILER_FRAME_CEILING * WAVEFORM_SAMPLES_PER_FRAME,
-                    assets.voices.len(),
                     memory.borrowed_model_bytes,
                     memory.allocated_index_bytes,
-                    assets.lexicon.resident_bytes(),
-                    assets.lexicon.entry_count(),
-                    assets.lexicon.variant_count(),
                     assets.coverage.missing_ops,
                     assets.coverage.workspace_ops,
                     assets.coverage.first_missing,
@@ -781,22 +747,19 @@ impl InferenceJob for KokoroTtsJob {
                 let Some(assets) = assets_guard.as_ref() else {
                     return self.fail("kokoro-warm-state-lost");
                 };
-                let frontend = match prepare_english_with(
-                    &assets.g2p,
-                    &self.request.request.text,
-                    Some(&assets.lexicon),
-                ) {
-                    Ok(frontend) if !frontend.token_ids.is_empty() => frontend,
-                    Ok(_) => return self.fail("kokoro-frontend-produced-no-tokens"),
-                    Err(error) => {
-                        crate::log_warn!(
-                            target: "ttstt";
-                            "ttstt: kokoro frontend rejected error={:?}\n",
-                            error
-                        );
-                        return self.fail("kokoro-frontend-rejected");
-                    }
-                };
+                let frontend =
+                    match prepare_english_with(&assets.g2p, &self.request.request.text, None) {
+                        Ok(frontend) if !frontend.token_ids.is_empty() => frontend,
+                        Ok(_) => return self.fail("kokoro-frontend-produced-no-tokens"),
+                        Err(error) => {
+                            crate::log_warn!(
+                                target: "ttstt";
+                                "ttstt: kokoro frontend rejected error={:?}\n",
+                                error
+                            );
+                            return self.fail("kokoro-frontend-rejected");
+                        }
+                    };
                 self.frontend = Some(frontend);
                 self.stage = TtsStage::PrepareChunk;
                 JobProgress::Pending
@@ -818,7 +781,7 @@ impl InferenceJob for KokoroTtsJob {
                 };
                 let invocation = match InvocationScaffold::prepare(
                     &assets.program,
-                    &assets.voices,
+                    &assets.voice,
                     &frontend.token_ids[range],
                     frontend.token_ids.len(),
                     &self.request.request.voice,
@@ -1137,7 +1100,7 @@ struct InvocationScaffold {
 impl InvocationScaffold {
     fn prepare(
         program: &Program<'static>,
-        voices: &VoiceArchive<'_>,
+        voice: &Voice<'_>,
         token_ids: &[u8],
         full_phoneme_count: usize,
         voice_name: &str,
@@ -1161,12 +1124,12 @@ impl InvocationScaffold {
         padded_tokens.extend(token_ids.iter().map(|&token| i64::from(token)));
         padded_tokens.push(0);
 
-        let voice = voices
-            .lookup(voice_name)
-            .map_err(|_| "kokoro-voice-not-found")?;
+        if voice_name != "af_heart" {
+            return Err("kokoro-heart-only-bundle");
+        }
         let mut style = [0.0_f32; STYLE_WIDTH];
         // Match the Ubuntu/tts-rs path: every subchunk uses one stable style
-        // row selected from the full request token count. VoiceArchive clamps
+        // row selected from the full request token count. Voice clamps
         // counts above 509 to the archive's last valid row transactionally.
         voice
             .decode_style(full_phoneme_count, &mut style)

@@ -2,7 +2,6 @@
 //! One synchronous owner serializes inference and playback with backpressure.
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
 use std::time::Duration;
 
 use crate::playback::Playback;
@@ -72,12 +71,12 @@ fn respond(stream: &mut TcpStream, status: &str, value: serde_json::Value) -> io
     stream.write_all(&body)
 }
 
-pub fn serve(root: &Path) -> Result<(), String> {
+pub fn serve() -> Result<(), String> {
     // Bind before model allocation. A second launch cannot load another model
     // set or disturb the running service, even during its warmup.
     let listener =
         TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 9772)).map_err(|e| e.to_string())?;
-    let mut engine = Engine::load(root)?;
+    let mut engine = Engine::load()?;
     eprintln!("ttstt: ready protocol=ttstt-v1 tts=true stt=false listen=127.0.0.1:9772");
     for accepted in listener.incoming() {
         let mut stream = match accepted {
@@ -103,7 +102,7 @@ pub fn serve(root: &Path) -> Result<(), String> {
             Ok(r) if r.method == "GET" && r.path == "/health" => respond(
                 &mut stream,
                 "200 OK",
-                serde_json::json!({"protocol":"ttstt-v1", "ready":true, "tts":true, "stt":false}),
+                serde_json::json!({"protocol":"ttstt-v1", "ready":true, "tts":true, "stt":false, "language":"en", "voice":"af_heart", "bundled":true}),
             ),
             Ok(r) if r.method == "POST" && r.path == "/speech" => {
                 let result = serde_json::from_slice::<TtsRequest>(&r.body)

@@ -1,60 +1,60 @@
-# ttstt
+# ttstt: English + Heart
 
-On-demand local Kokoro text to speech for TRUEOS. This application Blueprint
-has no MCP server or plugin registration. STT is unavailable and never loads
-Whisper or opens a microphone.
+Self-contained Kokoro text to speech for the TRUEOS Codex integration test.
+`ttstt.bp` embeds the native synthesis model, the English G2P frontend and
+only the `af_heart` voice. Launch it and speak: no setup, downloader, model
+folder, plugin or MCP is needed. STT remains unavailable.
 
-The app owns the Kokoro crates in `crates/`, native inference, pronunciation
-lexicon, G2P frontend and model residency. The kernel supplies its existing
-filesystem, execution and PCM playback APIs. The former kernel controller,
-capture diagnostics and HWP policy remain uncompiled in `legacy/`.
+The Blueprint borrows aligned static model bytes directly. It does not copy
+or install models into TRUEOSFS. The large Misaki dictionary and the other
+53 voices are excluded; English lexicalization/pronunciation uses the existing
+G2P frontend. The unchanged neural model weights remain necessary.
 
-Build from the Blueprint repository (skip the packer's automatic publish):
+From Codex, enable read-aloud with `codex -c tui.trueos_tts=true`. Completed
+public final answers launch the on-demand Blueprint. History, reasoning, tool
+output and realtime delegated voice replies are excluded. Pending speech can
+be replaced or cleared; already playing speech finishes normally.
+
+The local service listens at `127.0.0.1:9772`. `GET /health` advertises
+`ttstt-v1`, `language: en`, `voice: af_heart`, `bundled: true`, `tts: true`,
+and `stt: false`. `POST /speech` accepts:
+
+```json
+{"text":"Hello from TRUEOS.","speed":1.0}
+```
+
+Speed defaults to 1.0 and must be 0.5–2.0. Text is bounded to 16 KiB.
+The optional legacy `voice` field accepts only `af_heart`; other voices are
+rejected explicitly. Requests run serially with bounded PCM handoffs and
+playback backpressure through the existing Blueprint audio ABI.
+
+For host testing, the same embedded backend can write a WAV:
 
 ```sh
-cargo bp ttstt --check
+cargo run --release --manifest-path apps/ttstt/Cargo.toml -- \
+  --text 'Hello from TRUEOS.' --wav /tmp/heart.wav
+```
+
+Host live playback is unavailable. `ttstt --licenses` prints the bundled
+model provenance and third-party notices.
+
+## Building
+
+Build inputs are prepared once on the developer's host, not on TRUEOS.
+See [tools/BUNDLE_SOURCES.md](tools/BUNDLE_SOURCES.md) for the pinned upstream
+sources and reproducible preparation command. Cargo verifies every input and
+extracts Heart from the authenticated upstream voice archive at build time.
+Missing or mismatched inputs fail the build; Cargo never downloads assets.
+
+After preparing `models/kokoro/`, build from the Blueprint repository:
+
+```sh
+cargo test --manifest-path apps/ttstt/Cargo.toml -p ttstt -p trueos-kokoro-voice
 TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp ttstt
 ```
 
-Launch `ttstt` through Apps to start the service at `127.0.0.1:9772`. It binds
-before allocating models, preventing duplicate resident sets. `GET /health`
-returns protocol `ttstt-v1`, `tts: true` and `stt: false`. `POST /speech` accepts:
-
-```json
-{"text":"Hello from TRUEOS.","voice":"af_heart","speed":1.0}
-```
-
-Voice and speed are optional. Text is limited to 16 KiB of UTF-8; speed must
-be 0.5–2.0. Requests execute serially and return after playback drains. PCM
-transfers are bounded to 250 ms with playback backpressure. Inference yields
-between its existing bounded native graph slices.
-
-Provide these files under `/models/kokoro`, or pass `--model-dir DIR`:
-
-- `kokoro.kkaot`: existing authenticated native artifact
-- `voices-v1.0.bin`: pinned Kokoro voice archive
-- `en.g2p`: English frontend model
-- `misaki-us.klex`: pronunciation overlay
-
-Model provenance, alignment and waveform acceptance checks are preserved.
-Models are not bundled or downloaded automatically. Neither an ONNX fallback
-nor Whisper is needed. `tools/` contains the native artifact and lexicon
-compilers. Model installation is separate from executable installation.
-
-Host waveform verification uses the same inference and PCM conversion:
-
-```sh
-cargo run --manifest-path apps/ttstt/Cargo.toml -- \
-  --model-dir /path/to/kokoro --text 'Hello.' --wav /tmp/hello.wav
-cargo test --manifest-path apps/ttstt/Cargo.toml --workspace
-```
-
-Live host playback is unavailable; use WAV output on the host.
-
-Codex opts in with `tui.trueos_tts = true` (default off), and launches ttstt
-on its first eligible completed public answer. It sends visible prose without
-code blocks or link destinations; pronunciation and lexicalization stay here.
-Historical turns, reasoning, tools and realtime delegated voice replies are
-excluded. Pending answers can be replaced or cleared. Interruption of an
-already playing request is a future protocol step: that request finishes
-before the service accepts the next one.
+The embedded payload is 131,294,877 bytes before executable code and package
+compression: 124,081,360 model bytes, 6,691,149 English G2P bytes and 522,368
+Heart voice bytes. The full upstream voice archive is a build input only.
+The archived kernel controller/capture/HWP files in `legacy/` are uncompiled
+migration references.
