@@ -124,15 +124,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_installs_sqlite_and_xerj_service_with_its_engine() {
+    fn codex_installs_default_services_without_xerj() {
         let bundles = AppBundles::parse(include_bytes!("../../../appbundle.json")).unwrap();
         assert_eq!(
             bundles.members("codex.bp").unwrap(),
-            ["sqlite.bp", "xerj.bp", "xerj-service.bp", "codex.bp"]
+            ["sqlite.bp", "lily2vec.bp", "ttstt.bp", "codex.bp"]
         );
         assert_eq!(
             bundles.members("CODEX.bp").unwrap(),
-            ["sqlite.bp", "xerj.bp", "xerj-service.bp", "CODEX.bp"]
+            ["sqlite.bp", "lily2vec.bp", "ttstt.bp", "CODEX.bp"]
         );
         assert_eq!(bundles.members("sqlite.bp").unwrap(), ["sqlite.bp"]);
         assert_eq!(bundles.members("xerj.bp").unwrap(), ["xerj.bp"]);

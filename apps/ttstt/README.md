@@ -10,9 +10,11 @@ or install models into TRUEOSFS. The large Misaki dictionary and the other
 53 voices are excluded; English lexicalization/pronunciation uses the existing
 G2P frontend. The unchanged neural model weights remain necessary.
 
-From Codex, enable read-aloud with `codex -c tui.trueos_tts=true`. Completed
-public final answers launch the on-demand Blueprint. History, reasoning, tool
-output and realtime delegated voice replies are excluded. Pending speech can
+The standard TRUEOS Codex build enables read-aloud and starts this Blueprint
+at TUI startup, reusing a healthy existing service. No launch arguments are
+needed. The normal `cargo bp codex-cli` build includes SQLite, Lily and this
+TTS Blueprint. Completed public final answers enter the speech service.
+History, reasoning, tool output and realtime delegated voice replies are excluded. Pending speech can
 be replaced or cleared; already playing speech finishes normally.
 
 The local service listens at `127.0.0.1:9772`. `GET /health` advertises
@@ -50,7 +52,7 @@ After preparing `models/kokoro/`, build from the Blueprint repository:
 
 ```sh
 cargo test --manifest-path apps/ttstt/Cargo.toml -p ttstt -p trueos-kokoro-voice
-TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp ttstt
+cargo bp ttstt
 ```
 
 The embedded payload is 131,294,877 bytes before executable code and package
@@ -58,3 +60,28 @@ compression: 124,081,360 model bytes, 6,691,149 English G2P bytes and 522,368
 Heart voice bytes. The full upstream voice archive is a build input only.
 The archived kernel controller/capture/HWP files in `legacy/` are uncompiled
 migration references.
+
+## Runtime diagnostics
+
+The Matrix slot shows a short ready notice, then two lines per speech job:
+
+```text
+ttstt: job=1 submitted bytes=29
+ttstt: job=1 done compute_ms=6370
+```
+
+`compute_ms` measures elapsed calculation work inside inference slices,
+excluding audio sink backpressure, playback drain and yielding between slices.
+Failures remain visible. Text contents are not logged.
+
+Detailed startup and timing counters stay in the structured global log
+(`blueprint/ttstt`). Sparse global summaries use
+the Important level so the rig's Apps=Warn filter retains them. Warmup reports
+the selected quantized SIMD lane and elapsed time. Synthesis reports time to
+first PCM handoff to the sink, work inside inference slices excluding the audio
+sink, sink time, audio duration, frame/slice counts and status; HTTP playback
+also reports drain and total request time.
+
+The kernel admits this model-bearing service with its speech-inference memory
+profile: 2 GiB for retained packed/unpacked/relocated images, model indexes,
+and inference arenas. The generic playback-only budget is insufficient.

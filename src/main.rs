@@ -11,6 +11,7 @@ mod app_catalog;
 mod artifact;
 mod build_cache;
 mod build_plan;
+mod bundle_build;
 mod cache_inputs;
 mod cargo_output;
 mod cli;
@@ -345,15 +346,24 @@ fn run() -> Result<(), String> {
             }
 
             if let Some(package_app) = package_app_spec(&app_dir, &example_name, package_catalog)? {
-                let bp_file = build_one_target_to(
-                    &package_app.dir,
-                    &package_app.manifest_path,
-                    BuildTarget::Package,
-                    &[],
-                    &app_dir.join("dist"),
-                    cargo_profile,
-                )?;
-                publish_blueprint_file(&bp_file, package_catalog)?;
+                let packages = bundle_build::resolve(&app_dir, package_app, package_catalog)?;
+                let mut built_blueprints = Vec::with_capacity(packages.len());
+                for package_app in packages {
+                    println!("trueos-blueprint: package app: {}", package_app.name);
+                    built_blueprints.push(build_one_target_to(
+                        &package_app.dir,
+                        &package_app.manifest_path,
+                        BuildTarget::Package,
+                        &[],
+                        &app_dir.join("dist"),
+                        cargo_profile,
+                    )?);
+                }
+                // A named bundle adds its members to the published catalog. The bulk
+                // publisher clears that catalog and belongs only to full builds.
+                for bp_file in built_blueprints {
+                    publish_blueprint_file(&bp_file, package_catalog)?;
+                }
                 continue;
             }
 

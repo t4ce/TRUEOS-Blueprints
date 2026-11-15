@@ -82,8 +82,9 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 fn main() {
+    ttstt::log_info!(target: "ttstt"; "ttstt: startup phase=entry bundle_bytes={} language=en voice=af_heart", ttstt::bundle::TOTAL_BYTES);
     if let Err(e) = run() {
-        eprintln!("ttstt: {e}");
+        ttstt::log_warn!(target: "ttstt"; "ttstt: startup-or-request failed error={e}");
         std::process::exit(1);
     }
 }

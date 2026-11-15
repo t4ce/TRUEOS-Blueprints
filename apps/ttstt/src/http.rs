@@ -74,15 +74,17 @@ fn respond(stream: &mut TcpStream, status: &str, value: serde_json::Value) -> io
 pub fn serve() -> Result<(), String> {
     // Bind before model allocation. A second launch cannot load another model
     // set or disturb the running service, even during its warmup.
-    let listener =
-        TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 9772)).map_err(|e| e.to_string())?;
+    crate::log_info!(target: "ttstt"; "ttstt: startup phase=bind endpoint=127.0.0.1:9772");
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 9772))
+        .map_err(|e| format!("bind 127.0.0.1:9772: {e}"))?;
     let mut engine = Engine::load()?;
-    eprintln!("ttstt: ready protocol=ttstt-v1 tts=true stt=false listen=127.0.0.1:9772");
+    crate::log_info!(target: "ttstt"; "ttstt: ready protocol=ttstt-v1 tts=true stt=false listen=127.0.0.1:9772");
+    crate::diagnostics::record(false, format_args!("ttstt: ready (English, Heart)"));
     for accepted in listener.incoming() {
         let mut stream = match accepted {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("ttstt: accept: {e}");
+                crate::log_warn!(target: "ttstt"; "ttstt: accept: {e}");
                 continue;
             }
         };
@@ -105,21 +107,37 @@ pub fn serve() -> Result<(), String> {
                 serde_json::json!({"protocol":"ttstt-v1", "ready":true, "tts":true, "stt":false, "language":"en", "voice":"af_heart", "bundled":true}),
             ),
             Ok(r) if r.method == "POST" && r.path == "/speech" => {
+                let started = std::time::Instant::now();
                 let result = serde_json::from_slice::<TtsRequest>(&r.body)
                     .map_err(|e| e.to_string())
                     .and_then(|request| {
                         request.validate()?;
                         let playback = Playback::open()?;
                         engine.synthesize(request, playback.sink())?;
-                        playback.drain()
+                        let drain_started = std::time::Instant::now();
+                        let drained = playback.drain();
+                        crate::log_info!(target: "ttstt"; "ttstt: playback drain_us={} status={}", drain_started.elapsed().as_micros(), if drained.is_ok() { "ok" } else { "failed" });
+                        drained
                     });
+                crate::diagnostics::detail(
+                    result.is_err(),
+                    format_args!(
+                        "ttstt: request total_us={} status={} error={}",
+                        started.elapsed().as_micros(),
+                        if result.is_ok() { "ok" } else { "failed" },
+                        result.as_ref().err().map_or("none", String::as_str)
+                    ),
+                );
                 match result {
                     Ok(()) => respond(&mut stream, "200 OK", serde_json::json!({"ok":true})),
-                    Err(e) => respond(
-                        &mut stream,
-                        "422 Unprocessable Content",
-                        serde_json::json!({"error":e}),
-                    ),
+                    Err(e) => {
+                        crate::log_warn!(target: "ttstt"; "ttstt: speech failed: {e}");
+                        respond(
+                            &mut stream,
+                            "422 Unprocessable Content",
+                            serde_json::json!({"error":e}),
+                        )
+                    }
                 }
             }
             Ok(_) => respond(
@@ -129,7 +147,7 @@ pub fn serve() -> Result<(), String> {
             ),
         };
         if let Err(e) = result {
-            eprintln!("ttstt: response: {e}");
+            crate::log_warn!(target: "ttstt"; "ttstt: response: {e}");
         }
     }
     Ok(())

@@ -120,6 +120,10 @@ struct OutputState {
     sink: AudioSink,
     finished: bool,
     error: Option<&'static str>,
+    started: Instant,
+    first_pcm_us: Option<u128>,
+    frames: u64,
+    sink_us: u128,
 }
 #[derive(Clone)]
 pub struct TtsOutput(Arc<Mutex<OutputState>>);
@@ -129,6 +133,10 @@ impl TtsOutput {
             sink,
             finished: false,
             error: None,
+            started: Instant::now(),
+            first_pcm_us: None,
+            frames: 0,
+            sink_us: 0,
         })))
     }
     pub fn cancelled(&self) -> bool {
@@ -150,11 +158,17 @@ impl TtsOutput {
         }
         // The single owner applies backpressure synchronously. No audio queue
         // can grow while the playback endpoint is full.
-        if let Err(reason) = (state.sink)(&chunk.samples_i16_stereo_48k) {
+        let first_pcm_us = state.started.elapsed().as_micros();
+        let sink_started = Instant::now();
+        let result = (state.sink)(&chunk.samples_i16_stereo_48k);
+        state.sink_us += sink_started.elapsed().as_micros();
+        if let Err(reason) = result {
             state.error = Some(reason);
             state.finished = true;
             return Err(TtsOutputError::Closed(chunk));
         }
+        state.first_pcm_us.get_or_insert(first_pcm_us);
+        state.frames += (count / TTS_PCM_CHANNELS) as u64;
         Ok(())
     }
     pub fn finish_success(&self) -> bool {
@@ -204,9 +218,14 @@ pub fn install_speech_backend(backend: &'static dyn SpeechBackend) -> bool {
 static INITIALIZED: OnceLock<Result<&'static ModelSet, String>> = OnceLock::new();
 pub struct Engine {
     models: &'static ModelSet,
+    next_job: u64,
 }
 impl Engine {
     pub fn load() -> Result<Self, String> {
+        let started = Instant::now();
+        let cached = INITIALIZED.get().is_some();
+        crate::log_info!(target: "ttstt"; "ttstt: warmup phase=begin cached={} quant_lane={}", cached as u8,
+            trueos_kokoro_dispatch::CpuDispatchPlan::detect().quantized_lane());
         let models = INITIALIZED
             .get_or_init(|| {
                 let models = ModelSet::bundled();
@@ -214,7 +233,7 @@ impl Engine {
                 crate::ttstt_kokoro::install();
                 let backend = *BACKEND.get().ok_or("speech-backend-missing")?;
                 let mut warm = backend.create_warm_job()?;
-                run_job(warm.as_mut(), models)?;
+                run_job(warm.as_mut(), models, &mut JobTiming::default())?;
                 if !backend.tts_ready() {
                     return Err(backend
                         .warm_failure_reason()
@@ -223,39 +242,109 @@ impl Engine {
                 }
                 Ok(models as &'static ModelSet)
             })
-            .as_ref()
-            .map_err(Clone::clone)?;
-        Ok(Self { models })
+            .as_ref();
+        crate::diagnostics::detail(
+            models.is_err(),
+            format_args!(
+                "ttstt: warmup elapsed_us={} cached={} status={}",
+                started.elapsed().as_micros(),
+                cached as u8,
+                if models.is_ok() { "ok" } else { "failed" }
+            ),
+        );
+        let models = models.map_err(Clone::clone)?;
+        Ok(Self {
+            models,
+            next_job: 1,
+        })
     }
     pub fn synthesize(&mut self, request: TtsRequest, sink: AudioSink) -> Result<(), String> {
         request.validate()?;
+        let job_id = self.next_job;
+        self.next_job += 1;
+        let text_bytes = request.text.len();
+        crate::diagnostics::record(
+            false,
+            format_args!("ttstt: job={job_id} submitted bytes={text_bytes}"),
+        );
         let output = TtsOutput::new(sink);
-        let mut job = BACKEND
-            .get()
-            .ok_or("speech-backend-missing")?
-            .create_tts_job(BackendTtsRequest {
-                request,
-                output: output.clone(),
-            })?;
-        let result = run_job(job.as_mut(), self.models);
+        let mut timing = JobTiming::default();
+        // All admission, inference and output errors share the completion path,
+        // so every submitted job gets one short done or failed notice.
+        let result: Result<(), String> = (|| {
+            let mut job = BACKEND
+                .get()
+                .ok_or("speech-backend-missing")?
+                .create_tts_job(BackendTtsRequest {
+                    request,
+                    output: output.clone(),
+                })?;
+            let result = run_job(job.as_mut(), self.models, &mut timing);
+            let state = output.0.lock().unwrap();
+            if let Some(reason) = state.error {
+                return Err(reason.into());
+            }
+            result?;
+            if !state.finished {
+                return Err("speech ended without completion".into());
+            }
+            Ok(())
+        })();
         let state = output.0.lock().unwrap();
-        if let Some(reason) = state.error {
-            return Err(reason.into());
+        let compute_us = timing.slice_us.saturating_sub(state.sink_us);
+        let compute_ms = compute_us / 1000;
+        match &result {
+            Ok(()) => crate::diagnostics::record(
+                false,
+                format_args!("ttstt: job={job_id} done compute_ms={compute_ms}"),
+            ),
+            Err(error) => crate::diagnostics::record(
+                true,
+                format_args!("ttstt: job={job_id} failed compute_ms={compute_ms} error={error}"),
+            ),
         }
-        result?;
-        if !state.finished {
-            return Err("speech ended without completion".into());
-        }
-        Ok(())
+        crate::diagnostics::detail(
+            result.is_err(),
+            format_args!(
+                "ttstt: synthesis job={} text_bytes={} total_us={} first_pcm_us={} synth_work_us={} sink_us={} audio_ms={} frames={} slices={} status={}",
+                job_id,
+                text_bytes,
+                state.started.elapsed().as_micros(),
+                state
+                    .first_pcm_us
+                    .map_or_else(|| "none".into(), |v| v.to_string()),
+                compute_us,
+                state.sink_us,
+                state.frames * 1000 / 48_000,
+                state.frames,
+                timing.slices,
+                if result.is_ok() { "ok" } else { "failed" }
+            ),
+        );
+        result
     }
 }
-fn run_job(job: &mut dyn InferenceJob, models: &'static ModelSet) -> Result<(), String> {
+#[derive(Default)]
+struct JobTiming {
+    slices: u64,
+    slice_us: u128,
+}
+
+fn run_job(
+    job: &mut dyn InferenceJob,
+    models: &'static ModelSet,
+    timing: &mut JobTiming,
+) -> Result<(), String> {
     let deadline = Instant::now() + SYNTHESIS_TIMEOUT;
     loop {
         if Instant::now() >= deadline {
             return Err("speech-inference-timeout".into());
         }
-        match job.run_slice(models, WorkerContext) {
+        let started = Instant::now();
+        let progress = job.run_slice(models, WorkerContext);
+        timing.slices += 1;
+        timing.slice_us += started.elapsed().as_micros();
+        match progress {
             JobProgress::Pending => std::thread::yield_now(),
             JobProgress::Complete => return Ok(()),
             JobProgress::Failed(reason) => return Err(reason.into()),

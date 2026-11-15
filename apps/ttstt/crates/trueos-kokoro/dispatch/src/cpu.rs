@@ -323,6 +323,11 @@ pub struct CpuDispatchPlan {
 }
 
 impl CpuDispatchPlan {
+    /// Quantized kernel lane selected for the current CPU and OS SIMD state.
+    pub fn quantized_lane(self) -> &'static str {
+        self.quant.best_lane().as_str()
+    }
+
     /// Detect the best sealed kernel lanes once for the current CPU.
     pub fn detect() -> Self {
         Self {
