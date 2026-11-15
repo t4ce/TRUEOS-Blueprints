@@ -27,8 +27,14 @@ and `stt: false`. `POST /speech` accepts:
 
 Speed defaults to 1.0 and must be 0.5–2.0. Text is bounded to 16 KiB.
 The optional legacy `voice` field accepts only `af_heart`; other voices are
-rejected explicitly. Requests run serially with bounded PCM handoffs and
-playback backpressure through the existing Blueprint audio ABI.
+rejected explicitly. Requests run serially, collecting each complete utterance before one kernel
+HTTP-sink handoff.
+Synthesis finishes before playback starts. Listen at `http://TRUEOS-IP:82/`;
+`POST /speech` returns after the clip is copied, without waiting for playback.
+The clip limit is 120 seconds (23,040,000 bytes of stereo s16le/48 kHz PCM);
+longer utterances fail without publishing a partial clip. The first active clip
+plays to completion. Concurrent handoffs succeed but are discarded, with no
+mixing or waiting queue. No microphone or audio-upload HTTP route is exposed.
 
 For host testing, the same embedded backend can write a WAV:
 
@@ -71,20 +77,19 @@ ttstt: job=1 done compute_ms=6370
 ```
 
 `compute_ms` measures elapsed calculation work inside inference slices,
-excluding audio sink backpressure, playback drain and yielding between slices.
+excluding PCM collection, clip handoff and yielding between slices.
 Failures remain visible. Text contents are not logged.
 
 Detailed startup and timing counters stay in the structured global log
 (`blueprint/ttstt`). Sparse global summaries use
 the Important level so the rig's Apps=Warn filter retains them. Warmup reports
 the selected quantized SIMD lane and elapsed time. Synthesis reports time to
-first PCM handoff to the sink, work inside inference slices excluding the audio
-sink, sink time, audio duration, frame/slice counts and status; HTTP playback
-also reports drain and total request time.
+first PCM emission to the collector, work inside inference slices excluding the audio
+collector, collection time, audio duration, frame/slice counts and status; HTTP
+playback also reports completed-clip handoff and total request time.
 
-The kernel admits this model-bearing service with its speech-inference memory
-profile: 2 GiB for retained packed/unpacked/relocated images, model indexes,
-and inference arenas. The generic playback-only budget is insufficient.
+The kernel uses its ordinary Blueprint memory admission policy; TTSTT has no
+name-specific speech or audio memory exception.
 
 ## CPU performance
 

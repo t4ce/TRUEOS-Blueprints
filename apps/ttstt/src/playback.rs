@@ -1,83 +1,93 @@
-//! PCM output through the existing owner-scoped Blueprint audio ABI.
+//! Collect a finished utterance, then hand it to the kernel's HTTP playback sink.
 use crate::ttstt_service::AudioSink;
+use std::sync::{Arc, Mutex};
 
-#[cfg(any(target_os = "trueos", test))]
-fn write_pcm_with(
-    samples: &[i16],
-    mut write: impl FnMut(&[i16]) -> Result<usize, i32>,
-) -> Result<(), &'static str> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut offset = 0;
-    while offset < samples.len() {
-        // A full native PCM lane reports EBUSY (-16), including when a guest
-        // could not commit even its first sub-transfer. Retry the same samples.
-        let frames = match write(&samples[offset..]) {
-            Ok(frames) => frames,
-            Err(-16) => 0,
-            Err(_) => return Err("audio-write-failed"),
-        };
-        let consumed = frames.checked_mul(2).ok_or("invalid-audio-write-count")?;
-        if consumed > samples.len() - offset {
-            return Err("invalid-audio-write-count");
+// Must match the versioned kernel handoff contract: stereo s16le/48 kHz, 120 s.
+const MAX_CLIP_BYTES: usize = 48_000 * 4 * 120;
+
+#[cfg(target_os = "trueos")]
+unsafe extern "C" {
+    fn trueos_cabi_http_audio_clip_submit_v1(pcm_ptr: *const u8, pcm_bytes: usize) -> i32;
+}
+
+#[derive(Default)]
+struct ClipBuffer {
+    bytes: Vec<u8>,
+    handed_off: bool,
+}
+impl ClipBuffer {
+    fn append(&mut self, samples: &[i16]) -> Result<(), &'static str> {
+        if self.handed_off {
+            return Err("clip-already-handed-off");
         }
-        offset += consumed;
-        if consumed == 0 {
-            if std::time::Instant::now() >= deadline {
-                return Err("audio-write-timeout");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+        if samples.is_empty() || samples.len() % 2 != 0 {
+            return Err("invalid-pcm-chunk");
         }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "trueos")]
-pub struct Playback(trueos::audio::Stream);
-#[cfg(target_os = "trueos")]
-impl Playback {
-    pub fn open() -> Result<Self, String> {
-        let stream =
-            trueos::audio::Stream::open_playback(trueos::audio::PlaybackParams::s16le_stereo_48k())
-                .map_err(|e| format!("audio open: {e}"))?;
-        let playback = Self(stream);
-        playback
-            .0
-            .start()
-            .map_err(|e| format!("audio start: {e}"))?;
-        Ok(playback)
-    }
-    pub fn sink(&self) -> AudioSink {
-        let stream = self.0;
-        Box::new(move |samples| {
-            write_pcm_with(samples, |remaining| stream.write_interleaved_i16(remaining))
-        })
-    }
-    pub fn drain(&self) -> Result<(), String> {
-        self.0
-            .drain(30_000)
-            .map_err(|e| format!("audio drain: {e}"))
-    }
-}
-#[cfg(target_os = "trueos")]
-impl Drop for Playback {
-    fn drop(&mut self) {
-        let _ = self.0.drop_stream();
-        let _ = self.0.close();
-    }
-}
-
-#[cfg(not(target_os = "trueos"))]
-pub struct Playback;
-#[cfg(not(target_os = "trueos"))]
-impl Playback {
-    pub fn open() -> Result<Self, String> {
-        Err("live playback requires TRUEOS; use --wav on the host".into())
-    }
-    pub fn sink(&self) -> AudioSink {
-        Box::new(|_| Err("live-playback-unavailable"))
-    }
-    pub fn drain(&self) -> Result<(), String> {
+        let bytes = samples
+            .len()
+            .checked_mul(2)
+            .ok_or("clip-too-long-maximum-120-seconds")?;
+        let total = self
+            .bytes
+            .len()
+            .checked_add(bytes)
+            .ok_or("clip-too-long-maximum-120-seconds")?;
+        if total > MAX_CLIP_BYTES {
+            return Err("clip-too-long-maximum-120-seconds");
+        }
+        self.bytes
+            .try_reserve(bytes)
+            .map_err(|_| "clip-allocation-failed")?;
+        for sample in samples {
+            self.bytes.extend_from_slice(&sample.to_le_bytes());
+        }
         Ok(())
+    }
+}
+
+pub struct Playback(Arc<Mutex<ClipBuffer>>);
+impl Playback {
+    pub fn open() -> Result<Self, String> {
+        #[cfg(not(any(target_os = "trueos", test)))]
+        return Err("HTTP playback requires TRUEOS; use --wav on the host".into());
+        #[cfg(any(target_os = "trueos", test))]
+        Ok(Self(Arc::new(Mutex::new(ClipBuffer::default()))))
+    }
+
+    /// Inference produces chunks at any speed. Nothing reaches playback here.
+    pub fn sink(&self) -> AudioSink {
+        let output = self.0.clone();
+        Box::new(move |samples| output.lock().unwrap().append(samples))
+    }
+
+    fn handoff_with(&self, submit: impl FnOnce(&[u8]) -> i32) -> Result<(), String> {
+        let bytes = {
+            let mut clip = self.0.lock().unwrap();
+            if clip.handed_off {
+                return Err("clip-already-handed-off".into());
+            }
+            if clip.bytes.is_empty() {
+                return Err("empty-speech-clip".into());
+            }
+            clip.handed_off = true;
+            std::mem::take(&mut clip.bytes)
+        };
+        // Kernel copies before returning. A busy sink is a successful discard;
+        // no retry could append this utterance behind a competing source.
+        match submit(&bytes) {
+            0 => Ok(()),
+            code => Err(format!("HTTP playback clip handoff failed: {code}")),
+        }
+    }
+
+    /// Call only after synthesis succeeded. Returns after handoff, not playback.
+    pub fn handoff(&self) -> Result<(), String> {
+        #[cfg(target_os = "trueos")]
+        return self.handoff_with(|bytes| unsafe {
+            trueos_cabi_http_audio_clip_submit_v1(bytes.as_ptr(), bytes.len())
+        });
+        #[cfg(not(target_os = "trueos"))]
+        Err("HTTP playback requires TRUEOS; use --wav on the host".into())
     }
 }
 
@@ -103,32 +113,58 @@ pub fn wav_header(frames: u32) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn busy_and_partial_writes_preserve_all_stereo_samples() {
-        let samples = [1, 2, 3, 4, 5, 6];
-        let mut calls = 0;
-        let mut written = Vec::new();
-        write_pcm_with(&samples, |remaining| {
-            calls += 1;
-            if calls == 1 {
-                return Err(-16);
-            }
-            written.extend_from_slice(&remaining[..2]);
-            Ok(1)
-        })
-        .unwrap();
-        assert_eq!(written, samples);
-        assert_eq!(calls, 4);
+    fn inference_chunks_are_one_ordered_complete_handoff() {
+        let playback = Playback::open().unwrap();
+        let mut sink = playback.sink();
+        sink(&[1, -2]).unwrap();
+        sink(&[3, -4]).unwrap();
+        playback
+            .handoff_with(|bytes| {
+                assert_eq!(bytes, &[1, 0, 254, 255, 3, 0, 252, 255]);
+                0
+            })
+            .unwrap();
+        assert!(playback.0.lock().unwrap().bytes.is_empty());
+        assert_eq!(sink(&[5, 6]), Err("clip-already-handed-off"));
+        assert!(
+            playback
+                .handoff_with(|_| panic!("must not submit twice"))
+                .is_err()
+        );
     }
+
     #[test]
-    fn invalid_frame_count_and_device_failure_are_terminal() {
+    fn failed_synthesis_can_drop_the_collected_prefix_without_playing() {
+        let playback = Playback::open().unwrap();
+        let mut sink = playback.sink();
+        sink(&[1, 2]).unwrap();
+        // The caller's synthesis error returns before handoff. Neither dropping
+        // the collector nor its callback submits a partial utterance.
+        assert!(!playback.0.lock().unwrap().handed_off);
+        drop(sink);
+        drop(playback);
+    }
+
+    #[test]
+    fn malformed_and_oversize_input_does_not_extend_the_clip() {
+        let mut clip = ClipBuffer::default();
+        assert_eq!(clip.append(&[1]), Err("invalid-pcm-chunk"));
+        clip.bytes.resize(MAX_CLIP_BYTES, 0);
         assert_eq!(
-            write_pcm_with(&[1, 2], |_| Ok(2)),
-            Err("invalid-audio-write-count")
+            clip.append(&[1, 2]),
+            Err("clip-too-long-maximum-120-seconds")
         );
-        assert_eq!(
-            write_pcm_with(&[1, 2], |_| Err(-19)),
-            Err("audio-write-failed")
-        );
+        assert_eq!(clip.bytes.len(), MAX_CLIP_BYTES);
+    }
+
+    #[test]
+    fn handoff_errors_are_reported_without_retrying_or_partial_publication() {
+        let playback = Playback::open().unwrap();
+        assert!(playback.handoff_with(|_| panic!("empty clip")).is_err());
+        playback.sink()(&[1, 2]).unwrap();
+        assert!(playback.handoff_with(|_| -12).unwrap_err().contains("-12"));
+        assert!(playback.handoff_with(|_| panic!("retry")).is_err());
     }
 }

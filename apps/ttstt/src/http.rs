@@ -1,5 +1,5 @@
 //! Deliberately small loopback protocol: GET /health, POST /speech.
-//! One synchronous owner serializes inference and playback with backpressure.
+//! One synchronous owner finishes inference before handing a clip to HTTP playback.
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -114,10 +114,10 @@ pub fn serve() -> Result<(), String> {
                         request.validate()?;
                         let playback = Playback::open()?;
                         engine.synthesize(request, playback.sink())?;
-                        let drain_started = std::time::Instant::now();
-                        let drained = playback.drain();
-                        crate::log_info!(target: "ttstt"; "ttstt: playback drain_us={} status={}", drain_started.elapsed().as_micros(), if drained.is_ok() { "ok" } else { "failed" });
-                        drained
+                        let handoff_started = std::time::Instant::now();
+                        let handed_off = playback.handoff();
+                        crate::log_info!(target: "ttstt"; "ttstt: playback handoff_us={} status={}", handoff_started.elapsed().as_micros(), if handed_off.is_ok() { "ok" } else { "failed" });
+                        handed_off
                     });
                 crate::diagnostics::detail(
                     result.is_err(),

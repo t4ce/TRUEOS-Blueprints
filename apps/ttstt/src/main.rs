@@ -77,7 +77,7 @@ fn run() -> Result<(), String> {
     } else {
         let playback = ttstt::playback::Playback::open()?;
         engine.synthesize(request, playback.sink())?;
-        playback.drain()?;
+        playback.handoff()?;
     }
     Ok(())
 }

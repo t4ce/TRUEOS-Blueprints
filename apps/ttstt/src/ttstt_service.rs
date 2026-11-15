@@ -156,8 +156,8 @@ impl TtsOutput {
                 reason: "invalid-pcm-chunk",
             });
         }
-        // The single owner applies backpressure synchronously. No audio queue
-        // can grow while the playback endpoint is full.
+        // The caller owns output collection (bounded completed clip or WAV file).
+        // Playback is handed off only after the complete synthesis succeeds.
         let first_pcm_us = state.started.elapsed().as_micros();
         let sink_started = Instant::now();
         let result = (state.sink)(&chunk.samples_i16_stereo_48k);
