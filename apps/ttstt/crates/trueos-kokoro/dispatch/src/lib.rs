@@ -12,6 +12,8 @@ extern crate alloc;
 compile_error!("async-convolution is an Ubuntu experiment; native placement is not implemented");
 #[cfg(feature = "async-convolution")]
 pub mod async_conv;
+#[cfg(feature = "async-graph")]
+pub mod async_graph;
 #[cfg(feature = "occupancy-trace")]
 pub mod occupancy;
 pub mod attributes;
@@ -32,7 +34,7 @@ pub use cpu::{
     native_dispatch_supported,
 };
 
-#[cfg(any(test, feature = "async-convolution"))]
+#[cfg(any(test, feature = "async-convolution", feature = "async-graph"))]
 extern crate std;
 
 #[cfg(test)]

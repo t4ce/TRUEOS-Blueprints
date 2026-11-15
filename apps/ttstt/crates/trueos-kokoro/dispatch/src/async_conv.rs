@@ -39,6 +39,12 @@ pub struct Counters {
     pub max_tile_us: AtomicU64,
     pub wait_us: AtomicU64,
     pub snapshot_bytes: AtomicU64,
+    pub shared_prepare_us: AtomicU64,
+}
+
+pub(crate) struct SharedActivation {
+    cache: Vec<u8>,
+    sums: Vec<i32>,
 }
 
 pub(crate) struct Weights {
@@ -78,8 +84,10 @@ impl Geometry {
     }
 }
 pub(crate) struct Operation {
+    #[cfg_attr(not(feature = "occupancy-trace"), allow(dead_code))]
     pub op_index: u32,
     pub input: Arc<[f32]>,
+    pub shared: Option<Arc<SharedActivation>>,
     pub weights: Arc<Weights>,
     pub geometry: Geometry,
     pub prepared: PreparedQConv1d,
@@ -111,12 +119,19 @@ pub struct Pool {
     stop: Sender<()>,
     threads: Mutex<Vec<JoinHandle<()>>>,
     workers: usize,
+    shared_preparation: bool,
     weights: Mutex<BTreeMap<([u8; 32], u32), Arc<Weights>>>,
     pub counters: Arc<Counters>,
 }
 impl Pool {
     /// Fixed Linux CPU IDs; one smol executor thread per requested compute CPU.
     pub fn new(cpus: &[usize]) -> Result<Arc<Self>, Failure> {
+        Self::with_preparation(cpus, false)
+    }
+    pub fn new_shared(cpus: &[usize]) -> Result<Arc<Self>, Failure> {
+        Self::with_preparation(cpus, true)
+    }
+    fn with_preparation(cpus: &[usize], shared_preparation: bool) -> Result<Arc<Self>, Failure> {
         if cpus.is_empty() || cpus.len() > 3 {
             return Err("expected-one-to-three-compute-cpus");
         }
@@ -181,9 +196,47 @@ impl Pool {
             stop,
             threads: Mutex::new(threads),
             workers: cpus.len(),
+            shared_preparation,
             weights: Mutex::new(BTreeMap::new()),
             counters,
         }))
+    }
+    pub(crate) fn activation_snapshot(
+        &self,
+        input: &[f32],
+        params: QConv1dParams<'_>,
+        prepared: PreparedQConv1d,
+    ) -> Result<(Arc<[f32]>, Option<Arc<SharedActivation>>), trueos_ttstt_cpu::Error> {
+        if !self.shared_preparation {
+            self.counters
+                .snapshot_bytes
+                .fetch_add((input.len() * 4) as u64, Ordering::Relaxed);
+            return Ok((Arc::from(input), None));
+        }
+        let started = Instant::now();
+        let needs = params.shared_cache_requirements()?;
+        let mut cache = vec![0; needs.cache_bytes];
+        let mut sums = vec![0; needs.patch_sums];
+        let dispatcher = DISPATCH.with(|dispatcher| *dispatcher);
+        dispatcher.prepare_qconv1d_shared_cache_with_lane(
+            input,
+            &mut cache,
+            &mut vec![0; needs.column_sums],
+            &mut sums,
+            params,
+            prepared,
+            dispatcher.best_lane(),
+        )?;
+        self.counters
+            .snapshot_bytes
+            .fetch_add((cache.len() + sums.len() * 4) as u64, Ordering::Relaxed);
+        self.counters
+            .shared_prepare_us
+            .fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        Ok((
+            Arc::from([]),
+            Some(Arc::new(SharedActivation { cache, sums })),
+        ))
     }
     pub(crate) fn cached_weights(
         &self,
@@ -288,7 +341,14 @@ async fn compute_shard(job: &Job, counters: &Counters) -> Result<Shard, Failure>
     #[cfg(feature = "occupancy-trace")]
     let allocation_span = crate::occupancy::start(crate::occupancy::SHARD_ALLOC, op.op_index);
     let mut output = vec![0.0; g.batch * job.count * width];
-    let mut scratch = vec![0; 4 * g.input_channels * g.kernel_width];
+    let mut scratch = vec![
+        0;
+        if op.shared.is_some() {
+            0
+        } else {
+            4 * g.input_channels * g.kernel_width
+        }
+    ];
     const TIME_QUANTUM: usize = 64;
     let mut tile = vec![0.0; g.batch * job.count * TIME_QUANTUM.min(width)];
     #[cfg(feature = "occupancy-trace")]
@@ -304,22 +364,41 @@ async fn compute_shard(job: &Job, counters: &Counters) -> Result<Shard, Failure>
         let lane = dispatcher.best_lane();
         #[cfg(feature = "occupancy-trace")]
         let kernel_span = crate::occupancy::start(crate::occupancy::WORKER_KERNEL, op.op_index);
-        dispatcher
-            .qconv1d_prepared_window_with_lane(
-                &op.input,
-                &op.weights.packed,
-                &mut tile[..g.batch * job.count * times],
-                &mut scratch,
-                g.params(&op.weights),
-                op.prepared,
-                op.bias.as_deref(),
-                job.start,
-                job.count,
-                time,
-                times,
-                lane,
-            )
-            .map_err(|_| "compute-convolution-kernel-failed")?;
+        if let Some(shared) = &op.shared {
+            dispatcher
+                .qconv1d_shared_cache_window_with_lane(
+                    &shared.cache,
+                    &shared.sums,
+                    &op.weights.packed,
+                    &mut tile[..g.batch * job.count * times],
+                    g.params(&op.weights),
+                    op.prepared,
+                    op.bias.as_deref(),
+                    job.start,
+                    job.count,
+                    time,
+                    times,
+                    lane,
+                )
+                .map_err(|_| "compute-shared-convolution-kernel-failed")?;
+        } else {
+            dispatcher
+                .qconv1d_prepared_window_with_lane(
+                    &op.input,
+                    &op.weights.packed,
+                    &mut tile[..g.batch * job.count * times],
+                    &mut scratch,
+                    g.params(&op.weights),
+                    op.prepared,
+                    op.bias.as_deref(),
+                    job.start,
+                    job.count,
+                    time,
+                    times,
+                    lane,
+                )
+                .map_err(|_| "compute-convolution-kernel-failed")?;
+        }
         #[cfg(feature = "occupancy-trace")]
         drop(kernel_span);
         #[cfg(feature = "occupancy-trace")]

@@ -264,6 +264,10 @@ impl Engine {
         })
     }
     pub fn synthesize(&mut self, request: TtsRequest, sink: AudioSink) -> Result<(), String> {
+        #[cfg(feature = "async-graph")]
+        if trueos_kokoro_dispatch::async_graph::installed() {
+            return Err("async-graph requires synthesize_async".into());
+        }
         #[cfg(feature = "async-convolution")]
         if trueos_kokoro_dispatch::async_conv::installed() {
             return Err("async convolution pool requires synthesize_async".into());

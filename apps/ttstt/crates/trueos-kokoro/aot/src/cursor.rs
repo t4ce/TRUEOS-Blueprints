@@ -55,6 +55,15 @@ pub struct WorkSlice {
 }
 
 impl WorkSlice {
+    /// Authenticate one whole atomic operation for an independently owned
+    /// subgraph memory context. Cooperative operations require the normal cursor.
+    pub fn whole_atomic(program: &Program<'_>, op_index: u32) -> Option<Self> {
+        let op = program.op(op_index)?;
+        if op.work_units != 1 { return None; }
+        Some(Self { op_index, op, unit_start: 0, unit_count: 1,
+            artifact_sha256: *program.artifact_sha256() })
+    }
+
     pub const fn op_index(self) -> u32 {
         self.op_index
     }

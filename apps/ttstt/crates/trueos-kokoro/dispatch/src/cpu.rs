@@ -319,6 +319,10 @@ pub struct CpuDispatcher<
     quant: trueos_ttstt_cpu::Dispatcher,
     execution: Option<&'dispatch mut CpuExecutionState<'artifact>>,
     prepared: Option<&'dispatch PreparedWeights<'artifact>>,
+    #[cfg(feature = "async-graph")]
+    branch_results: Option<&'dispatch mut crate::async_graph::Completed>,
+    #[cfg(feature = "async-graph")]
+    graph_coordinator: bool,
     #[cfg(feature = "profile-inference")]
     profile: Option<&'dispatch mut crate::ExecutionProfile>,
 }
@@ -329,6 +333,16 @@ pub struct CpuExecutionState<'artifact> {
     convolution: Option<RetainedConvolution<'artifact>>,
     #[cfg(feature = "async-convolution")]
     asynchronous: crate::async_conv::State,
+}
+
+#[cfg(feature = "async-graph")]
+impl CpuExecutionState<'_> {
+    pub(crate) fn serial_for_graph() -> Self {
+        let mut state = Self::default();
+        #[cfg(feature = "async-convolution")]
+        { state.asynchronous.pool = None; }
+        state
+    }
 }
 
 #[cfg(feature = "async-convolution")]
@@ -417,6 +431,10 @@ impl<
             quant: plan.quant,
             execution: None,
             prepared: None,
+            #[cfg(feature = "async-graph")]
+            branch_results: None,
+            #[cfg(feature = "async-graph")]
+            graph_coordinator: false,
             #[cfg(feature = "profile-inference")]
             profile: None,
         }
@@ -457,9 +475,20 @@ impl<
             quant: plan.quant,
             execution: None,
             prepared: None,
+            #[cfg(feature = "async-graph")]
+            branch_results: None,
+            #[cfg(feature = "async-graph")]
+            graph_coordinator: false,
             #[cfg(feature = "profile-inference")]
             profile: None,
         }
+    }
+
+    #[cfg(feature = "async-graph")]
+    pub fn with_graph_replay(mut self, results: Option<&'dispatch mut crate::async_graph::Completed>) -> Self {
+        self.branch_results = results;
+        self.graph_coordinator = true;
+        self
     }
 
     #[cfg(feature = "profile-inference")]
@@ -478,6 +507,12 @@ impl<
         }
         let bound_program = *self.memory.program();
         let program = &bound_program;
+        #[cfg(feature = "async-graph")]
+        if self.graph_coordinator && self.branch_results.is_none()
+            && crate::async_graph::stage_at(work.op_index()).is_some()
+        {
+            return Ok(DispatchResult::Pending);
+        }
         if self
             .prepared
             .is_some_and(|prepared| !prepared.matches(program))
@@ -501,6 +536,20 @@ impl<
         let output_shapes = infer_output_shapes(self.memory, program, work, attributes)?;
         self.memory
             .declare_op_outputs(work.op_index(), output_shapes.as_slice())?;
+        #[cfg(feature = "async-graph")]
+        if let Some(results) = self.branch_results.as_deref_mut() {
+            if results.handles(work.op_index()) {
+                if let Some(values) = results.take_output(work.op_index()) {
+                    self.memory.with_op(work.op_index(), |access| {
+                        let mut output = access.output::<f32>(0)?;
+                        if output.len() != values.len() { return Err(DispatchError::ShapeConversion); }
+                        output.copy_from_slice(&values);
+                        Ok(())
+                    })??;
+                }
+                return Ok(DispatchResult::Completed);
+            }
+        }
         if let Attributes::View(view) = attributes {
             validate_view_storage(self.memory, program, work, view, output_shapes.values[0])?;
             return Ok(DispatchResult::Completed);
@@ -2831,13 +2880,11 @@ fn execute_quant_conv<const BINDINGS: usize>(
             drop(prepare_span);
             #[cfg(feature = "occupancy-trace")]
             let snapshot_span = crate::occupancy::start(crate::occupancy::SNAPSHOT, operation_key.0);
-            let input_snapshot = alloc::sync::Arc::from(&*input);
+            let (input_snapshot, shared) = pool.activation_snapshot(&input, params, preparation)?;
             #[cfg(feature = "occupancy-trace")]
             drop(snapshot_span);
-            pool.counters.snapshot_bytes.fetch_add((input.len() * 4) as u64,
-                core::sync::atomic::Ordering::Relaxed);
             state.stage(operation_key.0, crate::async_conv::Operation {
-                op_index: operation_key.0, input: input_snapshot, weights: shared_weights,
+                op_index: operation_key.0, input: input_snapshot, shared, weights: shared_weights,
                 geometry: crate::async_conv::Geometry {
                     batch, input_channels, input_width, output_channels, kernel_width,
                     stride: attributes.stride as usize, dilation: attributes.dilation as usize,

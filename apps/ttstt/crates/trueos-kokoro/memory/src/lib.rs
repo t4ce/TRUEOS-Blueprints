@@ -404,6 +404,7 @@ pub struct TensorMemory<
 ///
 /// `SLOTS` is a compile-time memory bound. Construction fails closed when it
 /// cannot hold the program's complete slot table; it never allocates.
+#[derive(Clone)]
 pub struct PhaseOneMemoryPlan<'artifact, const SLOTS: usize> {
     program: Program<'artifact>,
     admission: ResolvedPhase,

@@ -1,5 +1,8 @@
 # Ubuntu async convolution experiment
 
+Follow-up: [measured worker occupancy and pipeline boundaries](CONVOLUTION_OCCUPANCY.md).
+The next implementation comparison is in [shared preparation and whole branches](PARALLEL_FOLLOWUP.md).
+
 This experiment distributes the existing quantized 1D convolutions across
 one, two or three compute workers. It retains all vocoder branches, Heart,
 speed 1.0, the pinned model and the original integer/floating-point arithmetic.

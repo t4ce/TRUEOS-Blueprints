@@ -13,6 +13,7 @@ default = []
 blocked-gemm = []
 profile-inference = []
 async-convolution = ["dep:smol", "dep:core_affinity", "trueos-kokoro-exec/async-execution"]
+async-graph = ["async-convolution"]
 occupancy-trace = ["async-convolution", "dep:cpu-time", "dep:serde"]
 
 [target.'cfg(not(target_os = "trueos"))'.dependencies]

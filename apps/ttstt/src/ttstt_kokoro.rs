@@ -149,8 +149,10 @@ struct WarmAssets {
     voice: Voice<'static>,
     g2p: G2pModel<'static>,
     coverage: DispatchCoverage,
-    #[cfg(feature = "prepared-weights")]
+    #[cfg(all(feature = "prepared-weights", not(feature = "async-graph")))]
     prepared: PreparedWeights<'static>,
+    #[cfg(all(feature = "prepared-weights", feature = "async-graph"))]
+    prepared: std::sync::Arc<PreparedWeights<'static>>,
 }
 
 #[derive(Clone, Copy)]
@@ -439,6 +441,8 @@ impl InferenceJob for KokoroWarmJob {
                 };
                 #[cfg(feature = "prepared-weights")]
                 crate::log_info!(target: "ttstt"; "ttstt: prepared_weights bytes={}", prepared.packed_bytes());
+                #[cfg(all(feature = "prepared-weights", feature = "async-graph"))]
+                let prepared = std::sync::Arc::new(prepared);
                 let assets = WarmAssets {
                     program,
                     voice,
@@ -786,6 +790,8 @@ impl InferenceJob for KokoroTtsJob {
     fn wait_ready(&mut self) -> core::pin::Pin<Box<dyn core::future::Future<Output = Result<(), &'static str>> + '_>> {
         Box::pin(async move {
             if let Some(invocation) = self.invocation.as_mut() {
+                #[cfg(feature = "async-graph")]
+                invocation.graph.wait_ready().await?;
                 invocation.execution_state.wait_ready().await
             } else {
                 smol::future::yield_now().await;
@@ -865,6 +871,13 @@ impl KokoroTtsJob {
                     frontend.token_ids.len(),
                     &self.request.request.voice,
                     self.request.request.speed,
+                    #[cfg(feature = "async-graph")]
+                    {
+                        #[cfg(feature = "prepared-weights")]
+                        { Some(assets.prepared.clone()) }
+                        #[cfg(not(feature = "prepared-weights"))]
+                        { None }
+                    },
                 ) {
                     Ok(invocation) => invocation,
                     Err(reason) => return self.fail(reason),
@@ -882,7 +895,7 @@ impl KokoroTtsJob {
                     return self.fail("kokoro-invocation-state-lost");
                 };
                 #[cfg(feature = "prepared-weights")]
-                let prepared = Some(&assets.prepared);
+                let prepared: Option<&PreparedWeights<'static>> = Some(&assets.prepared);
                 #[cfg(not(feature = "prepared-weights"))]
                 let prepared = None;
                 #[cfg(feature = "profile-inference")]
@@ -1184,6 +1197,10 @@ struct InvocationScaffold {
     workspace: WorkspaceBuffers,
     cpu_dispatch_plan: CpuDispatchPlan,
     execution_state: CpuExecutionState<'static>,
+    #[cfg(feature = "async-graph")]
+    graph: trueos_kokoro_dispatch::async_graph::State,
+    #[cfg(feature = "async-graph")]
+    graph_prepared: Option<std::sync::Arc<PreparedWeights<'static>>>,
     executor: Executor<SLOT_CAPACITY>,
     stage: InvocationStage,
 }
@@ -1196,6 +1213,8 @@ impl InvocationScaffold {
         full_phoneme_count: usize,
         voice_name: &str,
         speed: f32,
+        #[cfg(feature = "async-graph")]
+        graph_prepared: Option<std::sync::Arc<PreparedWeights<'static>>>,
     ) -> Result<Self, &'static str> {
         if token_ids.is_empty() || token_ids.len() > 510 {
             return Err("kokoro-model-chunk-size-invalid");
@@ -1275,6 +1294,10 @@ impl InvocationScaffold {
             workspace,
             cpu_dispatch_plan: CpuDispatchPlan::detect(),
             execution_state: CpuExecutionState::default(),
+            #[cfg(feature = "async-graph")]
+            graph: trueos_kokoro_dispatch::async_graph::State::default(),
+            #[cfg(feature = "async-graph")]
+            graph_prepared,
             executor: Executor::new(),
             stage: InvocationStage::PhaseZero,
         };
@@ -1574,6 +1597,10 @@ impl InvocationScaffold {
             execution_state,
             executor,
             stage,
+            #[cfg(feature = "async-graph")]
+            graph,
+            #[cfg(feature = "async-graph")]
+            graph_prepared,
             ..
         } = self;
         let Some(phase_one_arena) = phase_one_arena.as_mut() else {
@@ -1586,6 +1613,21 @@ impl InvocationScaffold {
             return InvocationProgress::Failed("kokoro-phase1-admission-state-mismatch");
         }
         let program = phase_one_plan.program();
+        #[cfg(feature = "async-graph")]
+        if graph.enabled() {
+            if graph.completed.as_ref().is_some_and(|value| value.finished()) {
+                graph.completed = None;
+            }
+            if let Some(stage) = trueos_kokoro_dispatch::async_graph::stage_at(executor.cursor().op_index()) {
+                if graph.completed.is_none() {
+                    if let Err(reason) = graph.stage(stage, phase_one_plan, shapes.as_ref(),
+                        phase_one_arena.as_bytes(), graph_prepared.clone()) {
+                        return InvocationProgress::Failed(reason);
+                    }
+                    return InvocationProgress::Pending;
+                }
+            }
+        }
         let mut externals = ExternalBindings::<1>::new();
         if externals
             .bind_output(
@@ -1619,6 +1661,10 @@ impl InvocationScaffold {
             &mut cpu_workspace,
             *cpu_dispatch_plan,
         );
+        #[cfg(feature = "async-graph")]
+        let dispatcher = if graph.enabled() {
+            dispatcher.with_graph_replay(graph.completed.as_mut())
+        } else { dispatcher };
         #[cfg(any(feature = "retained-convolution", feature = "async-convolution"))]
         let dispatcher = dispatcher.with_execution_state(execution_state);
         let dispatcher = if let Some(prepared) = prepared {

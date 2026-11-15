@@ -81,6 +81,7 @@ fn fixture(g: Geometry, has_bias: bool) -> (Operation, Vec<f32>) {
         Operation {
             op_index: 0,
             input,
+            shared: None,
             weights,
             geometry: g,
             prepared,
@@ -171,6 +172,69 @@ fn two_and_three_smol_workers_match_complete_serial_kernels() {
         assert_eq!(pool.counters.operations.load(Ordering::Relaxed), 3);
         assert_eq!(pool.counters.tiles.load(Ordering::Relaxed), tiles as u64);
     }
+}
+
+#[test]
+fn shared_preparation_two_and_three_workers_match_serial() {
+    let _guard = RUNTIME_TEST.lock().unwrap_or_else(|p| p.into_inner());
+    for count in [2, 3] {
+        let Some(cpus) = cpus(count) else { continue };
+        let pool = Pool::new_shared(&cpus).unwrap();
+        for g in [
+            geometry(137, 11),
+            Geometry {
+                batch: 2,
+                input_channels: 35,
+                stride: 2,
+                dilation: 3,
+                pad_left: 15,
+                pad_right: 15,
+                ..geometry(131, 7)
+            },
+        ] {
+            let (mut op, expected) = fixture(g, true);
+            let (input, shared) = pool
+                .activation_snapshot(&op.input, g.params(&op.weights), op.prepared)
+                .unwrap();
+            op.input = input;
+            op.shared = shared;
+            assert!(op.input.is_empty());
+            assert_bits(&drive(pool.evaluate(op)).unwrap(), &expected);
+        }
+        assert!(pool.counters.shared_prepare_us.load(Ordering::Relaxed) > 0);
+    }
+}
+
+#[test]
+fn cancelled_shared_operation_releases_cache_and_pool_can_be_reused() {
+    let _guard = RUNTIME_TEST.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(cpus) = cpus(2) else { return };
+    let pool = Pool::new_shared(&cpus).unwrap();
+    let (mut op, _) = fixture(geometry(4097, 64), true);
+    let (input, shared) = pool
+        .activation_snapshot(&op.input, op.geometry.params(&op.weights), op.prepared)
+        .unwrap();
+    op.input = input;
+    op.shared = shared;
+    let cache = Arc::downgrade(op.shared.as_ref().unwrap());
+    drive(async {
+        let mut pending = std::boxed::Box::pin(pool.evaluate(op));
+        assert!(smol::future::poll_once(pending.as_mut()).await.is_none());
+        while pool.counters.tiles.load(Ordering::Relaxed) == 0 {
+            smol::Timer::after(Duration::from_millis(1)).await;
+        }
+        drop(pending);
+        while cache.upgrade().is_some() {
+            smol::Timer::after(Duration::from_millis(1)).await;
+        }
+    });
+    let (mut op, expected) = fixture(geometry(73, 7), false);
+    let (input, shared) = pool
+        .activation_snapshot(&op.input, op.geometry.params(&op.weights), op.prepared)
+        .unwrap();
+    op.input = input;
+    op.shared = shared;
+    assert_bits(&drive(pool.evaluate(op)).unwrap(), &expected);
 }
 
 #[test]

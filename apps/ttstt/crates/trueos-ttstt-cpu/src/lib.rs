@@ -18,6 +18,8 @@
 //! neither required nor used.
 
 mod quant;
+mod shared_conv;
+pub use shared_conv::SharedQConv1dRequirements;
 
 pub use quant::{
     DynamicQuantization, QuantizationError, conv_integer_scale, dequantize_conv_integer_ncw,
@@ -1511,7 +1513,6 @@ fn sum_qconv1d_cached_patch(cache: &[u8], params: QConv1dParams<'_>, tile_positi
     sum
 }
 
-#[cfg(target_arch = "x86_64")]
 fn qconv1d_dot_cached(
     cache: &[u8],
     weights: &[i8],

@@ -109,7 +109,7 @@ impl RuntimeTensorState {
 /// are explicitly bound by the backend. A concrete dispatcher declares an
 /// operation's output shapes after validating all of them, so a rejected
 /// declaration cannot partially mutate the table.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TensorShapeTable<const CAPACITY: usize> {
     states: [RuntimeTensorState; CAPACITY],
     tensor_count: u32,

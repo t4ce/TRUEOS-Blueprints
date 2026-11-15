@@ -99,6 +99,11 @@ opt-in and does not enable native worker placement. The quality audition's
 pruned vocoder variants were rejected after listening; the full three-branch
 Heart graph remains the reference for this experiment.
 
+The [shared preparation and whole-branch follow-up](tools/PARALLEL_FOLLOWUP.md)
+compares a shared quantized activation cache with complete residual branches
+on private arenas. Both use the same host async driver and preserve the full
+model. They remain optional Ubuntu experiments.
+
 The package requests a performance core for the VMX carrier with
 `vm-core-preference = "performance"` in its Blueprint metadata. The kernel
 tries eligible P cores first and falls back to another eligible core when
