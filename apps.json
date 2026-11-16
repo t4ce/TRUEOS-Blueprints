@@ -35,6 +35,7 @@
     "ttstt",
     { "name": "lily2vec", "path": "apps/lily2Vec" },
     "Frog",
+    "lweb",
     "osm",
     "maxpix",
     "Player",

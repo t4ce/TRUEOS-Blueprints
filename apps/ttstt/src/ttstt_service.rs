@@ -542,4 +542,17 @@ mod tests {
             serde_json::from_str(r#"{"text":"Hello","voice":"am_michael"}"#).unwrap();
         assert!(request.validate().is_err());
     }
+    #[test]
+    fn emoji_only_job_finishes_without_pcm_or_mutating_request_text() {
+        let request: TtsRequest =
+            serde_json::from_str(r#"{"text":"😄 ❤️ 👩🏽‍💻 🇩🇪 1️⃣"}"#).unwrap();
+        request.validate().unwrap();
+        assert!(request.is_emoji_only());
+        let original = request.text.clone();
+        let mut engine = Engine::load().unwrap();
+        engine
+            .synthesize(request.clone(), Box::new(|_| panic!("emoji-only speech emitted PCM")))
+            .unwrap();
+        assert_eq!(request.text, original);
+    }
 }

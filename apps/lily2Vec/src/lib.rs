@@ -48,6 +48,9 @@ const EMOJI_CUES: [(&str, &str); 15] = [
     ("scared", "😨😱"),
     ("facepalm", "🤦"),
 ];
+// Authored prose normalization removes this control character. Only this
+// private cue boundary can introduce it into the feature-matching string.
+const CUE_SEPARATOR: char = '\u{1f}';
 
 fn normalize(text: &str) -> String {
     let mut out = String::from(" ");
@@ -73,8 +76,12 @@ fn normalize(text: &str) -> String {
     // Preserve prose adjacency and negation phrases; emoji between words must
     // not splice a cue into an otherwise contiguous authored phrase. Each cue
     // occurs at most once, independent of repetitions, modifiers and selectors.
+    // A reserved boundary prevents the last prose word or the previous cue
+    // from forming a synthetic multiword feature with the next cue.
     for (index, (cue, _)) in EMOJI_CUES.iter().enumerate() {
         if cues & (1_u16 << index) != 0 {
+            out.push(CUE_SEPARATOR);
+            out.push(' ');
             out.push_str(cue);
             out.push(' ');
         }
@@ -301,7 +308,7 @@ mod tests {
             assert_label(&model, text, expected);
         }
         let repeated = "😄".repeat(768);
-        assert_eq!(normalize(&repeated), " happy ");
+        assert_eq!(normalize(&repeated), " \u{1f} happy ");
         assert_eq!(model.encode(&repeated).unwrap(), model.encode("😄").unwrap());
     }
 
@@ -310,15 +317,44 @@ mod tests {
         let model = Model::load(DEFAULT_GUIDE).unwrap();
         let original = String::from("not 😄 angry, just explaining");
         let saved = original.clone();
-        assert_eq!(normalize(&original), " not angry just explaining happy ");
+        assert_eq!(normalize(&original), " not angry just explaining \u{1f} happy ");
         assert_label(&model, &original, "Static");
         assert_eq!(original, saved);
-        assert_eq!(normalize("left😄right"), " left right happy ");
+        assert_eq!(normalize("left😄right"), " left right \u{1f} happy ");
         assert_eq!(normalize("i don't feel well 🦄"), " i dont feel well ");
         assert_label(&model, "i don't feel well 🦄", "Cry");
         assert_label(&model, "unrecognizablexyz 🦄", "Static");
         assert!(model.encode("  ").is_err());
         assert!(model.encode(&"😄".repeat(4097)).is_err());
+    }
+
+    #[test]
+    fn cue_boundaries_do_not_create_prose_or_cross_cue_phrases() {
+        let model = Model::load(DEFAULT_GUIDE).unwrap();
+        let original = "😄 The next item is not";
+        assert_eq!(normalize(original), " the next item is not \u{1f} happy ");
+        assert_label(&model, original, "Happy");
+        // Real prose negation still activates the original authored feature.
+        assert_eq!(normalize("not happy"), " not happy ");
+        assert_label(&model, "not happy", "Cry");
+
+        let phrases = Model::load(r#"{
+            "labels":["Happy","Wink","Angry"],
+            "features":[
+                {"text":"happy","weights":{"Happy":8}},
+                {"text":"wink","weights":{"Wink":12}},
+                {"text":"happy wink","weights":{"Angry":100}}
+            ]
+        }"#).unwrap();
+        for text in ["😄😉", "happy😉", "😄 😉 😄"] {
+            let query = phrases.encode(text).unwrap();
+            assert_eq!(&query[..3], &[1, 1, 0], "{text}");
+            assert_label(&phrases, text, "Wink");
+        }
+        assert_eq!(normalize("😄😉"), " \u{1f} happy \u{1f} wink ");
+        // Adjacent literal prose keeps its previous multiword matching.
+        assert_label(&phrases, "happy wink", "Angry");
+        assert_eq!(normalize("happy\u{1f}wink"), " happy wink ");
     }
 
     #[test]

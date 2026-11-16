@@ -22,7 +22,9 @@ fn emoji_base(character: char) -> bool {
 // tags. ASCII digits, '#' and '*' are removed only when used as keycaps.
 fn component_len(text: &str) -> usize {
     let mut characters = text.char_indices();
-    let Some((_, first)) = characters.next() else { return 0 };
+    let Some((_, first)) = characters.next() else {
+        return 0;
+    };
     let mut end = first.len_utf8();
     if matches!(first, '0'..='9' | '#' | '*') {
         if text[end..].starts_with('\u{fe0f}') {
@@ -38,7 +40,8 @@ fn component_len(text: &str) -> usize {
         return 0;
     }
     for (offset, character) in characters {
-        if matches!(character, '\u{fe0e}' | '\u{fe0f}' | '\u{1f3fb}'..='\u{1f3ff}' | '\u{e0020}'..='\u{e007f}') {
+        if matches!(character, '\u{fe0e}' | '\u{fe0f}' | '\u{1f3fb}'..='\u{1f3ff}' | '\u{e0020}'..='\u{e007f}')
+        {
             end = offset + character.len_utf8();
         } else {
             break;
@@ -74,7 +77,9 @@ pub fn speech_without_emoji(text: &str) -> Result<Cow<'_, str>, FrontendError> {
         if skipped != 0 {
             if result.is_none() {
                 let mut output = String::new();
-                output.try_reserve_exact(text.len()).map_err(|_| FrontendError::Allocation)?;
+                output
+                    .try_reserve_exact(text.len())
+                    .map_err(|_| FrontendError::Allocation)?;
                 output.push_str(&text[..offset]);
                 result = Some(output);
             }

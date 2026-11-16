@@ -323,16 +323,37 @@ fn pinned_fixture() -> Option<Vec<u8>> {
 fn speech_skips_whole_emoji_sequences_and_preserves_other_text() {
     use alloc::borrow::Cow;
     for emoji in [
-        "😄", "❤️", "❤\u{fe0e}", "👍🏽", "👩🏽‍💻", "👨‍👩‍👧‍👦", "🏳️‍🌈",
-        "🇩🇪", "1️⃣", "#️⃣", "*⃣", "🏴\u{e0067}\u{e0062}\u{e007f}",
+        "😄",
+        "❤️",
+        "❤\u{fe0e}",
+        "👍🏽",
+        "👩🏽‍💻",
+        "👨‍👩‍👧‍👦",
+        "🏳️‍🌈",
+        "🇩🇪",
+        "1️⃣",
+        "#️⃣",
+        "*⃣",
+        "🏴\u{e0067}\u{e0062}\u{e007f}",
     ] {
-        assert_eq!(speech_without_emoji(&std::format!("hello{emoji}world")).unwrap(), "hello world", "{emoji}");
-        assert_eq!(speech_without_emoji(&std::format!(" {emoji} \n")).unwrap(), "", "{emoji}");
+        assert_eq!(
+            speech_without_emoji(&std::format!("hello{emoji}world")).unwrap(),
+            "hello world",
+            "{emoji}"
+        );
+        assert_eq!(
+            speech_without_emoji(&std::format!(" {emoji} \n")).unwrap(),
+            "",
+            "{emoji}"
+        );
         assert!(is_emoji_only(&std::format!(" {emoji} \n")), "{emoji}");
         assert!(!is_emoji_only(&std::format!("hello {emoji}")), "{emoji}");
     }
     for text in ["hello 42 # * +", "café", "∑", "x\u{200d}y", "\u{fe0f}", ""] {
-        assert!(matches!(speech_without_emoji(text).unwrap(), Cow::Borrowed(_)), "{text}");
+        assert!(
+            matches!(speech_without_emoji(text).unwrap(), Cow::Borrowed(_)),
+            "{text}"
+        );
         assert_eq!(speech_without_emoji(text).unwrap(), text);
         assert!(!is_emoji_only(text));
     }
@@ -343,10 +364,23 @@ fn speech_skips_whole_emoji_sequences_and_preserves_other_text() {
 
 #[test]
 fn emoji_do_not_reject_a_sentence_or_change_its_phonemes() {
-    let bytes = model_blob(&[("", "")], 1, false, &[], &[], -5.0, &[("hello", "hɛloʊ"), ("world", "wɜːld")]);
+    let bytes = model_blob(
+        &[("", "")],
+        1,
+        false,
+        &[],
+        &[],
+        -5.0,
+        &[("hello", "hɛloʊ"), ("world", "wɜːld")],
+    );
     let model = Model::parse(&bytes).unwrap();
     let plain = prepare_english(&model, "Hello world!").unwrap();
-    for text in ["😄 Hello world!", "Hello world! 😄", "😄 Hello world! 👍🏽", "Hello👩🏽‍💻world!"] {
+    for text in [
+        "😄 Hello world!",
+        "Hello world! 😄",
+        "😄 Hello world! 👍🏽",
+        "Hello👩🏽‍💻world!",
+    ] {
         let decorated = prepare_english(&model, text).unwrap();
         assert_eq!(decorated.phonemes, plain.phonemes, "{text}");
         assert_eq!(decorated.token_ids, plain.token_ids, "{text}");
@@ -354,7 +388,10 @@ fn emoji_do_not_reject_a_sentence_or_change_its_phonemes() {
     }
     let silent = prepare_english(&model, "😄 ❤️ 👩🏽‍💻 🇩🇪 1️⃣").unwrap();
     assert!(silent.phonemes.is_empty() && silent.token_ids.is_empty() && silent.chunks.is_empty());
-    assert!(matches!(prepare_english(&model, "hello ∑ 😄"), Err(FrontendError::UnsupportedText('∑'))));
+    assert!(matches!(
+        prepare_english(&model, "hello ∑ 😄"),
+        Err(FrontendError::UnsupportedText('∑'))
+    ));
 }
 
 #[test]

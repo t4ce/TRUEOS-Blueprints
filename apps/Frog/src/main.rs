@@ -1,6 +1,6 @@
 // trueos-blueprint: features=["tokio-net-probe"]
 
-mod weather;
+use frog::weather;
 
 use anyhow::Result;
 

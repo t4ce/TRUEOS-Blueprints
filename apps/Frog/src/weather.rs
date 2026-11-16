@@ -26,6 +26,7 @@ pub struct Location {
 #[derive(Clone, Debug)]
 pub struct CurrentWeather {
     pub summary: String,
+    pub icon: String,
     pub temp_c: i32,
     pub feels_c: i32,
     pub humidity: i32,
@@ -36,6 +37,7 @@ pub struct CurrentWeather {
 pub struct ForecastDay {
     pub weekday: &'static str,
     pub summary: String,
+    pub icon: String,
     pub temp_day_c: i32,
     pub temp_min_c: i32,
     pub temp_max_c: i32,
@@ -72,6 +74,55 @@ pub async fn load_weather_snapshot(coordinates: (f64, f64)) -> Result<WeatherSna
         .map_err(|_| anyhow!("decode OpenWeather onecall response"))?;
 
     Ok(build_snapshot(location, response, note))
+}
+
+/// Offline fixture, explicitly labelled so it cannot be mistaken for live weather.
+pub fn demo_snapshot() -> Result<WeatherSnapshot> {
+    // The historical fixture contains two JSON documents with prose between
+    // them. Read only the first complete document; its temperatures are Kelvin.
+    let mut response = serde_json::Deserializer::from_str(trueos_weather::DEMO_JSON)
+        .into_iter::<trueos_weather::OpenWeatherResponse>()
+        .next()
+        .ok_or_else(|| anyhow!("missing bundled demo weather"))?
+        .context("decode bundled demo weather")?;
+    if let Some(current) = &mut response.current {
+        current.temp -= 273.15;
+        current.feels_like -= 273.15;
+    }
+    if let Some(days) = &mut response.daily {
+        for day in days {
+            for value in [
+                &mut day.temp.day,
+                &mut day.temp.min,
+                &mut day.temp.max,
+                &mut day.temp.night,
+                &mut day.temp.eve,
+                &mut day.temp.morn,
+                &mut day.feels_like.day,
+                &mut day.feels_like.night,
+                &mut day.feels_like.eve,
+                &mut day.feels_like.morn,
+            ] {
+                *value -= 273.15;
+            }
+        }
+    }
+    let location = Location {
+        name: "Demo location".into(),
+        country: String::new(),
+        lat: response.lat,
+        lon: response.lon,
+    };
+    let timestamp = response.current.as_ref().map(|c| c.dt).unwrap_or(0);
+    let local_datetime =
+        format_local_datetime(timestamp, response.timezone_offset, &response.timezone);
+    let mut snapshot = build_snapshot(
+        location,
+        response,
+        "Offline sample — not live weather".into(),
+    );
+    snapshot.local_datetime = local_datetime;
+    Ok(snapshot)
 }
 
 fn fallback_location(coordinates: (f64, f64)) -> Location {
@@ -150,6 +201,7 @@ fn build_snapshot(
             summary: weather
                 .map(|w| title_case(w.description.as_str()))
                 .unwrap_or_else(|| String::from("Weather")),
+            icon: weather.map(|w| w.icon.clone()).unwrap_or_default(),
             temp_c: rounded(current.temp),
             feels_c: rounded(current.feels_like),
             humidity: current.humidity,
@@ -175,6 +227,7 @@ fn build_snapshot(
                         } else {
                             day.summary.clone()
                         },
+                        icon: weather.map(|w| w.icon.clone()).unwrap_or_default(),
                         temp_day_c: rounded(day.temp.day),
                         temp_min_c: rounded(day.temp.min),
                         temp_max_c: rounded(day.temp.max),
@@ -256,6 +309,21 @@ fn ms_to_kmh(value: f64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn demo_uses_first_document_converts_kelvin_and_keeps_icons() {
+        let snapshot = demo_snapshot().unwrap();
+        assert_eq!(snapshot.current.as_ref().unwrap().temp_c, 14);
+        assert_eq!(snapshot.current.as_ref().unwrap().icon, "04n");
+        assert_eq!(snapshot.days.len(), 8);
+        assert!(
+            snapshot
+                .days
+                .iter()
+                .all(|day| (-50..=60).contains(&day.temp_day_c))
+        );
+        assert!(snapshot.local_datetime.starts_with("2026-04-17"));
+    }
+
     #[test]
     fn local_datetime_handles_offsets_and_calendar_boundaries() {
         assert_eq!(
