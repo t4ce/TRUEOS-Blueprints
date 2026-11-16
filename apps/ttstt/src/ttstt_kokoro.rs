@@ -838,6 +838,10 @@ impl KokoroTtsJob {
                 let frontend =
                     match prepare_english_with(&assets.g2p, &self.request.request.text, None) {
                         Ok(frontend) if !frontend.token_ids.is_empty() => frontend,
+                        Ok(_) if self.request.request.is_emoji_only() => {
+                            self.stage = TtsStage::Finish;
+                            return JobProgress::Pending;
+                        }
                         Ok(_) => return self.fail("kokoro-frontend-produced-no-tokens"),
                         Err(error) => {
                             crate::log_warn!(

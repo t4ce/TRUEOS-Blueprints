@@ -25,6 +25,10 @@ fn default_speed() -> f32 {
     1.0
 }
 impl TtsRequest {
+    pub fn is_emoji_only(&self) -> bool {
+        trueos_kokoro_g2p::is_emoji_only(&self.text)
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.text.trim().is_empty() || self.text.len() > MAX_TEXT_BYTES {
             return Err("text must contain 1..16384 UTF-8 bytes");

@@ -13,11 +13,14 @@
 extern crate alloc;
 
 mod decode;
+mod emoji;
+mod emoji_ranges;
 mod ipa;
 mod model;
 mod text;
 
 pub use decode::{DecodeError, PronunciationLookup};
+pub use emoji::{is_emoji_only, speech_without_emoji};
 pub use ipa::{EncodedPhonemes, IpaError, canonicalize_ipa, kokoro_token_id};
 pub use model::{
     MAX_NGRAM_ORDER, MemoryUsage, Model, ModelError, PINNED_ENGLISH_BYTES, PINNED_ENGLISH_PATH,

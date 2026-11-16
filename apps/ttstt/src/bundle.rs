@@ -18,6 +18,8 @@ pub const LICENSES: &str = concat!(
     include_str!("../tools/licenses/G2P2-GERMANIC-METADATA.json"),
     "\n\n",
     include_str!("../tools/licenses/KOKORO-82M-MODEL-CARD.md"),
+    "\n\nUnicode emoji data:\n",
+    include_str!("../crates/trueos-kokoro/g2p/LICENSE-UNICODE"),
 );
 
 pub fn model() -> &'static [u8] {

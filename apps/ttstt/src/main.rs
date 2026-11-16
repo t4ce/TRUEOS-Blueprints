@@ -75,9 +75,12 @@ fn run() -> Result<(), String> {
         out.0.write_all(&header).map_err(|e| e.to_string())?;
         out.0.flush().map_err(|e| e.to_string())?;
     } else {
+        let silent = request.is_emoji_only();
         let playback = ttstt::playback::Playback::open()?;
         engine.synthesize(request, playback.sink())?;
-        playback.handoff()?;
+        if !silent {
+            playback.handoff()?;
+        }
     }
     Ok(())
 }

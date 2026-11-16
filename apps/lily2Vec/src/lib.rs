@@ -28,17 +28,56 @@ pub struct Model {
     pub dimensions: usize,
 }
 
+// Classifier-only cues into the existing authored phrase model. These are
+// deliberately small, explicit associations, not Unicode-name expansion or
+// voice/animation instructions. Unlisted symbols contribute no cue.
+const EMOJI_CUES: [(&str, &str); 15] = [
+    ("happy", "😀😃😄😁😆😊🙂😂🤣🥳🎉"),
+    ("cry", "😢😭😞😔💔"),
+    ("angry", "😠😡🤬"),
+    ("confused", "😕🤔"),
+    ("nod", "👍👌✅"),
+    ("disapprove", "👎❌"),
+    ("idea", "💡"),
+    ("tired", "😴🥱"),
+    ("waving", "👋"),
+    ("wink", "😉"),
+    ("kiss", "😘💋"),
+    ("flirt", "😍🥰❤💕💖💗💞"),
+    ("silly", "😛😜🤪🙃"),
+    ("scared", "😨😱"),
+    ("facepalm", "🤦"),
+];
+
 fn normalize(text: &str) -> String {
     let mut out = String::from(" ");
+    let mut cues = 0_u16;
     for c in text.chars().flat_map(char::to_lowercase) {
         if c.is_alphanumeric() {
             out.push(c);
-        } else if c != '\'' && c != '’' && !out.ends_with(' ') {
-            out.push(' ');
+        } else {
+            if c != '\'' && c != '’' && !out.ends_with(' ') {
+                out.push(' ');
+            }
+            for (index, (_, symbols)) in EMOJI_CUES.iter().enumerate() {
+                if symbols.contains(c) {
+                    cues |= 1_u16 << index;
+                    break;
+                }
+            }
         }
     }
     if !out.ends_with(' ') {
         out.push(' ');
+    }
+    // Preserve prose adjacency and negation phrases; emoji between words must
+    // not splice a cue into an otherwise contiguous authored phrase. Each cue
+    // occurs at most once, independent of repetitions, modifiers and selectors.
+    for (index, (cue, _)) in EMOJI_CUES.iter().enumerate() {
+        if cues & (1_u16 << index) != 0 {
+            out.push_str(cue);
+            out.push(' ');
+        }
     }
     out
 }
@@ -206,6 +245,82 @@ pub const DEFAULT_TOKENS: &str = include_str!("../tokens.txt");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_label(model: &Model, text: &str, expected: &str) {
+        let query = model.encode(text).unwrap();
+        let reference = model.score_reference(&query);
+        assert_eq!(model.labels[model.winner(&reference)], expected, "{text}");
+        if vnni_available() {
+            assert_eq!(model.score_vnni(&query).unwrap(), reference, "{text}");
+        }
+    }
+
+    #[test]
+    fn curated_emoji_use_existing_phrase_features_and_vnni_scores() {
+        let model = Model::load(DEFAULT_GUIDE).unwrap();
+        let cases = [
+            ("😄", "Happy"),
+            ("hello 😄", "Happy"),
+            ("😭", "Cry"),
+            ("😡", "Angry"),
+            ("🤔", "Confused"),
+            ("👍", "Nod"),
+            ("👎", "Disapprove"),
+            ("💡", "Idea"),
+            ("😴", "Tired"),
+            ("👋", "Waving"),
+            ("😉", "Wink"),
+            ("😘", "Kiss"),
+            ("❤️", "Flirt"),
+            ("🤪", "Silly"),
+            ("😱", "Scared"),
+            ("🤦", "Facepalm"),
+            ("🦄🛸🧿", "Static"),
+        ];
+        for (text, expected) in cases {
+            assert_label(&model, text, expected);
+        }
+        // No new classifier columns, weights, labels or scoring backend.
+        for (cue, _) in EMOJI_CUES {
+            assert!(model.phrases.contains(&normalize(cue)), "missing authored cue {cue}");
+        }
+    }
+
+    #[test]
+    fn emoji_modifiers_and_repetitions_do_not_amplify_binary_cues() {
+        let model = Model::load(DEFAULT_GUIDE).unwrap();
+        for (text, canonical, expected) in [
+            ("👋🏽", "waving", "Waving"),
+            ("🤦🏿\u{200d}♀️", "facepalm", "Facepalm"),
+            ("❤\u{fe0e}", "flirt", "Flirt"),
+            ("❤\u{fe0f}", "flirt", "Flirt"),
+            ("😄😃😊😂🥳🎉", "happy", "Happy"),
+            ("🏳️\u{200d}🌈", "unrecognizablexyz", "Static"),
+        ] {
+            assert_eq!(model.encode(text).unwrap(), model.encode(canonical).unwrap(), "{text}");
+            assert_label(&model, text, expected);
+        }
+        let repeated = "😄".repeat(768);
+        assert_eq!(normalize(&repeated), " happy ");
+        assert_eq!(model.encode(&repeated).unwrap(), model.encode("😄").unwrap());
+    }
+
+    #[test]
+    fn emoji_cues_preserve_prose_negation_and_the_original_text() {
+        let model = Model::load(DEFAULT_GUIDE).unwrap();
+        let original = String::from("not 😄 angry, just explaining");
+        let saved = original.clone();
+        assert_eq!(normalize(&original), " not angry just explaining happy ");
+        assert_label(&model, &original, "Static");
+        assert_eq!(original, saved);
+        assert_eq!(normalize("left😄right"), " left right happy ");
+        assert_eq!(normalize("i don't feel well 🦄"), " i dont feel well ");
+        assert_label(&model, "i don't feel well 🦄", "Cry");
+        assert_label(&model, "unrecognizablexyz 🦄", "Static");
+        assert!(model.encode("  ").is_err());
+        assert!(model.encode(&"😄".repeat(4097)).is_err());
+    }
+
     #[test]
     fn vnni_matches_integer_reference_with_negative_weights_and_full_byte_range() {
         if !vnni_available() {

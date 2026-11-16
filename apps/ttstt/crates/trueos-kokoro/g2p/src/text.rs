@@ -127,6 +127,8 @@ pub fn prepare_english_with(
     if text.len() > MAX_TEXT_BYTES {
         return Err(FrontendError::TextTooLong);
     }
+    let speech = crate::speech_without_emoji(text)?;
+    let text = speech.as_ref();
     let mut output = FrontendOutput {
         phonemes: String::new(),
         token_ids: Vec::new(),

@@ -116,8 +116,12 @@ pub fn serve() -> Result<(), String> {
                     .map_err(|e| e.to_string())
                     .and_then(|request| {
                         request.validate()?;
+                        let silent = request.is_emoji_only();
                         let playback = Playback::open()?;
                         engine.synthesize(request, playback.sink())?;
+                        if silent {
+                            return Ok(());
+                        }
                         let handoff_started = std::time::Instant::now();
                         let handed_off = playback.handoff();
                         crate::log_info!(target: "ttstt"; "ttstt: playback handoff_us={} status={}", handoff_started.elapsed().as_micros(), if handed_off.is_ok() { "ok" } else { "failed" });

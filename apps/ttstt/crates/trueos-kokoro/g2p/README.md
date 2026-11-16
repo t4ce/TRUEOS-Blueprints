@@ -8,6 +8,7 @@ Kokoro v1.0 model. The crate provides:
 - a primary pronunciation-override hook for a future Kokoro/Misaki lexicon;
 - English acronym and integer normalization while retaining punctuation and
   whitespace boundaries;
+- speech-only removal of emoji sequences, without discarding other Unicode;
 - Kokoro IPA canonicalization and the fixed v1.0 character-to-token mapping;
 - deterministic model ranges targeting 60–120 tokens, searching as far as
   180 tokens for a natural boundary, with 510 as the graph's final hard limit.
@@ -30,6 +31,10 @@ backoff keys use fixed six-ID records in contiguous vectors instead of one
 heap allocation per key.
 
 ## Upstream and license
+
+The emoji property table is derived from Unicode 18.0 `Emoji_Presentation` and
+`Extended_Pictographic` data, under Unicode-3.0; see [LICENSE-UNICODE](LICENSE-UNICODE).
+Its source URL and digest are recorded in `src/emoji_ranges.rs`.
 
 The model format, backoff scoring, and beam-decoder behavior are adapted from
 [`g2p2-core` 0.2.0](https://github.com/jqueguiner/g2p2), copyright © 2026

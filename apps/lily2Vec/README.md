@@ -35,6 +35,14 @@ adds short context cues. For example, `the bug was a typo` selects `Silly`,
 associations; the ranker does not perform language-model reasoning. Exact token
 names are also recognized so every listed output can be exercised directly.
 
+Classifier normalization also recognizes a small curated set of emoji cues,
+including `😄` → `happy`, `😭` → `cry`, and `👍` → `nod`. It preserves normalized
+prose adjacency, then appends each cue once; repeated emoji, skin tones, joiners
+and presentation selectors do not multiply that cue. Unrecognized emoji alone
+fall back to `Static`. The original snapshot text stays intact. These cues use
+the existing guide weights and affect classifier scores; voice mood remains
+future work, as does the Spirit vocabulary bridge described above.
+
 ```sh
 cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- "the bug was a typo"
 # Silly

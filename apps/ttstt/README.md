@@ -29,6 +29,11 @@ Speed defaults to 1.0 and must be 0.5–2.0. Text is bounded to 16 KiB.
 The optional legacy `voice` field accepts only `af_heart`; other voices are
 rejected explicitly. Requests run serially, collecting each complete utterance before one kernel
 HTTP-sink handoff.
+Emoji sequences are omitted from speech, including skin tones, joined emoji,
+flags and keycaps. Emoji-only requests succeed silently without submitting a
+clip. Other unsupported text still reports the normal frontend error. The
+original text remains available to Lily's independent emotion classifier;
+Kokoro's fixed Heart voice currently has no emotion input.
 Synthesis finishes before playback starts. Listen at `http://TRUEOS-IP:82/`;
 `POST /speech` returns after the clip is copied, without waiting for playback.
 The clip limit is 120 seconds (23,040,000 bytes of stereo s16le/48 kHz PCM);
