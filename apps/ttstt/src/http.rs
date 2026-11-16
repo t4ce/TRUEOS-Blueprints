@@ -78,6 +78,10 @@ pub fn serve() -> Result<(), String> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 9772))
         .map_err(|e| format!("bind 127.0.0.1:9772: {e}"))?;
     let mut engine = Engine::load()?;
+    #[cfg(all(target_os="trueos",feature="native-convolution"))]
+    if let Err(error)=crate::native_benchmark::consume_request(&mut engine) {
+        crate::diagnostics::record(true,format_args!("ttstt: native benchmark failed: {error}"));
+    }
     crate::log_info!(target: "ttstt"; "ttstt: ready protocol=ttstt-v1 tts=true stt=false listen=127.0.0.1:9772");
     crate::diagnostics::record(false, format_args!("ttstt: ready (English, Heart)"));
     for accepted in listener.incoming() {

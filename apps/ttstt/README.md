@@ -93,6 +93,12 @@ name-specific speech or audio memory exception.
 
 ## CPU performance
 
+The normal TRUEOS build enables shared convolution preparation and requests
+three native AP workers with a soft performance-core preference. It needs no
+launch arguments. The [native rig results](tools/NATIVE_CONVOLUTION.md) record
+the 15–16% measured reduction in generation time, exact audio checks, and the
+logical-AP/SMT placement limitation.
+
 The Ubuntu-only [async convolution experiment](tools/ASYNC_CONVOLUTION.md)
 uses smol with bounded compute workers and awaited operator completion. It is
 opt-in and does not enable native worker placement. The quality audition's

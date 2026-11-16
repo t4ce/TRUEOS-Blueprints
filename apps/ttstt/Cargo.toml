@@ -32,7 +32,8 @@ sha2 = { version = "=0.10.9", default-features = false }
 trueos-kokoro-voice = { path = "crates/trueos-kokoro/voice" }
 
 [features]
-default = ["retained-convolution", "prepared-weights", "blocked-gemm"]
+default = ["retained-convolution", "prepared-weights", "blocked-gemm", "native-convolution"]
+native-convolution = ["trueos-kokoro-dispatch/native-convolution"]
 retained-convolution = []
 prepared-weights = []
 blocked-gemm = ["trueos-kokoro-dispatch/blocked-gemm"]

@@ -15,6 +15,8 @@ macro_rules! log_info {
 pub mod bundle;
 pub mod diagnostics;
 pub mod http;
+#[cfg(feature = "native-convolution")]
+pub mod native_benchmark;
 pub mod playback;
 #[cfg(feature = "profile-inference")]
 mod profiling;

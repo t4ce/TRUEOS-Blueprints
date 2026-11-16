@@ -13,6 +13,7 @@ default = []
 blocked-gemm = []
 profile-inference = []
 async-convolution = ["dep:smol", "dep:core_affinity", "trueos-kokoro-exec/async-execution"]
+native-convolution = ["dep:trueos", "trueos-kokoro-exec/async-execution"]
 async-graph = ["async-convolution"]
 occupancy-trace = ["async-convolution", "dep:cpu-time", "dep:serde"]
 
@@ -26,6 +27,7 @@ serde = { version = "=1.0.228", optional = true, features = ["derive"] }
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
 
 [dependencies]
+trueos = { path = "../../../../../api", features = ["tokio-runtime"], optional = true }
 trueos-kokoro-aot = { path = "../aot", default-features = false }
 trueos-kokoro-exec = { path = "../exec", default-features = false }
 trueos-kokoro-memory = { path = "../memory", default-features = false }

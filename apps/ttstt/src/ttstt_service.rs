@@ -102,9 +102,15 @@ pub trait InferenceJob: Send {
     fn direction(&self) -> Direction;
     fn run_slice(&mut self, models: &'static ModelSet, worker: WorkerContext) -> JobProgress;
 
-    #[cfg(feature = "async-convolution")]
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
     fn wait_ready(&mut self) -> core::pin::Pin<Box<dyn core::future::Future<Output = Result<(), &'static str>> + '_>> {
-        Box::pin(async { smol::future::yield_now().await; Ok(()) })
+        Box::pin(async {
+            #[cfg(feature = "async-convolution")]
+            smol::future::yield_now().await;
+            #[cfg(not(feature = "async-convolution"))]
+            trueos_kokoro_dispatch::native_conv::yield_now().await;
+            Ok(())
+        })
     }
 }
 
@@ -227,6 +233,13 @@ pub struct Engine {
 }
 impl Engine {
     pub fn load() -> Result<Self, String> {
+        #[cfg(all(target_os = "trueos", feature = "native-convolution"))]
+        {
+            match trueos_kokoro_dispatch::native_conv::install_default() {
+                Ok(pool) => crate::diagnostics::record(false, format_args!("ttstt: shared preparation requested_compute_aps={} preference=performance-first", pool.worker_count())),
+                Err(error) => crate::diagnostics::record(true, format_args!("ttstt: native workers unavailable; serial fallback: {error}")),
+            }
+        }
         let started = Instant::now();
         let cached = INITIALIZED.get().is_some();
         crate::log_info!(target: "ttstt"; "ttstt: warmup phase=begin cached={} quant_lane={}", cached as u8,
@@ -264,6 +277,10 @@ impl Engine {
         })
     }
     pub fn synthesize(&mut self, request: TtsRequest, sink: AudioSink) -> Result<(), String> {
+        #[cfg(all(feature = "native-convolution", not(feature = "async-convolution")))]
+        if trueos_kokoro_dispatch::native_conv::installed() {
+            return trueos_kokoro_dispatch::native_conv::block_on(self.synthesize_async(request,sink)).map_err(String::from)?;
+        }
         #[cfg(feature = "async-graph")]
         if trueos_kokoro_dispatch::async_graph::installed() {
             return Err("async-graph requires synthesize_async".into());
@@ -336,8 +353,8 @@ impl Engine {
         );
         result
     }
-    /// Ubuntu experiment: await owned compute jobs without blocking the coordinator.
-    #[cfg(feature = "async-convolution")]
+    /// Await owned native work or the optional host experiment without blocking the coordinator.
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
     pub async fn synthesize_async(&mut self, request: TtsRequest, sink: AudioSink) -> Result<(), String> {
         request.validate()?;
         let job_id = self.next_job;
@@ -432,7 +449,7 @@ fn run_job(
     }
 }
 
-#[cfg(feature = "async-convolution")]
+#[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
 async fn run_job_async(
     job: &mut dyn InferenceJob, models: &'static ModelSet, timing: &mut JobTiming,
 ) -> Result<(), String> {
@@ -443,10 +460,15 @@ async fn run_job_async(
         let progress = job.run_slice(models, WorkerContext);
         timing.slices += 1;
         let result = match progress {
+            #[cfg(feature = "async-convolution")]
             JobProgress::Pending => smol::future::or(job.wait_ready(), async {
                 smol::Timer::after(deadline.saturating_duration_since(Instant::now())).await;
                 Err("speech-inference-timeout")
             }).await.map_err(String::from),
+            #[cfg(not(feature = "async-convolution"))]
+            JobProgress::Pending => trueos_kokoro_dispatch::native_conv::with_timeout(
+                deadline.saturating_duration_since(Instant::now()), job.wait_ready()
+            ).await.map_err(String::from).and_then(|result|result.map_err(String::from)),
             JobProgress::Complete => {
                 timing.slice_us += started.elapsed().as_micros();
                 return Ok(());

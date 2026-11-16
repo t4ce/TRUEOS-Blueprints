@@ -1,5 +1,9 @@
 # Shared preparation and complete residual branches
 
+The shared-preparation path has since been ported and tested on the physical
+TRUEOS rig: [native results and default integration](NATIVE_CONVOLUTION.md).
+The measurements below remain the preceding Ubuntu experiments.
+
 Both proposed approaches were implemented as Ubuntu experiments, using smol,
 fixed pinned compute threads and bounded asynchronous request/reply channels.
 The original complete model, English Heart, speed 1.0 and output arithmetic are

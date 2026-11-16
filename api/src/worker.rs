@@ -16,6 +16,68 @@ use core::{
 };
 use tokio::sync::oneshot;
 
+/// Placement preference for an independently leased native worker lane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CorePreference {
+    Any,
+    /// Try performance lanes first, then other eligible lanes without waiting.
+    PreferPerformance,
+}
+
+impl CorePreference {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
+    const fn raw(self) -> u32 {
+        match self {
+            Self::Any => v::worker_abi::CORE_PREFERENCE_ANY,
+            Self::PreferPerformance => v::worker_abi::CORE_PREFERENCE_PREFER_PERFORMANCE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoreKind {
+    Unknown,
+    Performance,
+    Efficiency,
+}
+
+/// Actual logical CPU placement. This is separate from a worker-local TLS
+/// identity and does not assert that logical slots are distinct physical cores.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Placement {
+    pub cpu_slot: u32,
+    pub core_kind: CoreKind,
+}
+
+impl Placement {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
+    fn from_raw(packed: u64) -> Option<Self> {
+        if packed >> 40 != 0 {
+            return None;
+        }
+        let core_kind = match (packed >> 32) as u8 {
+            0 => CoreKind::Unknown,
+            1 => CoreKind::Performance,
+            2 => CoreKind::Efficiency,
+            _ => return None,
+        };
+        Some(Self { cpu_slot: packed as u32, core_kind })
+    }
+}
+
+/// Actual placement of the calling native worker or coordinating Blueprint.
+/// Host emulation returns None because its scheduler can migrate the thread.
+pub fn placement() -> Option<Placement> {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        Placement::from_raw(unsafe { v::worker_abi::trueos_service_lane_current_placement() })
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        None
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpawnError {
     /// No lane is free, or Blueprint admission is closed during teardown.
@@ -130,6 +192,20 @@ where
     R: Send + 'static,
 {
     spawn_with(f, submit)
+}
+
+/// Submit finite owned work with a soft CPU preference. Simultaneously running
+/// native jobs lease distinct logical lanes. Capacity may be unavailable; this
+/// never executes the closure inline. The preference is advisory on host OSes.
+pub fn spawn_with_preference<F, R>(
+    preference: CorePreference,
+    f: F,
+) -> Result<JoinHandle<R>, SpawnError>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    spawn_with(f, |job| submit_with_preference(job, preference))
 }
 
 /// Submit finite CPU work to XPAPP's sticky two-worker strict-P-core pool.
@@ -265,6 +341,23 @@ fn submit(job: Box<dyn FnOnce() + Send + 'static>) -> i32 {
     }
 }
 
+fn submit_with_preference(
+    job: Box<dyn FnOnce() + Send + 'static>,
+    preference: CorePreference,
+) -> i32 {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        unsafe {
+            v::worker_abi::trueos_service_lane_submit_job_with_preference(job, preference.raw())
+        }
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        let _ = preference;
+        submit(job)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +369,27 @@ mod tests {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::AcqRel);
         }
+    }
+
+    #[test]
+    fn placement_decodes_each_kind_and_rejects_invalid_wire_values() {
+        for (wire, kind) in [(0, CoreKind::Unknown), (1, CoreKind::Performance), (2, CoreKind::Efficiency)] {
+            assert_eq!(Placement::from_raw((wire << 32) | 17), Some(Placement { cpu_slot: 17, core_kind: kind }));
+        }
+        assert_eq!(Placement::from_raw(v::worker_abi::PLACEMENT_UNAVAILABLE), None);
+        assert_eq!(Placement::from_raw(3 << 32), None);
+        assert_eq!(Placement::from_raw(1 << 40), None);
+        assert_eq!(CorePreference::Any.raw(), 0);
+        assert_eq!(CorePreference::PreferPerformance.raw(), 1);
+    }
+
+    #[test]
+    fn preferred_host_job_uses_normal_completion_without_claiming_placement() {
+        let result = spawn_with_preference(CorePreference::PreferPerformance, || {
+            assert_eq!(placement(), None);
+            23
+        }).unwrap().join_blocking().unwrap();
+        assert_eq!(result, 23);
     }
 
     #[test]

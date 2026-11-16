@@ -170,7 +170,7 @@ impl<'a> CpuWorkspace<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchError {
     /// An owned host operation is staged; await it before retrying this cursor.
-    #[cfg(feature = "async-convolution")]
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
     AsyncPending,
     Allocation,
     MissingAttributes,
@@ -331,7 +331,7 @@ pub struct CpuDispatcher<
 #[derive(Default)]
 pub struct CpuExecutionState<'artifact> {
     convolution: Option<RetainedConvolution<'artifact>>,
-    #[cfg(feature = "async-convolution")]
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
     asynchronous: crate::async_conv::State,
 }
 
@@ -339,13 +339,13 @@ pub struct CpuExecutionState<'artifact> {
 impl CpuExecutionState<'_> {
     pub(crate) fn serial_for_graph() -> Self {
         let mut state = Self::default();
-        #[cfg(feature = "async-convolution")]
+        #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
         { state.asynchronous.pool = None; }
         state
     }
 }
 
-#[cfg(feature = "async-convolution")]
+#[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
 impl CpuExecutionState<'_> {
     pub async fn wait_ready(&mut self) -> Result<(), &'static str> {
         self.asynchronous.wait_ready().await
@@ -1978,7 +1978,7 @@ impl<
         #[cfg(feature = "occupancy-trace")]
         let _dispatch_span = crate::occupancy::start(crate::occupancy::DISPATCH, work.op_index());
         let result = self.dispatch_inner(program, work);
-        #[cfg(feature = "async-convolution")]
+        #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
         let result = match result {
             Err(DispatchError::AsyncPending) => Ok(DispatchResult::Pending),
             other => other,
@@ -2089,9 +2089,9 @@ fn execute<'artifact, const BINDINGS: usize>(
                 quant,
                 require_workspace(workspace, OpCode::DynamicQuantizedConv1d)?,
                 prepared.and_then(|p| p.quant(work.op_index())),
-                #[cfg(feature = "async-convolution")]
+                #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
                 execution.map(|state| &mut state.asynchronous),
-                #[cfg(feature = "async-convolution")]
+                #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
                 (work.op_index(), *program.artifact_sha256()),
             )?;
         }
@@ -2737,8 +2737,8 @@ fn execute_quant_conv<const BINDINGS: usize>(
     dispatcher: trueos_ttstt_cpu::Dispatcher,
     workspace: &mut CpuWorkspace<'_>,
     prepared: Option<&QuantWeights>,
-    #[cfg(feature = "async-convolution")] asynchronous: Option<&mut crate::async_conv::State>,
-    #[cfg(feature = "async-convolution")] operation_key: (u32, [u8; 32]),
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))] asynchronous: Option<&mut crate::async_conv::State>,
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))] operation_key: (u32, [u8; 32]),
 ) -> Result<(), DispatchError> {
     let has_bias = attributes.bias_mode == BiasMode::QuantizedInt32;
     require_arity(access, if has_bias { 5 } else { 4 }, 1)?;
@@ -2852,7 +2852,7 @@ fn execute_quant_conv<const BINDINGS: usize>(
     if output.len() != expected_output {
         return Err(DispatchError::ShapeConversion);
     }
-    #[cfg(feature = "async-convolution")]
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
     if let Some(state) = asynchronous {
         if let Some(pool) = state.pool.clone() {
             if let Some(pending) = state.pending.as_mut() {

@@ -101,9 +101,9 @@ const SEALED_WORK_UNITS: u64 = 97_778_896;
 /// Preserve short scheduling checkpoints while walking atomic graph records.
 // Async coordinator yields between atomic operators; workers yield between
 // bounded time windows. Native/default cooperative budgets are unchanged.
-#[cfg(feature = "async-convolution")]
+#[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
 const ATOMIC_WORK_UNITS_PER_SLICE: u32 = 1;
-#[cfg(not(feature = "async-convolution"))]
+#[cfg(not(any(feature = "async-convolution", feature = "native-convolution")))]
 const ATOMIC_WORK_UNITS_PER_SLICE: u32 = 64;
 /// Coordinate cap selected from the slowest pinned float-convolution profile.
 /// On the i9-13900K oracle it bounds a cooperative tile to about 15 ms; the
@@ -786,7 +786,7 @@ const fn retry_boundary_token(token: u8) -> bool {
 }
 
 impl InferenceJob for KokoroTtsJob {
-    #[cfg(feature = "async-convolution")]
+    #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
     fn wait_ready(&mut self) -> core::pin::Pin<Box<dyn core::future::Future<Output = Result<(), &'static str>> + '_>> {
         Box::pin(async move {
             if let Some(invocation) = self.invocation.as_mut() {
@@ -794,7 +794,10 @@ impl InferenceJob for KokoroTtsJob {
                 invocation.graph.wait_ready().await?;
                 invocation.execution_state.wait_ready().await
             } else {
+                #[cfg(feature = "async-convolution")]
                 smol::future::yield_now().await;
+                #[cfg(not(feature = "async-convolution"))]
+                trueos_kokoro_dispatch::native_conv::yield_now().await;
                 Ok(())
             }
         })
@@ -1441,7 +1444,7 @@ impl InvocationScaffold {
             &mut cpu_workspace,
             *cpu_dispatch_plan,
         );
-        #[cfg(any(feature = "retained-convolution", feature = "async-convolution"))]
+        #[cfg(any(feature = "retained-convolution", feature = "async-convolution", feature = "native-convolution"))]
         let dispatcher = dispatcher.with_execution_state(execution_state);
         let dispatcher = if let Some(prepared) = prepared {
             dispatcher.with_prepared_weights(prepared)
@@ -1481,7 +1484,7 @@ impl InvocationScaffold {
                     Err(reason) => InvocationProgress::Failed(reason),
                 }
             }
-            #[cfg(feature = "async-convolution")]
+            #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
             SliceEvent::PendingWork => InvocationProgress::Pending,
             SliceEvent::DispatchFailed(error) => {
                 Self::log_execution_failure(program, executor, "phase0-dispatch", Some(&error));
@@ -1665,7 +1668,7 @@ impl InvocationScaffold {
         let dispatcher = if graph.enabled() {
             dispatcher.with_graph_replay(graph.completed.as_mut())
         } else { dispatcher };
-        #[cfg(any(feature = "retained-convolution", feature = "async-convolution"))]
+        #[cfg(any(feature = "retained-convolution", feature = "async-convolution", feature = "native-convolution"))]
         let dispatcher = dispatcher.with_execution_state(execution_state);
         let dispatcher = if let Some(prepared) = prepared {
             dispatcher.with_prepared_weights(prepared)
@@ -1700,7 +1703,7 @@ impl InvocationScaffold {
                 *stage = InvocationStage::Complete;
                 InvocationProgress::Complete
             }
-            #[cfg(feature = "async-convolution")]
+            #[cfg(any(feature = "async-convolution", feature = "native-convolution"))]
             SliceEvent::PendingWork => InvocationProgress::Pending,
             SliceEvent::DispatchFailed(error) => {
                 Self::log_execution_failure(program, executor, "phase1-dispatch", Some(&error));
