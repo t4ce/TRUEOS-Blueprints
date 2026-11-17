@@ -126,7 +126,7 @@ fn run() -> Result<()> {
     let synthesis_started = Instant::now();
     let deadline = synthesis_started + std::time::Duration::from_secs(180);
     for chunk in chunks {
-        let stats = engine.generate_with_limits(
+        frames += engine.generate_with_limits(
             &chunk.tokens,
             temperature,
             chunk.frames_after_eos,
@@ -146,7 +146,6 @@ fn run() -> Result<()> {
                 Ok(())
             },
         )?;
-        frames += stats.frames;
     }
     notice(format!(
         "ptts: generated samples={} rate=24000 frames={frames} generation_ms={} total_ms={}",

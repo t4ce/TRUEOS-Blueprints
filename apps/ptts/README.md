@@ -30,10 +30,10 @@ launches reuse the saved file, including after a reboot with persistent TRUEOSFS
 storage. An existing invalid file stops startup with an error and is left in
 place for inspection.
 
-The published Blueprint is 10,368,472 bytes. On the native rig, the first fetch,
-save, and model load took 3.4 seconds after app entry. With the server stopped,
-a fresh VM loaded the saved checkpoint in 7.3 seconds and passed the speech and
-audio handoff probe. Both measurements exclude Blueprint installation.
+The Blueprint is about 10.4 MB compressed. On the native rig, the first fetch,
+save, and model load took 3.4 seconds after app entry. A later launch loaded the
+saved checkpoint in 7.1 seconds with the seed server stopped and passed the
+speech and audio handoff probe. These timings exclude Blueprint installation.
 
 ## Codex test integration
 
@@ -85,11 +85,10 @@ sentence preparation, decimal handling and the upstream 50-token chunking target
 are retained. An unpunctuated clause beyond the engine's 512-token bound fails
 rather than being truncated. All chunks are prepared before inference.
 
-Emoji sequences are omitted from speech; emoji-only requests succeed silently
+Emoji sequences are omitted from speech. Emoji-only requests succeed silently
 without submitting a clip. The original response remains unchanged for display
-and Lily. Only the shared Kokoro crate's emoji helper is reused; no Kokoro model
-or G2P model is bundled. Its Unicode notice is
-[LICENSE-UNICODE](../ttstt/crates/trueos-kokoro/g2p/LICENSE-UNICODE).
+and Lily. The local emoji table uses
+[Unicode data](tools/licenses/LICENSE-UNICODE).
 
 ## Temperature policy
 

@@ -3,10 +3,12 @@
 //! Only the authenticated JSON tokenizer is used: no SentencePiece C++ code,
 //! filesystem access, model downloads or tokenizer worker pool is needed.
 
+#[path = "emoji.rs"]
+mod emoji;
 #[path = "frontend_text.rs"]
 mod text;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use text::{TextOptions, TextTokenizer};
 
@@ -17,6 +19,7 @@ const MAX_TEXT_BYTES: usize = 16 * 1024;
 #[derive(Debug, Clone)]
 pub struct PreparedChunk {
     /// Speech-only text. The caller retains the original response for display/Lily.
+    #[cfg(test)]
     pub text: String,
     pub tokens: Vec<u32>,
     pub frames_after_eos: usize,
@@ -63,8 +66,7 @@ impl Frontend {
         if input.trim().is_empty() {
             bail!("speech text must not be empty")
         }
-        let spoken = trueos_kokoro_g2p::speech_without_emoji(input)
-            .map_err(|error| anyhow::anyhow!("emoji preparation failed: {error:?}"))?;
+        let spoken = emoji::speech_without_emoji(input).context("emoji preparation failed")?;
         if spoken.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -90,6 +92,7 @@ impl Frontend {
                     )
                 }
                 Ok(PreparedChunk {
+                    #[cfg(test)]
                     text,
                     tokens,
                     frames_after_eos: eos_guess + 2,

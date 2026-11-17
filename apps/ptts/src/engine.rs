@@ -1,8 +1,5 @@
-//! Fixed-prompt Pocket TTS inference on the Rust/XN CPU backend.
-//!
-//! The Blueprint carries weights and a precomputed Azelma voice state, not a
-//! recording. Text token IDs are prepared on the build host for this first
-//! native milestone; all flow-LM and Mimi inference happens here at runtime.
+//! Pocket TTS inference on the Rust/XN CPU backend using prepared text tokens,
+//! a verified checkpoint, and the embedded Azelma voice state.
 
 use anyhow::{Context, Result, bail};
 use ptts_core::flow_lm::{FlowLMState, NormalRng, StepInput};
@@ -10,7 +7,7 @@ use ptts_core::transformer::{LayerAttentionState, StreamingMHAState, StreamingTr
 use ptts_core::tts_model::{TTSConfig, TTSModel, TTSState};
 use safetensors::{Dtype, SafeTensors};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use xn::{CpuDevice, Tensor, Unquantized};
 
 type Backend = Unquantized<f32, CpuDevice>;
@@ -18,35 +15,19 @@ type Backend = Unquantized<f32, CpuDevice>;
 const SAMPLE_RATE: usize = 24_000;
 const SEED: u64 = 42;
 const MIN_FRAMES_BEFORE_EOS: usize = 6;
-const FRAMES_AFTER_EOS: usize = 3;
 const MAX_GENERATION_FRAMES: usize = 1_500;
 
-/// Low-level inference is driven by prepared IDs, so the model must never call
-/// an implicit tokenizer or downloader during this fixed-sample milestone.
+/// The frontend prepares text tokens before calling the low-level model.
 struct PreparedTokens;
 
 impl ptts_core::Tokenizer for PreparedTokens {
     fn encode(&self, _: &str) -> xn::Result<Vec<u32>> {
-        Err(xn::Error::msg(
-            "ptts fixed-sample engine requires prepared token IDs",
-        ))
+        Err(xn::Error::msg("ptts engine requires prepared token IDs"))
     }
 
     fn decode(&self, _: &[u32]) -> xn::Result<String> {
-        Err(xn::Error::msg(
-            "ptts fixed-sample engine does not decode text tokens",
-        ))
+        Err(xn::Error::msg("ptts engine does not decode text tokens"))
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct GenerationStats {
-    pub sample_rate: usize,
-    pub samples: usize,
-    /// Number of 80 ms latent frames decoded.
-    pub frames: usize,
-    pub first_pcm_ms: Option<u128>,
-    pub generation_ms: u128,
 }
 
 pub struct Engine {
@@ -57,8 +38,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn load(checkpoint: Vec<u8>) -> Result<Self> {
-        // The initial native proof deliberately uses one calling CPU thread.
-        // XN's own size-one pool never spawns workers or enters Rayon fallback.
+        // The size-one XN pool uses the calling thread for inference.
         xn::set_num_threads(1);
         let config: TTSConfig = serde_json::from_slice(crate::bundle::config())
             .context("invalid bundled ptts configuration")?;
@@ -80,7 +60,7 @@ impl Engine {
                 .context("cannot initialize ptts CPU model")?;
         drop(weights);
         if model.sample_rate() != SAMPLE_RATE {
-            bail!("bundled ptts model must produce 24 kHz audio")
+            bail!("ptts model must produce 24 kHz audio")
         }
 
         let (voice, voice_positions) = import_voice(crate::bundle::voice(), &config)?;
@@ -91,23 +71,7 @@ impl Engine {
         })
     }
 
-    /// Synthesize prepared tokens and emit mono 24 kHz float PCM as each Mimi
-    /// frame becomes available. There is no prerecorded audio or host process.
-    pub fn generate(
-        &self,
-        tokens: &[u32],
-        temperature: f32,
-        on_pcm: &mut dyn FnMut(&[f32]) -> Result<()>,
-    ) -> Result<GenerationStats> {
-        self.generate_with_limits(
-            tokens,
-            temperature,
-            FRAMES_AFTER_EOS,
-            Instant::now() + Duration::from_secs(180),
-            on_pcm,
-        )
-    }
-
+    /// Emit mono 24 kHz PCM and return the number of 80 ms frames decoded.
     pub fn generate_with_limits(
         &self,
         tokens: &[u32],
@@ -115,7 +79,7 @@ impl Engine {
         frames_after_eos: usize,
         deadline: Instant,
         on_pcm: &mut dyn FnMut(&[f32]) -> Result<()>,
-    ) -> Result<GenerationStats> {
+    ) -> Result<usize> {
         if tokens.is_empty() || tokens.len() > 512 {
             bail!("ptts requires between 1 and 512 prepared tokens")
         }
@@ -134,19 +98,13 @@ impl Engine {
                 conditions: None,
             },
         };
-        let started = Instant::now();
         self.model.prompt_text(&mut state, tokens)?;
         let mut mimi = self.model.init_mimi_state(1)?;
         let mut rng = NormalRng::new(temperature, SEED)?;
         let mut previous = None;
         let mut eos_step = None;
-        let mut stats = GenerationStats {
-            sample_rate: SAMPLE_RATE,
-            samples: 0,
-            frames: 0,
-            first_pcm_ms: None,
-            generation_ms: 0,
-        };
+        let mut frames = 0;
+        let mut emitted_audio = false;
         let mut stopped_at_eos = false;
         for step in 0..max_frames {
             if Instant::now() >= deadline {
@@ -167,22 +125,21 @@ impl Engine {
             let audio = self.model.decode_latent(&latent, &mut mimi)?;
             let mut pcm = audio.to_vec()?;
             if !pcm.is_empty() {
-                if stats.samples == 0 {
+                if !emitted_audio {
                     // Match the official frontend's initial 5 ms click fade.
                     let fade = SAMPLE_RATE / 200;
                     let count = fade.min(pcm.len());
                     for (i, sample) in pcm[..count].iter_mut().enumerate() {
                         *sample *= i as f32 / (fade - 1) as f32;
                     }
-                    stats.first_pcm_ms = Some(started.elapsed().as_millis());
                 }
                 if pcm.iter().any(|sample| !sample.is_finite()) {
                     bail!("ptts generated non-finite PCM")
                 }
                 on_pcm(&pcm)?;
-                stats.samples += pcm.len();
+                emitted_audio = true;
             }
-            stats.frames += 1;
+            frames += 1;
             previous = Some(latent);
             // Preserve a cooperative boundary between expensive inference steps.
             std::thread::yield_now();
@@ -190,11 +147,10 @@ impl Engine {
         if !stopped_at_eos {
             bail!("ptts reached its generation frame budget without EOS")
         }
-        if stats.samples == 0 {
+        if !emitted_audio {
             bail!("ptts generated no audio")
         }
-        stats.generation_ms = started.elapsed().as_millis();
-        Ok(stats)
+        Ok(frames)
     }
 }
 

@@ -21,4 +21,4 @@ The packer encodes the request as
 flags field: a little-endian `u16` at byte offset 6. The low byte still describes
 the payload encoding (`3` for TAR+LZ4); the other capability bits retain their
 existing meanings. The metadata requires a kernel that recognizes this flag to
-affect placement. `apps/ttstt` opts in through its ordinary package build.
+affect placement. `apps/ptts` opts in through its ordinary package build.

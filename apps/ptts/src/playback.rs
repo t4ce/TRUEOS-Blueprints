@@ -31,13 +31,7 @@ pub fn submit_with_deadline(mono: &[f32], deadline: Instant) -> Result<()> {
     if Instant::now() >= deadline {
         bail!("native playback deadline expired before conversion")
     }
-    if mono.is_empty() || mono.len() > 24_000 * 120 {
-        bail!("invalid native clip length")
-    }
-    let mut stereo = vec![0i16; mono.len() * 4];
-    trueos_kokoro_audio::convert_frame_range(mono, 0, &mut stereo)
-        .map_err(|e| anyhow::anyhow!("PCM conversion failed: {e:?}"))?;
-    let bytes: Vec<u8> = stereo.iter().flat_map(|s| s.to_le_bytes()).collect();
+    let bytes = native_clip_bytes(mono)?;
     wait_until_idle_with(
         deadline,
         || sink_playing(deadline),
@@ -53,6 +47,33 @@ pub fn submit_with_deadline(mono: &[f32], deadline: Instant) -> Result<()> {
         bytes.len()
     ));
     Ok(())
+}
+
+/// Convert 24 kHz mono to 48 kHz stereo with one interpolated frame per sample.
+#[cfg(any(target_os = "trueos", test))]
+fn native_clip_bytes(mono: &[f32]) -> Result<Vec<u8>> {
+    if mono.is_empty() || mono.len() > 24_000 * 120 {
+        bail!("invalid native clip length")
+    }
+    if mono.iter().any(|sample| !sample.is_finite()) {
+        bail!("invalid PCM")
+    }
+    let mut bytes = Vec::new();
+    // Two output frames, two channels, two bytes per sample.
+    bytes.try_reserve_exact(mono.len() * 8)?;
+    for (index, &sample) in mono.iter().enumerate() {
+        let next = mono.get(index + 1).copied().unwrap_or(sample);
+        for value in [sample, sample * 0.5 + next * 0.5] {
+            let sample_bytes = pcm_sample_le(value);
+            bytes.extend_from_slice(&sample_bytes);
+            bytes.extend_from_slice(&sample_bytes);
+        }
+    }
+    Ok(bytes)
+}
+
+fn pcm_sample_le(sample: f32) -> [u8; 2] {
+    ((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes()
 }
 
 #[cfg(any(target_os = "trueos", test))]
@@ -191,6 +212,22 @@ fn status_playing(body: &[u8]) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_conversion_preserves_interpolation_stereo_and_clipping() {
+        let expected = [
+            0i16, 0, 16_383, 16_383, 32_767, 32_767, 0, 0, -32_767, -32_767, -32_767, -32_767,
+        ];
+        assert_eq!(
+            native_clip_bytes(&[0.0, 1.0, -1.0]).unwrap(),
+            expected
+                .into_iter()
+                .flat_map(i16::to_le_bytes)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(native_clip_bytes(&[2.0]).unwrap(), [255, 127].repeat(4));
+        assert!(native_clip_bytes(&[f32::NAN]).is_err());
+    }
     use std::cell::Cell;
     use std::collections::VecDeque;
 
@@ -328,7 +365,7 @@ pub fn write_wav(path: &str, pcm: &[f32]) -> Result<()> {
     file.write_all(b"data")?;
     file.write_all(&data_bytes.to_le_bytes())?;
     for &sample in pcm {
-        file.write_all(&((sample.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())?;
+        file.write_all(&pcm_sample_le(sample))?;
     }
     Ok(())
 }

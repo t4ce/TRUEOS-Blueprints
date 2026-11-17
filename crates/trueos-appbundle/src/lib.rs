@@ -128,11 +128,11 @@ mod tests {
         let bundles = AppBundles::parse(include_bytes!("../../../appbundle.json")).unwrap();
         assert_eq!(
             bundles.members("codex.bp").unwrap(),
-            ["sqlite.bp", "lily2vec.bp", "ttstt.bp", "codex.bp"]
+            ["sqlite.bp", "lily2vec.bp", "ptts.bp", "codex.bp"]
         );
         assert_eq!(
             bundles.members("CODEX.bp").unwrap(),
-            ["sqlite.bp", "lily2vec.bp", "ttstt.bp", "CODEX.bp"]
+            ["sqlite.bp", "lily2vec.bp", "ptts.bp", "CODEX.bp"]
         );
         assert_eq!(bundles.members("sqlite.bp").unwrap(), ["sqlite.bp"]);
         assert_eq!(bundles.members("xerj.bp").unwrap(), ["xerj.bp"]);

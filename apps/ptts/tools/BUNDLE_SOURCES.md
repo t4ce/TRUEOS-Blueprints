@@ -85,7 +85,5 @@ recording or prepared voice state. Their pinned download URLs and hashes above
 record provenance without replacing the publishers' respective terms. Preserve
 upstream model and voice attribution when distributing these assets.
 
-The runtime also reuses only the shared English frontend crate's emoji-removal
-helper. It does not embed Kokoro weights, its English G2P model or its voice
-archive. Preserve that helper's
-[Unicode data notice](../../ttstt/crates/trueos-kokoro/g2p/LICENSE-UNICODE).
+The emoji table derives from Unicode 18.0 emoji data. Preserve the
+[Unicode data notice](licenses/LICENSE-UNICODE).

@@ -710,8 +710,6 @@ dependencies = [
  "sha2",
  "tokenizers",
  "trueos",
- "trueos-kokoro-audio",
- "trueos-kokoro-g2p",
  "xn",
 ]
 
@@ -1287,17 +1285,6 @@ version = "0.0.1"
 dependencies = [
  "infer",
  "trueos-crypto",
-]
-
-[[package]]
-name = "trueos-kokoro-audio"
-version = "0.1.0"
-
-[[package]]
-name = "trueos-kokoro-g2p"
-version = "0.1.0"
-dependencies = [
- "sha2",
 ]
 
 [[package]]
