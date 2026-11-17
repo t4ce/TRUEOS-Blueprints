@@ -10,7 +10,6 @@ resolver = "3"
 
 [package.metadata.trueos-blueprint]
 entry-abi = "argv-v1"
-filesystem-independent = true
 replicatable = false
 rewrite-std-imports = false
 vm-core-preference = "performance"
@@ -27,6 +26,7 @@ memmap2 = "=0.9.11"
 rand = { version = "=0.9.5", default-features = false, features = ["std_rng"] }
 rand_distr = "=0.5.1"
 safetensors = "=0.7.0"
+sha2 = "=0.10.9"
 half = "=2.7.1"
 trueos-kokoro-audio = { path = "../ttstt/crates/trueos-kokoro/audio" }
 trueos-kokoro-g2p = { path = "../ttstt/crates/trueos-kokoro/g2p" }

@@ -119,7 +119,7 @@ impl SpeechModel {
     pub fn load() -> Result<Self> {
         let started = Instant::now();
         crate::notice("ptts: loading CPU model and Azelma state");
-        let engine = Engine::load()?;
+        let engine = Engine::load(crate::model::load()?)?;
         crate::notice(format!(
             "ptts: model ready elapsed_ms={} loading tokenizer",
             started.elapsed().as_millis()
@@ -219,7 +219,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
             Ok(r) if r.method == "GET" && r.path == "/health" => respond(
                 &mut stream,
                 "200 OK",
-                serde_json::json!({"protocol":"ptts-v1","ready":true,"tts":true,"stt":false,"language":"en","voice":"azelma","model":"english_2026-10","bundled":true}),
+                serde_json::json!({"protocol":"ptts-v1","ready":true,"tts":true,"stt":false,"language":"en","voice":"azelma","model":"english_2026-10","bundled":false}),
             ),
             Ok(r) if r.method == "POST" && r.path == "/speech" => {
                 job = job.saturating_add(1);

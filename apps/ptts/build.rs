@@ -12,10 +12,14 @@ fn main() {
         &fs::read(root.join("asset-sources.json")).expect("asset provenance"),
     )
     .expect("valid asset provenance");
-    let mut generated =
-        "#[repr(C, align(64))]\nstruct Aligned<const N: usize>([u8; N]);\n".to_owned();
+    let model = &sources["assets"]["model.safetensors"];
+    let mut generated = format!(
+        "pub const MODEL_BYTES: usize = {};\npub const MODEL_SHA256: &str = {:?};\n",
+        model["bytes"].as_u64().expect("model size"),
+        model["sha256"].as_str().expect("model SHA-256"),
+    );
+    generated.push_str("#[repr(C, align(64))]\nstruct Aligned<const N: usize>([u8; N]);\n");
     for (name, symbol) in [
-        ("model.safetensors", "MODEL"),
         ("azelma.safetensors", "AZELMA"),
         ("tokenizer.json", "TOKENIZER"),
     ] {

@@ -31,6 +31,23 @@ pub fn fetch_bytes(url: &[u8]) -> Result<u32, i32> {
     Ok(op_id)
 }
 
+/// Start a native GET with a deadline through 90 seconds and a decoded body
+/// limit through 256 MiB.
+pub fn fetch_bytes_with_options(url: &[u8], timeout_ms: u32, max_bytes: usize) -> Result<u32, i32> {
+    if timeout_ms == 0 || timeout_ms > 90_000 || max_bytes == 0 || max_bytes > 256 * 1024 * 1024 {
+        return Err(-4);
+    }
+    let id = unsafe {
+        vcabi::trueos_cabi_net_fetch_bytes_start_with_options_v1(
+            url.as_ptr(),
+            url.len(),
+            timeout_ms,
+            max_bytes as u64,
+        )
+    };
+    if id == 0 { Err(-4) } else { Ok(id) }
+}
+
 /// Fetch a browser subdocument with explicit, bounded Referer context.
 #[inline]
 pub fn fetch_bytes_with_referrer(url: &[u8], referrer: &[u8]) -> Result<u32, i32> {
@@ -166,6 +183,37 @@ pub fn fetch_bytes_final_url(op_id: u32) -> Result<String, i32> {
     if got < 0 { return Err(got as i32); }
     if got != len { return Err(-2); }
     String::from_utf8(bytes).map_err(|_| -1)
+}
+
+/// Consume a completed body with a caller-owned limit, discarding the operation
+/// on error. Reject short reads.
+pub fn fetch_bytes_read_bounded(op_id: u32, max_bytes: usize) -> Result<Vec<u8>, i32> {
+    struct Operation(u32);
+    impl Drop for Operation {
+        fn drop(&mut self) {
+            let _ = fetch_bytes_discard(self.0);
+        }
+    }
+    let _operation = Operation(op_id);
+    if op_id == 0 || max_bytes == 0 || max_bytes > 256 * 1024 * 1024 {
+        return Err(-4);
+    }
+    let len = fetch_bytes_result_len(op_id)?;
+    if len > max_bytes {
+        return Err(-7);
+    }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).map_err(|_| -5)?;
+    bytes.resize(len, 0);
+    let got =
+        unsafe { vcabi::trueos_cabi_net_fetch_bytes_read(op_id, bytes.as_mut_ptr(), bytes.len()) };
+    if got < 0 {
+        return Err(got as i32);
+    }
+    if got as usize != len {
+        return Err(-2);
+    }
+    Ok(bytes)
 }
 
 #[inline]

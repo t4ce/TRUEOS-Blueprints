@@ -56,28 +56,24 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn load() -> Result<Self> {
+    pub fn load(checkpoint: Vec<u8>) -> Result<Self> {
         // The initial native proof deliberately uses one calling CPU thread.
         // XN's own size-one pool never spawns workers or enters Rayon fallback.
         xn::set_num_threads(1);
         let config: TTSConfig = serde_json::from_slice(crate::bundle::config())
             .context("invalid bundled ptts configuration")?;
 
-        // XN's owned-byte VarBuilder avoids Unix mmap and filesystem APIs. The
-        // temporary checkpoint copy is dropped after model tensors are loaded.
-        let weights = xn::nn::VB::from_bytes_with_key_map(
-            vec![crate::bundle::model().to_vec()],
-            xn::CPU,
-            |key| {
-                let key = ptts_core::loader::remap_key(key)?;
-                if key == "flow_lm.bos_before_voice" {
-                    Some("flow_lm.condition_provider.conditioners.speaker_wavs.sink".into())
-                } else {
-                    Some(key)
-                }
-            },
-        )
-        .context("cannot load bundled ptts weights")?
+        // Move the verified checkpoint into XN and release it after the model
+        // tensors are loaded.
+        let weights = xn::nn::VB::from_bytes_with_key_map(vec![checkpoint], xn::CPU, |key| {
+            let key = ptts_core::loader::remap_key(key)?;
+            if key == "flow_lm.bos_before_voice" {
+                Some("flow_lm.condition_provider.conditioners.speaker_wavs.sink".into())
+            } else {
+                Some(key)
+            }
+        })
+        .context("cannot load ptts weights")?
         .root();
         let model =
             TTSModel::<Backend>::load(&weights, Box::new(PreparedTokens), &config, &HashMap::new())

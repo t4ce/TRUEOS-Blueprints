@@ -2,6 +2,7 @@ mod bundle;
 mod engine;
 mod frontend;
 mod http;
+mod model;
 mod playback;
 mod tone;
 
@@ -106,10 +107,10 @@ fn run() -> Result<()> {
     let temperature = rules.temperature_for(label.as_deref());
     let started = Instant::now();
     notice(format!(
-        "ptts: loading model=english_2026-10 voice=azelma backend=xn-cpu threads=1 assets_bytes={}",
-        bundle::model().len() + bundle::voice().len()
+        "ptts: loading model=english_2026-10 voice=azelma backend=xn-cpu threads=1 model_bytes={}",
+        bundle::MODEL_BYTES,
     ));
-    let engine = engine::Engine::load()?;
+    let engine = engine::Engine::load(model::load()?)?;
     notice(format!(
         "ptts: ready load_ms={} temperature={temperature} label={} tokens={}",
         started.elapsed().as_millis(),

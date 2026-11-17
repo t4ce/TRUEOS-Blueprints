@@ -1,17 +1,39 @@
 # ptts: English Azelma speech sidekick
 
-`ptts` is an independent, on-demand Blueprint for Pocket TTS on the Rust/XN CPU
-backend. It carries only the full-precision `english_2026-10` model, Azelma's
-matching English voice state and the matching JSON tokenizer. The model stays
-warm while the service runs. Text tokenization, FlowLM generation and Mimi audio
-decoding happen at runtime on the CPU.
+`ptts` is an on-demand Blueprint for Pocket TTS on the Rust/XN CPU backend. The
+package embeds English Azelma's voice state and its matching JSON tokenizer,
+which total 7,423,060 bytes before compression. It loads the 219,029,196-byte
+`english_2026-10` checkpoint from app storage and keeps the model warm while the
+service runs. Text tokenization, FlowLM generation and Mimi audio decoding run
+on the CPU. See [tools/BUNDLE_SOURCES.md](tools/BUNDLE_SOURCES.md) for exact pins.
 
-The package is not a buildin. It needs no Python runtime, GPU, asset downloader
-or external model directory. The runtime uses one calling CPU thread and requests
-P-core carrier placement with `vm-core-preference = "performance"`. This is a
-preference with normal fallback, not a core reservation. The three embedded
-assets total 226,452,256 bytes before code, configuration and compression.
-See [tools/BUNDLE_SOURCES.md](tools/BUNDLE_SOURCES.md) for exact pins.
+The runtime uses one calling CPU thread and requests P-core carrier placement
+with `vm-core-preference = "performance"`, with normal fallback.
+
+## Seed the model on TRUEOS
+
+On the developer host, start the checkpoint server in the foreground.
+
+```sh
+node '/run/media/t4ce/Data 1,0 TB/TrueOSSeedFs/serve-ptts-model.cjs'
+```
+
+Start `ptts` on TRUEOS, either directly or through Codex. When the checkpoint is
+missing, `ptts` fetches `http://192.168.178.111:8787/model.safetensors` using
+bounded native HTTP. Set `PTTS_MODEL_URL` in the `ptts` launch environment to
+use another seed address or port. The app checks the byte count and pinned
+SHA-256 before committing the file to its own
+`userdata/models/english_2026-10/model.safetensors` path.
+
+After `ptts` logs that it saved the model, stop the server with Ctrl+C. Subsequent
+launches reuse the saved file, including after a reboot with persistent TRUEOSFS
+storage. An existing invalid file stops startup with an error and is left in
+place for inspection.
+
+The published Blueprint is 10,368,472 bytes. On the native rig, the first fetch,
+save, and model load took 3.4 seconds after app entry. With the server stopped,
+a fresh VM loaded the saved checkpoint in 7.3 seconds and passed the speech and
+audio handoff probe. Both measurements exclude Blueprint installation.
 
 ## Codex test integration
 
@@ -34,7 +56,7 @@ yet, so ordinary Codex requests use the default temperature of 0.3.
 Bare native launch, `ptts serve` or `ptts --serve` starts a warm service at
 `127.0.0.1:9773`. It binds only loopback. `GET /health` reports `protocol:
 "ptts-v1"`, `ready: true`, `tts: true`, `stt: false`, `language: "en"`,
-`voice: "azelma"`, `model: "english_2026-10"` and `bundled: true` after loading.
+`voice: "azelma"`, `model: "english_2026-10"` and `bundled: false` after loading.
 
 `POST /speech` accepts JSON:
 
@@ -101,12 +123,6 @@ submission under `blueprint/ptts`. Submission alone does not prove physical
 speaker output; a new audio clip ID and exact-ID WAV retrieval provide the
 runtime handoff evidence.
 
-The full-precision service archive is approximately 200 MiB compressed and requires the
-shared 256 MiB archive-download ceiling in Apps, the native SDK and the kernel.
-The catalog limit remains 1 MiB. The current native service receives a 2 GiB
-guest heap recommendation under the shared image-aware memory policy. Archive
-size is separate from the memory needed for loaded CPU tensors and generation.
-
 ## Prepare, build and host checks
 
 Prepare authenticated assets explicitly on the developer host:
@@ -115,9 +131,11 @@ Prepare authenticated assets explicitly on the developer host:
 python3 /home/t4ce/Repositories/TRUEOS-Blueprints/apps/ptts/tools/prepare_bundle.py
 ```
 
-This host-only Python script downloads missing inputs under ignored `models/`
-and verifies reused files. Cargo repeats size/SHA-256 verification and never
-downloads assets from its build script.
+The host-only Python script downloads missing voice and tokenizer inputs under
+ignored `models/` and verifies reused files. Cargo verifies those embedded inputs
+again. For Ubuntu synthesis, run the script with `--with-model` to prepare the
+checkpoint as well. Ubuntu loads `models/model.safetensors` in the `ptts` source
+directory, or uses the file specified by `PTTS_MODEL_PATH`.
 
 Run Ubuntu checks from `/tmp` with the absolute manifest path to avoid inheriting
 the Blueprint repository's native `build-std` configuration:
@@ -150,7 +168,7 @@ cargo bp ptts
 cargo bp codex-cli
 ```
 
-## Verification history
+## Verification history for the embedded-model build
 
 The original fixed-sample proof passed on the physical TRUEOS rig on 2026-11-17.
 It downloaded through the normal Apps path after the archive-limit upgrade and
@@ -163,8 +181,9 @@ The sink clip ID advanced from 0 to 1, and the exact-ID download contained
 [tools/NATIVE_RUNTIME.json](tools/NATIVE_RUNTIME.json). That fixed-sample receipt
 does not validate the subsequent arbitrary-text service or Codex swap.
 
-The subsequent warm service also passed native checks on 2026-11-17. Model,
-voice state and tokenizer initialization took 142 ms after Blueprint invocation;
+The subsequent warm service with embedded weights passed native checks on
+2026-11-17. Model, voice state and tokenizer initialization took 142 ms after
+Blueprint invocation;
 this excludes fetching and loading the Blueprint itself. The runtime selected
 performance-core slot 9 with no fallback for this run.
 

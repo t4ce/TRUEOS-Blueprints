@@ -1,9 +1,6 @@
-//! Authenticated, immutable English model and Azelma voice; no runtime downloads.
+//! Embedded voice, tokenizer and config, plus the pin for the external model.
 include!(concat!(env!("OUT_DIR"), "/bundle.rs"));
 
-pub fn model() -> &'static [u8] {
-    &MODEL.0
-}
 pub fn voice() -> &'static [u8] {
     &AZELMA.0
 }
