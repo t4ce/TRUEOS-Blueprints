@@ -48,8 +48,8 @@ FIFO in completion order, with no skip or reset controls or age expiry. When
 waiting text exceeds 1 KiB in UTF-8, the producer logs a warning to keep replies
 small. This is a soft threshold: queued text is retained without truncation.
 
-Codex currently sends only the speech text. It does not attach live Lily labels
-yet, so ordinary Codex requests use the default temperature of 0.3.
+Codex sends the completed speech text. Pocket asks the local Lily service for
+the label of that text before generating the clip.
 
 ## Local service contract
 
@@ -74,9 +74,11 @@ chunked requests and duplicate content lengths are rejected.
 One service owner executes requests serially, with no separate application
 synthesis queue. The 180-second request-work deadline covers synthesis,
 conversion and waiting for the native audio sink. Clips are limited to 120
-seconds. A response is sent after complete-clip handoff, without waiting for
-playback to finish. Successful JSON includes `audio_ms`, `temperature`, `chunks`,
-`first_pcm_ms` and `generation_ms`.
+seconds. A response is sent when generation and clip finalization complete.
+Successful JSON includes `audio_ms`, `temperature`, `chunks`, `first_pcm_ms`,
+`generation_ms` and `first_stream_ms`. The last field measures time from the
+start of the request to the first successful native PCM write and is null on
+Ubuntu or for silent input.
 
 The frontend applies speech-only, case-insensitive whole-word aliases:
 `TRUEOS`/`TrueOS`/`trueos` become `True O S`, and `CPU`/`cpu` become `C P U`.
@@ -100,27 +102,34 @@ and Lily. The local emoji table uses
 | Happy, Angry, Idea | 0.4 |
 | Other, unknown or missing | 0.3 |
 
-The current label producer is `lily2Vec`. Labels match its exact spelling and
-case. An explicit HTTP `label` or CLI `--label` exercises this policy, and
-`--rules` prints it. Live Lily-to-speech label handoff is not wired yet.
+For an HTTP speech request without an explicit label, Pocket calls Lily's
+`POST /v1/classify` on loopback for that utterance, with a 500 ms deadline.
+If Lily is unavailable, Pocket uses the default temperature. An explicit HTTP
+`label` takes precedence, and the direct CLI uses `--label` or the default.
+`--rules` prints the policy. Labels match Lily's exact spelling and case.
 Temperature controls sampling variation. The host auditions' external pitch,
 tempo and gain effects are not part of this Blueprint.
 
 ## Native audio
 
-Generation emits 24 kHz mono PCM. The service collects the entire utterance,
-converts it to 48 kHz stereo signed 16-bit PCM, waits for the current audio sink
-to become idle within the same request deadline, then submits one complete clip.
-This avoids overlap between jobs owned by this serial service. The current kernel
-ABI cannot reserve the sink: another producer can still win between the idle
-check and submission, whose success code can mean a busy discard. There is no
-incremental audio producer in this test integration.
+The speech service converts each 24 kHz mono block to 48 kHz stereo signed
+16-bit PCM and sends it as Pocket produces it. One mono sample is carried
+across blocks to preserve interpolation. The first write reserves the native
+sink. TRUEOS prebuffers 120 ms of audio to absorb generation jitter and then
+feeds its live stream while the remainder is still generating. The complete
+clip is available for WAV retrieval after generation finishes.
 
-Listen through `http://TRUEOS-IP:82/`. Diagnostics report model loading,
-first generated PCM, chunk counts, temperature, generation time and clip
-submission under `blueprint/ptts`. Submission alone does not prove physical
-speaker output; a new audio clip ID and exact-ID WAV retrieval provide the
-runtime handoff evidence.
+Listen through `http://TRUEOS-IP:82/`. The first generated PCM and first native
+write timings under `blueprint/ptts` precede listener buffering and any quiet
+model lead-in. The direct native `--sample` and `--text` commands still submit
+a complete clip.
+
+In a warm, idle native check, the same 4.24-second Lily Happy reply that
+previously waited about 3.1 seconds for a complete clip reached the live
+listener with nonzero PCM at 235 ms. The first 10 ms block above roughly
+−60 dBFS arrived at 615 ms. Generation finished at 3,229 ms. Firefox
+scheduled speech before the retained clip became available. These timings
+measure delivery and scheduling rather than speaker output.
 
 ## Prepare, build and host checks
 

@@ -1,5 +1,5 @@
-//! A separate Blueprint/Hull owns inference and Spirit submission. HTTP only
-//! admits bounded snapshots; the worker drains them without blocking Codex.
+//! A separate Blueprint/Hull owns inference and Spirit submission. HTTP admits
+//! bounded Spirit snapshots and serves immediate, label-only requests.
 use anyhow::{Context, Result, bail};
 use axum::{
     Json, Router,
@@ -27,6 +27,8 @@ const CADENCE: Duration = Duration::from_millis(2500);
 const REPEAT: Duration = Duration::from_secs(5);
 const EXPIRE: Duration = Duration::from_secs(10);
 const IDLE: Duration = Duration::from_secs(120);
+const CLASSIFY_TEXT_BYTES: usize = 16 * 1024;
+const CLASSIFY_BODY_BYTES: usize = CLASSIFY_TEXT_BYTES * 6 + 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +65,15 @@ struct Inbox {
 #[derive(Clone)]
 struct Service {
     inbox: Arc<Mutex<Inbox>>,
+    model: Arc<Model>,
+}
+
+impl Service {
+    fn classify(&self, text: &str) -> Result<usize> {
+        let query = self.model.encode(text)?;
+        let scores = self.model.score_vnni(&query)?;
+        Ok(self.model.winner(&scores))
+    }
 }
 
 impl Inbox {
@@ -153,6 +164,28 @@ async fn health(State(service): State<Service>) -> Json<serde_json::Value> {
         "classified":inbox.classified, "signaled":inbox.signaled, "last_error":inbox.last_error,
     }))
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassifyRequest {
+    text: String,
+}
+
+async fn classify(
+    State(service): State<Service>,
+    Json(request): Json<ClassifyRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if request.text.len() > CLASSIFY_TEXT_BYTES || request.text.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let index = service
+        .classify(&request.text)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(
+        serde_json::json!({"label": service.model.labels[index]}),
+    ))
+}
+
 async fn enqueue(
     State(service): State<Service>,
     Json(request): Json<Request>,
@@ -202,7 +235,7 @@ fn signal(label: &str, dry_run: bool) -> Result<()> {
     }
 }
 
-async fn worker(service: Service, model: Model, dry_run: bool) {
+async fn worker(service: Service, dry_run: bool) {
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -210,7 +243,7 @@ async fn worker(service: Service, model: Model, dry_run: bool) {
         let Some(job) = service.inbox.lock().await.take(Instant::now()) else {
             continue;
         };
-        let result = model.encode(&job.text).and_then(|q| model.score_vnni(&q));
+        let result = service.classify(&job.text);
         let mut inbox = service.inbox.lock().await;
         // Clear/new sequence admission invalidates a previously selected job.
         if !inbox
@@ -220,8 +253,8 @@ async fn worker(service: Service, model: Model, dry_run: bool) {
         {
             continue;
         }
-        let scores = match result {
-            Ok(scores) => scores,
+        let index = match result {
+            Ok(index) => index,
             Err(error) => {
                 activity(job.request, &format!("inference=failed {error}"));
                 inbox.last_error = Some(error.to_string());
@@ -229,8 +262,7 @@ async fn worker(service: Service, model: Model, dry_run: bool) {
             }
         };
         inbox.classified += 1;
-        let index = model.winner(&scores);
-        let label = &model.labels[index];
+        let label = &service.model.labels[index];
         let now = Instant::now();
         if inbox.last_signal.is_some_and(|(last, when)| {
             last == index && now.saturating_duration_since(when) < REPEAT
@@ -312,17 +344,24 @@ async fn run(port: u16, dry_run: bool) -> Result<()> {
     std::hint::black_box(model.score_vnni(&query)?);
     let service = Service {
         inbox: Arc::new(Mutex::new(Inbox::default())),
+        model: Arc::new(model),
     };
     let router = Router::new()
         .route("/health", get(health))
-        .route("/v1/snapshots", post(enqueue))
-        .layer(DefaultBodyLimit::max(8192))
+        .route(
+            "/v1/snapshots",
+            post(enqueue).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/v1/classify",
+            post(classify).layer(DefaultBodyLimit::max(CLASSIFY_BODY_BYTES)),
+        )
         .with_state(service.clone());
     announce(&format!(
         "lily2vec-service: READY http://127.0.0.1:{} protocol=lily2vec-v1 backend=avx-vnni queue=32 scheduling=default-hull dry_run={dry_run}",
         listener.local_addr()?.port()
     ));
-    let job = tokio::task::spawn_local(worker(service, model, dry_run));
+    let job = tokio::task::spawn_local(worker(service, dry_run));
     #[cfg(any(target_os = "trueos", feature = "native-transport"))]
     let result = native_transport::serve(listener, router)
         .await

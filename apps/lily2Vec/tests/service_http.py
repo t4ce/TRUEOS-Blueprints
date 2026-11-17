@@ -154,6 +154,15 @@ def main():
         assert health["received"] == 0, health
         print("PASS: HTTP health reports a ready AVX-VNNI backend")
 
+        for text, label in [("hi", "Waving"), ("x " * 4500 + "i dont feel well", "Cry")]:
+            assert request(base, "/v1/classify", {"text": text}) == (200, {"label": label})
+        for text in [" ", "🙂" * 4097]:
+            assert request(base, "/v1/classify", {"text": text})[0] == 400
+        assert request(base, "/v1/classify", {"text": "a" * 100_000})[0] == 413
+        assert request(base, "/health") == (200, health)
+        assert not events.items and not notifications.items
+        print("PASS: classification returns a per-request label without touching Spirit state")
+
         source = "integration-response"
         received = 0
         def post(sequence, text=None, clear=False):
@@ -229,7 +238,7 @@ def main():
         assert health["classified"] == 5 and health["signaled"] == 4, health
         assert not notifications.errors, notifications.errors
         print("PASS: timestamped receipts correlate with single-label results, including held repeats")
-        print("6 HTTP integration checks passed; Spirit signaling was dry-run only")
+        print("HTTP integration checks passed; Spirit signaling was dry-run only")
     except BaseException:
         print("Service diagnostics:\n" + "".join(notifications.lines)[-6000:])
         raise

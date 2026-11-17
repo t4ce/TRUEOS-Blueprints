@@ -2,6 +2,7 @@ mod bundle;
 mod engine;
 mod frontend;
 mod http;
+mod loopback;
 mod model;
 mod playback;
 mod tone;

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, String>;
 const DEFAULT_PORT: u16 = 9773;
+const LILY_PORT: u16 = 9771;
 const MAX_HEADER: usize = 8192;
 const MAX_BODY: usize = 8192;
 const SPEECH_TIMEOUT: Duration = Duration::from_secs(185);
@@ -79,6 +80,17 @@ fn request(
     timeout: Duration,
 ) -> Result<Response> {
     let deadline = Instant::now() + timeout;
+    let stream = send_request(port, method, path, body, deadline)?;
+    read_response(stream, deadline)
+}
+
+fn send_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+    deadline: Instant,
+) -> Result<TcpStream> {
     let mut stream = TcpStream::connect_timeout(
         &SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
         remaining(deadline)?.min(SMALL_TIMEOUT),
@@ -106,6 +118,10 @@ fn request(
         }
         pending = &pending[count..];
     }
+    Ok(stream)
+}
+
+fn read_response(mut stream: TcpStream, deadline: Instant) -> Result<Response> {
     let mut reply = Vec::new();
     let mut expected = None;
     let mut buffer = [0u8; 2048];
@@ -166,16 +182,105 @@ fn health(port: u16) -> Result<()> {
 }
 
 #[cfg(target_os = "trueos")]
-fn clip_id() -> Result<u64> {
-    let json = require_status(
+fn audio_status() -> Result<serde_json::Value> {
+    require_status(
         request(82, "GET", "/audio/status", None, SMALL_TIMEOUT)?,
         200,
-    )?;
-    json["clip_id"]
+    )
+}
+
+#[cfg(target_os = "trueos")]
+fn clip_id() -> Result<u64> {
+    audio_status()?["clip_id"]
         .as_str()
         .ok_or("audio status has no string clip_id")?
         .parse::<u64>()
         .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "trueos")]
+fn check_live_speech(port: u16, body: serde_json::Value) -> Result<Response> {
+    use std::io::BufReader;
+
+    if audio_status()?["playing"] != false {
+        return Err("live onset measurement requires an idle audio sink".into());
+    }
+    let deadline = Instant::now() + SMALL_TIMEOUT;
+    let stream = send_request(82, "GET", "/audio/live.wav", None, deadline)?;
+    stream
+        .set_read_timeout(Some(remaining(deadline)?))
+        .map_err(|e| e.to_string())?;
+    let mut live = BufReader::new(stream);
+    let mut header = Vec::new();
+    while !header.ends_with(b"\r\n\r\n") {
+        if header.len() == MAX_HEADER {
+            return Err("live audio HTTP headers exceed bound".into());
+        }
+        let mut byte = [0];
+        live.read_exact(&mut byte).map_err(|e| e.to_string())?;
+        header.push(byte[0]);
+    }
+    let mut wav = [0; 44];
+    live.read_exact(&mut wav).map_err(|e| e.to_string())?;
+    if !header.starts_with(b"HTTP/1.1 200 ")
+        || &wav[0..4] != b"RIFF"
+        || &wav[8..12] != b"WAVE"
+        || &wav[20..28] != [1, 0, 2, 0, 128, 187, 0, 0]
+        || &wav[34..40] != b"\x10\x00data"
+    {
+        return Err("unexpected live audio WAV format".into());
+    }
+
+    let started = Instant::now();
+    let speech_deadline = started + SPEECH_TIMEOUT;
+    let speech = send_request(port, "POST", "/speech", Some(body), speech_deadline)?;
+    let live_deadline = started + SMALL_TIMEOUT;
+    let mut block = [0u8; 1920];
+    let mut first_nonzero_ms = None;
+    let onset_ms = loop {
+        live.get_ref()
+            .set_read_timeout(Some(remaining(live_deadline)?))
+            .map_err(|e| e.to_string())?;
+        live.read_exact(&mut block)
+            .map_err(|e| format!("read live audio: {e}"))?;
+        let elapsed = started.elapsed().as_millis();
+        if first_nonzero_ms.is_none() && block.iter().any(|byte| *byte != 0) {
+            first_nonzero_ms = Some(elapsed);
+        }
+        // Detect a 10 ms window above roughly -60 dBFS rather than counting
+        // digital silence or reporting the browser's audio device latency.
+        let sum: u64 = block
+            .chunks_exact(2)
+            .map(|b| {
+                let sample = i32::from(i16::from_le_bytes([b[0], b[1]]));
+                (sample * sample) as u64
+            })
+            .sum();
+        if sum >= (block.len() as u64 / 2) * 33 * 33 {
+            break elapsed;
+        }
+    };
+    drop(live);
+    let response = read_response(speech, speech_deadline)?;
+    let first_pcm_ms = response.json["first_pcm_ms"]
+        .as_u64()
+        .ok_or("missing first_pcm_ms")?;
+    let first_stream_ms = response.json["first_stream_ms"]
+        .as_u64()
+        .ok_or("missing first_stream_ms")?;
+    let generation_ms = response.json["generation_ms"]
+        .as_u64()
+        .ok_or("missing generation_ms")?;
+    if onset_ms >= u128::from(generation_ms) {
+        return Err(format!(
+            "live PCM onset {onset_ms} ms did not precede generation end {generation_ms} ms"
+        ));
+    }
+    notice(format!(
+        "ptts-check: live first_pcm_ms={first_pcm_ms} first_stream_ms={first_stream_ms} first_nonzero_ms={} energy_onset_ms={onset_ms} generation_ms={generation_ms}",
+        first_nonzero_ms.unwrap_or(onset_ms),
+    ));
+    Ok(response)
 }
 
 fn check_speech(json: &serde_json::Value, expected_temperature: f64) -> Result<(u64, u64)> {
@@ -197,11 +302,22 @@ fn run(port: u16) -> Result<()> {
     notice(format!(
         "ptts-check: ready port={port} protocol=ptts-v1 voice=azelma"
     ));
+    let lily_ready =
+        request(LILY_PORT, "GET", "/health", None, SMALL_TIMEOUT).is_ok_and(|response| {
+            response.status == 200
+                && response.json["protocol"] == "lily2vec-v1"
+                && response.json["ready"] == true
+        });
+    let (automatic_case, automatic_temperature) = if lily_ready {
+        ("Lily/Happy", 0.4)
+    } else {
+        ("default/Lily-unavailable", 0.3)
+    };
     for (label, temperature, text) in [
         (
             None,
-            0.3,
-            "Codex can read this completed answer using the default Azelma voice.",
+            automatic_temperature,
+            "I am so happy. This is wonderful news!",
         ),
         (
             Some("Happy"),
@@ -217,13 +333,20 @@ fn run(port: u16) -> Result<()> {
         #[cfg(target_os = "trueos")]
         let before = clip_id()?;
         let started = Instant::now();
-        // Match Codex's text-only request exactly when no Lily label is present.
+        // Match Codex's text-only request when Pocket should ask Lily itself.
         let body = match label {
             Some(label) => serde_json::json!({"text":text,"label":label}),
             None => serde_json::json!({"text":text}),
         };
-        let label = label.unwrap_or("default");
+        #[cfg(target_os = "trueos")]
+        let response = if label.is_none() {
+            check_live_speech(port, body)?
+        } else {
+            request(port, "POST", "/speech", Some(body), SPEECH_TIMEOUT)?
+        };
+        #[cfg(not(target_os = "trueos"))]
         let response = request(port, "POST", "/speech", Some(body), SPEECH_TIMEOUT)?;
+        let label = label.unwrap_or(automatic_case);
         let json = require_status(response, 200)?;
         let (audio_ms, chunks) = check_speech(&json, temperature)?;
         #[cfg(target_os = "trueos")]

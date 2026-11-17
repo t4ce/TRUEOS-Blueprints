@@ -82,6 +82,10 @@ The service accepts HTTP only on loopback:
 
 - `GET /health` reports `protocol: "lily2vec-v1"`, `backend: "avx-vnni"`, and
   `ready: true` only after the model and required CPU features are ready.
+- `POST /v1/classify` accepts `{ "text": "..." }` and immediately returns the
+  winning classifier word as `{ "label": "Happy" }`. It uses the same model
+  as snapshots and accepts nonempty text up to 16 KiB of UTF-8. This lookup
+  leaves the Spirit queue, cadence, repeat state, and health counters untouched.
 - `POST /v1/snapshots` enqueues work and returns HTTP 202. Its JSON body contains
   `source`, monotonically increasing `sequence`, and `text`. A unique source
   identifies the initiating Codex presentation stream.

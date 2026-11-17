@@ -1,4 +1,4 @@
-//! Warm loopback speech sidekick for Codex. One owner serializes complete clips.
+//! Warm loopback speech sidekick for Codex. One owner serializes speech requests.
 use crate::{bundle, engine::Engine, frontend::Frontend, tone::ToneRules};
 use anyhow::{Result, bail};
 use serde::Deserialize;
@@ -11,6 +11,27 @@ pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_HEADER_BYTES: usize = 8192;
 const MAX_BODY_BYTES: usize = MAX_TEXT_BYTES * 6 + 1024;
+const LILY_PORT: u16 = 9771;
+const LILY_TIMEOUT: Duration = Duration::from_millis(500);
+
+fn lily_label(text: &str, deadline: Instant) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Classification {
+        label: String,
+    }
+
+    let deadline = deadline.min(Instant::now() + LILY_TIMEOUT);
+    let body = serde_json::to_vec(&serde_json::json!({"text": text})).ok()?;
+    let mut request = format!(
+        "POST /v1/classify HTTP/1.1\r\nHost: 127.0.0.1:{LILY_PORT}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len(),
+    )
+    .into_bytes();
+    request.extend_from_slice(&body);
+    let response = crate::loopback::exchange(LILY_PORT, &request, deadline).ok()?;
+    let result: Classification = serde_json::from_slice(&response).ok()?;
+    (!result.label.is_empty() && result.label.len() <= 64).then_some(result.label)
+}
 
 #[derive(Debug)]
 struct Request {
@@ -109,7 +130,7 @@ pub struct SpeechModel {
     rules: ToneRules,
 }
 pub struct SpeechResult {
-    pub pcm: Vec<f32>,
+    pub samples: usize,
     pub temperature: f32,
     pub chunks: usize,
     pub first_pcm_ms: Option<u128>,
@@ -135,12 +156,28 @@ impl SpeechModel {
             rules: ToneRules::embedded().map_err(anyhow::Error::msg)?,
         })
     }
-    pub fn synthesize(&self, request: &SpeechRequest, deadline: Instant) -> Result<SpeechResult> {
+    pub fn synthesize(
+        &self,
+        request: &SpeechRequest,
+        deadline: Instant,
+        on_pcm: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<SpeechResult> {
         request.validate()?;
-        let temperature = self.rules.temperature_for(request.label.as_deref());
         let started = Instant::now();
         let chunks = self.frontend.prepare(&request.text)?;
-        let mut pcm = Vec::new();
+        let inferred_label = if request.label.is_none() && !chunks.is_empty() {
+            lily_label(&request.text, deadline)
+        } else {
+            None
+        };
+        let label = request.label.as_deref().or(inferred_label.as_deref());
+        let temperature = self.rules.temperature_for(label);
+        if let Some(label) = inferred_label {
+            crate::notice(format!(
+                "ptts: Lily label={label:?} temperature={temperature}"
+            ));
+        }
+        let mut total_samples = 0;
         let mut first_pcm_ms = None;
         for chunk in &chunks {
             self.engine.generate_with_limits(
@@ -149,21 +186,20 @@ impl SpeechModel {
                 chunk.frames_after_eos,
                 deadline,
                 &mut |samples| {
-                    if pcm.len() + samples.len() > 24_000 * 120 {
+                    if total_samples + samples.len() > 24_000 * 120 {
                         bail!("speech exceeds the 120-second clip limit")
                     }
                     if first_pcm_ms.is_none() {
                         first_pcm_ms = Some(started.elapsed().as_millis());
                     }
-                    pcm.try_reserve(samples.len())
-                        .map_err(|_| anyhow::anyhow!("speech PCM allocation failed"))?;
-                    pcm.extend_from_slice(samples);
+                    on_pcm(samples)?;
+                    total_samples += samples.len();
                     Ok(())
                 },
             )?;
         }
         Ok(SpeechResult {
-            pcm,
+            samples: total_samples,
             temperature,
             chunks: chunks.len(),
             first_pcm_ms,
@@ -231,32 +267,52 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                     crate::notice(format!(
                         "ptts: job={job} submitted bytes={} label={}",
                         request.text.len(),
-                        request.label.as_deref().unwrap_or("Static")
+                        request.label.as_deref().unwrap_or("auto")
                     ));
-                    let generated = model.synthesize(&request, deadline)?;
-                    if !generated.pcm.is_empty() {
-                        #[cfg(target_os = "trueos")]
-                        crate::playback::submit_with_deadline(&generated.pcm, deadline)?;
-                        #[cfg(not(target_os = "trueos"))]
-                        crate::playback::write_wav(
-                            output_dir
-                                .join(format!("speech-{job:06}.wav"))
-                                .to_str()
-                                .ok_or_else(|| anyhow::anyhow!("invalid host output path"))?,
-                            &generated.pcm,
-                        )?;
-                    }
+                    #[cfg(target_os = "trueos")]
+                    let (generated, first_stream_ms) = {
+                        let mut playback = crate::playback::Stream::new(deadline);
+                        let generated = model.synthesize(&request, deadline, &mut |samples| {
+                            playback.push(samples)
+                        })?;
+                        playback.finish()?;
+                        (
+                            generated,
+                            playback.first_write().map(|at| (at - started).as_millis()),
+                        )
+                    };
+                    #[cfg(not(target_os = "trueos"))]
+                    let (generated, first_stream_ms) = {
+                        let mut pcm = Vec::new();
+                        let generated = model.synthesize(&request, deadline, &mut |samples| {
+                            pcm.try_reserve(samples.len())
+                                .map_err(|_| anyhow::anyhow!("speech PCM allocation failed"))?;
+                            pcm.extend_from_slice(samples);
+                            Ok(())
+                        })?;
+                        if !pcm.is_empty() {
+                            crate::playback::write_wav(
+                                output_dir
+                                    .join(format!("speech-{job:06}.wav"))
+                                    .to_str()
+                                    .ok_or_else(|| anyhow::anyhow!("invalid host output path"))?,
+                                &pcm,
+                            )?;
+                        }
+                        (generated, None::<u128>)
+                    };
+                    let audio_ms = generated.samples / 24;
                     crate::notice(format!(
-                        "ptts: job={job} done first_pcm_ms={} generation_ms={} audio_ms={} chunks={} temperature={} total_ms={}",
+                        "ptts: job={job} done first_pcm_ms={} generation_ms={} audio_ms={audio_ms} chunks={} temperature={} total_ms={} first_stream_ms={}",
                         generated.first_pcm_ms.unwrap_or_default(),
                         generated.generation_ms,
-                        generated.pcm.len() / 24,
                         generated.chunks,
                         generated.temperature,
-                        started.elapsed().as_millis()
+                        started.elapsed().as_millis(),
+                        first_stream_ms.unwrap_or_default()
                     ));
                     Ok(
-                        serde_json::json!({"ok":true,"audio_ms":generated.pcm.len()/24,"temperature":generated.temperature,"chunks":generated.chunks,"first_pcm_ms":generated.first_pcm_ms,"generation_ms":generated.generation_ms}),
+                        serde_json::json!({"ok":true,"audio_ms":audio_ms,"temperature":generated.temperature,"chunks":generated.chunks,"first_pcm_ms":generated.first_pcm_ms,"generation_ms":generated.generation_ms,"first_stream_ms":first_stream_ms}),
                     )
                 })();
                 match result {

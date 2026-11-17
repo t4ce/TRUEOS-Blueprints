@@ -4,15 +4,117 @@ use anyhow::{Result, bail};
 use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "trueos", test))]
-const STATUS_HEADER_LIMIT: usize = 8192;
-#[cfg(any(target_os = "trueos", test))]
-const STATUS_BODY_LIMIT: usize = 1024;
-#[cfg(any(target_os = "trueos", test))]
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[cfg(target_os = "trueos")]
 unsafe extern "C" {
     fn trueos_cabi_http_audio_clip_submit_v1(pcm_ptr: *const u8, pcm_bytes: usize) -> i32;
+    fn trueos_cabi_http_audio_stream_v1(
+        action: u32,
+        stream: u64,
+        pcm_ptr: *const u8,
+        pcm_bytes: usize,
+    ) -> i64;
+}
+
+#[cfg(target_os = "trueos")]
+pub struct Stream {
+    deadline: Instant,
+    token: Option<u64>,
+    previous: Option<f32>,
+    bytes: Vec<u8>,
+    first_write: Option<Instant>,
+}
+
+#[cfg(target_os = "trueos")]
+impl Stream {
+    pub fn new(deadline: Instant) -> Self {
+        Self {
+            deadline,
+            token: None,
+            previous: None,
+            bytes: Vec::new(),
+            first_write: None,
+        }
+    }
+
+    pub fn push(&mut self, mono: &[f32]) -> Result<()> {
+        // Two 48 kHz stereo s16le frames per 24 kHz mono sample.
+        for block in mono.chunks(64 * 1024 / 8) {
+            self.bytes.clear();
+            append_interpolated(block, &mut self.previous, &mut self.bytes)?;
+            self.write()?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<()> {
+        self.bytes.clear();
+        flush_interpolation(&mut self.previous, &mut self.bytes);
+        self.write()?;
+        if let Some(token) = self.token {
+            let status = stream_call(2, token, &[]);
+            if status != 0 {
+                bail!("native audio stream finish failed: {status}")
+            }
+            self.token = None;
+        }
+        Ok(())
+    }
+
+    pub fn first_write(&self) -> Option<Instant> {
+        self.first_write
+    }
+
+    fn write(&mut self) -> Result<()> {
+        if self.bytes.is_empty() {
+            return Ok(());
+        }
+        if self.token.is_none() {
+            loop {
+                let remaining = self.deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    bail!("native audio stream deadline expired while waiting for the sink")
+                }
+                match stream_call(0, 0, &[]) {
+                    token @ 1.. => {
+                        self.token = Some(token as u64);
+                        break;
+                    }
+                    -16 => std::thread::sleep(remaining.min(Duration::from_millis(5))),
+                    status => bail!("native audio stream begin failed: {status}"),
+                }
+            }
+        }
+        if Instant::now() >= self.deadline {
+            bail!("native audio stream deadline expired before writing")
+        }
+        let status = stream_call(1, self.token.expect("stream reserved"), &self.bytes);
+        if status != 0 {
+            bail!("native audio stream write failed: {status}")
+        }
+        self.first_write.get_or_insert_with(Instant::now);
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "trueos")]
+impl Drop for Stream {
+    fn drop(&mut self) {
+        if let Some(token) = self.token {
+            let _ = stream_call(3, token, &[]);
+        }
+    }
+}
+
+#[cfg(target_os = "trueos")]
+fn stream_call(action: u32, token: u64, bytes: &[u8]) -> i64 {
+    let ptr = if bytes.is_empty() {
+        std::ptr::null()
+    } else {
+        bytes.as_ptr()
+    };
+    unsafe { trueos_cabi_http_audio_stream_v1(action, token, ptr, bytes.len()) }
 }
 
 #[cfg(target_os = "trueos")]
@@ -55,21 +157,46 @@ fn native_clip_bytes(mono: &[f32]) -> Result<Vec<u8>> {
     if mono.is_empty() || mono.len() > 24_000 * 120 {
         bail!("invalid native clip length")
     }
+    let mut bytes = Vec::new();
+    let mut previous = None;
+    append_interpolated(mono, &mut previous, &mut bytes)?;
+    flush_interpolation(&mut previous, &mut bytes);
+    Ok(bytes)
+}
+
+/// Retain one mono sample so interpolation crosses decoder block boundaries.
+#[cfg(any(target_os = "trueos", test))]
+fn append_interpolated(
+    mono: &[f32],
+    previous: &mut Option<f32>,
+    bytes: &mut Vec<u8>,
+) -> Result<()> {
     if mono.iter().any(|sample| !sample.is_finite()) {
         bail!("invalid PCM")
     }
-    let mut bytes = Vec::new();
-    // Two output frames, two channels, two bytes per sample.
     bytes.try_reserve_exact(mono.len() * 8)?;
-    for (index, &sample) in mono.iter().enumerate() {
-        let next = mono.get(index + 1).copied().unwrap_or(sample);
-        for value in [sample, sample * 0.5 + next * 0.5] {
-            let sample_bytes = pcm_sample_le(value);
-            bytes.extend_from_slice(&sample_bytes);
-            bytes.extend_from_slice(&sample_bytes);
+    for &next in mono {
+        if let Some(sample) = previous.replace(next) {
+            append_stereo_pair(bytes, sample, next);
         }
     }
-    Ok(bytes)
+    Ok(())
+}
+
+#[cfg(any(target_os = "trueos", test))]
+fn flush_interpolation(previous: &mut Option<f32>, bytes: &mut Vec<u8>) {
+    if let Some(sample) = previous.take() {
+        append_stereo_pair(bytes, sample, sample);
+    }
+}
+
+#[cfg(any(target_os = "trueos", test))]
+fn append_stereo_pair(bytes: &mut Vec<u8>, sample: f32, next: f32) {
+    for value in [sample, sample * 0.5 + next * 0.5] {
+        let sample_bytes = pcm_sample_le(value);
+        bytes.extend_from_slice(&sample_bytes);
+        bytes.extend_from_slice(&sample_bytes);
+    }
 }
 
 fn pcm_sample_le(sample: f32) -> [u8; 2] {
@@ -101,105 +228,14 @@ fn wait_until_idle_with(
 }
 
 #[cfg(target_os = "trueos")]
-fn status_budget(deadline: Instant) -> Result<Duration> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        bail!("audio status request deadline expired")
-    }
-    Ok(remaining.min(Duration::from_secs(1)))
-}
-
-#[cfg(target_os = "trueos")]
 fn sink_playing(deadline: Instant) -> Result<bool> {
-    use std::io::{Read, Write};
-    use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-
-    let endpoint = SocketAddr::from((Ipv4Addr::LOCALHOST, 82));
-    let mut stream = TcpStream::connect_timeout(&endpoint, status_budget(deadline)?)
-        .map_err(|error| anyhow::anyhow!("connect 127.0.0.1:82: {error}"))?;
-    let mut request =
-        &b"GET /audio/status HTTP/1.1\r\nHost: 127.0.0.1:82\r\nConnection: close\r\n\r\n"[..];
-    while !request.is_empty() {
-        stream.set_write_timeout(Some(status_budget(deadline)?))?;
-        let written = stream.write(request)?;
-        if written == 0 {
-            bail!("audio status request write made no progress")
-        }
-        request = &request[written..];
-    }
-
-    let mut response = Vec::new();
-    let mut expected = None;
-    let mut buffer = [0u8; 2048];
-    loop {
-        if let Some((body_start, body_len)) = expected {
-            if response.len() == body_start + body_len {
-                return status_playing(&response[body_start..]);
-            }
-            if response.len() > body_start + body_len {
-                bail!("audio status response has bytes beyond Content-Length")
-            }
-        }
-        stream.set_read_timeout(Some(status_budget(deadline)?))?;
-        let count = stream.read(&mut buffer)?;
-        if count == 0 {
-            bail!("audio status response ended before its complete body")
-        }
-        if response.len() + count > STATUS_HEADER_LIMIT + STATUS_BODY_LIMIT {
-            bail!("audio status response is too large")
-        }
-        response.extend_from_slice(&buffer[..count]);
-        if expected.is_none() {
-            if let Some(end) = response.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                let body_start = end + 4;
-                if body_start > STATUS_HEADER_LIMIT {
-                    bail!("audio status response headers are too large")
-                }
-                expected = Some((body_start, status_body_length(&response[..body_start])?));
-            } else if response.len() >= STATUS_HEADER_LIMIT {
-                bail!("audio status response headers are too large")
-            }
-        }
-    }
-}
-
-#[cfg(any(target_os = "trueos", test))]
-fn status_body_length(header: &[u8]) -> Result<usize> {
-    if header.len() > STATUS_HEADER_LIMIT {
-        bail!("audio status response headers are too large")
-    }
-    let header = std::str::from_utf8(header)?;
-    let mut lines = header.split("\r\n");
-    let mut status = lines.next().unwrap_or_default().split_whitespace();
-    if !matches!(status.next(), Some("HTTP/1.1" | "HTTP/1.0")) || status.next() != Some("200") {
-        bail!("audio status endpoint did not return HTTP 200")
-    }
-    let mut length = None;
-    for line in lines.filter(|line| !line.is_empty()) {
-        let (name, value) = line
-            .split_once(':')
-            .ok_or_else(|| anyhow::anyhow!("malformed audio status header"))?;
-        if name.eq_ignore_ascii_case("transfer-encoding") {
-            bail!("audio status response must not use transfer encoding")
-        }
-        if name.eq_ignore_ascii_case("content-length") {
-            if length.is_some() {
-                bail!("duplicate audio status Content-Length")
-            }
-            length = Some(value.trim().parse::<usize>()?);
-        }
-    }
-    let length =
-        length.ok_or_else(|| anyhow::anyhow!("audio status response has no Content-Length"))?;
-    if length > STATUS_BODY_LIMIT {
-        bail!("audio status JSON body is too large")
-    }
-    Ok(length)
+    let request = b"GET /audio/status HTTP/1.1\r\nHost: 127.0.0.1:82\r\nConnection: close\r\n\r\n";
+    status_playing(&crate::loopback::exchange(82, request, deadline)?)
 }
 
 #[cfg(any(target_os = "trueos", test))]
 fn status_playing(body: &[u8]) -> Result<bool> {
-    if body.len() > STATUS_BODY_LIMIT {
+    if body.len() > crate::loopback::BODY_LIMIT {
         bail!("audio status JSON body is too large")
     }
     let value: serde_json::Value = serde_json::from_slice(body)?;
@@ -212,6 +248,7 @@ fn status_playing(body: &[u8]) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loopback::{HEADER_LIMIT, response_body_length};
 
     #[test]
     fn native_conversion_preserves_interpolation_stereo_and_clipping() {
@@ -228,6 +265,28 @@ mod tests {
         assert_eq!(native_clip_bytes(&[2.0]).unwrap(), [255, 127].repeat(4));
         assert!(native_clip_bytes(&[f32::NAN]).is_err());
     }
+
+    #[test]
+    fn streaming_conversion_matches_whole_clip_across_callback_boundaries() {
+        let mono = [0.0, 0.91, -0.23, -1.1, 0.17, 1.2, -0.79];
+        let expected = native_clip_bytes(&mono).unwrap();
+        for width in 1..=mono.len() {
+            let mut previous = None;
+            let mut block = Vec::new();
+            let mut output = Vec::new();
+            for chunk in mono.chunks(width) {
+                block.clear();
+                append_interpolated(chunk, &mut previous, &mut block).unwrap();
+                output.extend_from_slice(&block);
+            }
+            block.clear();
+            flush_interpolation(&mut previous, &mut block);
+            assert_eq!(block.len(), 8);
+            output.extend_from_slice(&block);
+            assert_eq!(output, expected, "callback width {width}");
+        }
+    }
+
     use std::cell::Cell;
     use std::collections::VecDeque;
 
@@ -314,7 +373,7 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
-        assert_eq!(status_body_length(header.as_bytes()).unwrap(), body.len());
+        assert_eq!(response_body_length(header.as_bytes()).unwrap(), body.len());
         assert!(!status_playing(body).unwrap());
         assert!(status_playing(br#"{"playing":true}"#).unwrap());
         for header in [
@@ -324,14 +383,14 @@ mod tests {
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_owned(),
             format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                STATUS_BODY_LIMIT + 1
+                crate::loopback::BODY_LIMIT + 1
             ),
             format!(
                 "HTTP/1.1 200 OK\r\nX-Pad: {}\r\nContent-Length: 0\r\n\r\n",
-                "x".repeat(STATUS_HEADER_LIMIT)
+                "x".repeat(HEADER_LIMIT)
             ),
         ] {
-            assert!(status_body_length(header.as_bytes()).is_err());
+            assert!(response_body_length(header.as_bytes()).is_err());
         }
         for body in [
             &b"{}"[..],
