@@ -199,12 +199,17 @@ fn run(port: u16) -> Result<()> {
     ));
     for (label, temperature, text) in [
         (
-            "Happy",
+            None,
+            0.3,
+            "Codex can read this completed answer using the default Azelma voice.",
+        ),
+        (
+            Some("Happy"),
             0.4,
             "The build passed, and TRUEOS can now read this message with its new CPU voice.",
         ),
         (
-            "Tired",
+            Some("Tired"),
             0.2,
             "This second sentence uses the tired label while the cpu prepares the next response.",
         ),
@@ -212,13 +217,13 @@ fn run(port: u16) -> Result<()> {
         #[cfg(target_os = "trueos")]
         let before = clip_id()?;
         let started = Instant::now();
-        let response = request(
-            port,
-            "POST",
-            "/speech",
-            Some(serde_json::json!({"text":text,"label":label})),
-            SPEECH_TIMEOUT,
-        )?;
+        // Match Codex's text-only request exactly when no Lily label is present.
+        let body = match label {
+            Some(label) => serde_json::json!({"text":text,"label":label}),
+            None => serde_json::json!({"text":text}),
+        };
+        let label = label.unwrap_or("default");
+        let response = request(port, "POST", "/speech", Some(body), SPEECH_TIMEOUT)?;
         let json = require_status(response, 200)?;
         let (audio_ms, chunks) = check_speech(&json, temperature)?;
         #[cfg(target_os = "trueos")]

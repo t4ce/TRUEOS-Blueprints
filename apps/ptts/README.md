@@ -15,18 +15,16 @@ See [tools/BUNDLE_SOURCES.md](tools/BUNDLE_SOURCES.md) for exact pins.
 
 ## Codex test integration
 
-The TRUEOS Codex test default is now `ptts`. Codex starts the speech Blueprint
+TRUEOS Codex uses `ptts` for read-aloud. Codex starts the speech Blueprint
 headlessly at TUI startup or reuses a healthy service with protocol `ptts-v1`.
 The normal `cargo bp codex-cli` bundle requires SQLite, Lily and `ptts.bp`.
-Kokoro remains available as a separate rollback backend: set
-`CODEX_TRUEOS_TTS_BACKEND=ttstt` in Codex's launch environment. The old sidekick
-must then be available separately; it is not part of the default Pocket bundle.
 
 The existing `trueos_tts` read-aloud boolean remains the switch for enabling
 speech. Only completed public final answers enter this path. History, reasoning,
-tool output and realtime delegated voice replies are excluded. Codex retains
-its latest-pending replacement/cancellation behavior; clearing pending speech
-does not retroactively abort an already submitted synthesis or playing clip.
+tool output and realtime delegated voice replies are excluded. Codex feeds one
+FIFO in completion order, with no skip or reset controls or age expiry. When
+waiting text exceeds 1 KiB in UTF-8, the producer logs a warning to keep replies
+small. This is a soft threshold: queued text is retained without truncation.
 
 Codex currently sends only the speech text. It does not attach live Lily labels
 yet, so ordinary Codex requests use the default temperature of 0.3.
@@ -103,9 +101,11 @@ submission under `blueprint/ptts`. Submission alone does not prove physical
 speaker output; a new audio clip ID and exact-ID WAV retrieval provide the
 runtime handoff evidence.
 
-The full-precision archive is approximately 198 MiB compressed and requires the
+The full-precision service archive is approximately 200 MiB compressed and requires the
 shared 256 MiB archive-download ceiling in Apps, the native SDK and the kernel.
-The catalog limit remains 1 MiB.
+The catalog limit remains 1 MiB. The current native service receives a 2 GiB
+guest heap recommendation under the shared image-aware memory policy. Archive
+size is separate from the memory needed for loaded CPU tensors and generation.
 
 ## Prepare, build and host checks
 
@@ -163,9 +163,33 @@ The sink clip ID advanced from 0 to 1, and the exact-ID download contained
 [tools/NATIVE_RUNTIME.json](tools/NATIVE_RUNTIME.json). That fixed-sample receipt
 does not validate the subsequent arbitrary-text service or Codex swap.
 
-Native warm-service and end-to-end Codex validation are pending for the new test
-integration. Building the changed packages alone does not establish those
-runtime results.
+The subsequent warm service also passed native checks on 2026-11-17. Model,
+voice state and tokenizer initialization took 142 ms after Blueprint invocation;
+this excludes fetching and loading the Blueprint itself. The runtime selected
+performance-core slot 9 with no fallback for this run.
+
+| Native request | Temperature | Audio duration | Generation | First generated PCM |
+| --- | ---: | ---: | ---: | ---: |
+| Codex-shaped text only | 0.3 | 4.24 s | 3,120 ms | 167 ms |
+| Happy | 0.4 | 5.60 s | 4,108 ms | 185 ms |
+| Tired | 0.2 | 5.60 s | 4,083 ms | 168 ms |
+
+Each spoken request advanced the sink clip ID. Emoji-only text stayed silent,
+and an unsupported voice was rejected while the service remained ready. The
+exact-ID native WAV was retrieved as 48 kHz stereo PCM. First generated PCM is
+not playback-start latency: this adapter still submits complete utterances.
+See [tools/SERVICE_RUNTIME.json](tools/SERVICE_RUNTIME.json) for the service
+receipt.
+
+The Pocket-only FIFO Codex build also passed an end-to-end native check. Starting
+Codex cold launched `ptts` headlessly on performance-core slot 7 with no fallback;
+the sidekick loaded in 144 ms. One controlled public final answer entered the
+text-only speech API at temperature 0.3 and advanced the audio clip ID from 5 to
+6. It produced 5.68 seconds of audio in 4,195 ms of generation, with first PCM at
+223 ms and complete-clip handoff at 4,207 ms. The exact-ID 48 kHz stereo WAV was
+retrieved without clipping. Six focused Codex contract tests cover the fixed
+Pocket service, final-text filtering, FIFO order, de-duplication, byte accounting,
+and preservation above the 1 KiB warning threshold.
 
 The copied upstream software notice is
 [tools/licenses/POCKET-TTS-MIT.txt](tools/licenses/POCKET-TTS-MIT.txt). Asset

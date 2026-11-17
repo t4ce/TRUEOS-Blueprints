@@ -117,9 +117,21 @@ pub struct SpeechResult {
 }
 impl SpeechModel {
     pub fn load() -> Result<Self> {
+        let started = Instant::now();
+        crate::notice("ptts: loading CPU model and Azelma state");
+        let engine = Engine::load()?;
+        crate::notice(format!(
+            "ptts: model ready elapsed_ms={} loading tokenizer",
+            started.elapsed().as_millis()
+        ));
+        let frontend = Frontend::from_bytes(bundle::tokenizer())?;
+        crate::notice(format!(
+            "ptts: tokenizer ready elapsed_ms={}",
+            started.elapsed().as_millis()
+        ));
         Ok(Self {
-            engine: Engine::load()?,
-            frontend: Frontend::from_bytes(bundle::tokenizer())?,
+            engine,
+            frontend,
             rules: ToneRules::embedded().map_err(anyhow::Error::msg)?,
         })
     }

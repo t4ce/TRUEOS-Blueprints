@@ -1,0 +1,134 @@
+{
+  "runtime_date": "2026-11-17",
+  "rig": "192.168.178.94",
+  "native_service_verified": true,
+  "native_codex_final_answer_verified": true,
+  "native_codex_status": "Published; native TUI cold sidekick launch and final-answer audio handoff verified",
+  "model": "english_2026-10",
+  "voice": "azelma",
+  "backend": "xn-cpu",
+  "threads": 1,
+  "heap_mib": 2048,
+  "carrier": {
+    "preference": "performance",
+    "selected_slot": 9,
+    "selected_kind": "perf",
+    "fallback": false
+  },
+  "startup": {
+    "model_ms": 128,
+    "model_voice_tokenizer_ms": 142,
+    "excludes": "Blueprint fetch and loader time"
+  },
+  "artifacts": {
+    "ptts": {
+      "bytes": 209567671,
+      "sha256": "68400b1933a75e40e82b86ffa24438c48c216d6aea06ef8b32e91ab408e7a06b"
+    },
+    "ptts-check": {
+      "bytes": 157296,
+      "sha256": "db2f1a728b64d1e76d4c75db4137c998962edebe59960d096012d03e5973b9b3"
+    },
+    "codex": {
+      "bytes": 80608395,
+      "sha256": "f63d00fb5ec51fa3f61139d6d55dcd6f21080e3c233f3d135ba660838f4ca45a"
+    }
+  },
+  "speech_checks": [
+    {
+      "job": 5,
+      "first_pcm_ms": 167,
+      "generation_ms": 3120,
+      "audio_ms": 4240,
+      "chunks": 1,
+      "temperature": 0.3,
+      "total_ms": 3123
+    },
+    {
+      "job": 6,
+      "first_pcm_ms": 185,
+      "generation_ms": 4108,
+      "audio_ms": 5600,
+      "chunks": 1,
+      "temperature": 0.4,
+      "total_ms": 4235
+    },
+    {
+      "job": 7,
+      "first_pcm_ms": 168,
+      "generation_ms": 4083,
+      "audio_ms": 5600,
+      "chunks": 1,
+      "temperature": 0.2,
+      "total_ms": 5592
+    }
+  ],
+  "clip_advances": [
+    "2->3",
+    "3->4",
+    "4->5"
+  ],
+  "emoji_only": {
+    "audio_ms": 0,
+    "chunks": 0,
+    "clip_unchanged": true
+  },
+  "unsupported_voice": {
+    "status": 422,
+    "health_remained_ready": true
+  },
+  "native_audio": {
+    "path": "/home/t4ce/.cache/pocket-tts-official-eval/ptts-service-native-tired.wav",
+    "clip_id": "5",
+    "bytes": 1075244,
+    "sha256": "258d556823b8635ccdc0a01db351704c3215f603fe2961f257e84938e8948ffb",
+    "sample_rate": 48000,
+    "channels": 2,
+    "frames": 268800,
+    "duration_s": 5.6,
+    "peak": 0.569976806640625,
+    "clipped_sample_fraction": 0.0
+  },
+  "probe_passed": true,
+  "probe_note": "One prior probe attempt failed connecting to native audio status port82 before synthesis. A repeat passed all checks without restarting ptts.",
+  "codex_host_contract_tests_passed": 6,
+  "codex_queue": {
+    "kind": "FIFO",
+    "queued_text_warning_bytes": 1024,
+    "warning_only": true,
+    "resets": false,
+    "drops_on_threshold": false
+  },
+  "native_codex": {
+    "blueprint_sha256": "f63d00fb5ec51fa3f61139d6d55dcd6f21080e3c233f3d135ba660838f4ca45a",
+    "sidekick_vm": 3,
+    "sidekick_protocol": "ptts-v1",
+    "sidekick_startup_ms": 144,
+    "carrier": {
+      "selected_slot": 7,
+      "selected_kind": "perf",
+      "fallback": false
+    },
+    "text_bytes": 70,
+    "temperature": 0.3,
+    "first_pcm_ms": 223,
+    "generation_ms": 4195,
+    "audio_ms": 5680,
+    "total_handoff_ms": 4207,
+    "chunks": 1,
+    "audio_clip_id_before": "5",
+    "audio_clip_id_after": "6",
+    "model_response_test": "One short controlled final answer through native Codex TUI; no model-requested tools.",
+    "audio": {
+      "path": "/home/t4ce/.cache/pocket-tts-official-eval/codex-ptts-native-final-answer.wav",
+      "bytes": 1090604,
+      "sha256": "5bc00714f72430633432d40c53474bc6365fa08f1ac1c31818a25589be94a57d",
+      "sample_rate": 48000,
+      "channels": 2,
+      "frames": 272640,
+      "duration_s": 5.68,
+      "peak": 0.49591064453125,
+      "clipped_sample_fraction": 0.0
+    }
+  }
+}
