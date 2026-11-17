@@ -1019,6 +1019,8 @@ filesystem-independent = true
         fs::remove_file(path).unwrap();
         let ttstt = Path::new(env!("CARGO_MANIFEST_DIR")).join("apps/ttstt/Cargo.toml");
         assert!(package_blueprint_prefer_performance_core(&ttstt).unwrap());
+        let ptts = Path::new(env!("CARGO_MANIFEST_DIR")).join("apps/ptts/Cargo.toml");
+        assert!(package_blueprint_prefer_performance_core(&ptts).unwrap());
     }
 
     #[test]

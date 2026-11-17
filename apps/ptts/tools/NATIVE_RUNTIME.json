@@ -1,0 +1,56 @@
+{
+  "blueprint": "/home/t4ce/Repositories/TRUEOS-Blueprints/dist/ptts.bp",
+  "blueprint_bytes": 207581453,
+  "blueprint_sha256": "7f0e79d7cc9c78d69d8d4c1e9490b4754ad8f721020d9408735b525296f71adc",
+  "native_runtime_verified": true,
+  "shared_archive_limit_bytes": 268435456,
+  "catalog_limit_bytes": 1048576,
+  "host_audio": {
+    "path": "/home/t4ce/.cache/pocket-tts-official-eval/ptts-host-static.wav",
+    "sample_rate": 24000,
+    "channels": 1,
+    "frames": 101760,
+    "duration_s": 4.24
+  },
+  "native_clip_id": "1",
+  "native_audio": {
+    "path": "/home/t4ce/.cache/pocket-tts-official-eval/ptts-native-azelma.wav",
+    "url": "http://192.168.178.94:82/audio/clip.wav?id=1",
+    "sample_rate": 48000,
+    "channels": 2,
+    "frames": 203520,
+    "duration_s": 4.24,
+    "bytes": 814124,
+    "sha256": "2a198f308365984d2a65f039dc421b6ff158e281df28b1bbbc601ef78f7539c1",
+    "peak": 0.528533935546875,
+    "clipped_sample_fraction": 0.0
+  },
+  "native_status": {
+    "listeners": 0,
+    "capacity": 4,
+    "clip_id": "1",
+    "playing": false
+  },
+  "watch_elapsed_s": 0.1425250930042239,
+  "native_timing": {
+    "load_ms": 129,
+    "temperature": 0.3,
+    "first_pcm_from_launch_ms": 322,
+    "first_pcm_from_generation_ms": 191,
+    "generation_ms": 3038,
+    "generation_total_ms": 3169,
+    "generation_rtf": 0.7165094339622641
+  },
+  "runtime_date": "2026-11-17",
+  "rig": "192.168.178.94",
+  "threads": 1,
+  "model": "english_2026-10",
+  "voice": "azelma",
+  "host_comparison": {
+    "native_even_frame_mono_samples": 101760,
+    "max_pcm_difference": 12989,
+    "rms_pcm_difference": 770.5735024645421,
+    "method": "native left channel, every second48k frame vs24k Ubuntu generated PCM",
+    "note": "Native and Ubuntu outputs are not bit-identical. This is not an exact waveform parity claim; the difference has not been isolated to a specific numerical backend or conversion step."
+  }
+}

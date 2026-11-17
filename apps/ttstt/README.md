@@ -1,6 +1,7 @@
 # ttstt: English + Heart
 
-Self-contained Kokoro text to speech for the TRUEOS Codex integration test.
+Legacy self-contained Kokoro text to speech, retained as the rollback backend
+for the TRUEOS Codex speech test.
 `ttstt.bp` embeds the native synthesis model, the English G2P frontend and
 only the `af_heart` voice. Launch it and speak: no setup, downloader, model
 folder, plugin or MCP is needed. STT remains unavailable.
@@ -10,12 +11,18 @@ or install models into TRUEOSFS. The large Misaki dictionary and the other
 53 voices are excluded; English lexicalization/pronunciation uses the existing
 G2P frontend. The unchanged neural model weights remain necessary.
 
-The standard TRUEOS Codex build enables read-aloud and starts this Blueprint
-at TUI startup, reusing a healthy existing service. No launch arguments are
-needed. The normal `cargo bp codex-cli` build includes SQLite, Lily and this
-TTS Blueprint. Completed public final answers enter the speech service.
-History, reasoning, tool output and realtime delegated voice replies are excluded. Pending speech can
-be replaced or cleared; already playing speech finishes normally.
+The TRUEOS Codex speech test now defaults to the separate English Azelma
+[`ptts` Blueprint](../ptts/README.md). The normal `cargo bp codex-cli` bundle
+requires SQLite, Lily and `ptts.bp`; it no longer bundles or automatically starts
+this Kokoro service by default. To test rollback, make `ttstt.bp` available and
+set `CODEX_TRUEOS_TTS_BACKEND=ttstt` in Codex's launch environment. Codex then
+starts this sidekick headlessly or reuses a healthy `ttstt-v1` service.
+
+The existing `trueos_tts` boolean still controls read-aloud. Completed public
+final answers enter the selected speech service. History, reasoning, tool output
+and realtime delegated voice replies are excluded. Pending speech can be
+replaced or cleared; an already submitted synthesis or playing clip is not
+retroactively aborted.
 
 The local service listens at `127.0.0.1:9772`. `GET /health` advertises
 `ttstt-v1`, `language: en`, `voice: af_heart`, `bundled: true`, `tts: true`,

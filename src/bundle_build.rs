@@ -128,11 +128,11 @@ mod tests {
     #[test]
     fn codex_builds_its_runtime_companions_in_install_order_without_xerj() {
         let fixture = Fixture::new();
-        for name in ["sqlite", "lily2vec", "ttstt"] {
+        for name in ["sqlite", "lily2vec", "ptts", "ttstt"] {
             fixture.package(name, None);
         }
         fixture.package("codex-cli", Some("codex"));
-        fs::write(fixture.0.join("apps.json"), r#"{"apps":["codex-cli","sqlite","lily2vec","ttstt",{"name":"xerj-server","optional":true}]}"#).unwrap();
+        fs::write(fixture.0.join("apps.json"), r#"{"apps":["codex-cli","sqlite","lily2vec","ptts","ttstt",{"name":"xerj-server","optional":true}]}"#).unwrap();
         fs::write(
             fixture.0.join("appbundle.json"),
             include_bytes!("../appbundle.json"),
@@ -144,7 +144,7 @@ mod tests {
                 .iter()
                 .map(|package| package.name.as_str())
                 .collect::<Vec<_>>(),
-            ["sqlite", "lily2vec", "ttstt", "codex-cli"]
+            ["sqlite", "lily2vec", "ptts", "codex-cli"]
         );
         assert_eq!(fixture.resolve("ttstt").unwrap().len(), 1);
     }

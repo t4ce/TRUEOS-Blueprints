@@ -33,6 +33,8 @@
     "sqlite",
     "emomodel",
     "ttstt",
+    "ptts",
+    { "name": "ptts-check", "path": "probes/ptts-check", "optional": true },
     { "name": "lily2vec", "path": "apps/lily2Vec" },
     "Frog",
     "lweb",

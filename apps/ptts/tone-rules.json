@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "label_namespace": "Lily expression labels",
+  "current_label_source": "lily2Vec",
+  "default_temperature": 0.3,
+  "temperature_overrides": {
+    "Tired": 0.2,
+    "Cry": 0.2,
+    "Happy": 0.4,
+    "Angry": 0.4,
+    "Idea": 0.4
+  }
+}
