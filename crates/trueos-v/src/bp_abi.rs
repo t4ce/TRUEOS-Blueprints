@@ -589,6 +589,14 @@ pub struct TrueosUi4FontMetricsV1 {
 }
 
 unsafe extern "C" {
+    /// Render one 132-byte Spirit control page to a 256×256 premultiplied BGRA8 cell.
+    pub fn trueos_cabi_lilyvfx_background_v1(
+        controls: *const u8,
+        controls_len: usize,
+        output: *mut u8,
+        output_len: usize,
+    ) -> i32;
+
     pub fn trueos_cabi_lumen_template_open(system_ptr: *const u8, system_len: usize) -> i32;
     pub fn trueos_cabi_lumen_prompt_submit(
         turn: u64,

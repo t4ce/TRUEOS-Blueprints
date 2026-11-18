@@ -35,6 +35,7 @@
     "ptts",
     { "name": "ptts-check", "path": "probes/ptts-check", "optional": true },
     { "name": "lily2vec", "path": "apps/lily2Vec" },
+    { "name": "lilyvfx", "path": "apps/lilyvfx", "optional": true },
     "Frog",
     "lweb",
     "osm",

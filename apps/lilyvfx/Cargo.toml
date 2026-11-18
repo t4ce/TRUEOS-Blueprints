@@ -1,0 +1,18 @@
+[package]
+name = "lilyvfx"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+replicatable = false
+rewrite-std-imports = false
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+v = { path = "../../crates/trueos-v" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
