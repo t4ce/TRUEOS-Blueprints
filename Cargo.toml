@@ -9,6 +9,7 @@ members = [
     "api",
     "apps/websys",
     "apps/ratatest",
+    "apps/lico",
     "apps/gboi",
     "apps/rbgb",
     "apps/hello_world",

@@ -1,0 +1,45 @@
+[package]
+name = "glicol_synth"
+version = "0.14.0-dev"
+edition = "2021"
+keywords = [
+    "audio",
+    "music",
+    "DSP",
+    "synth",
+    "synthesizer"
+]
+license-file = "LICENSE"
+readme = "README.md"
+description = "A graph-based music DSP library written in Rust"
+repository = "https://github.com/chaosprint/glicol"
+authors = ["Qi Cao"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["node-boxed", "node-pass", "node-sum"]
+use-samples = ["node-sampling"]
+use-meta = ["node-dynamic"]
+node-boxed = []
+node-pass = []
+node-sampling = []
+node-dynamic = ["rhai"]
+node-sum = ["dasp_slice"]
+wasm-bindgen = ["rhai/wasm-bindgen"]
+
+[dependencies]
+petgraph = { version = "0.6", default-features = false,  features = ["stable_graph"] }
+dasp_slice = { version = "0.11.0", default-features = false, features = [
+    "std",
+] , optional = true }
+dasp_ring_buffer = { version = "0.11.0", default-features = false }
+dasp_signal = { version = "0.11.0" }
+dasp_interpolate = { version = "0.11.0", features = ["linear", "sinc"] }
+hashbrown = "0.14.3"
+rhai = { version = "1.12.0", default-features = false, features = [
+    "sync",
+    "f32_float",
+    "only_i32",
+] , optional = true }
+fasteval = "0.2.4"
+glicol_parser = { path = "../parser", version = "0.14.0-dev"}

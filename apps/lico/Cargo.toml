@@ -1,0 +1,35 @@
+[package]
+name = "lico"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Live-code Glicol audio in the TRUEOS terminal"
+publish = false
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+replicatable = false
+rewrite-std-imports = false
+
+[dependencies]
+hyper = { version = "=1.10.0", default-features = false, features = ["http1", "server", "std-compat"] }
+glicol_parser = { path = "vendor/parser" }
+crossterm = { version = "0.29", default-features = false, features = ["events", "bracketed-paste"] }
+glicol = { path = "vendor/main", features = ["use-samples", "use-meta"] }
+hound = "3.5"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }
+ratatui-textarea = "0.9"
+rustfft = "6"
+serde_json = { workspace = true }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "time", "sync", "macros", "net", "io-util"] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { workspace = true, features = ["tokio-net-probe"] }
+v = { path = "../../crates/trueos-v" }
+mio = { version = "=1.2.0", default-features = false, features = ["std-compat", "native-net"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
+getrandom = "0.2"

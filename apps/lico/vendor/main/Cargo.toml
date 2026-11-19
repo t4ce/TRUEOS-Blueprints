@@ -1,0 +1,30 @@
+[package]
+name = "glicol"
+version = "0.14.0-dev"
+edition = "2021"
+keywords = ["audio", "music", "DSP", "synth", "synthesizer"]
+
+license-file = "LICENSE"
+description = "Glicol language main entry point."
+repository = "https://github.com/chaosprint/glicol.git"
+authors = ["Qichao Lan <chaosprint@gmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+use-samples = []
+use-meta = []
+bela = []
+wasm-bindgen = ["glicol_synth/wasm-bindgen"]
+
+[dependencies]
+petgraph = { version = "0.6", default-features = false,  features = ["stable_graph"] }
+glicol_parser = { path = "../parser", version = "0.14.0-dev" }
+glicol_synth = { path = "../synth", version = "0.14.0-dev", features = [
+    "use-samples",
+    "use-meta",
+] }
+pest = "2.7.9"
+hashbrown = "0.14.3"
+yoke = { version = "0.7.3", default-features = false, features = ["derive", "alloc"] }

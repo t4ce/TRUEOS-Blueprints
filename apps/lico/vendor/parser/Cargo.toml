@@ -1,0 +1,19 @@
+[package]
+name = "glicol_parser"
+version = "0.14.0-dev"
+edition = "2021"
+keywords = ["audio", "music", "DSP", "synth", "synthesizer"]
+
+license-file = "LICENSE"
+description = "Parser for Glicol language."
+repository = "https://github.com/chaosprint/glicol.git"
+authors = ["Qichao Lan <chaosprint@gmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+pest = "2.7.9"
+pest_derive = "2.7.9"
+hashbrown = "0.14.3"
+fasteval = "0.2.4"
+yoke = { version = "0.7.3", default-features = false, features = ["derive", "alloc"] }
