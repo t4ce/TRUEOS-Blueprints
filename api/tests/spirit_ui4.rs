@@ -237,6 +237,51 @@ fn generic_calls_keep_the_existing_wire_contract() {
     assert_eq!(f.typed, "Lilly §");
     assert_eq!(f.key, v::bp_abi::DOBBY_UI4_KEY_ESCAPE);
 }
+
+#[test]
+fn key_chords_and_navigation_use_the_existing_key_symbol() {
+    use spirit::Ui4Key;
+
+    let _serial = SERIAL.lock().unwrap();
+    reset();
+    for (key, modifiers, wire) in [
+        (Ui4Key::Delete, 0, 10),
+        (Ui4Key::Home, 0, 11),
+        (Ui4Key::End, 0, 12),
+        (Ui4Key::PageUp, 0, 13),
+        (Ui4Key::PageDown, 0, 14),
+        (Ui4Key::Letter('a'), spirit::UI4_KEY_CONTROL, 0x161),
+        (Ui4Key::Tab, spirit::UI4_KEY_SHIFT, 0x204),
+        (Ui4Key::Left, spirit::UI4_KEY_ALT, 0x407),
+        (Ui4Key::Letter('z'), spirit::UI4_KEY_META, 0x87a),
+        (
+            Ui4Key::Letter('s'),
+            spirit::UI4_KEY_CONTROL | spirit::UI4_KEY_SHIFT,
+            0x373,
+        ),
+    ] {
+        spirit::ui4_key_with_modifiers(key, modifiers).unwrap();
+        assert_eq!(FIXTURE.lock().unwrap().key, wire);
+    }
+}
+
+#[test]
+fn invalid_key_chords_do_not_reach_native_input() {
+    let _serial = SERIAL.lock().unwrap();
+    reset();
+    for letter in ['A', '1', 'ß'] {
+        assert_eq!(
+            spirit::ui4_key(spirit::Ui4Key::Letter(letter)),
+            Err(spirit::UI4_BAD_INPUT)
+        );
+    }
+    assert_eq!(
+        spirit::ui4_key_with_modifiers(spirit::Ui4Key::Enter, 0x10),
+        Err(spirit::UI4_BAD_INPUT)
+    );
+    assert_eq!(FIXTURE.lock().unwrap().key, 0);
+}
+
 #[test]
 fn observations_are_read_in_bounded_native_chunks() {
     let _serial = SERIAL.lock().unwrap();

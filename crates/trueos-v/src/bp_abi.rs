@@ -181,6 +181,16 @@ pub const DOBBY_UI4_KEY_END: u32 = 12;
 pub const DOBBY_UI4_KEY_PAGE_UP: u32 = 13;
 pub const DOBBY_UI4_KEY_PAGE_DOWN: u32 = 14;
 
+// Key IDs and lowercase ASCII letters occupy the low byte. The next byte
+// carries the supported left-side USB HID modifier bits.
+pub const DOBBY_UI4_KEY_CODE_MASK: u32 = 0xff;
+pub const DOBBY_UI4_KEY_MODIFIER_SHIFT: u32 = 8;
+pub const DOBBY_UI4_KEY_MODIFIER_MASK: u32 = 0x0f << DOBBY_UI4_KEY_MODIFIER_SHIFT;
+pub const DOBBY_UI4_KEY_MODIFIER_CONTROL: u8 = 1;
+pub const DOBBY_UI4_KEY_MODIFIER_SHIFT_LEFT: u8 = 2;
+pub const DOBBY_UI4_KEY_MODIFIER_ALT: u8 = 4;
+pub const DOBBY_UI4_KEY_MODIFIER_META: u8 = 8;
+
 /// Default UI4 behaviour: close the selected frame (and stop its Blueprint
 /// VM). `DELIVER_TO_APPLICATION` reserves Escape for this frame only.
 pub const UI4_FRAME_ESCAPE_KEY_ACTION_CLOSE: u32 = 0;

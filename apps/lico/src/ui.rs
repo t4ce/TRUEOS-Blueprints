@@ -1,14 +1,17 @@
-use crate::audio::{self, Command, DEFAULT_BPM, DEFAULT_PATCH, MONITOR_FRAMES, Status};
+use crate::audio::{self, Command, DEFAULT_BPM, MONITOR_FRAMES, Status};
+use crate::examples::{DEFAULT_PATCH, PATCHES};
 use crate::mcp::{self, Session, SharedSession};
 use crossterm::ExecutableCommand;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
 };
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Axis, Block, Chart, Clear, Dataset, GraphType, Paragraph, Sparkline, Wrap};
+use ratatui::widgets::{
+    Axis, Block, Chart, Clear, Dataset, GraphType, List, ListState, Paragraph, Sparkline, Wrap,
+};
 use ratatui::{DefaultTerminal, Frame};
 use ratatui_textarea::TextArea;
 use rustfft::{FftPlanner, num_complex::Complex32};
@@ -20,35 +23,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
-pub fn run(pairing: bool) -> Result<(), Box<dyn Error>> {
+pub fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err("the editor requires a terminal".into());
     }
-    let session = Arc::new(Mutex::new(Session::new(DEFAULT_PATCH.to_owned())));
-    let mut builder = tokio::runtime::Builder::new_current_thread();
-    builder.enable_time();
-    let token = if pairing {
-        Some(mcp::pairing_token()?)
-    } else {
-        match std::env::var("LICO_MCP_TOKEN") {
-            Ok(token) => Some(token),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(error) => return Err(error.into()),
-        }
-    };
-    let connect = if pairing {
-        token.as_deref().map(mcp::connect_command)
-    } else {
-        None
-    };
-    if token.is_some() {
-        builder.enable_io();
-    }
-    let runtime = builder.build()?;
-    let endpoint = token
-        .map(|token| runtime.block_on(mcp::start(token, session.clone())))
-        .transpose()?;
+    let session = Arc::new(Mutex::new(Session::new(
+        DEFAULT_PATCH.trim_end_matches('\n').to_owned(),
+    )));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()?;
+    let endpoint = runtime.block_on(mcp::start(session.clone()));
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     let mut lease = trueos::vshell::terminal_initial_lease()
         .map_err(|error| io::Error::other(error.to_string()))?;
@@ -70,8 +57,7 @@ pub fn run(pairing: bool) -> Result<(), Box<dyn Error>> {
                             status_rx,
                             monitor_rx,
                             &session,
-                            endpoint.is_some(),
-                            connect.as_deref(),
+                            endpoint.as_ref().err(),
                             || {
                                 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
                                 lease
@@ -95,7 +81,7 @@ pub fn run(pairing: bool) -> Result<(), Box<dyn Error>> {
         result
     })();
 
-    if let Some(endpoint) = endpoint {
+    if let Ok(endpoint) = endpoint {
         endpoint.abort();
     }
 
@@ -112,14 +98,13 @@ async fn editor(
     mut status: Receiver<Status>,
     mut monitor: Receiver<[f32; MONITOR_FRAMES]>,
     session: &SharedSession,
-    mcp_enabled: bool,
-    connect: Option<&str>,
+    mcp_error: Option<&io::Error>,
     first_frame: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
     let mut first_frame = Some(first_frame);
-    let mut patch = patch_editor(DEFAULT_PATCH);
+    let mut patch = patch_editor(&session.lock().expect("Lico session").draft);
     let mut review: Option<(String, u16)> = None;
-    let mut pairing_panel = connect.is_some();
+    let mut examples = None;
 
     let transform = FftPlanner::new().plan_fft_forward(MONITOR_FRAMES);
     let mut fft_data = [Complex32::default(); MONITOR_FRAMES];
@@ -137,7 +122,7 @@ async fn editor(
     let mut bpm = DEFAULT_BPM;
     let docs: serde_json::Value = serde_json::from_str(include_str!("../assets/glicol-api.json"))
         .map_err(io::Error::other)?;
-    let mut reference = None;
+    let mut reference = mcp_error.map(|error| format!("Codex connection: {error}"));
 
     loop {
         while let Ok(update) = status.try_recv() {
@@ -189,75 +174,89 @@ async fn editor(
             }
         }
 
-        let pending = mcp_enabled && session.lock().expect("Lico session").proposal.is_some();
+        let pending = session.lock().expect("Lico session").proposal.is_some();
         terminal.draw(|frame| {
-            let [header, edit, plots, status, footer] = Layout::vertical([
-                Constraint::Length(1),
-                Constraint::Min(4),
-                Constraint::Percentage(30),
-                Constraint::Length(if error.is_some() || reference.is_some() {
-                    7
-                } else {
-                    3
-                }),
-                Constraint::Length(1),
-            ])
-            .areas(frame.area());
-            frame.render_widget(
-                Line::from(vec![
-                    Span::styled(
-                        " LICO ",
-                        Style::default().bg(Color::Cyan).fg(Color::Black).bold(),
-                    ),
-                    Span::raw(r"  Samples  \808bd  \808sd  \808ch  \blip"),
-                    Span::raw(if pending {
-                        "  • Alt+P review Codex edit"
-                    } else if connect.is_some() {
-                        "  • Alt+M connect Codex"
-                    } else if mcp_enabled {
-                        "  • MCP ready"
-                    } else {
-                        ""
-                    }),
-                ]),
-                header,
-            );
-            frame.render_widget(&patch, edit);
-            draw_plots(frame, plots, &waveform, &spectrum, sample_rate);
-            let label = error.as_deref().or(reference.as_deref()).unwrap_or(&state);
-            let color = if error.is_some() {
-                Color::Red
+            let area = frame.area();
+            if area.height < 25 {
+                frame.render_widget(&patch, area);
             } else {
-                Color::Green
-            };
-            frame.render_widget(
-                Paragraph::new(label)
-                    .style(Style::default().fg(color))
-                    .wrap(Wrap { trim: false })
-                    .block(
-                        Block::bordered()
-                            .title(format!(" {state} · {bpm} BPM · {sample_rate} Hz ")),
-                    ),
-                status,
-            );
-            frame.render_widget(
-                Line::from(" Alt+R Run   Alt+S Stop   Alt+D Docs   Alt+[ / ] Tempo   Esc Quit "),
-                footer,
-            );
-            if let Some(command) = connect.filter(|_| pairing_panel) {
-                let area = frame.area().inner(ratatui::layout::Margin {
-                    horizontal: 2,
-                    vertical: 1,
-                });
-                frame.render_widget(Clear, area);
+                let wide = area.width >= 80;
+                let [header, edit, plots, status, footer] = Layout::vertical([
+                    Constraint::Length(1),
+                    Constraint::Min(4),
+                    if wide {
+                        Constraint::Length(0)
+                    } else {
+                        Constraint::Percentage(30)
+                    },
+                    Constraint::Length(if error.is_some() || reference.is_some() {
+                        7
+                    } else {
+                        3
+                    }),
+                    Constraint::Length(1),
+                ])
+                .areas(area);
+                let (edit, plots) = if wide {
+                    let [edit, plots] = Layout::horizontal([
+                        Constraint::Percentage(65),
+                        Constraint::Percentage(35),
+                    ])
+                    .areas(edit);
+                    (
+                        edit,
+                        Layout::vertical([Constraint::Ratio(1, 2); 2]).areas(plots),
+                    )
+                } else {
+                    (
+                        edit,
+                        Layout::horizontal([Constraint::Ratio(1, 2); 2]).areas(plots),
+                    )
+                };
                 frame.render_widget(
-                    Paragraph::new(format!(
-                        "Run this in another Shell3 slot. Add resume --last to continue your conversation.\n\n{command}\n\nThe key is valid while this Lico session is open."
-                    ))
-                    .wrap(Wrap { trim: false })
-                    .block(Block::bordered().title(" Connect Codex · Esc back ")),
-                    area,
+                    Line::from(vec![
+                        Span::styled(
+                            " LICO ",
+                            Style::default().bg(Color::Cyan).fg(Color::Black).bold(),
+                        ),
+                        Span::raw(r"  Samples  \808bd  \808sd  \808ch  \blip"),
+                        Span::raw(if pending {
+                            "  • Alt+P review Codex edit"
+                        } else if mcp_error.is_none() {
+                            "  • Codex ready"
+                        } else {
+                            "  • Codex unavailable"
+                        }),
+                    ]),
+                    header,
                 );
+                frame.render_widget(&patch, edit);
+                draw_plots(frame, plots, &waveform, &spectrum, sample_rate);
+                let label = error.as_deref().or(reference.as_deref()).unwrap_or(&state);
+                let color = if error.is_some() {
+                    Color::Red
+                } else {
+                    Color::Green
+                };
+                frame.render_widget(
+                    Paragraph::new(label)
+                        .style(Style::default().fg(color))
+                        .wrap(Wrap { trim: false })
+                        .block(
+                            Block::bordered()
+                                .title(format!(" {state} · {bpm} BPM · {sample_rate} Hz ")),
+                        ),
+                    status,
+                );
+                frame.render_widget(
+                    Line::from(
+                        " Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+D Docs  Alt+[/] Tempo  Esc Quit ",
+                    ),
+                    footer,
+                );
+            }
+            if let Some(selection) = &mut examples {
+                draw_examples(frame, selection);
             }
             if let Some((diff, scroll)) = &review {
                 let area = frame.area().inner(ratatui::layout::Margin {
@@ -289,9 +288,29 @@ async fn editor(
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 let control = key.modifiers.contains(KeyModifiers::CONTROL);
                 let alt = key.modifiers.contains(KeyModifiers::ALT);
-                if pairing_panel {
-                    if key.code == KeyCode::Esc || (alt && key.code == KeyCode::Char('m')) {
-                        pairing_panel = false;
+                if let Some(selection) = &mut examples {
+                    match key.code {
+                        KeyCode::Esc => examples = None,
+                        KeyCode::Up => selection.select_previous(),
+                        KeyCode::Down => selection.select_next(),
+                        KeyCode::Home => selection.select_first(),
+                        KeyCode::End => selection.select_last(),
+                        KeyCode::Enter => {
+                            if let Some(&(name, code)) =
+                                selection.selected().and_then(|index| PATCHES.get(index))
+                            {
+                                let code = code.trim_end_matches('\n');
+                                patch = patch_editor(code);
+                                session
+                                    .lock()
+                                    .expect("Lico session")
+                                    .update_draft(code.to_owned());
+                                reference = Some(format!("{name} loaded. Alt+R to play."));
+                                error = None;
+                            }
+                            examples = None;
+                        }
+                        _ => {}
                     }
                     continue;
                 }
@@ -327,8 +346,8 @@ async fn editor(
                     KeyCode::Char('q') if control => break,
                     KeyCode::Char('r') if alt => Some(Command::Run(patch.lines().join("\n"))),
                     KeyCode::Char('s') if alt => Some(Command::Stop),
-                    KeyCode::Char('m') if alt && connect.is_some() => {
-                        pairing_panel = true;
+                    KeyCode::Char('e') if alt => {
+                        examples = Some(ListState::default().with_selected(Some(0)));
                         None
                     }
                     KeyCode::Char('p') if alt && pending => {
@@ -367,7 +386,7 @@ async fn editor(
                     let _ = commands.send(command).await;
                 }
             }
-            Event::Paste(text) if review.is_none() && !pairing_panel => {
+            Event::Paste(text) if review.is_none() && examples.is_none() => {
                 reference = None;
                 if patch.insert_str(text) {
                     session
@@ -436,13 +455,11 @@ fn node_reference(patch: &TextArea<'_>, docs: &serde_json::Value) -> String {
 
 fn draw_plots(
     frame: &mut Frame,
-    area: ratatui::layout::Rect,
+    [scope, frequencies]: [Rect; 2],
     waveform: &[(f64, f64)],
     spectrum: &[u64],
     sample_rate: u32,
 ) {
-    let [scope, frequencies] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
     let trace = Dataset::default()
         .marker(Marker::Braille)
         .graph_type(GraphType::Line)
@@ -472,5 +489,30 @@ fn draw_plots(
             .max(80)
             .style(Style::default().fg(Color::Magenta)),
         frequencies,
+    );
+}
+
+fn draw_examples(frame: &mut Frame, selection: &mut ListState) {
+    let area = frame.area();
+    let width = area.width.min(43);
+    let height = area.height.min(PATCHES.len() as u16 + 2);
+    let picker = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, picker);
+    frame.render_stateful_widget(
+        List::new(PATCHES.iter().map(|&(name, _)| name))
+            .block(
+                Block::bordered()
+                    .title(" Examples ")
+                    .title_bottom(" Enter replace draft · Esc back "),
+            )
+            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+            .highlight_symbol("› "),
+        picker,
+        selection,
     );
 }

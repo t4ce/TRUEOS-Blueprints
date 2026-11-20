@@ -1,0 +1,4 @@
+// Modulate volume and pan at different rates.
+~level: sin 3 >> mul 0.06 >> add 0.09;
+~position: sin 0.25 >> mul 0.85;
+out: tri 220 >> mul ~level >> pan ~position;

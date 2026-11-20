@@ -41,15 +41,15 @@ TRUEOS Codex uses `ptts` for read-aloud. Codex starts the speech Blueprint
 headlessly at TUI startup or reuses a healthy service with protocol `ptts-v1`.
 The normal `cargo bp codex-cli` bundle requires SQLite, Lily and `ptts.bp`.
 
-The existing `trueos_tts` read-aloud boolean remains the switch for enabling
-speech. Only completed public final answers enter this path. History, reasoning,
-tool output and realtime delegated voice replies are excluded. Codex feeds one
-FIFO in completion order, with no skip or reset controls or age expiry. When
-waiting text exceeds 1 KiB in UTF-8, the producer logs a warning to keep replies
-small. This is a soft threshold: queued text is retained without truncation.
+The `trueos_tts` setting enables local read-aloud. Codex can submit a plain
+opening sentence as soon as an item marked as a final answer starts streaming,
+then submits the rest when the item completes. It also reads the first complete
+sentence of a live reasoning summary when the model supplies one. History,
+raw reasoning, tool output and realtime delegated voice replies are excluded.
 
-Codex sends the completed speech text. Pocket asks the local Lily service for
-the label of that text before generating the clip.
+Codex submits utterances in FIFO order. Waiting text above 1 KiB produces a
+warning and stays queued. Pocket asks the local Lily service for the label of
+each utterance before generating its audio.
 
 ## Local service contract
 

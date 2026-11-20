@@ -65,52 +65,18 @@ pub type SharedSession = Arc<Mutex<Session>>;
 
 #[derive(Clone)]
 struct Endpoint {
-    token: Arc<str>,
     session: SharedSession,
 }
 
-pub fn pairing_token() -> io::Result<String> {
-    use std::fmt::Write;
-    let mut random = [0_u8; 16];
+pub async fn start(session: SharedSession) -> io::Result<tokio::task::JoinHandle<io::Result<()>>> {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    trueos::rng::fill(&mut random);
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    getrandom::getrandom(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
-    if random == [0; 16] {
-        return Err(io::Error::other("could not generate a Lico session key"));
-    }
-    let mut token = String::from("lico_");
-    for byte in random {
-        let _ = write!(token, "{byte:02x}");
-    }
-    Ok(token)
-}
-
-pub fn connect_command(token: &str) -> String {
-    let (address, port) = ADDRESS;
-    format!(
-        "codex -c mcp_servers.lico.url=http://{address}:{port}/mcp -c mcp_servers.lico.http_headers.X-Lico-Session={token}"
-    )
-}
-
-pub async fn start(
-    token: String,
-    session: SharedSession,
-) -> io::Result<tokio::task::JoinHandle<io::Result<()>>> {
-    if !(16..=256).contains(&token.len())
-        || !token
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-._~+/=".contains(&b))
-    {
+    if std::env::var("TRUEOS_LICO_MCP_ACL").as_deref() != Ok("1") {
         return Err(io::Error::other(
-            "LICO_MCP_TOKEN must be a bearer token of 16–256 characters",
+            "the running kernel needs the Lico socket policy",
         ));
     }
     let listener = TcpListener::bind(ADDRESS).await?;
-    let endpoint = Endpoint {
-        token: token.into(),
-        session,
-    };
+    let endpoint = Endpoint { session };
     Ok(tokio::spawn(async move {
         let permits = Arc::new(tokio::sync::Semaphore::new(4));
         loop {
@@ -174,24 +140,15 @@ async fn handle(endpoint: Endpoint, request: Request<Incoming>) -> Reply {
         return reply(StatusCode::NOT_FOUND);
     }
     let headers = request.headers();
-    // No browser origins are needed for the local, native Codex client.
-    if headers.contains_key(header::ORIGIN) {
+    // TRUEOS authorizes local peers when connecting to this port. Reject
+    // browser origins and non-loopback authorities at the HTTP boundary.
+    if headers.contains_key(header::ORIGIN)
+        || headers
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok())
+            != Some("127.0.0.1:42127")
+    {
         return reply(StatusCode::FORBIDDEN);
-    }
-    let bearer = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    let pairing = headers
-        .get("x-lico-session")
-        .and_then(|value| value.to_str().ok());
-    if bearer.or(pairing) != Some(endpoint.token.as_ref()) {
-        let mut response = reply(StatusCode::UNAUTHORIZED);
-        response.headers_mut().insert(
-            header::WWW_AUTHENTICATE,
-            header::HeaderValue::from_static("Bearer"),
-        );
-        return response;
     }
     if request.method() != Method::POST {
         let mut response = reply(StatusCode::METHOD_NOT_ALLOWED);

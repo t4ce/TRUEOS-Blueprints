@@ -2001,7 +2001,6 @@ name = "lico"
 version = "0.1.0"
 dependencies = [
  "crossterm 0.29.0",
- "getrandom 0.2.17",
  "glicol",
  "glicol_parser",
  "hound",

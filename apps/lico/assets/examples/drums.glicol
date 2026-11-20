@@ -1,0 +1,5 @@
+// Generate the drum sounds with bd, sn, and hh.
+~kick: seq 60 _ _ _ 60 _ 60 _ >> bd 0.18 >> mul 0.3;
+~snare: seq _ _ 60 _ _ _ 60 _ >> sn 0.12 >> mul 0.15;
+~hat: speed 8 >> seq 60 >> hh 0.035 >> mul 0.07;
+out: mix ~kick ~snare ~hat;

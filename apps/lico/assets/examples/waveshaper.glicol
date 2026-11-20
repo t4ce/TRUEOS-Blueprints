@@ -1,0 +1,3 @@
+// Use a Rhai meta node to shape each input sample.
+out: sin 110 >> meta `output = input.map(|x| x - 0.45 * x * x * x); output`
+>> mul 0.2;

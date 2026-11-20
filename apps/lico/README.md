@@ -2,8 +2,8 @@
 
 Lico is an on-demand TRUEOS Blueprint for live-coding sound in a terminal.
 The starter patch plays a sequenced lead and kick. The compiler embeds the
-Glicol engine, parser, DSP code, node reference, and four samples. Sample
-playback requires no runtime file access.
+Glicol engine, parser, DSP code, node reference, ten example patches, and
+four samples. The examples and samples require no runtime file access.
 
 From the Blueprint SDK root, build a local package with:
 
@@ -17,13 +17,23 @@ kernel audio server, then press **Alt+R** to play or apply edits. **Alt+S**
 stops playback, **Alt+D** shows node help, **Alt+[** and **Alt+]** change
 tempo, and **Esc** returns to the shell.
 
+Press **Alt+E** to browse the embedded patches. Use **↑** and **↓** to
+select an example, then press **Enter** to replace the draft. **Alt+R**
+plays it. The patches cover sampled and synthesized drums, filter bass,
+FM, stereo modulation, delay, sample patterns, automation, and Rhai DSP.
+
+At 80 columns and above, the waveform and spectrum stack to the right
+of the editor. On narrower terminals they sit side by side below it.
+Below 25 rows, the editor fills the screen, and **Alt+E** still opens
+the example picker.
+
 The editor and renderer run cooperatively on the same current-thread Tokio
 runtime. Each audio tick renders up to four 128-frame blocks and hands one
 48 kHz stereo PCM batch to the kernel. The sink accepts one producer at a time
 and caps each stream at two minutes. Lico lets the tail drain before opening
 the next stream, so rollover can introduce a short gap.
 
-To verify the embedded starter on the development host:
+To verify that every embedded patch renders audio on the development host:
 
 ```sh
 cargo run -p lico -- --self-check
@@ -37,17 +47,10 @@ so a runaway script cannot hold the cooperative executor indefinitely.
 
 ## Codex editing
 
-On TRUEOS, launch `lico --mcp` in Shell3. Lico shows a Codex launch command
-with a key for that Lico session. Run it in another Shell3 slot. Append
-`resume --last` if you want to continue your last Codex conversation. **Alt+M**
-reopens the connection panel. A running Codex process keeps its existing tool
-configuration, so resume or reopen it with the displayed command.
-
-The listener is bound to `http://127.0.0.1:42127/mcp`. The launch command
-uses Codex's `-c` overrides and needs no persistent Codex configuration.
-The displayed command contains the session key, which stops working when Lico
-exits. For scripted launches, setting `LICO_MCP_TOKEN` still enables bearer
-authentication on the same endpoint.
+Launch `lico` and Codex normally in separate Shell3 slots under the same
+signed-in account. The TRUEOS kernel authorizes the connection by app and
+account. If Codex is already open, it discovers Lico on the next request.
+Use the updated kernel and both updated Blueprints.
 
 Codex can read the draft and its revision with `get_patch`, check Glicol syntax
 with `validate_patch`, and send a proposal with `propose_patch`. In Lico,

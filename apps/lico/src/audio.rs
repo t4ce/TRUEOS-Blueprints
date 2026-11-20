@@ -1,3 +1,4 @@
+use crate::examples::PATCHES;
 use glicol::Engine;
 use std::error::Error;
 use std::io::{self, Cursor};
@@ -11,17 +12,6 @@ const BATCH_BYTES: usize = 4 * BATCH_FRAMES;
 const STREAM_LIMIT: usize = SAMPLE_RATE as usize * 4 * 120;
 pub const MONITOR_FRAMES: usize = BATCH_FRAMES;
 pub const DEFAULT_BPM: u16 = 120;
-pub const DEFAULT_PATCH: &str = r"// Sequenced lead and kick. Alt+R to play.
-~gate: speed 2.0
->> seq 60 _60 _~a 48;
-~a: choose 48 48 48 72 0 0 0
-~amp: ~gate >> envperc 0.001 0.1;
-~pit: ~gate >> mul 261.625565
-~lead: saw ~pit >> mul ~amp >> lpf ~mod 5.0
->> mul 0.1
-~mod: sin 0.2 >> mul 1300 >> add 1500;
-out: ~lead >> add ~drum >> plate 0.1
-~drum: speed 4.0 >> seq 60 >> sp \808bd;";
 const SAMPLES: [(&str, &[u8]); 4] = [
     (r"\808bd", include_bytes!("../assets/808bd.wav")),
     (r"\808sd", include_bytes!("../assets/808sd.wav")),
@@ -84,17 +74,23 @@ fn render(engine: &mut Engine<BLOCK>, pcm: &mut [u8], waveform: &mut [f32; MONIT
 
 pub fn self_check() -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
-    engine.update_with_code(DEFAULT_PATCH)?;
     let mut pcm = vec![0; BATCH_BYTES];
     let mut waveform = [0.; MONITOR_FRAMES];
-    for _ in 0..100 {
-        render(&mut engine, &mut pcm, &mut waveform);
-        if pcm.iter().any(|byte| *byte != 0) {
-            println!("lico: embedded starter rendered non-silent stereo PCM at {SAMPLE_RATE} Hz");
-            return Ok(());
+    for &(name, code) in PATCHES {
+        engine
+            .update_with_code(code)
+            .map_err(|error| io::Error::other(format!("{name}: {error}")))?;
+        let mut audible = false;
+        for _ in 0..(2 * SAMPLE_RATE as usize).div_ceil(BATCH_FRAMES) {
+            render(&mut engine, &mut pcm, &mut waveform);
+            audible |= pcm.iter().any(|byte| *byte != 0);
         }
+        if !audible {
+            return Err(format!("{name} produced only silence").into());
+        }
+        println!("lico: {name} rendered non-silent stereo PCM at {SAMPLE_RATE} Hz");
     }
-    Err("the starter produced only silence".into())
+    Ok(())
 }
 
 pub async fn serve(

@@ -126,11 +126,18 @@ pub enum Ui4Key {
     Down,
     Left,
     Right,
+    Delete,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    /// A physical letter key identified by its lowercase ASCII letter.
+    Letter(char),
 }
 
 impl Ui4Key {
-    const fn abi(self) -> u32 {
-        match self {
+    const fn abi(self) -> Result<u32, Error> {
+        let code = match self {
             Self::Enter => v::bp_abi::DOBBY_UI4_KEY_ENTER,
             Self::Escape => v::bp_abi::DOBBY_UI4_KEY_ESCAPE,
             Self::Tab => v::bp_abi::DOBBY_UI4_KEY_TAB,
@@ -140,9 +147,26 @@ impl Ui4Key {
             Self::Down => v::bp_abi::DOBBY_UI4_KEY_ARROW_DOWN,
             Self::Left => v::bp_abi::DOBBY_UI4_KEY_ARROW_LEFT,
             Self::Right => v::bp_abi::DOBBY_UI4_KEY_ARROW_RIGHT,
-        }
+            Self::Delete => v::bp_abi::DOBBY_UI4_KEY_DELETE,
+            Self::Home => v::bp_abi::DOBBY_UI4_KEY_HOME,
+            Self::End => v::bp_abi::DOBBY_UI4_KEY_END,
+            Self::PageUp => v::bp_abi::DOBBY_UI4_KEY_PAGE_UP,
+            Self::PageDown => v::bp_abi::DOBBY_UI4_KEY_PAGE_DOWN,
+            Self::Letter(letter) if letter.is_ascii_lowercase() => letter as u32,
+            Self::Letter(_) => return Err(UI4_BAD_INPUT),
+        };
+        Ok(code)
     }
 }
+
+/// Hold the left Control key during a UI4 key press.
+pub const UI4_KEY_CONTROL: u8 = v::bp_abi::DOBBY_UI4_KEY_MODIFIER_CONTROL;
+/// Hold the left Shift key during a UI4 key press.
+pub const UI4_KEY_SHIFT: u8 = v::bp_abi::DOBBY_UI4_KEY_MODIFIER_SHIFT_LEFT;
+/// Hold the left Alt key during a UI4 key press.
+pub const UI4_KEY_ALT: u8 = v::bp_abi::DOBBY_UI4_KEY_MODIFIER_ALT;
+/// Hold the left Meta key during a UI4 key press.
+pub const UI4_KEY_META: u8 = v::bp_abi::DOBBY_UI4_KEY_MODIFIER_META;
 
 fn bounded_len(code: isize, maximum: usize) -> Result<usize, Error> {
     if code < 0 {
@@ -250,9 +274,20 @@ pub fn ui4_type(text: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_dobby_ui4_type(text.as_ptr(), text.len()) })
 }
 
-/// Press one named interaction key through Spirit's UI4 keyboard.
+/// Press one unmodified key through Spirit's UI4 keyboard.
 pub fn ui4_key(key: Ui4Key) -> Result<(), Error> {
-    result(unsafe { v::bp_abi::trueos_cabi_dobby_ui4_key(key.abi()) })
+    ui4_key_with_modifiers(key, 0)
+}
+
+/// Press one key with any combination of the four UI4 key modifier flags.
+/// Combine the flags with bitwise OR. For text entry, use [`ui4_type`].
+pub fn ui4_key_with_modifiers(key: Ui4Key, modifiers: u8) -> Result<(), Error> {
+    let modifier_bits = u32::from(modifiers) << v::bp_abi::DOBBY_UI4_KEY_MODIFIER_SHIFT;
+    if modifier_bits & !v::bp_abi::DOBBY_UI4_KEY_MODIFIER_MASK != 0 {
+        return Err(UI4_BAD_INPUT);
+    }
+    let packed_key = key.abi()? | modifier_bits;
+    result(unsafe { v::bp_abi::trueos_cabi_dobby_ui4_key(packed_key) })
 }
 
 // Rust source compatibility; the native wire symbols retain their established ABI.

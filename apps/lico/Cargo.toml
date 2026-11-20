@@ -30,6 +30,3 @@ mio = { version = "=1.2.0", default-features = false, features = ["std-compat", 
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
-
-[target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
-getrandom = "0.2"

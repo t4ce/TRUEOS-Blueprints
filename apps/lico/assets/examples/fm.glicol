@@ -1,0 +1,5 @@
+// Modulate a sine oscillator's frequency and pluck its amplitude.
+~index: imp 2 >> envperc 0.001 0.17 >> mul 210;
+~freq: sin 660 >> mul ~index >> add 440;
+~amp: imp 2 >> envperc 0.003 0.32;
+out: sin ~freq >> mul ~amp >> mul 0.18 >> plate 0.2;
