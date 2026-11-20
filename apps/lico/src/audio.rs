@@ -1,5 +1,6 @@
 use crate::examples::PATCHES;
 use glicol::Engine;
+use glicol_parser::HighlightSpan;
 use std::error::Error;
 use std::io::{self, Cursor};
 use std::time::Duration;
@@ -32,6 +33,7 @@ pub enum Command {
 pub enum Status {
     Ready(u32),
     Tempo(u16),
+    PatchParsed(String, Vec<HighlightSpan>),
     Playing(String),
     Stopped,
     PatchError(String),
@@ -72,6 +74,31 @@ fn render(engine: &mut Engine<BLOCK>, pcm: &mut [u8], waveform: &mut [f32; MONIT
     }
 }
 
+pub fn render_wav(code: &str, path: &str, seconds: u32) -> Result<(), Box<dyn Error>> {
+    let mut engine = engine()?;
+    engine.update_with_code(code)?;
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut wav = hound::WavWriter::create(path, spec)?;
+    let mut pcm = [0; BATCH_BYTES];
+    let mut waveform = [0.; MONITOR_FRAMES];
+    let mut remaining = u64::from(seconds) * u64::from(SAMPLE_RATE) * 2;
+    while remaining > 0 {
+        render(&mut engine, &mut pcm, &mut waveform);
+        let samples = remaining.min((BATCH_BYTES / 2) as u64) as usize;
+        for bytes in pcm[..samples * 2].chunks_exact(2) {
+            wav.write_sample(i16::from_le_bytes([bytes[0], bytes[1]]))?;
+        }
+        remaining -= samples as u64;
+    }
+    wav.finalize()?;
+    Ok(())
+}
+
 pub fn self_check() -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
     let mut pcm = vec![0; BATCH_BYTES];
@@ -80,15 +107,28 @@ pub fn self_check() -> Result<(), Box<dyn Error>> {
         engine
             .update_with_code(code)
             .map_err(|error| io::Error::other(format!("{name}: {error}")))?;
-        let mut audible = false;
-        for _ in 0..(2 * SAMPLE_RATE as usize).div_ceil(BATCH_FRAMES) {
+        let batches = (8 * SAMPLE_RATE as usize).div_ceil(BATCH_FRAMES);
+        let mut energy = 0.0;
+        let mut peak = 0.0_f64;
+        for _ in 0..batches {
             render(&mut engine, &mut pcm, &mut waveform);
-            audible |= pcm.iter().any(|byte| *byte != 0);
+            for bytes in pcm.chunks_exact(2) {
+                let sample = f64::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.0;
+                energy += sample * sample;
+                peak = peak.max(sample.abs());
+            }
         }
-        if !audible {
-            return Err(format!("{name} produced only silence").into());
+        if peak >= f64::from(i16::MAX) / 32768.0 {
+            return Err(format!("{name} reached full scale").into());
         }
-        println!("lico: {name} rendered non-silent stereo PCM at {SAMPLE_RATE} Hz");
+        let rms_dbfs = 10.0 * (energy / (batches * BATCH_FRAMES * 2) as f64).log10();
+        if rms_dbfs < -36.0 {
+            return Err(format!("{name} rendered at only {rms_dbfs:.1} dBFS RMS").into());
+        }
+        let peak_dbfs = 20.0 * peak.log10();
+        println!(
+            "lico: {name} at {SAMPLE_RATE} Hz, {rms_dbfs:.1} dBFS RMS, {peak_dbfs:.1} dBFS peak"
+        );
     }
     Ok(())
 }
@@ -115,8 +155,9 @@ pub async fn serve(
         tokio::select! {
             command = commands.recv() => match command {
                 Some(Command::Run(code)) => {
-                    match engine.update_with_code(&code) {
-                        Ok(()) => {
+                    match engine.update_with_code_and_spans(&code) {
+                        Ok(spans) => {
+                            let _ = status.try_send(Status::PatchParsed(code.clone(), spans));
                             if !playing {
                                 match Stream::open() {
                                     Ok(output) => {
@@ -258,4 +299,51 @@ fn audio_call(action: u32, token: u64, pcm: &[u8]) -> i64 {
 fn audio_call(action: u32, _token: u64, _pcm: &[u8]) -> i64 {
     // Desktop preview exercises the TUI and DSP without a kernel audio sink.
     i64::from(action == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offbeat_sample_starts_in_the_second_slot() {
+        let mut engine = engine().unwrap();
+        engine
+            .update_with_code(r"out: speed 8 >> seq _ 60 >> sp \808ch;")
+            .unwrap();
+        let mut first_hit = None;
+        for block in 0..12_000_usize.div_ceil(BLOCK) {
+            let stereo = engine.next_block(Vec::new());
+            if let Some(frame) = stereo[0].iter().position(|sample| *sample != 0.0) {
+                first_hit = Some(block * BLOCK + frame);
+                break;
+            }
+        }
+        assert_eq!(first_hit, Some(6_000));
+    }
+
+    #[test]
+    fn looping_points_interpolate_between_adjacent_values() {
+        let mut engine = engine().unwrap();
+        engine
+            .update_with_code("out: [0=>0.1 1/4=>0.5 1/2=>0.2 1=>0.1]!;")
+            .unwrap();
+        let mut output = Vec::new();
+        for _ in 0..96_001_usize.div_ceil(BLOCK) {
+            output.extend_from_slice(&engine.next_block(Vec::new())[0][..]);
+        }
+        for (frame, expected) in [
+            (0, 0.1),
+            (12_000, 0.3),
+            (24_000, 0.5),
+            (36_000, 0.35),
+            (96_000, 0.1),
+        ] {
+            assert!(
+                (output[frame] - expected).abs() < 0.0001,
+                "frame {frame}: {}",
+                output[frame]
+            );
+        }
+    }
 }

@@ -1,0 +1,12 @@
+// Compare a fixed comb on the left and a swept all-pass mix on the right.
+// The noise and high-pass sweep make the difference easy to hear.
+~cutoff: sin 0.2 >> mul 900 >> add 1400;
+~delayms: sin 0.3 >> mul 2.5 >> add 3.5;
+~motion: eval `t := (phase % (2 * sr)) / (2 * sr); 0.1 + 1.8 * t * (1 - t)`;
+~noise: noiz 42 >> hpf ~cutoff 0.8 >> onepole 0.13
+>> mul ~motion >> mul 0.55;
+~tap: ~noise >> delayn 96 >> mul 0.8;
+~swept: ~noise >> apfgain ~delayms 0.6 >> mul 0.8;
+~left: ~noise >> add ~tap;
+~right: ~noise >> add ~swept;
+out: balance ~left ~right;

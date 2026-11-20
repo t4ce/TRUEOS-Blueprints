@@ -2,7 +2,7 @@
 
 Lico is an on-demand TRUEOS Blueprint for live-coding sound in a terminal.
 The starter patch plays a sequenced lead and kick. The compiler embeds the
-Glicol engine, parser, DSP code, node reference, ten example patches, and
+Glicol engine, parser, DSP code, node reference, eleven example patches, and
 four samples. The examples and samples require no runtime file access.
 
 From the Blueprint SDK root, build a local package with:
@@ -17,10 +17,23 @@ kernel audio server, then press **Alt+R** to play or apply edits. **Alt+S**
 stops playback, **Alt+D** shows node help, **Alt+[** and **Alt+]** change
 tempo, and **Esc** returns to the shell.
 
+A successful run colors the parsed patch and briefly highlights its border.
+The colors track the parsed draft until you edit it or load another patch.
+
 Press **Alt+E** to browse the embedded patches. Use **↑** and **↓** to
 select an example, then press **Enter** to replace the draft. **Alt+R**
 plays it. The patches cover sampled and synthesized drums, filter bass,
 FM, stereo modulation, delay, sample patterns, automation, and Rhai DSP.
+
+**Cosmic soundscape** adapts the Games Blueprint's ambient audio with a
+sweeping stereo tone, a five-voice pad, filtered surf, and sparse chimes.
+At 120 BPM, the first chord starts to glide after 48 seconds. The chimes
+use a repeating phrase whose pitches, timing, and panning are editable.
+
+The example mixes are leveled near −22 LUFS integrated at the default
+120 BPM. Adjust the final `mul` in an example's `out` chain to change
+its whole mix, or change a track's own `mul` to rebalance it. Lico renders
+these gains into PCM and the port 82 player receives that PCM over HTTP.
 
 At 80 columns and above, the waveform and spectrum stack to the right
 of the editor. On narrower terminals they sit side by side below it.
@@ -37,6 +50,12 @@ To verify that every embedded patch renders audio on the development host:
 
 ```sh
 cargo run -p lico -- --self-check
+```
+
+The host WAV export uses the same PCM renderer as live playback.
+
+```sh
+cargo run -p lico -- --render apps/lico/assets/examples/808.glicol /tmp/lico-808.wav 16
 ```
 
 The desktop TUI preview renders its waveform and spectrum without a host

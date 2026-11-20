@@ -1,5 +1,5 @@
 // Layer the bundled kick, snare, and closed hat.
 ~kick: seq 60 _ _ _ 60 _ 60 _ >> sp \808bd >> mul 0.45;
 ~snare: seq _ _ 60 _ _ _ 60 _ >> sp \808sd >> mul 0.25;
-~hat: seq 60 60 60 _ 60 60 60 _ >> sp \808ch >> mul 0.15;
-out: mix ~kick ~snare ~hat;
+~hat: seq 60 60 60 _ 60 60 60 _ >> sp \808ch >> mul 0.28;
+out: mix ~kick ~snare ~hat >> mul 1.47;

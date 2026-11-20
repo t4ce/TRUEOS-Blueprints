@@ -1,4 +1,4 @@
 // Sweep a resonant low-pass filter over a pulse bass.
 ~cutoff: sin 0.5 >> mul 350 >> add 500;
 out: seq 36 _36 43 _ 36 _48 41 _
->> squsynth 0.006 0.16 >> lpf ~cutoff 2.0 >> mul 0.18;
+>> squsynth 0.006 0.16 >> lpf ~cutoff 2.0 >> mul 0.45;

@@ -1,12 +1,15 @@
 use hashbrown::HashMap;
 use nodes::{Component, Node as _, Points};
 use pest::error::Error;
+use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::*;
 use util::{EndSpan, ToPestErrWithPositives};
 
+mod highlight;
 pub mod nodes;
 mod util;
+pub use highlight::{HighlightKind, HighlightSpan};
 pub use util::ToInnerOwned;
 
 #[derive(Parser)]
@@ -14,17 +17,30 @@ pub use util::ToInnerOwned;
 pub struct GlicolParser;
 
 pub fn get_ast(code: &str) -> Result<nodes::Ast<'_>, Box<Error<Rule>>> {
-    let mut block = GlicolParser::parse(Rule::block, code)?;
+    ast_from_block(parse_block(code)?)
+}
 
-    // this can be a comment though, but we call it a line
-    let lines = block.next().ok_or_else(|| {
+/// Returns the AST and its non-overlapping highlight spans in source order.
+pub fn get_ast_with_spans(
+    code: &str,
+) -> Result<(nodes::Ast<'_>, Vec<HighlightSpan>), Box<Error<Rule>>> {
+    let block = parse_block(code)?;
+    let mut spans = Vec::new();
+    highlight::collect(block.clone(), &mut spans);
+    ast_from_block(block).map(|ast| (ast, spans))
+}
+
+fn parse_block(code: &str) -> Result<Pair<'_, Rule>, Box<Error<Rule>>> {
+    let mut block = GlicolParser::parse(Rule::block, code)?;
+    block.next().ok_or_else(|| {
         pest::Span::new(code, 0, 0)
             // We know this will be a valid span b/c 0 (end) >= 0 (start)
             .unwrap()
             .to_err_with_positives([Rule::line])
-    })?;
+    })
+}
 
-    //for line in lines.into_inner() {
+fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rule>>> {
     let nodes = lines.into_inner()
         .filter(|line| line.as_rule() == Rule::line)
         .map(|line| {
@@ -45,7 +61,7 @@ pub fn get_ast(code: &str) -> Result<nodes::Ast<'_>, Box<Error<Rule>>> {
                 // if it's not, then report an error
                 .ok_or_else(|| line_end.to_err_with_positives([Rule::chain]))?;
 
-            let components = chain.into_inner().map(|node_pair| {
+            let components = chain.into_inner().filter(|pair| pair.as_rule() == Rule::node).map(|node_pair| {
                 let node_end = node_pair.as_end_span();
                 let node = node_pair.into_inner()
                     .next()

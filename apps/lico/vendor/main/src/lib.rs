@@ -7,9 +7,9 @@ use util::makenode;
 pub mod error;
 pub use error::{get_error_info, EngineError};
 use glicol_parser::{
-    get_ast,
+    get_ast, get_ast_with_spans,
     nodes::{Ast, Component, UsizeOrRef},
-    ToInnerOwned as _,
+    HighlightSpan, ToInnerOwned as _,
 };
 use glicol_synth::{
     AudioContext, AudioContextConfig, BoxedNodeSend, Buffer, GlicolGraph, GlicolPara, Message,
@@ -170,6 +170,23 @@ impl<const N: usize> Engine<N> {
     //       update it fully to reflect the new syntax
     // 4. Set self.ast = new_ast;
     pub fn update_with_code(&mut self, code: &str) -> Result<(), EngineError> {
+        self.update_patch(code, None)
+    }
+
+    pub fn update_with_code_and_spans(
+        &mut self,
+        code: &str,
+    ) -> Result<Vec<HighlightSpan>, EngineError> {
+        let mut spans = Vec::new();
+        self.update_patch(code, Some(&mut spans))?;
+        Ok(spans)
+    }
+
+    fn update_patch(
+        &mut self,
+        code: &str,
+        spans: Option<&mut Vec<HighlightSpan>>,
+    ) -> Result<(), EngineError> {
         // It would be nice to re-use the allocation in self.ast for this Yoke creation, but I
         // can't figure out a way to.
         // We have to make this Yoke here to return it (we can't like make an `Ast` with the same
@@ -178,7 +195,14 @@ impl<const N: usize> Engine<N> {
         // 'cause then we'll be unable to do this diffing thing against what it used to be b/c
         // it'll have been overwritten.
         let new_ast: YokedAst =
-            Yoke::try_attach_to_cart(code.to_owned().into_boxed_str(), |code| get_ast(code))?;
+            Yoke::try_attach_to_cart(code.to_owned().into_boxed_str(), |code| match spans {
+                Some(spans) => {
+                    let (ast, source_spans) = get_ast_with_spans(code)?;
+                    *spans = source_spans;
+                    Ok(ast)
+                }
+                None => get_ast(code),
+            })?;
 
         self.temp_node_index.clear();
 

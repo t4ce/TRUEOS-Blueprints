@@ -1,0 +1,68 @@
+// Inspired by the Games Blueprint's F warm-horizon soundscape.
+// At 120 BPM the carrier sweeps from 75 to 125 Hz and back every 30 seconds.
+~carrier: [0=>75 1/2=>125 1=>75] * 15 !;
+~spread: [0=>1 1/3=>1 0.337=>3 2/3=>3 0.67=>5 0.996=>5 1=>1] * 270 !;
+~negative_spread: ~spread >> mul -1;
+~left_freq: ~carrier >> add ~negative_spread;
+~right_freq: ~carrier >> add ~spread;
+~left_tone: sin ~left_freq;
+~right_tone: sin ~right_freq;
+~tone: balance ~left_tone ~right_tone >> mul 0.22;
+
+// Five panned voices glide between four chords. At 120 BPM each chord
+// lasts 48 seconds, with an eight-second glide into the next one.
+~pitch1: [0=>87.307 1/4=>87.307 7/24=>116.541 1/2=>116.541
+          13/24=>97.999 3/4=>97.999 19/24=>130.813 23/24=>130.813 1=>87.307] * 96 !;
+~pitch2: [0=>130.813 1/4=>130.813 7/24=>174.614 1/2=>174.614
+          13/24=>146.832 3/4=>146.832 19/24=>195.998 23/24=>195.998 1=>130.813] * 96 !;
+~pitch3: [0=>174.614 1/4=>174.614 7/24=>220 1/2=>220
+          13/24=>174.614 3/4=>174.614 19/24=>233.082 23/24=>233.082 1=>174.614] * 96 !;
+~pitch4: [0=>220 1/4=>220 7/24=>261.626 1/2=>261.626
+          13/24=>220 3/4=>220 19/24=>293.665 23/24=>293.665 1=>220] * 96 !;
+~pitch5: [0=>261.626 1/4=>261.626 7/24=>329.628 1/2=>329.628
+          13/24=>293.665 3/4=>293.665 19/24=>349.228 23/24=>349.228 1=>261.626] * 96 !;
+~drift: sin 0.023 >> mul 0.0015 >> add 1;
+~hz1: ~pitch1 >> mul ~drift;
+~hz2: ~pitch2 >> mul ~drift;
+~hz3: ~pitch3 >> mul ~drift;
+~hz4: ~pitch4 >> mul ~drift;
+~hz5: ~pitch5 >> mul ~drift;
+~edge1: tri ~hz1 >> mul 0.13;
+~edge2: tri ~hz2 >> mul 0.13;
+~edge3: tri ~hz3 >> mul 0.13;
+~edge4: tri ~hz4 >> mul 0.13;
+~edge5: tri ~hz5 >> mul 0.13;
+~voice1: sin ~hz1 >> add ~edge1 >> pan -0.7;
+~voice2: sin ~hz2 >> add ~edge2 >> pan -0.35;
+~voice3: sin ~hz3 >> add ~edge3 >> pan 0;
+~voice4: sin ~hz4 >> add ~edge4 >> pan 0.35;
+~voice5: sin ~hz5 >> add ~edge5 >> pan 0.7;
+~breath: [0=>0.07 1/2=>0.09 1=>0.07] * 30 !;
+~pad: mix ~voice..
+>> mul ~breath;
+
+// Independent filtered noises rise, hold, and recede like surf.
+~tide: [0=>0.13 1/2=>0.42 3/4=>0.42 1=>0.13] * 10 !;
+// Subtract a slower low-pass copy to remove the deepest rumble.
+~left_low: noiz 83 >> onepole 0.0097;
+~right_low: noiz 119 >> onepole 0.0097;
+~left_rumble: ~left_low >> onepole 0.00134 >> mul -1;
+~right_rumble: ~right_low >> onepole 0.00134 >> mul -1;
+~left_surf: ~left_low >> add ~left_rumble >> mul ~tide;
+~right_surf: ~right_low >> add ~right_rumble >> mul ~tide;
+~surf: balance ~left_surf ~right_surf;
+
+// Three chimes ring at uneven intervals across a 40-second loop.
+// Change pitch and position while the envelope is silent.
+~bell_hz: [0=>261.626 0.3=>261.626 0.4=>293.665
+           0.625=>293.665 0.7=>349.228 0.9=>349.228 1=>261.626] * 20 !;
+~bell_pan: [0=>-0.55 0.3=>-0.55 0.4=>0.6
+            0.625=>0.6 0.7=>-0.2 0.9=>-0.2 1=>-0.55] * 20 !;
+~bell_env: [0=>0 0.05=>0 0.0525=>0.055 0.075=>0.02 0.12=>0.004 0.225=>0
+            0.45=>0 0.4525=>0.045 0.475=>0.016 0.52=>0.003 0.625=>0
+            0.725=>0 0.7275=>0.06 0.75=>0.022 0.795=>0.004 0.9=>0 1=>0] * 20 !;
+~bell_octave: ~bell_hz >> mul 2;
+~bell_partial: sin ~bell_octave >> mul 0.15;
+~bell: sin ~bell_hz >> add ~bell_partial >> mul ~bell_env >> pan ~bell_pan;
+
+out: mix ~tone ~pad ~surf ~bell >> mul 0.42;

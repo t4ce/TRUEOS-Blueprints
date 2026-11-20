@@ -1,5 +1,5 @@
 // Mix the dry blip with two delayed taps at different pan positions.
-~dry: seq 60 _ _ 60 _ _ 60 _ >> sp \blip >> mul 0.35;
+~dry: seq 60 _ _ 60 _ _ 60 _ >> sp \blip;
 ~first: ~dry >> delayms 190 >> mul 0.55 >> pan -0.65;
 ~second: ~dry >> delayms 380 >> mul 0.3 >> pan 0.65;
-out: mix ~dry ~first ~second;
+out: mix ~dry ~first ~second >> mul 1.3;

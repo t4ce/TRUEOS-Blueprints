@@ -1,0 +1,15 @@
+// Stereo pad with a two-second gate, then a full ADSR release.
+// The square wave is converted from -1/+1 to a 0/1 gate.
+~env: squ 0.25 >> mul 0.5 >> add 0.5
+>> adsr 0.45 0.55 0.58 0.8;
+~floor: sig 900;
+~cutoff: sin 0.3 >> mul 450 >> add ~floor;
+~leftbass: saw 130.81 >> mul 0.15;
+~lefttop: tri 196.00 >> mul 0.10;
+~rightbass: saw 131.20 >> mul 0.15;
+~righttop: tri 311.13 >> mul 0.10;
+~left: mix ~leftbass ~lefttop
+>> lpf ~cutoff 0.7 >> mul ~env;
+~right: mix ~rightbass ~righttop
+>> lpf ~cutoff 0.7 >> mul ~env;
+out: balance ~left ~right;

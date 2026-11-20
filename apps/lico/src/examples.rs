@@ -16,6 +16,10 @@ pub const PATCHES: &[(&str, &str)] = &[
     ),
     ("FM bells", include_str!("../assets/examples/fm.glicol")),
     (
+        "Cosmic soundscape",
+        include_str!("../assets/examples/cosmic.glicol"),
+    ),
+    (
         "Stereo tremolo",
         include_str!("../assets/examples/stereo.glicol"),
     ),

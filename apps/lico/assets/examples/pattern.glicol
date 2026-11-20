@@ -1,3 +1,3 @@
 // Schedule sample hits at fractional positions in a one-bar loop.
 out: psampler "\808bd@0 \808ch@0.125 \808sd@0.25 \808ch@0.375 \808bd@0.5 \808ch@0.625 \808sd@0.75 \808ch@0.875"(1)
->> mul 0.35;
+>> mul 0.62;

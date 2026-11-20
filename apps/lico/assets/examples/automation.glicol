@@ -1,4 +1,4 @@
 // Loop a cutoff curve over one bar using time/value points.
 ~cutoff: [0=>180 1/4=>1600 1/2=>420 3/4=>950 1=>180]!;
 out: speed 2 >> seq 48 _55 60 _57 >> sawsynth 0.01 0.18
->> lpf ~cutoff 1.5 >> mul 0.16;
+>> lpf ~cutoff 1.5 >> mul 0.335;

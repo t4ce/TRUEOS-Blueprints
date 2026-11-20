@@ -1,12 +1,13 @@
 use crate::audio::{self, Command, DEFAULT_BPM, MONITOR_FRAMES, Status};
 use crate::examples::{DEFAULT_PATCH, PATCHES};
+use crate::highlight::Highlight;
 use crate::mcp::{self, Session, SharedSession};
 use crossterm::ExecutableCommand;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -20,7 +21,7 @@ use std::io;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -103,6 +104,7 @@ async fn editor(
 ) -> io::Result<()> {
     let mut first_frame = Some(first_frame);
     let mut patch = patch_editor(&session.lock().expect("Lico session").draft);
+    let mut highlight = None;
     let mut review: Option<(String, u16)> = None;
     let mut examples = None;
 
@@ -134,6 +136,14 @@ async fn editor(
                 Status::Tempo(value) => {
                     bpm = value;
                     session.lock().expect("Lico session").bpm = value;
+                }
+                Status::PatchParsed(code, spans) => {
+                    if session.lock().expect("Lico session").draft == code {
+                        highlight = Some((
+                            Highlight::new(&code, &spans, patch.tab_length()),
+                            Instant::now() + Duration::from_millis(300),
+                        ));
+                    }
                 }
                 Status::Playing(code) => {
                     session.lock().expect("Lico session").playing = Some(code);
@@ -178,7 +188,7 @@ async fn editor(
         terminal.draw(|frame| {
             let area = frame.area();
             if area.height < 25 {
-                frame.render_widget(&patch, area);
+                draw_patch(frame, &patch, area, highlight.as_ref());
             } else {
                 let wide = area.width >= 80;
                 let [header, edit, plots, status, footer] = Layout::vertical([
@@ -230,7 +240,7 @@ async fn editor(
                     ]),
                     header,
                 );
-                frame.render_widget(&patch, edit);
+                draw_patch(frame, &patch, edit, highlight.as_ref());
                 draw_plots(frame, plots, &waveform, &spectrum, sample_rate);
                 let label = error.as_deref().or(reference.as_deref()).unwrap_or(&state);
                 let color = if error.is_some() {
@@ -301,6 +311,7 @@ async fn editor(
                             {
                                 let code = code.trim_end_matches('\n');
                                 patch = patch_editor(code);
+                                highlight = None;
                                 session
                                     .lock()
                                     .expect("Lico session")
@@ -325,6 +336,7 @@ async fn editor(
                             let mut session = session.lock().expect("Lico session");
                             if let Some(proposal) = session.proposal.take() {
                                 patch = patch_editor(&proposal.code);
+                                highlight = None;
                                 session.update_draft(patch.lines().join("\n"));
                                 reference = Some(
                                     "Proposal accepted. Alt+R to play the edited patch.".into(),
@@ -373,6 +385,7 @@ async fn editor(
                     _ => {
                         reference = None;
                         if patch.input(key) {
+                            highlight = None;
                             session
                                 .lock()
                                 .expect("Lico session")
@@ -389,6 +402,7 @@ async fn editor(
             Event::Paste(text) if review.is_none() && examples.is_none() => {
                 reference = None;
                 if patch.insert_str(text) {
+                    highlight = None;
                     session
                         .lock()
                         .expect("Lico session")
@@ -407,6 +421,103 @@ fn patch_editor(code: &str) -> TextArea<'static> {
     patch.set_line_number_style(Style::default().fg(Color::DarkGray));
     patch.set_cursor_line_style(Style::default());
     patch
+}
+
+fn draw_patch(
+    frame: &mut Frame,
+    patch: &TextArea<'_>,
+    area: Rect,
+    highlight: Option<&(Highlight, Instant)>,
+) {
+    frame.render_widget(patch, area);
+    let Some((highlight, outline_until)) = highlight else {
+        return;
+    };
+    let text_area = patch.block().map_or(area, |block| block.inner(area));
+    let (top, left) = patch.scroll_offset();
+    let left = usize::from(left);
+    let gutter = usize::from(patch.line_number_width());
+    let width = usize::from(text_area.width);
+    let buffer = frame.buffer_mut();
+    for (y, line) in
+        (text_area.top()..text_area.bottom()).zip(highlight.lines.iter().skip(usize::from(top)))
+    {
+        for span in line {
+            let start = (gutter + span.start).saturating_sub(left).min(width);
+            let end = (gutter + span.end).saturating_sub(left).min(width);
+            for column in start..end {
+                let cell = &mut buffer[(text_area.x + column as u16, y)];
+                if cell.bg == Color::Reset && !cell.modifier.contains(Modifier::REVERSED) {
+                    cell.fg = span.color;
+                }
+            }
+        }
+    }
+    if !area.is_empty() && Instant::now() < *outline_until {
+        let bottom = area.bottom() - 1;
+        let right = area.right() - 1;
+        let style = Style::default().fg(Color::LightGreen);
+        for edge in [
+            Rect::new(area.x, area.y, area.width, 1),
+            Rect::new(area.x, bottom, area.width, 1),
+            Rect::new(area.x, area.y + 1, 1, area.height.saturating_sub(2)),
+            Rect::new(right, area.y + 1, 1, area.height.saturating_sub(2)),
+        ] {
+            buffer.set_style(edge, style);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui_textarea::CursorMove;
+
+    #[test]
+    fn highlights_follow_scrolling_and_keep_the_cursor_and_selection_visible() {
+        let code = "out: sin 440 >> mul 0.25;";
+        let (_, spans) = glicol_parser::get_ast_with_spans(code).unwrap();
+        let mut patch = patch_editor(code);
+        patch.set_selection_style(Style::default().bg(Color::Blue));
+        let mut highlight = (
+            Highlight::new(code, &spans, patch.tab_length()),
+            Instant::now() + Duration::from_secs(1),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(18, 4)).unwrap();
+
+        patch.move_cursor(CursorMove::Jump(0, 5));
+        terminal
+            .draw(|frame| draw_patch(frame, &patch, frame.area(), Some(&highlight)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].fg, Color::LightGreen);
+        assert_eq!(buffer[(9, 1)].symbol(), "s");
+        assert!(buffer[(9, 1)].modifier.contains(Modifier::REVERSED));
+        assert_eq!(buffer[(10, 1)].fg, Color::LightBlue);
+
+        patch.move_cursor(CursorMove::Jump(0, 22));
+        patch.start_selection();
+        patch.move_cursor(CursorMove::End);
+        highlight.1 = Instant::now();
+        terminal
+            .draw(|frame| draw_patch(frame, &patch, frame.area(), Some(&highlight)))
+            .unwrap();
+        assert!(patch.scroll_offset().1 > 0);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].fg, Color::Cyan);
+        let cells = (1..17).map(|x| &buffer[(x, 1)]).collect::<Vec<_>>();
+        assert!(
+            cells
+                .iter()
+                .any(|cell| cell.symbol() == "0" && cell.fg == Color::LightYellow)
+        );
+        assert!(
+            cells
+                .iter()
+                .any(|cell| cell.symbol() == "5" && cell.bg == Color::Blue)
+        );
+    }
 }
 
 fn proposal_diff(draft: &str, proposal: &mcp::Proposal) -> String {

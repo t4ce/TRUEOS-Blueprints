@@ -1,0 +1,10 @@
+// The verse and chorus take turns, one bar per section.
+// The kick and offbeat hats continue under both sections.
+~verse: seq 48 _ 55 _ 60 _ 58 _
+>> trisynth 0.008 0.22 >> mul 0.23;
+~chorus: seq 60 63 67 70 72 70 67 63
+>> sawsynth 0.004 0.16 >> lpf 1250 0.8 >> mul 0.22;
+~section: arrange ~verse 1 ~chorus 1 >> pan 0;
+~kick: seq 60 _ _ _ 60 _ 60 _ >> bd 0.19 >> mul 0.27;
+~hat: seq _ 60 _ 60 _ 60 _ 60 >> hh 0.055 >> mul 0.19;
+out: mix ~section ~kick ~hat >> plate 0.06;

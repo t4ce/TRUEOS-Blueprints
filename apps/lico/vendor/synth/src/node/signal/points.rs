@@ -6,6 +6,7 @@ use hashbrown::HashMap;
 #[derive(Debug, Clone)]
 pub struct Points {
     pub point_list: Vec<(usize, f32)>, // time and value
+    points: Vec<(TimeList, f32)>,
     pub span: f32,
     pub bpm: f32,
     pub sr: usize,
@@ -28,6 +29,7 @@ impl Points {
         // println!("point_list {:?}", point_list);
         Self {
             point_list: vec![],
+            points: vec![],
             span: 1.0,
             bpm: 120.,
             sr: 44100,
@@ -54,119 +56,93 @@ impl Points {
         Self { sr, ..self }
     }
 
-    pub fn points(self, points: Vec<(TimeList, f32)>) -> Self {
-        let bpm = self.bpm;
-        let sr = self.sr;
-        let span = self.span;
-        let point_list = self.make_point_list(points, bpm, sr, span);
-        Self { point_list, ..self }
+    pub fn points(mut self, points: Vec<(TimeList, f32)>) -> Self {
+        self.points = points;
+        self.update_point_list();
+        self
     }
 
-    fn make_point_list(
-        &self,
-        points: Vec<(TimeList, f32)>,
-        bpm: f32,
-        sr: usize,
-        span: f32,
-    ) -> Vec<(usize, f32)> {
-        let mut point_list = points
-            .into_iter()
-            .map(|(time, value)| {
-                let cycle_dur = 60. / bpm * 4.;
-                let bar_dur = cycle_dur * span * sr as f32;
+    fn cycle_frames(&self) -> f32 {
+        // A negative parser span means that the patch omitted its span.
+        let span = if self.span > 0.0 { self.span } else { 1.0 };
+        240.0 / self.bpm * self.sr as f32 * span
+    }
 
-                let bar_pos = time.bar * bar_dur;
-                let time_pos = time.time.map_or(0., |kind| match kind {
-                    Duration::Bar(b) => b * bar_dur,
-                    Duration::Seconds(s) => s * (sr as f32),
-                    Duration::Milliseconds(ms) => (ms / 1000.0) * sr as f32,
+    fn update_point_list(&mut self) {
+        let cycle_frames = self.cycle_frames();
+        let sr = self.sr as f32;
+        self.point_list.clear();
+        self.point_list
+            .extend(self.points.iter().map(|(time, value)| {
+                let bar_pos = time.bar * cycle_frames;
+                let time_pos = time.time.as_ref().map_or(0.0, |kind| match kind {
+                    Duration::Bar(b) => b * cycle_frames,
+                    Duration::Seconds(s) => s * sr,
+                    Duration::Milliseconds(ms) => ms / 1000.0 * sr,
                 });
-
-                ((bar_pos + time_pos) as usize, value)
-            })
-            .collect::<Vec<_>>();
-
-        if point_list[0].0 != 0 {
-            point_list.insert(0, (0, 0.0));
+                ((bar_pos + time_pos) as usize, *value)
+            }));
+        self.point_list.sort_by_key(|point| point.0);
+        if self.point_list.first().is_some_and(|point| point.0 != 0) {
+            self.point_list.insert(0, (0, 0.0));
         }
-
-        point_list
     }
 }
 
 impl<const N: usize> Node<N> for Points {
     fn process(&mut self, _inputs: &mut HashMap<usize, Input<N>>, output: &mut [Buffer<N>]) {
-        // println!("span {}", self.span);
-        let list_len = self.point_list.len();
-        if list_len == 0 {
+        let samples = &self.point_list;
+        let Some(&(first_pos, first_value)) = samples.first() else {
+            output[0].silence();
             return;
-        }
-        let cycle_dur = 60. / self.bpm * 4.;
-        let bar_dur = (cycle_dur * self.span * self.sr as f32) as usize;
+        };
+        let period = (self.cycle_frames() as usize).max(1);
 
-        if !self.is_looping {
-            for out in &mut *output[0] {
-                let pos = self.step;
-                let samples = &self.point_list;
-
-                let index = samples.iter().position(|s| pos <= s.0).map_or(0, |p| p - 1);
-
-                // println!("index {} pos {} samples {:?}", index, pos, samples);
-                if index < samples.len() - 1 {
-                    // not yet reach the last point
-                    let (prev_pos, prev_val) = samples[index];
-                    let (next_pos, next_val) = samples[index + 1];
-                    let t = (pos as f32 - prev_pos as f32) / (next_pos as f32 - prev_pos as f32);
-                    *out = prev_val + t * (next_val - prev_val);
+        for out in &mut *output[0] {
+            let pos = if self.is_looping {
+                self.step % period
+            } else {
+                self.step
+            };
+            let next = samples.partition_point(|point| point.0 <= pos);
+            let (start, value) = samples[next.saturating_sub(1)];
+            let (end, next_value) = samples.get(next).copied().unwrap_or_else(|| {
+                if self.is_looping {
+                    (period.saturating_add(first_pos), first_value)
                 } else {
-                    // reach the last point
-                    // pass the last point stay at the last point
-                    // panic!("self.step {}", self.step);
-                    *out = samples.last().unwrap().1;
+                    (start, value)
                 }
-                self.step += 1;
-            }
-        } else {
-            for out in &mut *output[0] {
-                let pos = self.step % bar_dur;
-                let period = bar_dur;
-                let samples = &self.point_list;
-
-                let prev = samples.iter().enumerate().find(|(_, (s, _))| pos <= *s);
-
-                let is_last = prev.is_none();
-                let (index, (prev_pos, prev_val)) =
-                    prev.unwrap_or_else(|| (samples.len() - 1, samples.last().unwrap()));
-
-                let (next_pos, next_val) = samples[(index + 1) % samples.len()];
-
-                let t = if is_last {
-                    (pos as f32 - *prev_pos as f32)
-                        / (period as f32 - *prev_pos as f32 + next_pos as f32)
-                } else {
-                    (pos as f32 - *prev_pos as f32) / (next_pos as f32 - *prev_pos as f32)
-                };
-                *out = prev_val + t * (next_val - prev_val);
-
-                self.step += 1;
-            }
+            });
+            let duration = end.saturating_sub(start);
+            *out = if duration == 0 {
+                value
+            } else {
+                let progress = pos.saturating_sub(start) as f32 / duration as f32;
+                value + progress * (next_value - value)
+            };
+            self.step += 1;
         }
     }
     fn send_msg(&mut self, info: Message) {
         match info {
             Message::SetParam(0, GlicolPara::Points(time_list)) => {
-                self.point_list = self.make_point_list(time_list, self.bpm, self.sr, self.span);
+                self.points = time_list;
+                self.update_point_list();
                 self.step = 0;
             }
             Message::SetToNumber(1, num) => {
                 self.span = num;
+                self.update_point_list();
                 self.step = 0;
             }
             Message::SetToBool(2, b) => {
                 self.is_looping = b;
                 self.step = 0;
             }
-            Message::SetBPM(bpm) => self.bpm = bpm,
+            Message::SetBPM(bpm) => {
+                self.bpm = bpm;
+                self.update_point_list();
+            }
             Message::Index(i) => self.input_order.push(i),
             Message::IndexOrder(pos, index) => self.input_order.insert(pos, index),
             _ => {}

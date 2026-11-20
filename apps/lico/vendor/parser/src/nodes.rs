@@ -514,9 +514,8 @@ impl<'ast> Node<'ast> for Seq<'ast> {
             .next()
             .ok_or_else(|| end_span.to_err_with_positives(positives))?;
 
-        // to do, more than a symbol
-        // should be an event that contains time and note
         let compounds = paras.into_inner();
+        let compounds_n = compounds.len() as f32;
 
         let events = compounds
             .enumerate()
@@ -534,7 +533,8 @@ impl<'ast> Node<'ast> for Seq<'ast> {
                             .next()
                             .ok_or_else(|| e_span.to_err_with_positives(positives))?;
 
-                        let time = relative_time_sub + i as f32;
+                        // The sequencer consumes positions within one bar.
+                        let time = (i as f32 + relative_time_sub) / compounds_n;
 
                         match_or_return_err!(e,
                             Rule::integer => {
@@ -1107,13 +1107,17 @@ impl<'ast> Node<'ast> for CodeBlock<'ast> {
         pairs: &mut Pairs<'ast, Rule>,
         span: Span<'ast>,
     ) -> Result<Self, Box<Error<Rule>>> {
-        let s = pairs
+        let pair = pairs
             .next()
-            .ok_or_else(|| span.as_end_span().to_err_with_positives([Rule::code]))?
-            .as_str();
+            .ok_or_else(|| span.as_end_span().to_err_with_positives([Rule::code]))?;
+        let source = pair.as_str();
 
         Ok(Self {
-            code: &s[1..s.len() - 1],
+            code: if pair.as_rule() == Rule::code {
+                &source[1..source.len() - 1]
+            } else {
+                source
+            },
         })
     }
 }

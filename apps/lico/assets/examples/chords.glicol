@@ -1,0 +1,7 @@
+// A polyphonic chord can start several MIDI notes at the same time.
+// Each pair is a position in the two-second cycle and a MIDI note.
+~keys: psynth `0 48,0 55,0 60,0 63,0.375 67,0.5 46,0.5 53,0.5 58,0.5 62,0.875 65` 1
+>> lpf 1650 0.8 >> mul 0.6;
+~answer: seq _ _ 72 _ _ 70 _ 67
+>> trisynth 0.006 0.14 >> mul 0.15;
+out: mix ~keys ~answer >> plate 0.13;
