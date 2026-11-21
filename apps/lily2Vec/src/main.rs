@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         return service::entry(&service_args);
     }
 
-    let mut guide = include_str!("../vibes.json").to_owned();
+    let mut guide = None;
     let mut detail = false;
     let mut benchmark = None;
     let mut words = Vec::new();
@@ -102,13 +102,15 @@ fn main() -> Result<()> {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "lily2vec [--scores] [--guide FILE] [--bench ITERATIONS] [TEXT...]\n\nService: --serve [--port 9771] [--dry-run] (host requires --dry-run). Native bare launch serves.\nCPU AVX-VNNI vibe classifier. No downloads or pretrained model.\nWithout TEXT, type one input per line; Ctrl-D exits. Stdout is one vibe token.\n--scores prints integer scores and backend to stderr.\n--bench compares VNNI scoring with its integer reference and times the whole selector.\nAVX-VNNI hardware and OS vector state are required. No fallback backend.\nThe previous Potion experiment is available with: cargo run --release --features potion --bin lily2vec-potion"
+                    "lily2vec [--scores] [--guide FILE] [--bench ITERATIONS] [TEXT...]\n\nService: --serve [--port 9771] [--dry-run] (host requires --dry-run). Native bare launch serves.\nCPU AVX-VNNI vibe classifier. No downloads or pretrained model.\nWithout TEXT, type one input per line; Ctrl-D exits. Stdout is one Contextual label or Static.\n--scores prints integer scores and backend to stderr.\n--bench compares VNNI scoring with its integer reference and times the whole selector.\nAVX-VNNI hardware and OS vector state are required. No fallback backend.\nThe previous Potion experiment is available with: cargo run --release --features potion --bin lily2vec-potion"
                 );
                 return Ok(());
             }
             "--scores" => detail = true,
             "--guide" => {
-                guide = std::fs::read_to_string(args.next().context("--guide requires a file")?)?
+                guide = Some(std::fs::read_to_string(
+                    args.next().context("--guide requires a file")?,
+                )?)
             }
             "--bench" => {
                 benchmark = Some(
@@ -128,7 +130,10 @@ fn main() -> Result<()> {
     if !vnni_available() {
         bail!("AVX-VNNI + AVX2 unavailable; no substitute scoring backend is used");
     }
-    let model = Model::load(&guide)?;
+    let model = match guide {
+        Some(guide) => Model::load(&guide)?,
+        None => Model::contextual()?,
+    };
     if let Some(n) = benchmark {
         return bench(&model, n);
     }

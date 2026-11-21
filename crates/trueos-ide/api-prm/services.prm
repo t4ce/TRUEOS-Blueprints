@@ -1141,6 +1141,13 @@ extern "C" fn trueos_cabi_spirit_agents_publish_v1(bytes: *const u8, len: usize)
 Declaration: crates/trueos-v/src/bp_abi.rs:611
 
 
+## trueos_cabi_spirit_contextual_play_v1
+
+extern "C" fn trueos_cabi_spirit_contextual_play_v1(word_ptr: *const u8, word_len: usize) -> i32;
+
+Declaration: crates/trueos-v/src/bp_abi.rs:651
+
+
 ## trueos_cabi_spirit_emotion_play
 
 extern "C" fn trueos_cabi_spirit_emotion_play(idea_ptr: *const u8, idea_len: usize) -> i32;

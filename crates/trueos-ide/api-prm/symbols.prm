@@ -228,6 +228,7 @@ trueos_cabi_socket_tcp_set_nonblocking -> services.prm
 trueos_cabi_socket_tcp_shutdown -> services.prm
 trueos_cabi_socket_tcp_take_error -> services.prm
 trueos_cabi_spirit_agents_publish_v1 -> services.prm
+trueos_cabi_spirit_contextual_play_v1 -> services.prm
 trueos_cabi_spirit_emotion_play -> services.prm
 trueos_cabi_spirit_move -> services.prm
 trueos_cabi_spirit_response_present -> services.prm

@@ -89,9 +89,84 @@ fn normalize(text: &str) -> String {
     out
 }
 
+pub const CONTEXTUAL_LABELS: [&str; 16] = [
+    "Angry",
+    "Blush",
+    "Confused",
+    "Cry",
+    "Disapprove",
+    "Drink",
+    "Eat",
+    "Flirt",
+    "Wave",
+    "Tired",
+    "Grimace",
+    "Silly",
+    "Scared",
+    "Nod",
+    "Idea",
+    "Happy",
+];
+
+fn contextual_label(label: &str) -> Option<&str> {
+    Some(match label {
+        "Kiss" => "Flirt",
+        "Gun" => "Idea",
+        "Threaten" => "Angry",
+        "Waving" => "Wave",
+        "Wink" => "Grimace",
+        "Static" => "Static",
+        label if CONTEXTUAL_LABELS.contains(&label) => label,
+        _ => return None,
+    })
+}
+
+fn contextual_weights(weights: HashMap<String, i8>) -> HashMap<String, i8> {
+    let mut folded = HashMap::<String, i8>::new();
+    for (label, weight) in weights {
+        if let Some(label) = contextual_label(&label) {
+            folded
+                .entry(label.to_owned())
+                .and_modify(|old| *old = (*old).max(weight))
+                .or_insert(weight);
+        }
+    }
+    folded
+}
+
 impl Model {
     pub fn load(json: &str) -> Result<Self> {
-        let mut guide: Guide = serde_json::from_str(json)?;
+        Self::from_guide(serde_json::from_str(json)?)
+    }
+
+    /// Use the Contextual row's vocabulary for turn playback. The original
+    /// read-only classifier still serves callers that use the old cue names.
+    pub fn contextual() -> Result<Self> {
+        let mut guide: Guide = serde_json::from_str(DEFAULT_GUIDE)?;
+        guide.labels = CONTEXTUAL_LABELS
+            .into_iter()
+            .chain(["Static"])
+            .map(str::to_owned)
+            .collect();
+        for feature in &mut guide.features {
+            feature.weights = contextual_weights(std::mem::take(&mut feature.weights));
+        }
+        guide.features.retain(|feature| !feature.weights.is_empty());
+        for (text, label) in [
+            ("drink", "Drink"),
+            ("drinking", "Drink"),
+            ("sip", "Drink"),
+            ("grimace", "Grimace"),
+        ] {
+            guide.features.push(Feature {
+                text: text.to_owned(),
+                weights: HashMap::from([(label.to_owned(), 8)]),
+            });
+        }
+        Self::from_guide(guide)
+    }
+
+    fn from_guide(mut guide: Guide) -> Result<Self> {
         if guide.labels.is_empty() {
             guide.labels = DEFAULT_TOKENS.lines().map(str::to_owned).collect();
         }
@@ -252,6 +327,20 @@ pub const DEFAULT_TOKENS: &str = include_str!("../tokens.txt");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contextual_vocabulary_matches_the_preview_names() {
+        let model = Model::contextual().unwrap();
+        assert_eq!(
+            model.labels,
+            CONTEXTUAL_LABELS.into_iter().chain(["Static"]).collect::<Vec<_>>()
+        );
+        for label in CONTEXTUAL_LABELS {
+            assert_label(&model, label, label);
+        }
+        assert_label(&model, "hello", "Wave");
+        assert_label(&model, "unrecognizablexyz", "Static");
+    }
 
     fn assert_label(model: &Model, text: &str, expected: &str) {
         let query = model.encode(text).unwrap();

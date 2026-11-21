@@ -1,51 +1,20 @@
 # lily2Vec — VNNI vibe service
 
-Lily is an on-demand Blueprint service in its own TRUEOS VMX/Hull. Codex tees
-recent assistant-response text to its loopback input queue. Lily's VM owns the
-warm integer model, AVX-VNNI inference, and native Spirit signaling.
+Lily is an on-demand Blueprint service in its own TRUEOS VMX/Hull. Codex
+forwards one bounded assistant reply per completed turn over loopback. Lily
+runs the AVX-VNNI classifier and submits at most one contextual action to
+Spirit. The kernel sequencer owns variant selection, pose transitions and
+frame timing.
 
-```text
-Codex response stream ──→ terminal UI
-                    └──→ snapshot mailbox ──→ Lily VMX
-                                                 ├─ VNNI classification
-                                                 └─ Spirit clip queue
-```
-
-The terminal path does not wait for inference or Spirit. Codex contains the
-text sampler and asynchronous transport client; it does not contain the Lily
-model, VNNI classifier, or calls that choose and signal avatar expressions.
-
-## Current classifier experiment
-
-The current vocabulary is the user's 22 names in `tokens.txt`, one per line.
-The default `vibes.json` omits `labels` and reads that embedded vocabulary;
-custom guides can still provide their own explicit `labels`. `Static` has the
-small fallback bias for text with no matching phrase. The CLI returns exactly
-one token with the spelling/case from `tokens.txt`.
-
-This iteration is classification only. The new vocabulary has not been wired
-to Spirit's legacy ten-word animation API or deployed to the running native
-service. Use the CLI or `--serve --dry-run` to try it. Sprite mappings and
-transitions are separate work.
-
-The guide retains the original associations under the revised token names and
-adds short context cues. For example, `the bug was a typo` selects `Silly`,
-`silently drops errors` selects `Disapprove`, `untangle the source code` selects
-`Idea`, and `build passed` selects `Happy`. These are editable weighted phrase
-associations; the ranker does not perform language-model reasoning. Exact token
-names are also recognized so every listed output can be exercised directly.
-
-Classifier normalization also recognizes a small curated set of emoji cues,
-including `😄` → `happy`, `😭` → `cry`, and `👍` → `nod`. It preserves normalized
-prose adjacency, then appends each cue once; repeated emoji, skin tones, joiners
-and presentation selectors do not multiply that cue. Unrecognized emoji alone
-fall back to `Static`. The original snapshot text stays intact. These cues use
-the existing guide weights and affect classifier scores; voice mood remains
-future work, as does the Spirit vocabulary bridge described above.
+The turn classifier and default CLI use the Contextual row's 16 names.
+`Static` is the fallback for text without a cue and leaves ambient playback
+running. The weighted phrase guide and its existing emoji normalization
+provide the initial mapping. Custom CLI guides still accept explicit labels.
+The label-only lookup retains the vocabulary in `tokens.txt`.
 
 ```sh
-cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- "the bug was a typo"
-# Silly
+cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- "hello"
+# Wave
 ```
 
 ## TRUEOS deployment
@@ -73,102 +42,47 @@ whole-Hull P-core affinity policy is imposed by this change.
 
 The AppDB bundle metadata is embedded in the seed, so bundle changes require
 the normal kernel/builtins preparation and boot/update cycle. The updated kernel
-must also support the reserved Spirit presentation vocabulary below. No app was
-promoted to a buildin by this integration.
+must export `trueos_cabi_spirit_contextual_play_v1`.
 
-## Snapshot transport
+## Completed-turn transport
 
-The service accepts HTTP only on loopback:
+- `GET /health` reports `protocol: "lily2vec-v2"` and `backend: "avx-vnni"`.
+- `POST /v1/turns` accepts `source`, a nonzero increasing `sequence`, and
+  `text`. Each admitted sequence returns HTTP 202 and one contextual label
+  or `Static`. Retried or older sequences receive a stale acknowledgment.
+- `POST /v1/classify` is the read-only cue lookup. It accepts nonempty text
+  up to 16 KiB and returns a label in the existing voice-cue vocabulary.
+- `POST /v1/snapshots` is deprecated. It emits a warning and enqueues no action.
 
-- `GET /health` reports `protocol: "lily2vec-v1"`, `backend: "avx-vnni"`, and
-  `ready: true` only after the model and required CPU features are ready.
-- `POST /v1/classify` accepts `{ "text": "..." }` and immediately returns the
-  winning classifier word as `{ "label": "Happy" }`. It uses the same model
-  as snapshots and accepts nonempty text up to 16 KiB of UTF-8. This lookup
-  leaves the Spirit queue, cadence, repeat state, and health counters untouched.
-- `POST /v1/snapshots` enqueues work and returns HTTP 202. Its JSON body contains
-  `source`, monotonically increasing `sequence`, and `text`. A unique source
-  identifies the initiating Codex presentation stream.
-- `{ "source": "...", "sequence": 42, "clear": true }` advances the source
-  sequence and discards that source's pending text.
-
-The ingress is bounded to 32 source records, 8192 bytes per HTTP body, source
-IDs of at most 128 bytes without whitespace/control characters, nonzero
-sequence numbers, and nonempty snapshots of at most 4096 UTF-8 bytes
-and 768 Unicode characters. Each source has one pending slot: a newer snapshot
-replaces its unprocessed predecessor. Older/retried sequences are acknowledged
-with `accepted: false` and `stale: true`; capacity pressure returns 429 rather
-than growing an unbounded queue. Invalid input returns 400; oversized HTTP
-bodies return 413.
-
-The worker checks queued snapshots on a 50 ms tick and presents at most one
-cue globally every 2.5 seconds. The same label is suppressed for five seconds.
-Unprocessed snapshots expire after ten seconds; inactive source records expire
-after 120 seconds. Cancellation clears pending text. These are bounded
-presentation policies, not a new sprite-transition state machine.
-
-Codex samples only live assistant text being sent to its terminal UI, including
-its original Markdown. User input, reasoning, tool output, and replayed history
-do not enter the tee. The sampler targets 384 characters and retains at most
-768, preferring recent contiguous verbatim sections. Fast output coalesces into
-recent text; it is not a backlog of every token or terminal redraw.
+Turns allow up to 768 Unicode characters and 4096 UTF-8 bytes. The service
+tracks up to 32 sources and expires inactive source records after 120 seconds.
 
 ## Matrix activity output
 
 Lily appends compact activity lines to its own ShellIO Matrix slot through the
-existing log stream. It never claims a terminal UI or switches focus. Each
-decoded snapshot request gets a service-wide counter and a UTC timestamp:
+existing log stream. It never claims a terminal UI or switches focus. Each admitted turn gets a service-wide counter and a UTC timestamp:
 
 ```text
-lily2vec #1 17:49:02.123Z recv seq=1 chars=125 queued
-lily2vec #1 17:49:02.125Z result=Happy spirit=dry-run
+lily2vec #1 17:49:02.125Z turn seq=1 result=Happy spirit=dry-run
 ```
 
-The matching counter connects receipt to the single winning label. `result`
-is exactly one of the 22 classifier words. `spirit=queued` confirms admission
-to Spirit; `spirit=held-repeat` shows classification succeeded but the existing
-repeat limit held the animation. Host dry-run uses `spirit=dry-run`. UTC times
-have a `Z` suffix; an unavailable native wall clock is shown explicitly as
-`time=unavailable`.
-
-Receipt lines also show `clear`, `stale`, or `rejected` as appropriate. A queued
-snapshot replaced by newer text or cleared before classification has no result
-line. Input text is not printed. `/health` exposes `received`, counting requests
-that reached JSON admission, including clears, stale sequences, and semantic
-rejections. Malformed JSON and oversized bodies rejected before admission do
-not increment it.
+The result is one contextual label or `Static`. `spirit=queued` confirms
+admission to the kernel sequencer. `spirit=idle` marks a turn with no action.
+Host dry-run uses `spirit=dry-run` for an action. Input text stays out of these
+logs.
 
 ## Legacy Spirit signaling
 
-The previously deployed ten-word integration scores the snapshot and calls
-`trueos::spirit::play_expression(label)`. This crosses the native Spirit ABI
-using a reserved `vibe:` word, then enters the existing clip queue. The kernel
-maps its legacy ten labels to already resident clips (these are not the current
-22 classifier output names):
-
-| Label | Existing clip |
-| --- | --- |
-| neutral | idle.crossed.neutral_breath |
-| wave | wave.neutral |
-| happy | happy.cheer |
-| sad | cry.wipe |
-| affection | flirt.heart_hands |
-| disapprove | disapprove.head_shake |
-| agree | agree.firm_nod |
-| confused | confused.question |
-| idea | idea.finger_up |
-| angry | angry.fists_clenched |
-
-Frame sequences, pose transitions, playback priorities, and idle behavior stay
-with Spirit's existing sequencer. Ordinary unprefixed emotion requests retain
-their existing randomized variants. Lily records successful native admission,
-not proof that a GPU frame has reached the display.
+`play_emotion` and `play_expression` retain their ABI so older clients can
+run. They log a deprecation warning and schedule no frames. Completed turns
+use `play_contextual` for the new sequencer.
 
 ## The integer model
 
 `vibes.json` holds the guided word/phrase associations and `tokens.txt` lists
-the 22 labels. The model uses signed byte weights and small biases. It is
-embedded and loaded once by the service.
+the 22 read-only lookup labels. The service embeds the guide and loads a
+contextual projection alongside the original lookup model. Both use signed
+byte weights and small biases.
 No pretrained embedding download, Python runtime, GPU inference, SQLite model
 storage, or main-agent tool call participates.
 
@@ -183,8 +97,8 @@ Feature rows are padded to 32 bytes. Each 256-bit instruction computes 32
 unsigned-byte × signed-byte products into eight i32 accumulation lanes. VNNI
 computes the actual scores selecting the label; it is not a demonstration
 executed beside another classifier. The default matrix occupies only a few
-kilobytes. The guide supports up to 4096 features and 256 labels, although the
-native Spirit mapping still accepts only the legacy ten words above.
+kilobytes. Custom guides support up to 4096 features and 256 labels. Native playback
+accepts the 16 contextual names.
 
 The raw instruction wrappers are shared with the kernel in
 `../../../TRUEOS/src/turbo/vnni.rs`. The build script emits a module reference
@@ -199,7 +113,7 @@ not receive a scalar inference fallback or a ready service advertisement.
 
 ## Host CLI and service checks
 
-The host defaults to the original text-in, vibe-out CLI. Use Cargo from the
+The host defaults to the text-in, contextual-label-out CLI. Use Cargo from the
 Blueprint repository so the target directory is unambiguous:
 
 ```sh
@@ -220,9 +134,9 @@ cargo run --release --manifest-path apps/lily2Vec/Cargo.toml -- \
   --serve --dry-run --port 9771
 ```
 
-Dry-run still uses the production HTTP ingress, queue, cadence and VNNI
-classifier. It substitutes only the final Spirit call and writes one JSON line
-per presented classification to stdout:
+Dry-run uses the production HTTP ingress, sequence deduplication and VNNI
+classifier. It substitutes the final Spirit call and writes one JSON line
+per accepted turn to stdout:
 
 ```json
 {"source":"example","sequence":1,"label":"Flirt","accepted":true}
@@ -236,10 +150,8 @@ python3 apps/lily2Vec/tests/service_http.py
 # Or pass --binary /absolute/path/to/the/host/lily2vec
 ```
 
-The HTTP harness checks actual VNNI results, latest-wins coalescing, stale
-sequence rejection, cancellation, malformed/oversized ingress, and timestamped
-receipt/result correlation including held repeats. It does not claim to verify
-native Sprite/GPU display completion.
+The HTTP harness checks VNNI results, completed-turn deduplication, bounds
+and legacy-signal warnings. GPU presentation is verified separately.
 
 Additional focused checks:
 
@@ -266,7 +178,7 @@ AVX-VNNI backend. Its final native Spirit submission was dry-run, so this does
 not establish native VMX-to-sprite display completion or end-to-end latency.
 
 
-## Native verification for the separated service
+## Historical native verification of the v1 service
 
 Both native Blueprints built and published successfully:
 

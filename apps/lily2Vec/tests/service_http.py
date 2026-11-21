@@ -3,7 +3,7 @@
 
 Build the host binary first, then pass --binary if it is outside the ordinary
 Blueprint repository target directory. Only the final native Spirit submission
-is replaced by --dry-run; HTTP, queueing, cadence and inference are production.
+is replaced by --dry-run; HTTP, deduplication and inference are production.
 """
 from __future__ import annotations
 
@@ -20,7 +20,10 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 REPO = APP.parents[1]
-LABELS = set((APP / "tokens.txt").read_text().splitlines())
+LABELS = {
+    "Angry", "Blush", "Confused", "Cry", "Disapprove", "Drink", "Eat", "Flirt",
+    "Wave", "Tired", "Grimace", "Silly", "Scared", "Nod", "Idea", "Happy", "Static",
+}
 
 
 class Events:
@@ -149,7 +152,7 @@ def main():
             if time.monotonic() >= deadline:
                 raise AssertionError("service did not become ready")
             time.sleep(0.025)
-        assert health["protocol"] == "lily2vec-v1", health
+        assert health["protocol"] == "lily2vec-v2", health
         assert health["backend"] == "avx-vnni" and health["ready"] is True, health
         assert health["received"] == 0, health
         print("PASS: HTTP health reports a ready AVX-VNNI backend")
@@ -164,81 +167,56 @@ def main():
         print("PASS: classification returns a per-request label without touching Spirit state")
 
         source = "integration-response"
-        received = 0
-        def post(sequence, text=None, clear=False):
-            nonlocal received
-            data = {"source": source, "sequence": sequence}
-            if text is not None:
-                data["text"] = text
-            if clear:
-                data["clear"] = True
-            status, reply = request(base, "/v1/snapshots", data)
-            assert status == 202, (status, reply)
-            received += 1
-            state = "stale" if not reply["accepted"] else ("clear" if clear else "queued")
-            notifications.wait(received, f"recv seq={sequence} chars={len(text or '')} {state}")
-            return reply
+        def turn(sequence, text):
+            return {"source": source, "sequence": sequence, "text": text}
 
-        assert post(1, "hi")["accepted"] is True
-        assert events.wait(source, 1)["label"] == "Waving"
-        notifications.wait(received, "result=Waving spirit=dry-run")
-        print("PASS: a queued snapshot reaches the real VNNI classifier")
+        # A legacy snapshot is accepted by the transport, logged, and ignored.
+        assert request(base, "/v1/snapshots", turn(1, "hi")) == (
+            202, {"accepted": False, "deprecated": True}
+        )
+        assert request(base, "/health") == (200, health)
+        events.assert_absent(source, {1}, 0.1)
+        assert any("WARN lily2vec: deprecated snapshot signal ignored" in line for line in notifications.lines)
 
-        # A fresh cue starts the global cadence window. All three network
-        # submissions fit inside it, so only the newest pending text wins.
-        for sequence, text in [(2, "i love you"), (3, "NO"), (4, "i dont feel well")]:
-            assert post(sequence, text)["accepted"] is True
-        assert events.wait(source, 4)["label"] == "Cry"
-        notifications.wait(received, "result=Cry spirit=dry-run")
-        events.assert_absent(source, {2, 3}, 0)
-        print("PASS: the bounded mailbox coalesces rapid snapshots to the latest")
+        examples = [
+            (1, "hi", "Wave"),
+            (2, "i dont feel well", "Cry"),
+            (3, "drink", "Drink"),
+            (4, "i love you", "Flirt"),
+            (5, "i love you", "Flirt"),
+            (6, "unrecognizablexyz", "Static"),
+        ]
+        for sequence, text, label in examples:
+            assert request(base, "/v1/turns", turn(sequence, text)) == (202, {"accepted": True, "label": label})
+            assert events.wait(source, sequence)["label"] == label
+            state = "idle" if label == "Static" else "dry-run"
+            notifications.wait(sequence, f"turn seq={sequence} result={label} spirit={state}")
 
-        # A late retry cannot replace a newer source sequence.
-        assert post(3, "i am furious")["accepted"] is False
-        assert post(5, "i love you")["accepted"] is True
-        assert post(6, clear=True)["accepted"] is True
-        events.assert_absent(source, {2, 3, 5, 6}, 2.8)
-        assert post(7, "yes that will do")["accepted"] is True
-        assert events.wait(source, 7)["label"] == "Nod"
-        notifications.wait(received, "result=Nod spirit=dry-run")
-        print("PASS: stale sequences are ignored and cancellation clears pending work")
+        assert request(base, "/v1/turns", turn(6, "hi")) == (202, {"accepted": False, "stale": True})
+        assert request(base, "/v1/turns", turn(3, "hi")) == (202, {"accepted": False, "stale": True})
+        assert len(events.items) == len(examples), events.items
 
         invalid = [
-            {"source": "", "sequence": 1, "text": "hi"},
-            {"source": "x" * 129, "sequence": 1, "text": "hi"},
-            {"source": "bad source", "sequence": 1, "text": "hi"},
-            {"source": source, "sequence": 0, "text": "hi"},
-            {"source": source, "sequence": 8, "text": ""},
-            {"source": source, "sequence": 8, "text": "x" * 769},
-            {"source": source, "sequence": 8, "text": "🌼" * 769},
-            {"source": source, "sequence": 8, "text": "x" * 9000},
+            ({**turn(7, "hi"), "source": ""}, 400),
+            ({**turn(7, "hi"), "source": "x" * 129}, 400),
+            ({**turn(7, "hi"), "source": "bad source"}, 400),
+            (turn(0, "hi"), 400),
+            (turn(7, ""), 400),
+            (turn(7, "x" * 769), 400),
+            (turn(7, "🌼" * 769), 400),
+            (turn(7, "x" * 9000), 413),
         ]
-        for data in invalid:
-            status, reply = request(base, "/v1/snapshots", data)
-            if len(data["text"]) == 9000:
-                assert status == 413, (status, reply)  # HTTP body extraction rejects this first.
-            else:
-                assert status == 400, (status, reply)
-                received += 1
-                notifications.wait(received, f"recv seq={data['sequence']} chars={len(data['text'])} rejected")
-        status, _ = request(base, "/v1/snapshots", raw=b"{not json")
+        for data, expected in invalid:
+            assert request(base, "/v1/turns", data)[0] == expected, data
+        status, _ = request(base, "/v1/turns", raw=b"{not json")
         assert 400 <= status < 500, status
-        events.assert_absent(source, {8}, 0.1)
-        assert post(8, "i love you")["accepted"] is True
-        assert events.wait(source, 8)["label"] == "Flirt"
-        notifications.wait(received, "result=Flirt spirit=dry-run")
-        print("PASS: malformed/oversized requests neither queue work nor consume a valid sequence")
+        assert request(base, "/v1/turns", turn(7, "grimace")) == (202, {"accepted": True, "label": "Grimace"})
+        assert events.wait(source, 7)["label"] == "Grimace"
 
-        # Repeat suppression affects Spirit, not observability of classification.
-        assert post(9, "i love you")["accepted"] is True
-        notifications.wait(received, "result=Flirt spirit=held-repeat")
-        events.assert_absent(source, {9}, 0)
         status, health = request(base, "/health")
-        assert status == 200 and health["received"] == received, (status, health, received)
-        assert health["classified"] == 5 and health["signaled"] == 4, health
+        assert status == 200 and health["classified"] == 7 and health["signaled"] == 6, health
         assert not notifications.errors, notifications.errors
-        print("PASS: timestamped receipts correlate with single-label results, including held repeats")
-        print("HTTP integration checks passed; Spirit signaling was dry-run only")
+        print("PASS: completed turns each classify once, repeated labels can play, and retries and legacy snapshots add no action")
     except BaseException:
         print("Service diagnostics:\n" + "".join(notifications.lines)[-6000:])
         raise

@@ -57,21 +57,22 @@ fn result(code: i32) -> Result<(), Error> {
     if code == 0 { Ok(()) } else { Err(Error(code)) }
 }
 
-/// Queue a model-facing emotion: anger, disgust, fear, joy, sadness, or surprise.
+/// Legacy emotion signal. TRUEOS logs it at warning level.
+#[deprecated(note = "use play_contextual for Lilly sequencing")]
 pub fn play_emotion(idea: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(idea.as_ptr(), idea.len()) })
 }
 
-/// Queue one existing Lilly clip from the response classifier's presentation
-/// vocabulary. This uses the existing emotion transport with a reserved prefix;
-/// old emotion requests and animation transition policy are unchanged.
+/// Legacy response-classifier signal. TRUEOS logs it at warning level.
+#[deprecated(note = "use play_contextual for Lilly sequencing")]
 pub fn play_expression(vibe: &str) -> Result<(), Error> {
-    if !matches!(vibe, "neutral" | "wave" | "happy" | "sad" | "affection"
-        | "disapprove" | "agree" | "confused" | "idea" | "angry") {
-        return Err(Error(-3));
-    }
     let word = alloc::format!("vibe:{vibe}");
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(word.as_ptr(), word.len()) })
+}
+
+/// Queue one of the contextual Lily actions by its preview tile name.
+pub fn play_contextual(word: &str) -> Result<(), Error> {
+    result(unsafe { v::bp_abi::trueos_cabi_spirit_contextual_play_v1(word.as_ptr(), word.len()) })
 }
 
 /// Request display-safe UTF-8 without invoking a local inference or voice path.

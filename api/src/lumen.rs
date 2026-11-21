@@ -145,6 +145,7 @@ pub fn close() -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_lumen_close() })
 }
 
+#[deprecated(note = "use spirit::play_contextual for Lilly sequencing")]
 pub fn play_emotion(idea: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(idea.as_ptr(), idea.len()) })
 }
