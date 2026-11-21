@@ -102,7 +102,11 @@ async fn main() -> Result<(), String> {
     };
     let source = store.load(store.latest().await?).await?;
     let preview = Preview::new(config.entry.clone(), source)?;
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+    #[cfg(target_os = "trueos")]
+    let port = 42_128;
+    #[cfg(not(target_os = "trueos"))]
+    let port = 0;
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();

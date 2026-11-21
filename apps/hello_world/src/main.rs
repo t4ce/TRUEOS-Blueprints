@@ -1,9 +1,5 @@
 #![no_std]
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use trueos::hid::{
     MOUSE_MOTION_EASING_FAST_LINEAR, MOUSE_MOTION_EASING_NATURAL, MOUSE_MOTION_FLAG_CLEAR_QUEUE,
     MOUSE_MOTION_OPCODE_BUTTONS, MOUSE_MOTION_OPCODE_STROKE, MOUSE_MOTION_PATH_CUBIC,
@@ -11,23 +7,93 @@ use trueos::hid::{
 };
 use trueos::logl::{self, level};
 use trueos::ui4_scene::output_dimensions;
-use trueos::vshell;
-use trueos::vsys;
+use trueos::{clock, rng, vshell, vsys};
 
-const WINDOW_COUNT: usize = 4;
 const WINDOW_WIDTH: u32 = 480;
 const WINDOW_HEIGHT: u32 = 320;
 const ORBIT_RADIUS: i32 = 300;
 const PRIMARY_BUTTON: u32 = 1 << 0;
 const SECONDARY_BUTTON: u32 = 1 << 1;
 const ORBIT_CONTROL_PERCENT: i32 = 13;
+const MIN_CLOSE_DELAY_MS: u64 = 2_000;
+const MAX_CLOSE_DELAY_MS: u64 = 5_000;
 
-const CURSOR_LABELS: [&str; WINDOW_COUNT] = [
-    "hello-orbit-a",
-    "hello-orbit-b",
-    "hello-orbit-c",
-    "hello-orbit-d",
+#[derive(Clone, Copy)]
+struct Orbit {
+    label: &'static str,
+    start: usize,
+    radius_multiple: i32,
+    clockwise: bool,
+}
+
+const ORBITS: [Orbit; 8] = [
+    Orbit {
+        label: "hello-orbit-a",
+        start: 0,
+        radius_multiple: 0,
+        clockwise: true,
+    },
+    Orbit {
+        label: "hello-orbit-b",
+        start: 3,
+        radius_multiple: 1,
+        clockwise: false,
+    },
+    Orbit {
+        label: "hello-orbit-c",
+        start: 6,
+        radius_multiple: 2,
+        clockwise: true,
+    },
+    Orbit {
+        label: "hello-orbit-d",
+        start: 9,
+        radius_multiple: 3,
+        clockwise: false,
+    },
+    Orbit {
+        label: "hello-orbit-e",
+        start: 11,
+        radius_multiple: 1,
+        clockwise: false,
+    },
+    Orbit {
+        label: "hello-orbit-f",
+        start: 0,
+        radius_multiple: 2,
+        clockwise: true,
+    },
+    Orbit {
+        label: "hello-orbit-g",
+        start: 13,
+        radius_multiple: 2,
+        clockwise: true,
+    },
+    Orbit {
+        label: "hello-orbit-h",
+        start: 1,
+        radius_multiple: 3,
+        clockwise: false,
+    },
 ];
+
+struct WindowRun {
+    window: u32,
+    cursor: Option<VCursor>,
+    close_at_ms: Option<u64>,
+}
+
+struct SoftRng(u64);
+
+impl SoftRng {
+    fn close_delay_ms(&mut self) -> u64 {
+        // PlotTwist uses the same xorshift stream for demo randomness.
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        MIN_CLOSE_DELAY_MS + self.0 % (MAX_CLOSE_DELAY_MS - MIN_CLOSE_DELAY_MS + 1)
+    }
+}
 
 // Sixteen points keep each program comfortably below the mediated cursor's
 // bounded queue while cubic controls turn the polygon into a smooth circle.
@@ -50,9 +116,6 @@ const ORBIT_POINTS: [(i32, i32); 16] = [
     orbit_point(92, -38),
 ];
 
-const START_POINT: [usize; WINDOW_COUNT] = [0, 3, 6, 9];
-const CLOCKWISE: [bool; WINDOW_COUNT] = [true, false, true, false];
-
 const fn orbit_point(x_percent: i32, y_percent: i32) -> (i32, i32) {
     (
         x_percent * ORBIT_RADIUS / 100,
@@ -72,119 +135,154 @@ fn main() {
         }
     };
     let center = ((output_width / 2) as i32, (output_height / 2) as i32);
-    logl::log(
-        level::INFO,
-        format_args!(
-            "hello_world: four-window orbit demo output={}x{} center={},{} radius={ORBIT_RADIUS}",
-            output_width, output_height, center.0, center.1,
-        ),
-    );
-
-    let mut windows = Vec::with_capacity(WINDOW_COUNT);
-    for index in 0..WINDOW_COUNT {
-        let position = orbit_position(center, START_POINT[index], index as i32);
+    let mut windows = ORBITS.map(|orbit| {
+        let (x, y) = orbit_position(center, orbit.start, orbit.radius_multiple);
         match vshell::spawn_window(
-            position.0 - WINDOW_WIDTH as i32 / 2,
-            position.1 - WINDOW_HEIGHT as i32 / 2,
-            WINDOW_WIDTH, WINDOW_HEIGHT,
+            x - WINDOW_WIDTH as i32 / 2,
+            y - WINDOW_HEIGHT as i32 / 2,
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
         ) {
-            Ok(window) => windows.push(window),
-            Err(error) => {
-                logl::log(level::ERROR, format_args!("hello_world: shell spawn failed index={index} error={error}"));
-                return;
-            }
-        }
-    }
-
-    let mut cursors = Vec::with_capacity(WINDOW_COUNT);
-    for index in 0..WINDOW_COUNT {
-        let cursor = match VCursor::request(CURSOR_LABELS[index]) {
-            Ok(cursor) => cursor,
+            Ok(window) => Some(WindowRun {
+                window,
+                cursor: None,
+                close_at_ms: None,
+            }),
             Err(error) => {
                 logl::log(
                     level::ERROR,
                     format_args!(
-                        "hello_world: cursor request failed index={index} label={} error={error}",
-                        CURSOR_LABELS[index],
+                        "hello_world: shell spawn failed label={} error={error}",
+                        orbit.label
                     ),
                 );
-                return;
+                None
             }
-        };
-        cursors.push(cursor);
-    }
+        }
+    });
 
-    // Start every cursor's move from the shared spawn point to its own shell window
-    // center first. The selection/orbit programs are fully armed before those
-    // synchronized lead-ins end.
-    for (index, cursor) in cursors.iter().enumerate() {
-        let window_center = orbit_position(center, START_POINT[index], index as i32);
-        if let Err(error) = cursor.submit(stroke(
-            window_center.0,
-            window_center.1,
-            240,
-            MOUSE_MOTION_EASING_FAST_LINEAR,
-            MOUSE_MOTION_FLAG_CLEAR_QUEUE,
-        )) {
-            logl::log(
-                level::ERROR,
-                format_args!("hello_world: cursor sync failed index={index} error={error}"),
-            );
-            return;
+    for (slot, orbit) in windows.iter_mut().zip(ORBITS) {
+        let Some(run) = slot else { continue };
+        match VCursor::request(orbit.label) {
+            Ok(cursor) => {
+                if let Err(error) = start_orbit(&cursor, center, orbit) {
+                    logl::log(
+                        level::ERROR,
+                        format_args!(
+                            "hello_world: cursor program failed window={} error={error}",
+                            run.window
+                        ),
+                    );
+                    release_cursor(cursor);
+                    continue;
+                }
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "hello_world: pair ready window={} cursor_handle={} cursor_slot={}",
+                        run.window,
+                        cursor.handle(),
+                        cursor.slot_id(),
+                    ),
+                );
+                run.cursor = Some(cursor);
+            }
+            Err(error) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!(
+                        "hello_world: cursor request failed window={} error={error}",
+                        run.window
+                    ),
+                );
+            }
         }
     }
 
-    for (index, cursor) in cursors.iter().enumerate() {
-        let radius_multiple = index as i32;
-        let window_center = orbit_position(center, START_POINT[index], radius_multiple);
-        logl::log(
-            level::INFO,
-            format_args!(
-                "hello_world: pair ready index={index} window={} cursor_handle={} cursor_slot={} window_center={},{} radius={} direction={}",
-                windows[index],
-                cursor.handle(),
-                cursor.slot_id(),
-                window_center.0,
-                window_center.1,
-                ORBIT_RADIUS * radius_multiple,
-                if CLOCKWISE[index] {
-                    "clockwise"
-                } else {
-                    "counter-clockwise"
-                },
-            ),
-        );
-
-        if let Err(error) = queue_orbit(
-            cursor,
-            center,
-            START_POINT[index],
-            radius_multiple,
-            CLOCKWISE[index],
-        ) {
-            logl::log(
-                level::ERROR,
-                format_args!("hello_world: orbit program rejected index={index} error={error}"),
-            );
-            return;
+    let mut soft_rng = SoftRng((rng::u64() ^ clock::monotonic_nanos()).max(1));
+    while windows.iter().any(Option::is_some) {
+        for slot in &mut windows {
+            let Some(run) = slot else { continue };
+            if run.close_at_ms.is_none() {
+                if let Some(cursor) = &run.cursor {
+                    match cursor.idle() {
+                        Ok(false) => continue,
+                        Ok(true) => {}
+                        Err(error) => logl::log(
+                            level::ERROR,
+                            format_args!(
+                                "hello_world: cursor wait failed window={} error={error}",
+                                run.window
+                            ),
+                        ),
+                    }
+                }
+                let delay_ms = soft_rng.close_delay_ms();
+                run.close_at_ms = Some(clock::monotonic_millis().saturating_add(delay_ms));
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "hello_world: shell window {} closing in {delay_ms} ms",
+                        run.window
+                    ),
+                );
+            }
+            if run
+                .close_at_ms
+                .is_some_and(|deadline| clock::monotonic_millis() >= deadline)
+                && let Some(run) = slot.take()
+            {
+                finish_window(run);
+            }
         }
-    }
-    if let Err((index, error)) = wait_for_cursors(cursors.as_slice()) {
-        logl::log(
-            level::ERROR,
-            format_args!("hello_world: orbit wait failed index={index} error={error}"),
-        );
-        return;
-    }
-
-    logl::log(
-        level::INFO,
-        "hello_world: four concurrent window orbits complete; shell windows and cursors retained",
-    );
-    loop {
         vsys::poll_once();
-        vsys::sleep_ms(16);
+        vsys::sleep_ms(8);
     }
+}
+
+fn finish_window(run: WindowRun) {
+    let window = run.window;
+    match vshell::close_window(window) {
+        Ok(()) => logl::log(
+            level::INFO,
+            format_args!("hello_world: shell window {window} closed"),
+        ),
+        Err(error) => logl::log(
+            level::ERROR,
+            format_args!("hello_world: shell window {window} close failed error={error}"),
+        ),
+    }
+    if let Some(cursor) = run.cursor {
+        release_cursor(cursor);
+    }
+}
+
+fn release_cursor(cursor: VCursor) {
+    match cursor.close() {
+        Ok(()) => logl::log(level::INFO, "hello_world: cursor released"),
+        Err(error) => logl::log(
+            level::ERROR,
+            format_args!("hello_world: cursor release failed error={error}"),
+        ),
+    }
+}
+
+fn start_orbit(cursor: &VCursor, center: (i32, i32), orbit: Orbit) -> Result<(), i32> {
+    let window_center = orbit_position(center, orbit.start, orbit.radius_multiple);
+    cursor.submit(stroke(
+        window_center.0,
+        window_center.1,
+        240,
+        MOUSE_MOTION_EASING_FAST_LINEAR,
+        MOUSE_MOTION_FLAG_CLEAR_QUEUE,
+    ))?;
+    queue_orbit(
+        cursor,
+        center,
+        orbit.start,
+        orbit.radius_multiple,
+        orbit.clockwise,
+    )
 }
 
 fn queue_orbit(
@@ -251,24 +349,6 @@ fn scaled_orbit_point(point_index: usize, radius_multiple: i32) -> (i32, i32) {
 fn orbit_position(center: (i32, i32), point_index: usize, radius_multiple: i32) -> (i32, i32) {
     let radial = scaled_orbit_point(point_index, radius_multiple);
     (center.0 + radial.0, center.1 + radial.1)
-}
-
-fn wait_for_cursors(cursors: &[VCursor]) -> Result<(), (usize, i32)> {
-    loop {
-        let mut all_idle = true;
-        for (index, cursor) in cursors.iter().enumerate() {
-            match cursor.idle() {
-                Ok(true) => {}
-                Ok(false) => all_idle = false,
-                Err(error) => return Err((index, error)),
-            }
-        }
-        if all_idle {
-            return Ok(());
-        }
-        vsys::poll_once();
-        vsys::sleep_ms(8);
-    }
 }
 
 fn stroke(x: i32, y: i32, duration_ms: u32, easing: u8, flags: u8) -> MouseMotionCommand {
