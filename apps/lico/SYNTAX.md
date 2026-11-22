@@ -62,7 +62,10 @@ zero. Use a single-letter chain such as `~a: choose 48 55 60` with
 | `psynth`, `p_synth`, `pattern_synth` | Backtick-delimited `position midi` pairs separated by commas, followed by a number. Multiple notes at one position form a chord. |
 | `arrange` | Alternating reference and length in bars. Plays the input sections in order and wraps to the first. |
 
-The bundled sample names are `\808bd`, `\808sd`, `\808ch`, and `\blip`.
+The bundled samples include `\808bd`, `\808sd`, `\808ch`, and `\blip`.
+The acoustic kit adds `\kit_kick`, `\kit_snare`, `\kit_tom_high`,
+`\kit_tom_mid`, `\kit_tom_floor`, `\kit_hat_closed`, `\kit_hat_pedal`,
+`\kit_hat_open`, `\kit_crash`, and `\kit_ride`.
 `psampler "\808bd@0 \808ch@0.25 \808sd@0.5 \808ch@0.75"(1)` plays four
 events over one bar. A suffix of `()` also uses one bar. Keep events
 within the period, starting at zero and excluding the end of the loop.

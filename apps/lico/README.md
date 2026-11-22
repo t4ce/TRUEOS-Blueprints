@@ -2,8 +2,8 @@
 
 Lico is an on-demand TRUEOS Blueprint for live-coding sound in a terminal.
 The starter patch plays a sequenced lead and kick. The compiler embeds the
-Glicol engine, parser, DSP code, node reference, twelve example patches, and
-four samples. The examples and samples require no runtime file access.
+Glicol engine, parser, DSP code, node reference, thirteen example patches, and
+fourteen samples. The examples and samples require no runtime file access.
 
 From the Blueprint SDK root, build a local package with:
 
@@ -34,6 +34,12 @@ Press **Alt+E** to browse the embedded patches. Use **↑** and **↓** to
 select an example, then press **Enter** to replace the draft. **Alt+R**
 plays it. The patches cover sampled and synthesized drums, filter bass,
 FM, stereo modulation, delay, sample patterns, automation, and Rhai DSP.
+
+**Acoustic drum kit** plays a two-bar beginner groove on a five-piece kit.
+The first bar covers kick, snare, and closed, pedal, and open hi-hats. The
+second adds crash, ride, and a descending fill across the three toms. Each
+sound has its own editable sequence and level. The recordings come from
+[Virtuosity Drums](https://versilian-studios.com/virtuosity-drums/).
 
 Choose **MIDI instrument** from the examples and press **Alt+R**. Then play
 the piano or press **Alt+M** to feed a built-in MIDI 1.0 test phrase on

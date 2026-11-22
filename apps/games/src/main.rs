@@ -3,7 +3,6 @@
 extern crate alloc;
 
 mod app_shader_packages;
-mod audio;
 mod chess;
 mod chess_assets;
 mod chess_view;
@@ -15,7 +14,6 @@ mod sudoku;
 mod tic;
 
 use alloc::{format, vec::Vec};
-use audio::Audio;
 use chess::Chess;
 use chess_assets::ChessAssets;
 use chess_view::ChessView;
@@ -234,7 +232,6 @@ fn run() -> Result<(), Error> {
     let mut pending_resize = None;
     let mut resize_foreground_pending = false;
     let mut resize_refresh_pending = false;
-    let mut audio = Audio::new();
 
     loop {
         while let Some(event) = frame
@@ -769,7 +766,6 @@ fn run() -> Result<(), Error> {
             paint = true;
             text = true;
         }
-        audio.update(now);
         if game.consume_changed() && mode == Mode::Tetris {
             paint = true;
         }

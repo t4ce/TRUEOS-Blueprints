@@ -18,19 +18,6 @@ The board layer clears to
 and maximizing or restoring the UI4 window scales the board and text together.
 Quarter-size hull cubes frame both the whole UI4 window and the playfield
 with alternating cube and empty positions.
-A procedural F warm-horizon soundscape plays continuously while Games is open,
-including when a game ends or is paused.
-Its stereo carrier sweeps from 75 to 125 Hz and back every 30 seconds;
-the binaural difference changes from 2 to 6 to 10 Hz every three minutes.
-Weightless chords swell between 70% and 85% each minute. Ocean hush rises
-from 25% to 65% over ten seconds, holds for five, then falls over five.
-Distant chimes use a 75% layer level and cycle through 60%, 70%, and 80%
-note intensity every three notes; a chime has a one-third chance of a quick
-repeat. Warmth is 95%, drift is 15%, and the tone setting is 100%. The mix
-is peak bounded before PCM output. A sound pump runs on a separate
-TRUEOS native worker and keeps one second of PCM queued to absorb long
-shader frames. Games retries the TRUEOS audio device if it is temporarily
-unavailable and uses the main loop if no native worker lane is available.
 
 Select the frame and press F1 for Tetris, F2 for Minesweeper, F3 for Tic-Tac-Toe,
 F4 for Sudoku, F5 for chess, or F6 for Cut Tetris. F8 opens the game gallery. F9 opens the two hullshader render limits:
@@ -56,8 +43,7 @@ switching modes preserves each game.
 Initialize the library with `git submodule update --init vendor/microgames`.
 Build and refresh the apps share from the TRUEOS-Blueprints root with
 `cargo bp games`. Games uses the native `core`/`alloc` target with no std,
-Tokio, Unix or POSIX runtime; its audio worker uses the native worker service
-and TRUEOS sleep API. The source depends on
+Tokio, Unix or POSIX runtime. The source depends on
 the `vendor/microgames` submodule, the sibling TRUEOS-Picasso repo, and the pinned t4ce/gamie
 crate's Minesweeper and Tic-Tac-Toe modules, the pinned Sudokitty core
 crate, and pinned cozy-chess.

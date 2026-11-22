@@ -11,6 +11,10 @@ pub const PATCHES: &[(&str, &str)] = &[
         include_str!("../assets/examples/drums.glicol"),
     ),
     (
+        "Acoustic drum kit",
+        include_str!("../assets/examples/acoustic_kit.glicol"),
+    ),
+    (
         "Filter bass",
         include_str!("../assets/examples/bass.glicol"),
     ),

@@ -1,0 +1,24 @@
+// Two bars of eighth notes. 60 triggers a hit and _ is a rest.
+// Start with kick on 1 and 3, snare on 2 and 4, and three hi-hat sounds.
+// In bar 2, play crash and ride, then a fill across three descending toms.
+~kit_kick:   speed 0.5 >> seq 60 _  _  _  60 _  _  _   60 _  _  _  60 _  _  _
+>> sp \kit_kick >> mul 0.48;
+~kit_snare:  speed 0.5 >> seq _  _  60 _  _  _  60 _   _  _  60 _  _  _  _  _
+>> sp \kit_snare >> mul 0.40;
+~kit_closed: speed 0.5 >> seq 60 60 60 60 60 _  60 _   _  _  _  _  _  _  _  _
+>> sp \kit_hat_closed >> mul 0.18 >> pan -0.30;
+~kit_pedal:  speed 0.5 >> seq _  _  _  _  _  60 _  _   _  _  _  _  _  _  _  _
+>> sp \kit_hat_pedal >> mul 0.24 >> pan -0.30;
+~kit_open:   speed 0.5 >> seq _  _  _  _  _  _  _  60  _  _  _  _  _  _  _  _
+>> sp \kit_hat_open >> mul 0.25 >> pan -0.30;
+~kit_crash:  speed 0.5 >> seq _  _  _  _  _  _  _  _   60 _  _  _  _  _  _  _
+>> sp \kit_crash >> mul 0.24 >> pan -0.22;
+~kit_ride:   speed 0.5 >> seq _  _  _  _  _  _  _  _   _  60 60 60 60 _  _  _
+>> sp \kit_ride >> mul 0.23 >> pan 0.33;
+~kit_high:   speed 0.5 >> seq _  _  _  _  _  _  _  _   _  _  _  _  _  60 _  _
+>> sp \kit_tom_high >> mul 0.32 >> pan -0.17;
+~kit_mid:    speed 0.5 >> seq _  _  _  _  _  _  _  _   _  _  _  _  _  _  60 _
+>> sp \kit_tom_mid >> mul 0.34 >> pan 0.08;
+~kit_floor:  speed 0.5 >> seq _  _  _  _  _  _  _  _   _  _  _  _  _  _  _  60
+>> sp \kit_tom_floor >> mul 0.39 >> pan 0.26;
+out: mix ~kit..;

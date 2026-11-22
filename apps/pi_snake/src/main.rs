@@ -1,8 +1,7 @@
-#[cfg(target_os = "trueos")]
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod trueos_app {
     use std::{fmt::Write as _, net::Ipv4Addr, sync::Arc};
 
-    use crossterm::terminal;
     use pi_snake::{Cell, Game, PORT, snake_glyph};
     use trueos::{
         logl,
@@ -24,22 +23,6 @@ mod trueos_app {
 
     type SharedGame = Arc<Mutex<Game>>;
 
-    /// Keeps the terminal handoff contract intact on every return path.
-    struct RawMode;
-
-    impl RawMode {
-        fn enable() -> std::io::Result<Self> {
-            terminal::enable_raw_mode()?;
-            Ok(Self)
-        }
-    }
-
-    impl Drop for RawMode {
-        fn drop(&mut self) {
-            let _ = terminal::disable_raw_mode();
-        }
-    }
-
     pub fn main() {
         let runtime = match runtime::current_thread_net().build() {
             Ok(runtime) => runtime,
@@ -60,8 +43,23 @@ mod trueos_app {
     }
 
     async fn run() -> Result<(), &'static str> {
+        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, PORT))
+            .await
+            .map_err(|_| "could not bind TCP port 45329")?;
         let lease =
             vshell::terminal_initial_lease().map_err(|_| "could not claim Shell2 terminal")?;
+        let result = play(&lease, listener).await;
+        vshell::attached_write(b"\x1b[?25h\x1b[?1049l");
+        let released = lease
+            .release_to_shell()
+            .map_err(|_| "could not return the terminal to Shell2");
+        result.and(released.map(|_| ()))
+    }
+
+    async fn play(
+        lease: &vshell::TerminalLease,
+        listener: TcpListener,
+    ) -> Result<(), &'static str> {
         let surface = lease
             .surface_snapshot()
             .map_err(|_| "could not read Shell2 size")?;
@@ -70,17 +68,13 @@ mod trueos_app {
             surface.rows.saturating_sub(4) as u16,
         )));
 
-        // Do this only after the terminal lease is held. It is a direct cell
-        // renderer: no compositor window and no retained UI surface.
-        let _raw_mode = RawMode::enable().map_err(|_| "could not enable raw Shell2 input")?;
-        vshell::attached_write(b"\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");
+        // Attached Shell2 input already provides terminal bytes.
+        vshell::attached_write(b"\x1b[?1049h\x1b[?25l");
+        vshell::attached_write(render(&*game.lock().await).as_bytes());
         lease
             .acknowledge_ready()
             .map_err(|_| "Shell2 terminal lease went stale")?;
 
-        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, PORT))
-            .await
-            .map_err(|_| "could not bind TCP port 45329")?;
         logl::log(
             level::INFO,
             "pi_snake: Shell2 immediate UI, HTTP server on tcp/45329",
@@ -127,8 +121,6 @@ mod trueos_app {
             }
             time::sleep(Duration::from_millis(POLL_MS)).await;
         }
-        vshell::attached_write(b"\x1b[?25h\x1b[?1049l");
-        let _ = lease.release_to_shell();
         Ok(())
     }
 
@@ -424,12 +416,12 @@ mod trueos_app {
     const APP_JS: &str = include_str!("../web/app.js");
 }
 
-#[cfg(target_os = "trueos")]
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn main() {
     trueos_app::main();
 }
 
-#[cfg(not(target_os = "trueos"))]
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 fn main() {
     eprintln!("pi_snake is a TRUEOS Blueprint; build it with `cargo bp pi_snake`.");
 }

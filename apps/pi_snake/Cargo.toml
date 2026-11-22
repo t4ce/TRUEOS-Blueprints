@@ -18,8 +18,13 @@ test = false
 bench = false
 
 [dependencies]
-crossterm = { path = "../../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos", default-features = false }
 trueos = { path = "../../api", features = ["tokio-net-probe"] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+tokio = { version = "=1.54.1", default-features = false, features = ["native-net"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
 
 [patch.crates-io]
 mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }

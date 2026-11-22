@@ -17,11 +17,51 @@ const BATCH_BYTES: usize = 4 * BATCH_FRAMES;
 const STREAM_LIMIT: usize = SAMPLE_RATE as usize * 4 * 120;
 pub const MONITOR_FRAMES: usize = BATCH_FRAMES;
 pub const DEFAULT_BPM: u16 = 120;
-const SAMPLES: [(&str, &[u8]); 4] = [
+const SAMPLES: &[(&str, &[u8])] = &[
     (r"\808bd", include_bytes!("../assets/808bd.wav")),
     (r"\808sd", include_bytes!("../assets/808sd.wav")),
     (r"\808ch", include_bytes!("../assets/808ch.wav")),
     (r"\blip", include_bytes!("../assets/blip.wav")),
+    (
+        r"\kit_kick",
+        include_bytes!("../assets/acoustic-kit/kick.wav"),
+    ),
+    (
+        r"\kit_snare",
+        include_bytes!("../assets/acoustic-kit/snare.wav"),
+    ),
+    (
+        r"\kit_tom_high",
+        include_bytes!("../assets/acoustic-kit/tom_high.wav"),
+    ),
+    (
+        r"\kit_tom_mid",
+        include_bytes!("../assets/acoustic-kit/tom_mid.wav"),
+    ),
+    (
+        r"\kit_tom_floor",
+        include_bytes!("../assets/acoustic-kit/tom_floor.wav"),
+    ),
+    (
+        r"\kit_hat_closed",
+        include_bytes!("../assets/acoustic-kit/hat_closed.wav"),
+    ),
+    (
+        r"\kit_hat_pedal",
+        include_bytes!("../assets/acoustic-kit/hat_pedal.wav"),
+    ),
+    (
+        r"\kit_hat_open",
+        include_bytes!("../assets/acoustic-kit/hat_open.wav"),
+    ),
+    (
+        r"\kit_crash",
+        include_bytes!("../assets/acoustic-kit/crash.wav"),
+    ),
+    (
+        r"\kit_ride",
+        include_bytes!("../assets/acoustic-kit/ride.wav"),
+    ),
 ];
 
 pub fn sample_names() -> impl Iterator<Item = &'static str> {
@@ -77,7 +117,7 @@ impl Default for MonitorFrame {
 fn engine() -> Result<Engine<BLOCK>, hound::Error> {
     let mut engine = Engine::new();
     engine.set_sr(SAMPLE_RATE as usize);
-    for (name, wav) in SAMPLES {
+    for &(name, wav) in SAMPLES {
         let mut reader = hound::WavReader::new(Cursor::new(wav))?;
         let spec = reader.spec();
         let channels = usize::from(spec.channels);
