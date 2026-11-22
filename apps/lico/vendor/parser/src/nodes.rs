@@ -1,6 +1,6 @@
 use hashbrown::HashMap;
 use pest::{
-    error::Error,
+    error::{Error, ErrorVariant},
     iterators::{Pair, Pairs},
     Span,
 };
@@ -8,7 +8,7 @@ use pest::{
 use crate::{
     match_or_return_err,
     util::{EndSpan, GetNextParsed, ToPestErrWithPositives, TryToParse},
-    Rule,
+    Rule, SequenceSlot,
 };
 
 #[cfg(test)]
@@ -79,6 +79,7 @@ pub enum Component<'ast> {
     SquSynth(SquSynth),
     TriSynth(TriSynth),
     MsgSynth(MsgSynth<'ast>),
+    MidiSynth(MidiSynth),
     PatternSynth(PatternSynth<'ast>),
     Lpf(Lpf<'ast>),
     PSampler(PSampler<'ast>),
@@ -501,11 +502,20 @@ pub struct Seq<'ast> {
     pub events: Vec<(f32, UsizeOrRef<&'ast str>)>,
 }
 
-impl<'ast> Node<'ast> for Seq<'ast> {
-    #[cfg_attr(test, trace::trace(prefix_enter = "[+ Seq]"))]
-    fn parse_from_iter(
+impl<'ast> Seq<'ast> {
+    pub(crate) fn parse_with_slots(
+        pair: Pair<'ast, Rule>,
+    ) -> Result<(Self, Vec<SequenceSlot>), Box<Error<Rule>>> {
+        let span = pair.as_span();
+        let mut slots = Vec::new();
+        let sequence = Self::parse_notes(&mut pair.into_inner(), span, Some(&mut slots))?;
+        Ok((sequence, slots))
+    }
+
+    fn parse_notes(
         pairs: &mut Pairs<'ast, Rule>,
         span: Span<'ast>,
+        mut slots: Option<&mut Vec<SequenceSlot>>,
     ) -> Result<Self, Box<Error<Rule>>> {
         let positives = [Rule::integer, Rule::rest, Rule::note_ref];
 
@@ -517,47 +527,49 @@ impl<'ast> Node<'ast> for Seq<'ast> {
         let compounds = paras.into_inner();
         let compounds_n = compounds.len() as f32;
 
-        let events = compounds
-            .enumerate()
-            .map(|(i, compound)| {
-                let elements = compound.into_inner();
-                let elements_n = elements.len();
+        let mut events = Vec::new();
+        for (i, compound) in compounds.enumerate() {
+            let elements = compound.into_inner();
+            let elements_n = elements.len() as f32;
+            for (j, element) in elements.enumerate() {
+                let note_end = element.as_end_span();
+                let note = element
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| note_end.to_err_with_positives(positives))?;
 
-                elements
-                    .enumerate()
-                    .map(|(j, element)| {
-                        let relative_time_sub = j as f32 / elements_n as f32;
-                        let e_span = element.as_end_span();
-                        let e = element
-                            .into_inner()
-                            .next()
-                            .ok_or_else(|| e_span.to_err_with_positives(positives))?;
-
-                        // The sequencer consumes positions within one bar.
-                        let time = (i as f32 + relative_time_sub) / compounds_n;
-
-                        match_or_return_err!(e,
-                            Rule::integer => {
-                                e.try_to_parse()
-                                    .map(|num| Some((time, UsizeOrRef::Usize(num))))
-                            },
-                            Rule::rest => {
-                                Ok(None)
-                            },
-                            Rule::note_ref => {
-                                Ok(Some((time, UsizeOrRef::Ref(crate::reference_name(e)))))
-                            },
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(|elems| elems.into_iter().flatten())
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+                // The sequencer consumes positions within one bar.
+                let at = (i as f32 + j as f32 / elements_n) / compounds_n;
+                if let Some(slots) = slots.as_deref_mut() {
+                    let range = note.as_span();
+                    slots.push(SequenceSlot {
+                        at,
+                        start: range.start(),
+                        end: range.end(),
+                    });
+                }
+                let event = match_or_return_err!(note,
+                    Rule::integer => { note.try_to_parse().map(|num| Some(UsizeOrRef::Usize(num))) },
+                    Rule::rest => { Ok(None) },
+                    Rule::note_ref => { Ok(Some(UsizeOrRef::Ref(crate::reference_name(note)))) },
+                )?;
+                if let Some(event) = event {
+                    events.push((at, event));
+                }
+            }
+        }
 
         Ok(Self { events })
+    }
+}
+
+impl<'ast> Node<'ast> for Seq<'ast> {
+    #[cfg_attr(test, trace::trace(prefix_enter = "[+ Seq]"))]
+    fn parse_from_iter(
+        pairs: &mut Pairs<'ast, Rule>,
+        span: Span<'ast>,
+    ) -> Result<Self, Box<Error<Rule>>> {
+        Self::parse_notes(pairs, span, None)
     }
 }
 
@@ -840,6 +852,60 @@ impl<'ast> Node<'ast> for MsgSynth<'ast> {
             symbol,
             attack,
             decay,
+        })
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct MidiSynth {
+    pub channel: u8,
+    pub attack: f32,
+    pub release: f32,
+}
+
+impl Node<'_> for MidiSynth {
+    fn parse_from_iter(
+        pairs: &mut Pairs<'_, Rule>,
+        span: Span<'_>,
+    ) -> Result<Self, Box<Error<Rule>>> {
+        let end = span.as_end_span();
+        let channel = pairs
+            .next()
+            .ok_or_else(|| end.to_err_with_positives([Rule::integer]))?;
+        let channel = channel
+            .as_str()
+            .parse::<u8>()
+            .ok()
+            .filter(|channel| *channel <= 16)
+            .ok_or_else(|| {
+                Box::new(Error::new_from_span(
+                    ErrorVariant::CustomError {
+                        message: "MIDI channel must be 0 (omni) or 1 through 16".into(),
+                    },
+                    channel.as_span(),
+                ))
+            })?;
+        let mut envelope_time = |parameter: &str| {
+            let pair = pairs
+                .next()
+                .ok_or_else(|| end.to_err_with_positives([Rule::number]))?;
+            let time: f32 = pair.try_to_parse()?;
+            if time < 0.0 || !time.is_finite() {
+                return Err(Box::new(Error::new_from_span(
+                    ErrorVariant::CustomError {
+                        message: format!("MIDI {parameter} must be a finite, nonnegative time"),
+                    },
+                    pair.as_span(),
+                )));
+            }
+            Ok(time)
+        };
+        let attack = envelope_time("attack")?;
+        let release = envelope_time("release")?;
+        Ok(Self {
+            channel,
+            attack,
+            release,
         })
     }
 }

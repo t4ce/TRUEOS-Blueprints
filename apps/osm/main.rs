@@ -144,9 +144,10 @@ fn main() -> Result<()> {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn main() -> Result<()> {
-    trueos::logl::log(
+    trueos::logl::log_record(
         trueos::logl::level::IMPORTANT,
-        format_args!("osm: startup runtime=tokio-current-thread phase=build"),
+        "osm",
+        format_args!("startup runtime=tokio-current-thread phase=build"),
     );
     let runtime = trueos::runtime::current_thread_net().build()?;
     let local = tokio::task::LocalSet::new();
@@ -166,10 +167,6 @@ async fn run_ui() -> Result<()> {
 
     let tiles = Tiles::new()?;
     let mut loader = loader::Loader::start(tiles);
-    trueos::logl::log(
-        trueos::logl::level::IMPORTANT,
-        format_args!("osm: execution=tokio-local runtime=current-thread loader=cooperative"),
-    );
     let mut map = Map::new(51.471336, 13.827807, 17);
     let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + FOOTER)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
@@ -182,6 +179,16 @@ async fn run_ui() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("map collapse setup: {e:?}"))?;
     let mut menu =
         menu::MapMenu::new(&mut frame).map_err(|e| anyhow::anyhow!("map menu setup: {e:?}"))?;
+    let window = frame.window_id();
+    trueos::logl::log_record(
+        trueos::logl::level::IMPORTANT,
+        "osm",
+        format_args!(
+            "execution=tokio-local runtime=current-thread loader=cooperative window={window} extent={}x{}",
+            frame.width(),
+            frame.height()
+        ),
+    );
     let mut view = viewport::Viewport::new(map, frame.width(), frame.height());
     let mut presenter = presenter::Presenter::default();
     let mut displayed = (map, frame.width(), frame.height());
@@ -249,20 +256,34 @@ async fn run_ui() -> Result<()> {
         if !presenter.is_publishing()
             && let Some((width, height)) = pending_resize
         {
-            if (width, height) == (frame.width(), frame.height()) {
+            let (old_width, old_height) = (frame.width(), frame.height());
+            if (width, height) == (old_width, old_height) {
                 pending_resize = None;
             } else {
                 match frame.resize(width, height) {
                     Ok(()) => {
                         pending_resize = None;
                         navigated = true;
-                        trueos::logl::log(
+                        trueos::logl::log_record(
                             trueos::logl::level::IMPORTANT,
-                            format_args!("osm: resize staged {}x{}", width, height),
+                            "osm",
+                            format_args!(
+                                "resize staged window={window} previous_extent={old_width}x{old_height} extent={width}x{height} revision={}",
+                                revision + 1
+                            ),
                         );
                     }
                     Err(UiError::Busy) => {}
-                    Err(e) => return Err(anyhow::anyhow!("map resize {width}x{height}: {e:?}")),
+                    Err(error) => {
+                        trueos::logl::log_record(
+                            trueos::logl::level::ERROR,
+                            "osm",
+                            format_args!(
+                                "resize failed window={window} previous_extent={old_width}x{old_height} requested_extent={width}x{height} revision={revision} error={error:?}"
+                            ),
+                        );
+                        return Err(anyhow::anyhow!("map resize {width}x{height}: {error:?}"));
+                    }
                 }
             }
         }
@@ -285,21 +306,19 @@ async fn run_ui() -> Result<()> {
             match presenter.step(&mut frame, revision, || view.pixels()) {
                 Ok(presenter::Status::Published(presented)) => {
                     published = presented;
+                    let (map, width, height) = submitting;
+                    let resized = (displayed.1, displayed.2) != (width, height);
                     displayed = submitting;
                     retry |= published != revision;
                     presentations += 1;
-                    if presentations <= 4 || presentations % 120 == 0 {
-                        let (map, width, height) = displayed;
-                        trueos::logl::log(
+                    if resized || presentations <= 4 || presentations % 120 == 0 {
+                        trueos::logl::log_record(
                             trueos::logl::level::IMPORTANT,
+                            "osm",
                             format_args!(
-                                "osm: immediate viewport frame={} zoom={:.2} tiles={} extent={}x{} stale-skipped={}",
-                                presentations,
+                                "immediate viewport window={window} frame={presentations} revision={published} zoom={:.2} tiles={} extent={width}x{height} resized={resized} stale-skipped={discarded}",
                                 map.display_zoom(),
                                 map.zoom,
-                                width,
-                                height,
-                                discarded
                             ),
                         );
                     }

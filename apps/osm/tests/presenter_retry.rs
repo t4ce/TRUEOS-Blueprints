@@ -3,13 +3,43 @@
 extern crate self as trueos;
 
 pub mod logl {
+    use std::{cell::RefCell, fmt::Arguments};
+
     pub mod level {
-        pub const IMPORTANT: u8 = 1;
-        pub const ERROR: u8 = 2;
+        pub const ERROR: u8 = 1;
     }
-    pub fn log(_: u8, _: std::fmt::Arguments<'_>) {}
+
+    thread_local! {
+        static RECORDS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn log_record(level: u8, target: &str, message: Arguments<'_>) -> i32 {
+        assert_eq!(level, level::ERROR);
+        RECORDS.with_borrow_mut(|records| records.push(format!("{target}: {message}")));
+        0
+    }
+
+    pub fn take_records() -> Vec<String> {
+        RECORDS.with_borrow_mut(std::mem::take)
+    }
 }
+pub mod ui4_winit {
+    use crate::ui4_scene::SpriteQuad;
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum SpriteBackend {
+        Bcs0,
+    }
+
+    pub struct SpriteCommand {
+        pub quad: SpriteQuad,
+        pub backend: SpriteBackend,
+    }
+}
+
 pub mod ui4_scene {
+    use crate::ui4_winit::{SpriteBackend, SpriteCommand};
+
     #[derive(Debug, PartialEq)]
     pub enum Error {
         Busy,
@@ -58,6 +88,9 @@ pub mod ui4_scene {
         pub published_red: Vec<u8>,
     }
     impl Frame {
+        pub fn window_id(&self) -> u32 {
+            42
+        }
         pub fn width(&self) -> u32 {
             2
         }
@@ -79,7 +112,7 @@ pub mod ui4_scene {
             self.sprite_red = pixels[0];
             Ok(())
         }
-        pub fn begin_sprite_frame(&mut self, _: u32) -> Result<(), Error> {
+        pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
             if self.lease {
                 return Err(Error::InvalidState);
             }
@@ -91,10 +124,17 @@ pub mod ui4_scene {
             self.drawn = false;
             Ok(())
         }
-        pub fn draw_sprite_quads(&mut self, quads: &[SpriteQuad]) -> Result<(), Error> {
+        pub fn draw_sprite_commands(&mut self, commands: &[SpriteCommand]) -> Result<(), Error> {
             if !self.lease {
                 return Err(Error::InvalidState);
             }
+            assert_eq!(commands.len(), 1);
+            assert_eq!(commands[0].backend, SpriteBackend::Bcs0);
+            let quad = &commands[0].quad;
+            assert_eq!(quad.sprite_id, 1);
+            assert!(!quad.source_over);
+            assert_eq!((quad.c0.x, quad.c0.y), (0.0, 0.0));
+            assert_eq!((quad.c2.x, quad.c2.y), (2.0, 2.0));
             self.draws += 1;
             if self.fatal_draw {
                 return Err(Error::InvalidState);
@@ -104,12 +144,6 @@ pub mod ui4_scene {
                 self.lease = false;
                 return Err(Error::Busy);
             }
-            assert_eq!(quads.len(), 1);
-            let quad = &quads[0];
-            assert_eq!(quad.sprite_id, 1);
-            assert!(!quad.source_over);
-            assert_eq!((quad.c0.x, quad.c0.y), (0.0, 0.0));
-            assert_eq!((quad.c2.x, quad.c2.y), (2.0, 2.0));
             self.drawn = true;
             Ok(())
         }
@@ -235,4 +269,8 @@ fn invalid_state_is_reported_immediately() {
         Err(ui4_scene::Error::InvalidState)
     );
     assert_eq!((frame.begins, frame.draws, frame.publishes), (1, 1, 0));
+    assert_eq!(
+        logl::take_records(),
+        ["osm: presentation stage=draw window=42 extent=2x2 revision=1 error=InvalidState"]
+    );
 }

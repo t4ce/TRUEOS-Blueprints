@@ -50,6 +50,10 @@ pub trait Node<const N: usize> {
     fn process(&mut self, inputs: &mut HashMap<usize, Input<N>>, output: &mut [Buffer<N>]);
     fn send_msg(&mut self, info: crate::Message);
 
+    fn sequence_playhead(&self) -> Option<sequencer::SequencePlayhead> {
+        None
+    }
+
     fn to_boxed_nodedata(self, channels: usize) -> crate::NodeData<BoxedNodeSend<N>, N>
     where
         Self: Send + 'static + Sized,
@@ -107,6 +111,9 @@ where
     fn send_msg(&mut self, info: crate::Message) {
         (**self).send_msg(info)
     }
+    fn sequence_playhead(&self) -> Option<sequencer::SequencePlayhead> {
+        (**self).sequence_playhead()
+    }
 }
 
 impl<T, const N: usize> Node<N> for Box<T>
@@ -117,6 +124,9 @@ where
         (**self).process(inputs, output)
     }
     fn send_msg(&mut self, _info: crate::Message) {}
+    fn sequence_playhead(&self) -> Option<sequencer::SequencePlayhead> {
+        (**self).sequence_playhead()
+    }
 }
 
 impl<const N: usize> Node<N> for dyn Fn(&HashMap<usize, Input<N>>, &mut [Buffer<N>]) {

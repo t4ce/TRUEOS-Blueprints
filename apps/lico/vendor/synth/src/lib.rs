@@ -59,6 +59,14 @@ pub use node::Pass;
 
 use hashbrown::HashMap;
 
+/// A live MIDI note event. Channels use the MIDI wire numbering, 0 through 15.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MidiEvent {
+    NoteOn { channel: u8, note: u8, velocity: u8 },
+    NoteOff { channel: u8, note: u8 },
+    AllNotesOff { channel: u8 },
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     SetToNumber(u8, f32),
@@ -82,6 +90,8 @@ pub enum Message {
     ResetOrder,
     SetParam(u8, GlicolPara<String>),
     SetToBool(u8, bool),
+    Midi(MidiEvent),
+    ReleaseMidiNotes,
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Clone)]

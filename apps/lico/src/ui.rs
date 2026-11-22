@@ -1,13 +1,16 @@
-use crate::audio::{self, Command, DEFAULT_BPM, MONITOR_FRAMES, Status};
+use crate::audio::{self, Command, DEFAULT_BPM, MONITOR_FRAMES, MonitorFrame, Status};
 use crate::drum;
 use crate::examples::{DEFAULT_PATCH, PATCHES};
 use crate::highlight::Highlight;
 use crate::mcp::{self, Session, SharedSession};
-use crossterm::ExecutableCommand;
+use crate::midi;
+use crate::playhead;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::{Constraint, Layout, Rect};
+use crossterm::{execute, style::Print};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
@@ -23,9 +26,17 @@ use std::io;
 use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{self, Receiver, Sender},
+    watch,
+};
 
-pub fn run() -> Result<(), Box<dyn Error>> {
+enum Picker {
+    Examples(ListState),
+    Midi(ListState),
+}
+
+pub fn run(midi_input: midi::Input) -> Result<(), Box<dyn Error>> {
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err("the editor requires a terminal".into());
@@ -44,12 +55,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     let (commands_tx, commands_rx) = mpsc::channel(32);
     let (status_tx, status_rx) = mpsc::channel(32);
-    let (monitor_tx, monitor_rx) = mpsc::channel(1);
+    let (monitor_tx, monitor_rx) = watch::channel(MonitorFrame::default());
 
     let result = (|| -> Result<(), Box<dyn Error>> {
         let mut terminal = ratatui::try_init()?;
         let result = (|| -> Result<(), Box<dyn Error>> {
-            terminal.backend_mut().execute(EnableBracketedPaste)?;
+            // Request SGR button reports so pointer motion does not fill the input queue.
+            execute!(
+                terminal.backend_mut(),
+                EnableBracketedPaste,
+                Print("\x1b[?1006h\x1b[?1000h")
+            )?;
             let (ui_result, audio_result) = runtime.block_on(async {
                 tokio::join!(
                     async {
@@ -72,15 +88,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                         drop(commands_tx);
                         result
                     },
-                    audio::serve(commands_rx, status_tx, monitor_tx)
+                    audio::serve(commands_rx, status_tx, monitor_tx, midi_input)
                 )
             });
-            terminal.backend_mut().execute(DisableBracketedPaste)?;
             ui_result?;
             audio_result
         })();
+        let reset = execute!(
+            terminal.backend_mut(),
+            Print("\x1b[?1000l\x1b[?1006l"),
+            DisableBracketedPaste
+        );
         ratatui::restore();
-        result
+        result?;
+        reset?;
+        Ok(())
     })();
 
     if let Ok(endpoint) = endpoint {
@@ -98,7 +120,7 @@ async fn editor(
     terminal: &mut DefaultTerminal,
     commands: &Sender<Command>,
     mut status: Receiver<Status>,
-    mut monitor: Receiver<[f32; MONITOR_FRAMES]>,
+    mut monitor: watch::Receiver<MonitorFrame>,
     session: &SharedSession,
     mcp_error: Option<&io::Error>,
     first_frame: impl FnOnce() -> io::Result<()>,
@@ -107,8 +129,15 @@ async fn editor(
     let drum_menu = drum::register();
     let mut patch = patch_editor(&session.lock().expect("Lico session").draft);
     let mut highlight = None;
+    let mut active_run = 0;
+    let mut sequence_slots = Vec::new();
+    let mut outlines = Vec::new();
+    let mut published_outlines = Vec::new();
+    let mut published_area = Rect::default();
     let mut review: Option<(String, u16)> = None;
-    let mut examples = None;
+    let mut picker = None;
+    let mut midi_source = midi::Source::Off;
+    let mut midi_error = None;
 
     let transform = FftPlanner::new().plan_fft_forward(MONITOR_FRAMES);
     let mut fft_data = [Complex32::default(); MONITOR_FRAMES];
@@ -133,7 +162,7 @@ async fn editor(
         let menu_selected = drum_menu && drum::take_add_drum();
         if (std::mem::take(&mut insert_drum) || menu_selected)
             && review.is_none()
-            && examples.is_none()
+            && picker.is_none()
         {
             add_drum(&mut patch, session);
             highlight = None;
@@ -142,20 +171,33 @@ async fn editor(
         }
         while let Ok(update) = status.try_recv() {
             match update {
-                Status::Ready(rate) => {
+                Status::Ready {
+                    rate,
+                    midi_source: source,
+                } => {
                     sample_rate = rate;
+                    midi_source = source;
                     state = "Ready".into();
                 }
                 Status::Tempo(value) => {
                     bpm = value;
                     session.lock().expect("Lico session").bpm = value;
                 }
-                Status::PatchParsed(code, spans) => {
+                Status::PatchParsed { run, code, source } => {
+                    active_run = run;
+                    sequence_slots.clear();
                     if session.lock().expect("Lico session").draft == code {
                         highlight = Some((
-                            Highlight::new(&code, &spans, patch.tab_length()),
+                            Highlight::new(&code, &source.spans, patch.tab_length()),
                             Instant::now() + Duration::from_millis(300),
                         ));
+                        if cfg!(any(target_os = "trueos", target_os = "zkvm")) {
+                            sequence_slots = Highlight::sequence_slots(
+                                &code,
+                                &source.sequences,
+                                patch.tab_length(),
+                            );
+                        }
                     }
                 }
                 Status::Playing(code) => {
@@ -163,6 +205,19 @@ async fn editor(
                     playing = true;
                     state = "Playing".into();
                     error = None;
+                }
+                Status::Midi(message) => reference = Some(message),
+                Status::MidiInput { source, error } => {
+                    midi_source = source;
+                    reference = Some(
+                        error
+                            .clone()
+                            .unwrap_or_else(|| format!("MIDI input · {}", source.label())),
+                    );
+                    midi_error = error;
+                    if midi_error.is_none() && matches!(picker, Some(Picker::Midi(_))) {
+                        picker = None;
+                    }
                 }
                 Status::Stopped => {
                     session.lock().expect("Lico session").playing = None;
@@ -183,9 +238,10 @@ async fn editor(
                 }
             }
         }
-        if let Ok(samples) = monitor.try_recv() {
-            if playing {
-                for (i, sample) in samples.into_iter().enumerate() {
+        if monitor.has_changed().unwrap_or(false) {
+            let frame = monitor.borrow_and_update();
+            if playing && frame.run == active_run {
+                for (i, sample) in frame.waveform.into_iter().enumerate() {
                     waveform[i] = (i as f64, f64::from(sample));
                     fft_data[i] = Complex32::new(sample * window[i], 0.0);
                 }
@@ -198,10 +254,12 @@ async fn editor(
         }
 
         let pending = session.lock().expect("Lico session").proposal.is_some();
-        terminal.draw(|frame| {
+        let mut editor_area = Rect::default();
+        let drawn = terminal.draw(|frame| {
             let area = frame.area();
             if area.height < 25 {
-                draw_patch(frame, &patch, area, highlight.as_ref());
+                editor_area = area;
+                draw_patch(frame, &patch, editor_area, highlight.as_ref());
             } else {
                 let wide = area.width >= 80;
                 let [header, edit, plots, status, footer] = Layout::vertical([
@@ -253,7 +311,8 @@ async fn editor(
                     ]),
                     header,
                 );
-                draw_patch(frame, &patch, edit, highlight.as_ref());
+                editor_area = edit;
+                draw_patch(frame, &patch, editor_area, highlight.as_ref());
                 draw_plots(frame, plots, &waveform, &spectrum, sample_rate);
                 let label = error.as_deref().or(reference.as_deref()).unwrap_or(&state);
                 let color = if error.is_some() {
@@ -273,13 +332,17 @@ async fn editor(
                 );
                 frame.render_widget(
                     Line::from(
-                        " Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+D Docs  Alt+[/] Tempo  Esc Quit ",
+                        " Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+N MIDI  Alt+D Docs  Alt+[/] Tempo  Esc Quit ",
                     ),
                     footer,
                 );
             }
-            if let Some(selection) = &mut examples {
-                draw_examples(frame, selection);
+            match &mut picker {
+                Some(Picker::Examples(selection)) => draw_examples(frame, selection),
+                Some(Picker::Midi(selection)) => {
+                    draw_midi_picker(frame, selection, midi_source, midi_error.as_deref());
+                }
+                None => {}
             }
             if let Some((diff, scroll)) = &review {
                 let area = frame.area().inner(ratatui::layout::Margin {
@@ -300,6 +363,29 @@ async fn editor(
             }
         })?;
 
+        if cfg!(any(target_os = "trueos", target_os = "zkvm")) {
+            outlines.clear();
+            if playing && highlight.is_some() && review.is_none() && picker.is_none() {
+                let frame = monitor.borrow();
+                if frame.run == active_run {
+                    playhead::visible_outlines(
+                        &mut outlines,
+                        &patch,
+                        editor_area,
+                        &sequence_slots,
+                        &frame.sequences,
+                    );
+                }
+            }
+            if (outlines != published_outlines
+                || (!outlines.is_empty() && drawn.area != published_area))
+                && playhead::publish(&outlines)
+            {
+                published_area = drawn.area;
+                std::mem::swap(&mut outlines, &mut published_outlines);
+            }
+        }
+
         if let Some(ready) = first_frame.take() {
             ready()?;
         }
@@ -311,29 +397,43 @@ async fn editor(
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 let control = key.modifiers.contains(KeyModifiers::CONTROL);
                 let alt = key.modifiers.contains(KeyModifiers::ALT);
-                if let Some(selection) = &mut examples {
+                if let Some(open) = &mut picker {
+                    let selection = match open {
+                        Picker::Examples(selection) | Picker::Midi(selection) => selection,
+                    };
                     match key.code {
-                        KeyCode::Esc => examples = None,
+                        KeyCode::Esc => picker = None,
                         KeyCode::Up => selection.select_previous(),
                         KeyCode::Down => selection.select_next(),
                         KeyCode::Home => selection.select_first(),
                         KeyCode::End => selection.select_last(),
-                        KeyCode::Enter => {
-                            if let Some(&(name, code)) =
-                                selection.selected().and_then(|index| PATCHES.get(index))
-                            {
-                                let code = code.trim_end_matches('\n');
-                                patch = patch_editor(code);
-                                highlight = None;
-                                session
-                                    .lock()
-                                    .expect("Lico session")
-                                    .update_draft(code.to_owned());
-                                reference = Some(format!("{name} loaded. Alt+R to play."));
-                                error = None;
+                        KeyCode::Enter => match open {
+                            Picker::Examples(selection) => {
+                                if let Some(&(name, code)) =
+                                    selection.selected().and_then(|index| PATCHES.get(index))
+                                {
+                                    let code = code.trim_end_matches('\n');
+                                    patch = patch_editor(code);
+                                    highlight = None;
+                                    session
+                                        .lock()
+                                        .expect("Lico session")
+                                        .update_draft(code.to_owned());
+                                    reference = Some(format!("{name} loaded. Alt+R to play."));
+                                    error = None;
+                                }
+                                picker = None;
                             }
-                            examples = None;
-                        }
+                            Picker::Midi(selection) => {
+                                if let Some(&source) = selection
+                                    .selected()
+                                    .and_then(|index| midi::Source::CHOICES.get(index))
+                                {
+                                    midi_error = None;
+                                    let _ = commands.send(Command::SelectMidiInput(source)).await;
+                                }
+                            }
+                        },
                         _ => {}
                     }
                     continue;
@@ -371,12 +471,22 @@ async fn editor(
                     KeyCode::Char('q') if control => break,
                     KeyCode::Char('r') if alt => Some(Command::Run(patch.lines().join("\n"))),
                     KeyCode::Char('s') if alt => Some(Command::Stop),
+                    KeyCode::Char('m') if alt => Some(Command::TestMidi),
                     KeyCode::Char('i') if alt => {
                         insert_drum = true;
                         None
                     }
                     KeyCode::Char('e') if alt => {
-                        examples = Some(ListState::default().with_selected(Some(0)));
+                        picker = Some(Picker::Examples(
+                            ListState::default().with_selected(Some(0)),
+                        ));
+                        None
+                    }
+                    KeyCode::Char('n') if alt => {
+                        let index = midi::Source::CHOICES
+                            .iter()
+                            .position(|&source| source == midi_source);
+                        picker = Some(Picker::Midi(ListState::default().with_selected(index)));
                         None
                     }
                     KeyCode::Char('p') if alt && pending => {
@@ -432,7 +542,7 @@ async fn editor(
                     let _ = commands.send(command).await;
                 }
             }
-            Event::Paste(text) if review.is_none() && examples.is_none() => {
+            Event::Paste(text) if review.is_none() && picker.is_none() => {
                 reference = None;
                 if patch.insert_str(text) {
                     highlight = None;
@@ -440,6 +550,16 @@ async fn editor(
                         .lock()
                         .expect("Lico session")
                         .update_draft(patch.lines().join("\n"));
+                }
+            }
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                ..
+            }) if review.is_none() && picker.is_none() => {
+                if place_patch_cursor(&mut patch, editor_area, Position::new(column, row)) {
+                    reference = None;
                 }
             }
             _ => {}
@@ -466,6 +586,25 @@ fn patch_editor(code: &str) -> TextArea<'static> {
     patch.set_line_number_style(Style::default().fg(Color::DarkGray));
     patch.set_cursor_line_style(Style::default());
     patch
+}
+
+fn place_patch_cursor(patch: &mut TextArea<'_>, area: Rect, click: Position) -> bool {
+    let text_area = patch.block().map_or(area, |block| block.inner(area));
+    if !text_area.contains(click) {
+        return false;
+    }
+
+    let (top, left) = patch.scroll_offset();
+    let row = usize::from(click.y - text_area.y) + usize::from(top);
+    let col = (usize::from(click.x - text_area.x) + usize::from(left))
+        .saturating_sub(usize::from(patch.line_number_width()));
+    let cursor = patch.screen_to_data(row, col);
+    patch.cancel_selection();
+    patch.move_cursor(CursorMove::Jump(
+        cursor.0.min(u16::MAX as usize) as u16,
+        cursor.1.min(u16::MAX as usize) as u16,
+    ));
+    true
 }
 
 fn draw_patch(
@@ -517,7 +656,45 @@ fn draw_patch(
 mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
-    use ratatui_textarea::CursorMove;
+
+    #[test]
+    fn click_uses_editor_cells_and_clears_the_selection() {
+        let mut patch = patch_editor("top\n\t音abc");
+        patch.start_selection();
+        patch.move_cursor(CursorMove::End);
+        let area = Rect::new(3, 1, 18, 4);
+        let mut terminal = Terminal::new(TestBackend::new(24, 6)).unwrap();
+        terminal
+            .draw(|frame| draw_patch(frame, &patch, area, None))
+            .unwrap();
+
+        let click = Position::new(13, 3);
+        assert_eq!(terminal.backend().buffer()[click].symbol(), "a");
+        assert!(!place_patch_cursor(&mut patch, area, Position::new(3, 2)));
+        assert_eq!(patch.selection_range(), Some(((0, 0), (0, 3))));
+        assert!(place_patch_cursor(&mut patch, area, click));
+        assert_eq!(patch.cursor(), (1, 2));
+        assert_eq!(patch.selection_range(), None);
+        assert_eq!(patch.lines(), ["top", "\t音abc"]);
+    }
+
+    #[test]
+    fn click_accounts_for_both_scroll_offsets() {
+        let mut patch = patch_editor(&["0123456789abcdef"; 4].join("\n"));
+        patch.move_cursor(CursorMove::Bottom);
+        patch.move_cursor(CursorMove::End);
+        let area = Rect::new(2, 1, 10, 5);
+        let mut terminal = Terminal::new(TestBackend::new(16, 7)).unwrap();
+        terminal
+            .draw(|frame| draw_patch(frame, &patch, area, None))
+            .unwrap();
+
+        assert_eq!(patch.scroll_offset(), (1, 12));
+        let click = Position::new(3, 2);
+        assert_eq!(terminal.backend().buffer()[click].symbol(), "9");
+        assert!(place_patch_cursor(&mut patch, area, click));
+        assert_eq!(patch.cursor(), (1, 9));
+    }
 
     #[test]
     fn highlights_follow_scrolling_and_keep_the_cursor_and_selection_visible() {
@@ -649,15 +826,7 @@ fn draw_plots(
 }
 
 fn draw_examples(frame: &mut Frame, selection: &mut ListState) {
-    let area = frame.area();
-    let width = area.width.min(43);
-    let height = area.height.min(PATCHES.len() as u16 + 2);
-    let picker = Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    );
+    let picker = picker_area(frame.area(), 43, PATCHES.len() as u16 + 2);
     frame.render_widget(Clear, picker);
     frame.render_stateful_widget(
         List::new(PATCHES.iter().map(|&(name, _)| name))
@@ -671,4 +840,62 @@ fn draw_examples(frame: &mut Frame, selection: &mut ListState) {
         picker,
         selection,
     );
+}
+
+fn draw_midi_picker(
+    frame: &mut Frame,
+    selection: &mut ListState,
+    active: midi::Source,
+    error: Option<&str>,
+) {
+    let message_height = if error.is_some() { 3 } else { 0 };
+    let picker = picker_area(
+        frame.area(),
+        50,
+        midi::Source::CHOICES.len() as u16 + 2 + message_height,
+    );
+    let block = Block::bordered()
+        .title(" MIDI input ")
+        .title_bottom(" Enter select · Esc back ");
+    let [options, message] = Layout::vertical([
+        Constraint::Min(midi::Source::CHOICES.len() as u16),
+        Constraint::Length(message_height),
+    ])
+    .areas(block.inner(picker));
+    frame.render_widget(Clear, picker);
+    frame.render_widget(block, picker);
+    let labels = midi::Source::CHOICES.iter().map(|&source| {
+        let label = source.label();
+        if source == active {
+            format!("{label} · Active")
+        } else {
+            label.into()
+        }
+    });
+    frame.render_stateful_widget(
+        List::new(labels)
+            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+            .highlight_symbol("› "),
+        options,
+        selection,
+    );
+    if let Some(error) = error {
+        frame.render_widget(
+            Paragraph::new(error)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(Color::Red)),
+            message,
+        );
+    }
+}
+
+fn picker_area(area: Rect, width: u16, height: u16) -> Rect {
+    let width = area.width.min(width);
+    let height = area.height.min(height);
+    Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    )
 }

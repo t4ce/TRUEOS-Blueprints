@@ -2,7 +2,7 @@
 
 Lico is an on-demand TRUEOS Blueprint for live-coding sound in a terminal.
 The starter patch plays a sequenced lead and kick. The compiler embeds the
-Glicol engine, parser, DSP code, node reference, eleven example patches, and
+Glicol engine, parser, DSP code, node reference, twelve example patches, and
 four samples. The examples and samples require no runtime file access.
 
 From the Blueprint SDK root, build a local package with:
@@ -17,6 +17,8 @@ kernel audio server, then press **Alt+R** to play or apply edits. **Alt+S**
 stops playback, **Alt+D** shows node help, **Alt+[** and **Alt+]** change
 tempo, and **Esc** returns to the shell.
 
+Left-click in the patch editor to place the caret in Shell3 or over SSH.
+
 Right-click Lico’s Shell3 window and choose **Add Drum**, or press **Alt+I**.
 This adds an audible kick track to the draft. Press **Alt+R** to apply it.
 The drum reference is displayed as `~🥁` using Microemoji. Older patches
@@ -24,18 +26,39 @@ can still use `~drum`. Lico converts that spelling when you run the draft.
 
 A successful run colors the parsed patch and briefly highlights its border.
 The colors track the parsed draft until you edit it or load another patch.
+On a local UI4 Shell3 window, thin amber outlines follow the current `seq`
+notes and rests as Lico renders audio. Editing the draft clears the playheads
+until the next successful run.
 
 Press **Alt+E** to browse the embedded patches. Use **↑** and **↓** to
 select an example, then press **Enter** to replace the draft. **Alt+R**
 plays it. The patches cover sampled and synthesized drums, filter bass,
 FM, stereo modulation, delay, sample patterns, automation, and Rhai DSP.
 
+Choose **MIDI instrument** from the examples and press **Alt+R**. Then play
+the piano or press **Alt+M** to feed a built-in MIDI 1.0 test phrase on
+channel 1. In your own patch, `midisynth 1 0.012 0.12` listens on channel 1
+with attack and release times in seconds. Use channel `0` to listen on
+every channel.
+
+Press **Alt+N** to open MIDI input. Use **↑** and **↓** to choose a source
+and **Enter** to apply it. You can switch while a patch is playing.
+
+- **USB MIDI** is the default on TRUEOS. Lico reads note edges from the
+  kernel's MIDI input ring. The current kernel enables the Casio CTK-3500.
+- **Wi-Fi piano** opens UDP port 9696. Point the sender at the TRUEOS
+  address. Lico accepts the existing TPNO binary and `piano mask=…` text
+  formats and plays them on channel 1. This uses the kernel's Lico UDP
+  9696 networking rule.
+- **Off** disconnects the live input. **Alt+M** can still play the test
+  phrase on a running MIDI patch.
+
 **Cosmic soundscape** adapts the Games Blueprint's ambient audio with a
 sweeping stereo tone, a five-voice pad, filtered surf, and sparse chimes.
 At 120 BPM, the first chord starts to glide after 48 seconds. The chimes
 use a repeating phrase whose pitches, timing, and panning are editable.
 
-The example mixes are leveled near −22 LUFS integrated at the default
+The looping example mixes are leveled near −22 LUFS integrated at the default
 120 BPM. Adjust the final `mul` in an example's `out` chain to change
 its whole mix, or change a track's own `mul` to rebalance it. Lico renders
 these gains into PCM and the port 82 player receives that PCM over HTTP.

@@ -29,6 +29,7 @@ use petgraph::visit::{
     GraphBase,
     IntoNeighborsDirected,
     Reversed, //NodeCount, NodeIndexable,
+    VisitMap,
     Visitable,
 };
 use petgraph::Incoming;
@@ -78,6 +79,10 @@ where
         T: Node<N>,
     {
         process(self, graph, node)
+    }
+
+    pub fn processed_last_block(&self, node: G::NodeId) -> bool {
+        self.dfs_post_order.finished.is_visited(&node)
     }
 }
 

@@ -3,12 +3,21 @@ mod drum;
 mod examples;
 mod highlight;
 mod mcp;
+mod midi;
+mod piano_udp;
+mod playhead;
 mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        None => ui::run(),
+        None => ui::run(midi::Input::default()),
+        Some("--midi-piano") => {
+            if args.next().is_some() {
+                return Err("usage: lico --midi-piano".into());
+            }
+            ui::run(midi::Input::open(midi::Source::Wifi)?)
+        }
         Some("--self-check") => audio::self_check(),
         Some("--render") => {
             let patch = args.next().ok_or("--render requires a patch file")?;
@@ -21,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("--help" | "-h") => {
             println!(
-                "lico [--self-check]\nlico --render PATCH OUTPUT.wav [SECONDS]\nLive-code audio with Alt+R (Run), Alt+S (Stop), and Alt+E (Examples). Codex tools are available over the local TRUEOS connection."
+                "lico [--self-check | --midi-piano]\nlico --render PATCH OUTPUT.wav [SECONDS]\nAlt+N opens MIDI input selection. Alt+E opens examples.\nAlt+R runs the patch and Alt+S stops it."
             );
             Ok(())
         }

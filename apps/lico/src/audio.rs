@@ -1,10 +1,14 @@
 use crate::examples::PATCHES;
-use glicol::Engine;
-use glicol_parser::HighlightSpan;
+use crate::midi::{Demo as MidiDemo, Input as MidiInput, Source as MidiSource};
+use glicol::{Engine, MidiEvent, SequencePlayhead};
+use glicol_parser::SourceMap;
 use std::error::Error;
 use std::io::{self, Cursor};
 use std::time::Duration;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    watch,
+};
 
 const BLOCK: usize = 128;
 const SAMPLE_RATE: u32 = 48_000;
@@ -27,17 +31,47 @@ pub fn sample_names() -> impl Iterator<Item = &'static str> {
 pub enum Command {
     Run(String),
     ChangeTempo(i16),
+    SelectMidiInput(MidiSource),
+    TestMidi,
     Stop,
 }
 
 pub enum Status {
-    Ready(u32),
+    Ready {
+        rate: u32,
+        midi_source: MidiSource,
+    },
     Tempo(u16),
-    PatchParsed(String, Vec<HighlightSpan>),
+    PatchParsed {
+        run: u64,
+        code: String,
+        source: SourceMap,
+    },
     Playing(String),
+    Midi(String),
+    MidiInput {
+        source: MidiSource,
+        error: Option<String>,
+    },
     Stopped,
     PatchError(String),
     AudioError(String),
+}
+
+pub struct MonitorFrame {
+    pub run: u64,
+    pub waveform: [f32; MONITOR_FRAMES],
+    pub sequences: Vec<Option<SequencePlayhead>>,
+}
+
+impl Default for MonitorFrame {
+    fn default() -> Self {
+        Self {
+            run: 0,
+            waveform: [0.0; MONITOR_FRAMES],
+            sequences: Vec::new(),
+        }
+    }
 }
 
 fn engine() -> Result<Engine<BLOCK>, hound::Error> {
@@ -74,6 +108,14 @@ fn render(engine: &mut Engine<BLOCK>, pcm: &mut [u8], waveform: &mut [f32; MONIT
     }
 }
 
+fn feed_midi_demo(engine: &mut Engine<BLOCK>, demo: &mut Option<MidiDemo>) {
+    if let Some(source) = demo
+        && !source.advance(SAMPLE_RATE, BATCH_FRAMES, |event| engine.send_midi(event))
+    {
+        *demo = None;
+    }
+}
+
 pub fn render_wav(code: &str, path: &str, seconds: u32) -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
     engine.update_with_code(code)?;
@@ -107,10 +149,12 @@ pub fn self_check() -> Result<(), Box<dyn Error>> {
         engine
             .update_with_code(code)
             .map_err(|error| io::Error::other(format!("{name}: {error}")))?;
+        let mut midi_demo = engine.has_midi_input().then(MidiDemo::default);
         let batches = (8 * SAMPLE_RATE as usize).div_ceil(BATCH_FRAMES);
         let mut energy = 0.0;
         let mut peak = 0.0_f64;
         for _ in 0..batches {
+            feed_midi_demo(&mut engine, &mut midi_demo);
             render(&mut engine, &mut pcm, &mut waveform);
             for bytes in pcm.chunks_exact(2) {
                 let sample = f64::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.0;
@@ -136,12 +180,17 @@ pub fn self_check() -> Result<(), Box<dyn Error>> {
 pub async fn serve(
     mut commands: Receiver<Command>,
     status: Sender<Status>,
-    monitor: Sender<[f32; MONITOR_FRAMES]>,
+    monitor: watch::Sender<MonitorFrame>,
+    mut midi_input: MidiInput,
 ) -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
     let mut playing = false;
+    let mut run = 0_u64;
+    let mut sequences = Vec::new();
     let mut bpm = DEFAULT_BPM;
     let mut stream = None;
+    let mut midi_demo = None;
+    let mut midi_playing = false;
     // The kernel validates append buffers against the VM heap.
     let mut pcm = vec![0; BATCH_BYTES];
     let mut waveform = [0.; MONITOR_FRAMES];
@@ -149,15 +198,30 @@ pub async fn serve(
         1_000_000_000 * BATCH_FRAMES as u64 / u64::from(SAMPLE_RATE),
     ));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let _ = status.try_send(Status::Ready(SAMPLE_RATE));
+    let _ = status.try_send(Status::Ready {
+        rate: SAMPLE_RATE,
+        midi_source: midi_input.source(),
+    });
 
     loop {
         tokio::select! {
             command = commands.recv() => match command {
                 Some(Command::Run(code)) => {
-                    match engine.update_with_code_and_spans(&code) {
-                        Ok(spans) => {
-                            let _ = status.try_send(Status::PatchParsed(code.clone(), spans));
+                    match engine.update_with_code_and_source(&code) {
+                        Ok(source) => {
+                            if midi_demo.take().is_some() {
+                                engine.release_midi_notes();
+                            }
+                            run = run.wrapping_add(1);
+                            sequences.clear();
+                            sequences.extend(source.sequences.iter().map(|seq| {
+                                engine.sequence_node(&seq.chain, seq.node)
+                            }));
+                            let _ = status.try_send(Status::PatchParsed {
+                                run,
+                                code: code.clone(),
+                                source,
+                            });
                             if !playing {
                                 match Stream::open() {
                                     Ok(output) => {
@@ -171,6 +235,13 @@ pub async fn serve(
                                     }
                                 }
                             }
+                            midi_playing = engine.has_midi_input();
+                            if !midi_playing {
+                                midi_input.reset();
+                            } else if midi_input.source() != MidiSource::Off {
+                                let label = midi_input.source().label();
+                                let _ = status.try_send(Status::Midi(format!("MIDI input · {label}")));
+                            }
                             let _ = status.try_send(Status::Playing(code));
                         }
                         Err(error) => { let _ = status.try_send(Status::PatchError(error.to_string())); }
@@ -181,9 +252,38 @@ pub async fn serve(
                     engine.set_bpm(f32::from(bpm));
                     let _ = status.try_send(Status::Tempo(bpm));
                 }
+                Some(Command::SelectMidiInput(source)) => {
+                    let result = if source == midi_input.source() {
+                        Ok(())
+                    } else {
+                        MidiInput::open(source).map(|input| {
+                            midi_input = input;
+                            midi_demo = None;
+                            engine.release_midi_notes();
+                        })
+                    };
+                    let _ = status.try_send(Status::MidiInput {
+                        source: midi_input.source(),
+                        error: result.err().map(|error| error.to_string()),
+                    });
+                }
+                Some(Command::TestMidi) => {
+                    let message = if midi_playing {
+                        engine.release_midi_notes();
+                        midi_demo = Some(MidiDemo::default());
+                        "MIDI test phrase · channel 1"
+                    } else {
+                        "Run a patch with midisynth first. The test uses channel 1."
+                    };
+                    let _ = status.try_send(Status::Midi(message.into()));
+                }
                 Some(Command::Stop) => {
                     playing = false;
                     stream = None;
+                    midi_demo = None;
+                    midi_playing = false;
+                    midi_input.reset();
+                    sequences.clear();
                     let samples = std::mem::take(&mut engine.samples_dict);
                     engine = Engine::new();
                     engine.samples_dict = samples;
@@ -193,13 +293,50 @@ pub async fn serve(
                 }
                 None => return Ok(()),
             },
-            _ = ticks.tick(), if playing => {
-                if let Err(error) = tick(&mut stream, &mut engine, &mut pcm, &mut waveform) {
-                    stream = None;
-                    playing = false;
-                    let _ = status.try_send(Status::AudioError(error.to_string()));
-                } else {
-                    let _ = monitor.try_send(waveform);
+            _ = ticks.tick(), if playing || midi_input.needs_idle_poll() => {
+                let received = midi_input.poll(midi_playing, |event| {
+                    if midi_demo.is_some() {
+                        // A physical key press takes over from the test phrase.
+                        if !matches!(event, MidiEvent::NoteOn { .. }) {
+                            return;
+                        }
+                        midi_demo = None;
+                        engine.release_midi_notes();
+                    }
+                    engine.send_midi(event);
+                });
+                if let Err(error) = received {
+                    if midi_demo.is_none() {
+                        engine.release_midi_notes();
+                    }
+                    midi_input = MidiInput::Disabled;
+                    let _ = status.try_send(Status::MidiInput {
+                        source: midi_input.source(),
+                        error: Some(format!("MIDI input stopped: {error}")),
+                    });
+                }
+                if !playing {
+                    continue;
+                }
+                match tick(&mut stream, &mut engine, &mut pcm, &mut waveform, &mut midi_demo) {
+                    Ok(true) => monitor.send_modify(|frame| {
+                        frame.run = run;
+                        frame.waveform = waveform;
+                        frame.sequences.clear();
+                        frame.sequences.extend(sequences.iter().map(|node| {
+                            node.and_then(|node| engine.sequence_playhead(node))
+                        }));
+                    }),
+                    Ok(false) => {},
+                    Err(error) => {
+                        stream = None;
+                        playing = false;
+                        midi_demo = None;
+                        midi_playing = false;
+                        midi_input.reset();
+                        engine.release_midi_notes();
+                        let _ = status.try_send(Status::AudioError(error.to_string()));
+                    }
                 }
                 tokio::task::yield_now().await;
             }
@@ -212,22 +349,24 @@ fn tick(
     engine: &mut Engine<BLOCK>,
     pcm: &mut [u8],
     waveform: &mut [f32; MONITOR_FRAMES],
-) -> io::Result<()> {
+    midi_demo: &mut Option<MidiDemo>,
+) -> io::Result<bool> {
     if stream.is_none() {
         match Stream::open() {
             Ok(output) => *stream = Some(output),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
             Err(error) => return Err(error),
         }
     }
     let output = stream.as_mut().expect("stream opened");
+    feed_midi_demo(engine, midi_demo);
     render(engine, pcm, waveform);
     output.append(pcm)?;
     if output.written == STREAM_LIMIT {
         output.finish()?;
         *stream = None;
     }
-    Ok(())
+    Ok(true)
 }
 
 struct Stream {
@@ -304,6 +443,120 @@ fn audio_call(action: u32, _token: u64, _pcm: &[u8]) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    async fn wifi_piano_packets_play_release_and_switch_off() {
+        use std::net::{Ipv4Addr, UdpSocket};
+
+        async fn wait_for_sound(frames: &mut watch::Receiver<MonitorFrame>, sounding: bool) {
+            loop {
+                frames.changed().await.unwrap();
+                let waveform = &frames.borrow().waveform;
+                if if sounding {
+                    waveform.iter().any(|sample| sample.abs() > 0.01)
+                } else {
+                    *waveform == [0.0; MONITOR_FRAMES]
+                } {
+                    break;
+                }
+            }
+        }
+
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let address = socket.local_addr().unwrap();
+        let sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        sender.connect(address).unwrap();
+
+        let (commands, rx) = tokio::sync::mpsc::channel(8);
+        let (status, mut updates) = tokio::sync::mpsc::channel(8);
+        let (monitor, mut frames) = watch::channel(MonitorFrame::default());
+        let input = MidiInput::Wifi {
+            socket,
+            piano: crate::piano_udp::Piano::default(),
+        };
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let (result, ()) = tokio::join!(serve(rx, status, monitor, input), async move {
+                let patch = include_str!("../assets/examples/midi.glicol");
+                commands.send(Command::Run(patch.into())).await.unwrap();
+                while !matches!(updates.recv().await.unwrap(), Status::Playing(_)) {}
+                frames.changed().await.unwrap();
+                assert_eq!(frames.borrow().waveform, [0.0; MONITOR_FRAMES]);
+
+                sender.send(b"piano seq=1 mask=0x1000000").unwrap();
+                wait_for_sound(&mut frames, true).await;
+
+                sender.send(b"piano seq=2 mask=0").unwrap();
+                wait_for_sound(&mut frames, false).await;
+
+                sender.send(b"piano seq=3 mask=0x1000000").unwrap();
+                wait_for_sound(&mut frames, true).await;
+                commands
+                    .send(Command::SelectMidiInput(MidiSource::Off))
+                    .await
+                    .unwrap();
+                while !matches!(
+                    updates.recv().await.unwrap(),
+                    Status::MidiInput {
+                        source: MidiSource::Off,
+                        error: None,
+                    }
+                ) {}
+                let _rebound = UdpSocket::bind(address).unwrap();
+                wait_for_sound(&mut frames, false).await;
+                drop(commands);
+            });
+            result.unwrap();
+        })
+        .await
+        .expect("Wi-Fi MIDI should start and release a live note");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    fn raw_midi_demo_renders_and_releases_through_the_live_path() {
+        let mut engine = engine().unwrap();
+        engine
+            .update_with_code(include_str!("../assets/examples/midi.glicol"))
+            .unwrap();
+        let mut pcm = [0; BATCH_BYTES];
+        let mut waveform = [0.0; MONITOR_FRAMES];
+        let mut stream = None;
+        let mut midi_demo = None;
+
+        tick(
+            &mut stream,
+            &mut engine,
+            &mut pcm,
+            &mut waveform,
+            &mut midi_demo,
+        )
+        .unwrap();
+        assert!(pcm.iter().all(|byte| *byte == 0));
+        midi_demo = Some(MidiDemo::default());
+        tick(
+            &mut stream,
+            &mut engine,
+            &mut pcm,
+            &mut waveform,
+            &mut midi_demo,
+        )
+        .unwrap();
+        assert!(pcm.iter().any(|byte| *byte != 0));
+        for _ in 0..(2 * SAMPLE_RATE as usize).div_ceil(BATCH_FRAMES) {
+            tick(
+                &mut stream,
+                &mut engine,
+                &mut pcm,
+                &mut waveform,
+                &mut midi_demo,
+            )
+            .unwrap();
+        }
+        assert!(midi_demo.is_none());
+        assert!(pcm.iter().all(|byte| *byte == 0));
+    }
 
     #[test]
     fn offbeat_sample_starts_in_the_second_slot() {

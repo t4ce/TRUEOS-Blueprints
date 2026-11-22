@@ -1,5 +1,8 @@
-//! One full opaque 1:1 quad meets UI4's retained BCS0 copy eligibility.
-use trueos::ui4_scene::{Damage, Error, Frame, SpriteCorner, SpriteQuad, rgba};
+//! Publish the opaque 1:1 viewport with an explicit BCS0 copy.
+use trueos::{
+    ui4_scene::{Damage, Error, Frame, SpriteCorner, SpriteQuad, rgba},
+    ui4_winit::{SpriteBackend, SpriteCommand},
+};
 const MAP_SPRITE: u32 = 1;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -47,32 +50,32 @@ impl Presenter {
         if !matches!(self.stage, Stage::Uploaded(uploaded) if uploaded == revision) {
             let pixels = pixels();
             if pixels.dimensions() != (width, height) {
-                return Err(Error::Invalid);
+                return Err(stage_error(frame, revision, "pixels", Error::Invalid));
             }
             match frame.upload_sprite_rgba8(MAP_SPRITE, width, height, pixels.as_raw()) {
                 Ok(()) => self.stage = Stage::Uploaded(revision),
                 Err(Error::Busy) => return Ok(Status::Busy),
-                Err(error) => return Err(stage_error("upload", error)),
+                Err(error) => return Err(stage_error(frame, revision, "upload", error)),
             }
         }
 
-        match frame.begin_sprite_frame(rgba(255, 255, 255, 255)) {
+        match frame.begin_gpu_frame() {
             Ok(()) => {}
             Err(Error::Busy) => return Ok(Status::Busy),
-            Err(error) => return Err(stage_error("begin", error)),
+            Err(error) => return Err(stage_error(frame, revision, "begin", error)),
         }
-        match frame.draw_sprite_quads(&[viewport_quad(width, height)]) {
+        let copy = SpriteCommand {
+            quad: viewport_quad(width, height),
+            backend: SpriteBackend::Bcs0,
+        };
+        match frame.draw_sprite_commands(&[copy]) {
             Ok(()) => self.publish(frame, revision, Damage::full(width, height)),
             Err(Error::Busy) => {
                 // Admission Busy cancels the write lease. The retained sprite
                 // can be drawn on a new lease or replaced by newer pixels.
-                trueos::logl::log(
-                    trueos::logl::level::IMPORTANT,
-                    format_args!("osm: sprite admission busy action=restart-frame"),
-                );
                 Ok(Status::Busy)
             }
-            Err(error) => Err(stage_error("draw", error)),
+            Err(error) => Err(stage_error(frame, revision, "draw", error)),
         }
     }
 
@@ -91,7 +94,7 @@ impl Presenter {
                 self.stage = Stage::Publishing(revision, damage);
                 Ok(Status::Busy)
             }
-            Err(error) => Err(stage_error("publish", error)),
+            Err(error) => Err(stage_error(frame, revision, "publish", error)),
         }
     }
 }
@@ -128,10 +131,16 @@ fn viewport_quad(width: u32, height: u32) -> SpriteQuad {
     }
 }
 
-fn stage_error(stage: &str, error: Error) -> Error {
-    trueos::logl::log(
+fn stage_error(frame: &Frame, revision: u64, stage: &str, error: Error) -> Error {
+    trueos::logl::log_record(
         trueos::logl::level::ERROR,
-        format_args!("osm: presentation stage={stage} error={error:?}"),
+        "osm",
+        format_args!(
+            "presentation stage={stage} window={} extent={}x{} revision={revision} error={error:?}",
+            frame.window_id(),
+            frame.width(),
+            frame.height(),
+        ),
     );
     error
 }

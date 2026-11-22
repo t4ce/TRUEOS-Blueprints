@@ -1,4 +1,4 @@
-use glicol_parser::{HighlightKind, HighlightSpan};
+use glicol_parser::{HighlightKind, HighlightSpan, SequenceSource};
 use ratatui::{buffer::CellWidth as _, style::Color};
 use std::borrow::Cow;
 
@@ -12,58 +12,103 @@ pub struct Highlight {
     pub lines: Vec<Vec<DisplaySpan>>,
 }
 
+pub struct DisplaySequenceSlot {
+    pub at: f32,
+    pub row: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
 impl Highlight {
     pub fn new(code: &str, spans: &[HighlightSpan], tab_length: u8) -> Self {
-        let mut spans = spans.iter().peekable();
-        let mut line_start = 0;
-        let lines = code
-            .split('\n')
-            .map(|line| {
-                let line_end = line_start + line.len();
-                let mut offset = line_start;
-                let mut columns = Columns::default();
-                let mut colors = Vec::new();
-
-                while let Some(span) = spans.peek() {
-                    if span.start >= line_end {
-                        break;
-                    }
-                    if span.end <= line_start {
-                        spans.next();
-                        continue;
-                    }
-                    let start = span.start.max(line_start);
-                    let end = span.end.min(line_end);
-                    columns.advance(&code[offset..start], tab_length);
-                    let display_start = columns.visible;
-                    columns.advance(&code[start..end], tab_length);
-                    if display_start < columns.visible {
-                        colors.push(DisplaySpan {
-                            start: display_start,
-                            end: columns.visible,
-                            color: match span.kind {
-                                HighlightKind::Binding => Color::LightCyan,
-                                HighlightKind::Node => Color::LightBlue,
-                                HighlightKind::Reference => Color::Cyan,
-                                HighlightKind::Number => Color::LightYellow,
-                                HighlightKind::Sample => Color::LightMagenta,
-                                HighlightKind::Script => Color::LightGreen,
-                                HighlightKind::Comment => Color::DarkGray,
-                                HighlightKind::Operator => Color::Gray,
-                            },
-                        });
-                    }
-                    offset = end;
-                    if span.end > line_end {
-                        break;
-                    }
-                    spans.next();
-                }
-                line_start = line_end + 1;
-                colors
-            })
-            .collect();
+        let mut lines: Vec<_> = code.split('\n').map(|_| Vec::new()).collect();
+        map_display_ranges(
+            code,
+            spans.iter().map(|span| (span.start, span.end, span.kind)),
+            tab_length,
+            |kind, row, start, end| {
+                lines[row].push(DisplaySpan {
+                    start,
+                    end,
+                    color: match kind {
+                        HighlightKind::Binding => Color::LightCyan,
+                        HighlightKind::Node => Color::LightBlue,
+                        HighlightKind::Reference => Color::Cyan,
+                        HighlightKind::Number => Color::LightYellow,
+                        HighlightKind::Sample => Color::LightMagenta,
+                        HighlightKind::Script => Color::LightGreen,
+                        HighlightKind::Comment => Color::DarkGray,
+                        HighlightKind::Operator => Color::Gray,
+                    },
+                });
+            },
+        );
         Self { lines }
+    }
+
+    pub fn sequence_slots(
+        code: &str,
+        sequences: &[SequenceSource],
+        tab_length: u8,
+    ) -> Vec<Vec<DisplaySequenceSlot>> {
+        let mut slots: Vec<_> = sequences
+            .iter()
+            .map(|sequence| Vec::with_capacity(sequence.slots.len()))
+            .collect();
+        let ranges = sequences.iter().enumerate().flat_map(|(track, sequence)| {
+            sequence
+                .slots
+                .iter()
+                .map(move |slot| (slot.start, slot.end, (track, slot.at)))
+        });
+        map_display_ranges(code, ranges, tab_length, |(track, at), row, start, end| {
+            slots[track].push(DisplaySequenceSlot {
+                at,
+                row,
+                start,
+                end,
+            });
+        });
+        slots
+    }
+}
+
+/// Map ordered byte ranges in one traversal, splitting ranges that cross editor rows.
+fn map_display_ranges<T: Copy>(
+    code: &str,
+    spans: impl Iterator<Item = (usize, usize, T)>,
+    tab_length: u8,
+    mut emit: impl FnMut(T, usize, usize, usize),
+) {
+    let mut spans = spans.peekable();
+    let mut line_start = 0;
+    for (row, line) in code.split('\n').enumerate() {
+        let line_end = line_start + line.len();
+        let mut offset = line_start;
+        let mut columns = Columns::default();
+        while let Some(&(start, end, data)) = spans.peek() {
+            if start >= line_end {
+                break;
+            }
+            if end <= line_start {
+                spans.next();
+                continue;
+            }
+            let start = start.max(line_start);
+            let clipped_end = end.min(line_end);
+            columns.advance(&code[offset..start], tab_length);
+            let display_start = columns.visible;
+            columns.advance(&code[start..clipped_end], tab_length);
+            if display_start < columns.visible {
+                emit(data, row, display_start, columns.visible);
+            }
+            offset = clipped_end;
+            if end > line_end {
+                break;
+            }
+            spans.next();
+        }
+        line_start = line_end + 1;
     }
 }
 
@@ -111,7 +156,10 @@ impl Columns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glicol_parser::get_ast_with_spans;
+    use glicol_parser::{
+        get_ast, get_ast_with_source, get_ast_with_spans,
+        nodes::{Component, UsizeOrRef},
+    };
 
     #[test]
     fn colors_come_from_the_same_parse_as_the_components() {
@@ -167,6 +215,62 @@ mod tests {
         assert_eq!(
             (pipeline.start, pipeline.end, pipeline.color),
             (8, 10, Color::Gray)
+        );
+    }
+
+    #[test]
+    fn sequence_source_retains_rests_and_uses_live_chain_identity() {
+        let code = "~drum: seq 50;\nout: seq _ _;\n~🥁: speed 2\n>> seq 60 _62 ~a;\nshadow: seq 31; shadow: sin 30;";
+        let (ast, source) = get_ast_with_source(code).unwrap();
+        assert_eq!(ast, get_ast(code).unwrap());
+        assert_eq!(source.spans, get_ast_with_spans(code).unwrap().1);
+        assert_eq!(source.sequences.len(), 2);
+
+        let silent = &source.sequences[0];
+        assert_eq!((&*silent.chain, silent.node), ("out", 0));
+        assert_eq!(
+            silent.slots.iter().map(|slot| slot.at).collect::<Vec<_>>(),
+            [0.0, 0.5]
+        );
+
+        let drum = &source.sequences[1];
+        assert_eq!((&*drum.chain, drum.node), ("~drum", 1));
+        assert_eq!(
+            drum.slots
+                .iter()
+                .map(|slot| (slot.at, &code[slot.start..slot.end]))
+                .collect::<Vec<_>>(),
+            [
+                (0.0, "60"),
+                (1.0 / 3.0, "_"),
+                (0.5, "62"),
+                (2.0 / 3.0, "~a")
+            ]
+        );
+        let Component::Seq(sequence) = &ast.nodes["~drum"][1] else {
+            panic!("expected sequencer")
+        };
+        assert_eq!(
+            sequence.events,
+            [
+                (drum.slots[0].at, UsizeOrRef::Usize(60)),
+                (drum.slots[2].at, UsizeOrRef::Usize(62)),
+                (drum.slots[3].at, UsizeOrRef::Ref("~a"))
+            ]
+        );
+    }
+
+    #[test]
+    fn sequence_columns_follow_alias_width_and_tab_stops() {
+        let code = "// First track\n~🥁:\tseq 60 _;\nout: get ~🥁;";
+        let (_, source) = get_ast_with_source(code).unwrap();
+        let slots = Highlight::sequence_slots(code, &source.sequences, 4);
+        assert_eq!(
+            slots[0]
+                .iter()
+                .map(|slot| (slot.at, slot.row, slot.start, slot.end))
+                .collect::<Vec<_>>(),
+            [(0.0, 1, 12, 14), (0.5, 1, 15, 16)]
         );
     }
 }

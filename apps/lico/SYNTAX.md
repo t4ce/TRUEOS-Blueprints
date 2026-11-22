@@ -122,6 +122,21 @@ For example, `` eval `wet := in * in; wet * 0.5` `` transforms one
 sample at a time. `` meta `input.map(|x| x - 0.45 * x * x * x)` ``
 waveshapes the block.
 
+## Live MIDI instrument
+
+```glicol
+out: midisynth 1 0.012 0.12 >> mul 0.7;
+```
+
+`midisynth CHANNEL ATTACK RELEASE` generates up to eight simultaneous sine
+voices. Choose channel `1` through `16`, or `0` for all channels. Attack
+and release are in seconds. MIDI velocity controls level. A voice holds
+until Note Off or All Notes Off. The output connects to filters, effects,
+and other Glicol nodes like any other signal.
+
+Run the patch with **Alt+R**, then press **Alt+M** to send Lico’s channel 1
+test phrase through its MIDI byte decoder.
+
 ## Forms outside the Lico playback workflow
 
 - `msgsynth` (also `msg_synth`) parses a sample-style symbol, attack, and

@@ -2,6 +2,14 @@ use crate::{Buffer, Input, Message, Node};
 use glicol_parser::nodes::UsizeOrRef;
 use hashbrown::HashMap;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SequencePlayhead {
+    /// Zero-based position of the last rendered frame in the bar.
+    pub bar_frame: usize,
+    /// Unrounded bar length used to position events within a bar.
+    pub bar_length: f64,
+}
+
 #[derive(Debug)]
 pub struct Sequencer {
     events: Vec<(f32, UsizeOrRef<String>)>,
@@ -10,6 +18,7 @@ pub struct Sequencer {
     pub bpm: f32,
     sr: usize,
     pub step: usize,
+    bar_length: f64,
     input_order: Vec<usize>,
     // sidechain_lib: HashMap<String, usize>,
 }
@@ -24,6 +33,7 @@ impl Sequencer {
             bpm: 120.,
             sr: 44100,
             step: 0,
+            bar_length: 0.0,
         }
     }
     pub fn ref_order(self, ref_order: HashMap<String, usize>) -> Self {
@@ -43,6 +53,7 @@ impl<const N: usize> Node<N> for Sequencer {
         match inputs.len() {
             0 => {
                 let bar_length = 240.0 / self.bpm as f64 * self.sr as f64 / self.speed as f64;
+                self.bar_length = bar_length;
                 for out in &mut *output[0] {
                     *out = 0.0;
                     for event in &self.events {
@@ -74,6 +85,7 @@ impl<const N: usize> Node<N> for Sequencer {
                 }
 
                 let bar_length = 240.0 / self.bpm as f64 * self.sr as f64 / self.speed as f64;
+                self.bar_length = bar_length;
                 for (idx, out) in output[0].iter_mut().enumerate() {
                     *out = 0.0;
 
@@ -116,5 +128,16 @@ impl<const N: usize> Node<N> for Sequencer {
             }
             _ => {}
         }
+    }
+    fn sequence_playhead(&self) -> Option<SequencePlayhead> {
+        let rendered = self.step.checked_sub(1)?;
+        let frames_per_bar = self.bar_length as usize;
+        if frames_per_bar == 0 {
+            return None;
+        }
+        Some(SequencePlayhead {
+            bar_frame: rendered % frames_per_bar,
+            bar_length: self.bar_length,
+        })
     }
 }

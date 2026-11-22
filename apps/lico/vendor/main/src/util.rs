@@ -8,7 +8,7 @@ use glicol_synth::{
     oscillator::{SawOsc, SinOsc, SquOsc, TriOsc},
     sequencer::{Arrange, Choose, Sequencer, Speed},
     signal::{ConstSig, Impulse, Noise, Points},
-    synth::{MsgSynth, PatternSynth},
+    synth::{MidiSynth, MsgSynth, PatternSynth},
     Node, Pass, Sum2,
 };
 
@@ -97,6 +97,14 @@ pub fn makenode<const N: usize>(
                 .attack(*attack)
                 .decay(*decay)
                 .to_boxed_nodedata(1),
+            vec![],
+        ),
+        Component::MidiSynth(nodes::MidiSynth {
+            channel,
+            attack,
+            release,
+        }) => (
+            MidiSynth::new(*channel, *attack, *release, sr).to_boxed_nodedata(1),
             vec![],
         ),
         Component::PatternSynth(nodes::PatternSynth { symbol, span }) => {

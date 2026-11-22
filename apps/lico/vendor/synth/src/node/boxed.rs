@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{Buffer, Input, Message, Node};
+use crate::{sequencer::SequencePlayhead, Buffer, Input, Message, Node};
 use core::fmt;
 use core::ops::{Deref, DerefMut};
 use hashbrown::HashMap;
@@ -72,6 +72,9 @@ impl<const N: usize> Node<N> for BoxedNode<N> {
     fn send_msg(&mut self, info: Message) {
         self.0.send_msg(info)
     }
+    fn sequence_playhead(&self) -> Option<SequencePlayhead> {
+        self.0.sequence_playhead()
+    }
 }
 
 impl<const N: usize> Node<N> for BoxedNodeSend<N> {
@@ -80,6 +83,9 @@ impl<const N: usize> Node<N> for BoxedNodeSend<N> {
     }
     fn send_msg(&mut self, info: Message) {
         self.0.send_msg(info)
+    }
+    fn sequence_playhead(&self) -> Option<SequencePlayhead> {
+        self.0.sequence_playhead()
     }
 }
 

@@ -9,7 +9,7 @@ use util::{EndSpan, ToPestErrWithPositives};
 mod highlight;
 pub mod nodes;
 mod util;
-pub use highlight::{HighlightKind, HighlightSpan};
+pub use highlight::{HighlightKind, HighlightSpan, SequenceSlot, SequenceSource, SourceMap};
 pub use util::ToInnerOwned;
 
 #[derive(Parser)]
@@ -17,7 +17,7 @@ pub use util::ToInnerOwned;
 pub struct GlicolParser;
 
 pub fn get_ast(code: &str) -> Result<nodes::Ast<'_>, Box<Error<Rule>>> {
-    ast_from_block(parse_block(code)?)
+    ast_from_block(parse_block(code)?, None)
 }
 
 /// Returns the AST and its non-overlapping highlight spans in source order.
@@ -27,7 +27,16 @@ pub fn get_ast_with_spans(
     let block = parse_block(code)?;
     let mut spans = Vec::new();
     highlight::collect(block.clone(), &mut spans);
-    ast_from_block(block).map(|ast| (ast, spans))
+    ast_from_block(block, None).map(|ast| (ast, spans))
+}
+
+/// Returns source-ordered highlighting and sequence slots from the same parse.
+pub fn get_ast_with_source(code: &str) -> Result<(nodes::Ast<'_>, SourceMap), Box<Error<Rule>>> {
+    let block = parse_block(code)?;
+    let mut source = SourceMap::default();
+    highlight::collect(block.clone(), &mut source.spans);
+    let ast = ast_from_block(block, Some(&mut source.sequences))?;
+    Ok((ast, source))
 }
 
 fn parse_block(code: &str) -> Result<Pair<'_, Rule>, Box<Error<Rule>>> {
@@ -48,7 +57,11 @@ fn reference_name(pair: Pair<'_, Rule>) -> &str {
     }
 }
 
-fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rule>>> {
+fn ast_from_block<'ast>(
+    lines: Pair<'ast, Rule>,
+    sequences: Option<&mut Vec<SequenceSource>>,
+) -> Result<nodes::Ast<'ast>, Box<Error<Rule>>> {
+    let mut sequence_by_chain = sequences.as_ref().map(|_| HashMap::new());
     let nodes = lines.into_inner()
         .filter(|line| line.as_rule() == Rule::line)
         .map(|line| {
@@ -69,7 +82,8 @@ fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rul
                 // if it's not, then report an error
                 .ok_or_else(|| line_end.to_err_with_positives([Rule::chain]))?;
 
-            let components = chain.into_inner().filter(|pair| pair.as_rule() == Rule::node).map(|node_pair| {
+            let mut current_sequences = Vec::new();
+            let components = chain.into_inner().filter(|pair| pair.as_rule() == Rule::node).enumerate().map(|(ordinal, node_pair)| {
                 let node_end = node_pair.as_end_span();
                 let node = node_pair.into_inner()
                     .next()
@@ -88,7 +102,19 @@ fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rul
                     Rule::mul => { Component::Mul(nodes::Mul::parse(node)?) },
                     Rule::add => { Component::Add(nodes::Add::parse(node)?) },
                     Rule::pan => { Component::Pan(nodes::Pan::parse(node)?) },
-                    Rule::seq => { Component::Seq(nodes::Seq::parse(node)?) },
+                    Rule::seq => {
+                        if sequence_by_chain.is_some() {
+                            let (sequence, slots) = nodes::Seq::parse_with_slots(node)?;
+                            current_sequences.push(SequenceSource {
+                                chain: name.to_owned(),
+                                node: ordinal,
+                                slots,
+                            });
+                            Component::Seq(sequence)
+                        } else {
+                            Component::Seq(nodes::Seq::parse(node)?)
+                        }
+                    },
                     Rule::choose => { Component::Choose(nodes::Choose::parse(node)?) },
                     Rule::mix => { Component::Mix(nodes::Mix::parse(node)?) },
                     Rule::sp => { Component::Sp(nodes::Sp::parse(node)?) },
@@ -117,11 +143,20 @@ fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rul
                     Rule::eval => { Component::Eval(nodes::Eval::parse(node)?) },
                     Rule::arrange => { Component::Arrange(nodes::Arrange::parse(node)?) },
                     Rule::msgsynth => { Component::MsgSynth(nodes::MsgSynth::parse(node)?) },
+                    Rule::midisynth => { Component::MidiSynth(nodes::MidiSynth::parse(node)?) },
                     Rule::pattern_synth => { Component::PatternSynth(nodes::PatternSynth::parse(node)?) },
                 );
 
                 Ok(component)
             }).collect::<Result<Vec<_>, _>>()?;
+
+            if let Some(by_chain) = sequence_by_chain.as_mut() {
+                if current_sequences.is_empty() {
+                    by_chain.remove(name);
+                } else {
+                    by_chain.insert(name, current_sequences);
+                }
+            }
 
             Result::<_, Box<Error<Rule>>>::Ok((
                 name,
@@ -129,5 +164,9 @@ fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rul
             ))
         }).collect::<Result<HashMap<_, _>, _>>()?;
 
+    if let (Some(sequences), Some(by_chain)) = (sequences, sequence_by_chain) {
+        sequences.extend(by_chain.into_values().flatten());
+        sequences.sort_unstable_by_key(|sequence| sequence.slots.first().map(|slot| slot.start));
+    }
     Ok(nodes::Ast { nodes })
 }

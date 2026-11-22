@@ -1,0 +1,2 @@
+// Alt+R to run, then play channel 1 or try the test phrase with Alt+M.
+out: midisynth 1 0.012 0.12 >> mul 0.7;

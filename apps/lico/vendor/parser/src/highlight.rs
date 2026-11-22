@@ -21,6 +21,28 @@ pub struct HighlightSpan {
     pub kind: HighlightKind,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceMap {
+    pub spans: Vec<HighlightSpan>,
+    pub sequences: Vec<SequenceSource>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SequenceSource {
+    pub chain: String,
+    pub node: usize,
+    pub slots: Vec<SequenceSlot>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SequenceSlot {
+    /// Start of the slot as a fraction of the sequence loop.
+    pub at: f32,
+    /// Byte offsets into the original source.
+    pub start: usize,
+    pub end: usize,
+}
+
 pub(crate) fn collect(pair: Pair<'_, Rule>, spans: &mut Vec<HighlightSpan>) {
     use HighlightKind::*;
 

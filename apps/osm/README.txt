@@ -14,8 +14,8 @@ Keep it between launches. Failed tiles use recent imagery where available and
 leave any uncovered areas white. The loader retries with exponential backoff
 from one to thirty seconds. Retries continue without navigation and stop when
 a tile leaves the current demand.
-Hardware logs identify fetch request/status/body or PNG decode failures and
-the next retry delay. Invalid disk PNGs are evicted, and HTTP errors or invalid
+The app terminal identifies fetch request/status/body or PNG decode failures
+and the next retry delay. Invalid disk PNGs are evicted, and HTTP errors or invalid
 downloaded PNGs are never written to the cache.
 Decoded RGBA tiles also live in a session-only REDB ImageDatabase from the
 trueos-redb RAM helper. LRU eviction limits it to 128 tiles (32 MiB pixels plus
@@ -24,15 +24,15 @@ than their disk source. The RAM database is never serialized or persisted.
 OSM_CACHE_MODE=ram disables the disk layer for an alternate provider whose
 policy allows it. The public tile.openstreetmap.org service retains disk caching.
 
-UI4 presentation uploads one opaque sprite using the same ID and submits one
-full-frame 1:1 copy quad with source_over=false for the existing BCS0 fast path.
+UI4 presentation uploads one opaque sprite using the same ID and explicitly
+requests one full-frame 1:1 BCS0 copy. The copy overwrites the complete frame
+in one blit. The hardware path requires BCS0.
 The app polls input between Busy attempts. A newer view can replace an
 unsubmitted sprite. After a draw succeeds, the presenter finishes publishing
-its write lease before submitting the next view. Admission Busy cancels the
-lease and logs "sprite admission busy action=restart-frame". Kernel log evidence:
-ui4/blueprint: opaque viewport retired backend=bcs0
-The diagnostic is logged once globally. Emulator and unsupported hardware can
-use UI4's fallback paths.
+its write lease before submitting the next view. When BCS0 admission is Busy,
+UI4 cancels the unsubmitted lease so the presenter can retry with a fresh frame.
+UI4 traces this as "opaque viewport deferred" and logs
+"opaque viewport retired backend=bcs0" once globally.
 
 The map composes directly from decoded tiles into a reusable frame buffer.
 Unscaled tiles use clipped row copies. Scaled tiles use nearest-neighbor
@@ -47,8 +47,11 @@ The UI and sequential tile loader run as local tasks on a pinned Blueprint
 Tokio current-thread runtime. Viewport demand uses Tokio watch and completions
 use an async channel. Pending network I/O yields to the UI task. New navigation
 replaces queued old viewport work and lets an in-flight fetch finish.
-The first four/every 120 presentations emit an Important "immediate viewport"
-marker with zoom, extent and stale completions skipped.
+Host LogOs receives OSM setup, resize and presentation diagnostics. The
+"immediate viewport" record includes the window ID, revision, zoom and extent
+on the first four publications, every 120 thereafter, and the first publication
+at each new extent. Presentation errors record the failed stage, window ID,
+extent, and revision.
 Attribution: https://www.openstreetmap.org/copyright
 Policy: https://operations.osmfoundation.org/policies/tiles/
 

@@ -7,20 +7,25 @@ use util::makenode;
 pub mod error;
 pub use error::{get_error_info, EngineError};
 use glicol_parser::{
-    get_ast, get_ast_with_spans,
+    get_ast, get_ast_with_source,
     nodes::{Ast, Component, UsizeOrRef},
-    HighlightSpan, ToInnerOwned as _,
+    HighlightSpan, SourceMap, ToInnerOwned as _,
 };
 use glicol_synth::{
     AudioContext, AudioContextConfig, BoxedNodeSend, Buffer, GlicolGraph, GlicolPara, Message,
-    NodeData, Pass,
+    Node as _, NodeData, Pass,
 };
+pub use glicol_synth::{sequencer::SequencePlayhead, MidiEvent};
 use hashbrown::HashMap;
 use petgraph::graph::NodeIndex;
 use yoke::Yoke;
 
 pub type GlicolNodeData<const N: usize> = NodeData<BoxedNodeSend<N>, N>;
 type YokedAst = Yoke<Ast<'static>, Box<str>>;
+
+/// Handle for a sequencer in the current patch. Resolve it again after updating the patch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SequenceNode(NodeIndex);
 
 #[derive(Default)]
 struct GraphDiff<'engine, const N: usize> {
@@ -103,6 +108,24 @@ impl<const N: usize> Engine<N> {
         }
     }
 
+    pub fn has_midi_input(&self) -> bool {
+        self.ast.as_ref().is_some_and(|ast| {
+            ast.get()
+                .nodes
+                .values()
+                .flatten()
+                .any(|component| matches!(component, Component::MidiSynth(_)))
+        })
+    }
+
+    pub fn send_midi(&mut self, event: MidiEvent) {
+        self.context.send_msg_to_all(Message::Midi(event));
+    }
+
+    pub fn release_midi_notes(&mut self) {
+        self.context.send_msg_to_all(Message::ReleaseMidiNotes);
+    }
+
     // for bela adc, in the utils.rs, the adc will become a pass node
     // the pass node connect to ~adc1 for example as reference
     // then all we need to do is to create these reference in the engine
@@ -177,15 +200,20 @@ impl<const N: usize> Engine<N> {
         &mut self,
         code: &str,
     ) -> Result<Vec<HighlightSpan>, EngineError> {
-        let mut spans = Vec::new();
-        self.update_patch(code, Some(&mut spans))?;
-        Ok(spans)
+        self.update_with_code_and_source(code)
+            .map(|source| source.spans)
+    }
+
+    pub fn update_with_code_and_source(&mut self, code: &str) -> Result<SourceMap, EngineError> {
+        let mut source = SourceMap::default();
+        self.update_patch(code, Some(&mut source))?;
+        Ok(source)
     }
 
     fn update_patch(
         &mut self,
         code: &str,
-        spans: Option<&mut Vec<HighlightSpan>>,
+        source: Option<&mut SourceMap>,
     ) -> Result<(), EngineError> {
         // It would be nice to re-use the allocation in self.ast for this Yoke creation, but I
         // can't figure out a way to.
@@ -195,10 +223,10 @@ impl<const N: usize> Engine<N> {
         // 'cause then we'll be unable to do this diffing thing against what it used to be b/c
         // it'll have been overwritten.
         let new_ast: YokedAst =
-            Yoke::try_attach_to_cart(code.to_owned().into_boxed_str(), |code| match spans {
-                Some(spans) => {
-                    let (ast, source_spans) = get_ast_with_spans(code)?;
-                    *spans = source_spans;
+            Yoke::try_attach_to_cart(code.to_owned().into_boxed_str(), |code| match source {
+                Some(source) => {
+                    let (ast, source_map) = get_ast_with_source(code)?;
+                    *source = source_map;
                     Ok(ast)
                 }
                 None => get_ast(code),
@@ -609,6 +637,27 @@ impl<const N: usize> Engine<N> {
         &self.context.graph[self.context.destination].buffers
     }
 
+    /// Resolve a sequencer from its chain and component index in the active patch.
+    pub fn sequence_node(&self, chain: &str, component: usize) -> Option<SequenceNode> {
+        let components = self.ast.as_ref()?.get().nodes.get(chain)?;
+        if !matches!(components.get(component), Some(Component::Seq(_))) {
+            return None;
+        }
+        self.index_info
+            .get(chain)?
+            .get(component)
+            .copied()
+            .map(SequenceNode)
+    }
+
+    /// Return the phase of the last frame, if the most recent block processed this sequencer.
+    pub fn sequence_playhead(&self, node: SequenceNode) -> Option<SequencePlayhead> {
+        if !self.context.processor.processed_last_block(node.0) {
+            return None;
+        }
+        self.context.graph.node_weight(node.0)?.node.sequence_playhead()
+    }
+
     pub fn set_bpm(&mut self, bpm: f32) {
         self.bpm = bpm;
         self.context.send_msg_to_all(Message::SetBPM(bpm));
@@ -640,6 +689,116 @@ mod tests {
         Ast {
             nodes: hashbrown::HashMap::from_iter(nodes),
         }
+    }
+
+    fn midi_test_peak(engine: &mut Engine<128>) -> f32 {
+        engine.next_block(Vec::new())[0]
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn midi_synth_filters_channels_and_sustains_until_note_off() {
+        let mut engine = Engine::<128>::new();
+        engine.set_sr(48_000);
+        assert!(!engine.has_midi_input());
+        engine
+            .update_with_code("out: midisynth 2 0.001 0.005")
+            .unwrap();
+        assert!(engine.has_midi_input());
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+
+        engine.send_midi(MidiEvent::NoteOn { channel: 0, note: 69, velocity: 127 });
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+        engine.send_midi(MidiEvent::NoteOn { channel: 1, note: 69, velocity: 64 });
+        for _ in 0..64 {
+            assert!((0.06..0.061).contains(&midi_test_peak(&mut engine)));
+        }
+
+        engine.send_midi(MidiEvent::NoteOn { channel: 1, note: 69, velocity: 0 });
+        let first_release = midi_test_peak(&mut engine);
+        let second_release = midi_test_peak(&mut engine);
+        assert!(first_release > second_release && second_release > 0.0);
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+    }
+
+    #[test]
+    fn midi_synth_omni_keeps_same_pitch_on_different_channels_independent() {
+        let mut engine = Engine::<128>::new();
+        engine.set_sr(48_000);
+        engine.update_with_code("out: midisynth 0 0 0").unwrap();
+        for channel in [0, 15] {
+            engine.send_midi(MidiEvent::NoteOn { channel, note: 69, velocity: 127 });
+        }
+        assert!(midi_test_peak(&mut engine) > 0.23);
+        engine.send_midi(MidiEvent::AllNotesOff { channel: 0 });
+        assert!((0.11..=0.12).contains(&midi_test_peak(&mut engine)));
+        engine.release_midi_notes();
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+    }
+
+    #[test]
+    fn sequence_playhead_uses_rendered_speed_and_keeps_phase_across_edits() {
+        let mut engine = Engine::<128>::new();
+        engine.set_sr(48_000);
+        engine.update_with_code("out: speed 8 >> seq _ 60").unwrap();
+        assert!(engine.sequence_node("out", 0).is_none());
+        let seq = engine.sequence_node("out", 1).unwrap();
+        assert!(engine.sequence_playhead(seq).is_none());
+
+        engine.next_block(Vec::new());
+        let initial = SequencePlayhead {
+            bar_frame: 127,
+            bar_length: 12_000.0,
+        };
+        assert_eq!(engine.sequence_playhead(seq), Some(initial));
+
+        engine.set_bpm(150.0);
+        assert_eq!(engine.sequence_playhead(seq), Some(initial));
+        engine.next_block(Vec::new());
+        assert_eq!(
+            engine.sequence_playhead(seq),
+            Some(SequencePlayhead {
+                bar_frame: 255,
+                bar_length: 9_600.0,
+            })
+        );
+
+        engine
+            .update_with_code("out: speed 8 >> seq _ 60 >> mul 0.5\nother: seq 60")
+            .unwrap();
+        engine.next_block(Vec::new());
+        assert_eq!(
+            engine.sequence_playhead(engine.sequence_node("out", 1).unwrap()),
+            Some(SequencePlayhead {
+                bar_frame: 383,
+                bar_length: 9_600.0,
+            })
+        );
+        assert_eq!(
+            engine.sequence_playhead(engine.sequence_node("other", 0).unwrap()),
+            Some(SequencePlayhead {
+                bar_frame: 127,
+                bar_length: 76_800.0,
+            })
+        );
+    }
+
+    #[test]
+    fn sequence_playhead_hides_nodes_that_stop_contributing_to_the_graph() {
+        let mut engine = Engine::<128>::new();
+        engine.update_with_code("~clock: seq 60\nout: ~clock").unwrap();
+        engine.next_block(Vec::new());
+        assert!(engine
+            .sequence_playhead(engine.sequence_node("~clock", 0).unwrap())
+            .is_some());
+
+        engine.update_with_code("~clock: seq 60\nout: sig 1").unwrap();
+        engine.next_block(Vec::new());
+        assert!(engine
+            .sequence_playhead(engine.sequence_node("~clock", 0).unwrap())
+            .is_none());
     }
 
     #[test]

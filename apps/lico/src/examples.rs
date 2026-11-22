@@ -36,4 +36,8 @@ pub const PATCHES: &[(&str, &str)] = &[
         "Rhai waveshaper",
         include_str!("../assets/examples/waveshaper.glicol"),
     ),
+    (
+        "MIDI instrument",
+        include_str!("../assets/examples/midi.glicol"),
+    ),
 ];
