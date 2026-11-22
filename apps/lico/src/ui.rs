@@ -9,7 +9,11 @@ use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
     MouseButton, MouseEvent, MouseEventKind,
 };
-use crossterm::{execute, style::Print};
+use crossterm::{
+    execute, queue,
+    style::Print,
+    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
+};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
@@ -96,6 +100,7 @@ pub fn run(midi_input: midi::Input) -> Result<(), Box<dyn Error>> {
         })();
         let reset = execute!(
             terminal.backend_mut(),
+            EndSynchronizedUpdate,
             Print("\x1b[?1000l\x1b[?1006l"),
             DisableBracketedPaste
         );
@@ -255,6 +260,9 @@ async fn editor(
 
         let pending = session.lock().expect("Lico session").proposal.is_some();
         let mut editor_area = Rect::default();
+        if playing {
+            queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+        }
         let drawn = terminal.draw(|frame| {
             let area = frame.area();
             if area.height < 25 {
@@ -270,11 +278,8 @@ async fn editor(
                     } else {
                         Constraint::Percentage(30)
                     },
-                    Constraint::Length(if error.is_some() || reference.is_some() {
-                        7
-                    } else {
-                        3
-                    }),
+                    // Reserve room for diagnostics so they never move the plot frames.
+                    Constraint::Length(7),
                     Constraint::Length(1),
                 ])
                 .areas(area);
@@ -361,9 +366,11 @@ async fn editor(
                     area,
                 );
             }
-        })?;
+        }).map(|frame| frame.area);
 
-        if cfg!(any(target_os = "trueos", target_os = "zkvm")) {
+        if let Ok(area) = drawn.as_ref()
+            && cfg!(any(target_os = "trueos", target_os = "zkvm"))
+        {
             outlines.clear();
             if playing && highlight.is_some() && review.is_none() && picker.is_none() {
                 let frame = monitor.borrow();
@@ -377,14 +384,23 @@ async fn editor(
                     );
                 }
             }
-            if (outlines != published_outlines
-                || (!outlines.is_empty() && drawn.area != published_area))
+            if (outlines != published_outlines || (!outlines.is_empty() && *area != published_area))
                 && playhead::publish(&outlines)
             {
-                published_area = drawn.area;
+                published_area = *area;
                 std::mem::swap(&mut outlines, &mut published_outlines);
             }
         }
+
+        // Close the fence even if drawing failed. Shell3 can otherwise see
+        // plot cells and cursor moves from a partially written terminal frame.
+        let commit = if playing {
+            execute!(terminal.backend_mut(), EndSynchronizedUpdate)
+        } else {
+            Ok(())
+        };
+        drawn?;
+        commit?;
 
         if let Some(ready) = first_frame.take() {
             ready()?;
@@ -793,6 +809,9 @@ fn draw_plots(
     spectrum: &[u64],
     sample_rate: u32,
 ) {
+    let scope_frame = Block::bordered().title(" Waveform · L ");
+    let scope_inner = scope_frame.inner(scope);
+    frame.render_widget(scope_frame, scope);
     let trace = Dataset::default()
         .marker(Marker::Braille)
         .graph_type(GraphType::Line)
@@ -800,14 +819,15 @@ fn draw_plots(
         .data(waveform);
     frame.render_widget(
         Chart::new(vec![trace])
-            .block(Block::bordered().title(" Waveform · L "))
             .x_axis(Axis::default().bounds([0.0, (MONITOR_FRAMES - 1) as f64]))
             .y_axis(Axis::default().bounds([-1.0, 1.0])),
-        scope,
+        scope_inner,
     );
 
-    let block = Block::bordered().title(format!(" Spectrum · 0–{} Hz ", sample_rate / 2));
-    let columns = usize::from(block.inner(frequencies).width).min(spectrum.len());
+    let spectrum_frame = Block::bordered().title(format!(" Spectrum · 0–{} Hz ", sample_rate / 2));
+    let spectrum_inner = spectrum_frame.inner(frequencies);
+    frame.render_widget(spectrum_frame, frequencies);
+    let columns = usize::from(spectrum_inner.width).min(spectrum.len());
     let peaks: Vec<_> = (0..columns)
         .map(|i| {
             let start = i * spectrum.len() / columns;
@@ -817,11 +837,10 @@ fn draw_plots(
         .collect();
     frame.render_widget(
         Sparkline::default()
-            .block(block)
             .data(&peaks)
             .max(80)
             .style(Style::default().fg(Color::Magenta)),
-        frequencies,
+        spectrum_inner,
     );
 }
 

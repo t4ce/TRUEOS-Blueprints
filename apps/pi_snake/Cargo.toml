@@ -29,7 +29,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"
 [patch.crates-io]
 mio = { path = "../../../TRUEOS/vendor/mio-1.2.0" }
 rustix = { path = "../../../TRUEOS-Buildins/vendor/rustix-1.1.4-trueos" }
-socket2 = { path = "../../../TRUEOS-Buildins/vendor/socket2-0.6.3" }
 tokio = { path = "../../../TRUEOS-Buildins/vendor/tokio-1.54.1" }
 
 [profile.dev]
