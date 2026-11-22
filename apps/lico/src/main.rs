@@ -1,4 +1,5 @@
 mod audio;
+mod drum;
 mod examples;
 mod highlight;
 mod mcp;

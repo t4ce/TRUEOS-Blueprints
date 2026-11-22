@@ -40,6 +40,14 @@ fn parse_block(code: &str) -> Result<Pair<'_, Rule>, Box<Error<Rule>>> {
     })
 }
 
+fn reference_name(pair: Pair<'_, Rule>) -> &str {
+    match pair.as_str() {
+        "~🥁" => "~drum",
+        "~🥁.." => "~drum..",
+        name => name,
+    }
+}
+
 fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rule>>> {
     let nodes = lines.into_inner()
         .filter(|line| line.as_rule() == Rule::line)
@@ -53,7 +61,7 @@ fn ast_from_block(lines: Pair<'_, Rule>) -> Result<nodes::Ast<'_>, Box<Error<Rul
                 // if it's not, then report an error
                 .ok_or_else(|| line_end.to_err_with_positives([Rule::reference]))?;
 
-            let name = ref_pair.as_str();
+            let name = reference_name(ref_pair);
 
             let chain  = comp_iter.next()
                 // make sure it's a chain

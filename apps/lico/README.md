@@ -17,6 +17,11 @@ kernel audio server, then press **Alt+R** to play or apply edits. **Alt+S**
 stops playback, **Alt+D** shows node help, **Alt+[** and **Alt+]** change
 tempo, and **Esc** returns to the shell.
 
+Right-click Lico’s Shell3 window and choose **Add Drum**, or press **Alt+I**.
+This adds an audible kick track to the draft. Press **Alt+R** to apply it.
+The drum reference is displayed as `~🥁` using Microemoji. Older patches
+can still use `~drum`. Lico converts that spelling when you run the draft.
+
 A successful run colors the parsed patch and briefly highlights its border.
 The colors track the parsed draft until you edit it or load another patch.
 

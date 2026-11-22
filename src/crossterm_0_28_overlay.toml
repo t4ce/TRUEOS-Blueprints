@@ -1,0 +1,21 @@
+[package]
+name = "crossterm"
+version = "0.28.1"
+edition = "2021"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["bracketed-paste", "events", "windows"]
+bracketed-paste = ["crossterm_trueos/bracketed-paste"]
+events = ["crossterm_trueos/events"]
+event-stream = ["events", "crossterm_trueos/event-stream"]
+serde = ["crossterm_trueos/serde"]
+use-dev-tty = ["crossterm_trueos/use-dev-tty"]
+# Kept for legacy manifests that enable this feature on every target.
+windows = []
+
+[dependencies]
+crossterm_trueos = { package = "crossterm", version = "=0.29.0", default-features = false }

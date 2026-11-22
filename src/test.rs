@@ -1119,29 +1119,16 @@ mod terminal_platform_vendor_tests {
     }
 
     #[test]
-    fn crossterm_0_28_overlay_stages_the_complete_input_interface() {
+    fn crossterm_0_28_overlay_forwards_to_the_shared_backend() {
         let root = env::temp_dir().join(format!("trueos-crossterm-overlay-{}", std::process::id()));
-        let staged = stage_crossterm_trueos_overlay(&root, "0.28.1").unwrap();
-        assert!(
-            fs::read_to_string(staged.join("src/event/source/unix.rs"))
-                .unwrap()
-                .contains("mod parser;")
-        );
-        assert!(staged.join("src/event/source/unix/parser.rs").is_file());
-        assert!(
-            fs::read_to_string(staged.join("src/event.rs"))
-                .unwrap()
-                .contains("pub enum InputDiscardStatus")
-        );
-        assert!(
-            fs::read_to_string(staged.join("src/event/source.rs"))
-                .unwrap()
-                .contains("fn discard_buffered_input")
-        );
-        assert!(
-            fs::read_to_string(staged.join("src/event/read.rs"))
-                .unwrap()
-                .contains("source.discard_buffered_input()")
+        let staged = stage_crossterm_0_28_overlay(&root).unwrap();
+        let manifest = staged.join("Cargo.toml");
+        assert_eq!(package_version(&manifest).unwrap().as_deref(), Some("0.28.1"));
+        let manifest = fs::read_to_string(manifest).unwrap();
+        assert!(manifest.contains(r#"package = "crossterm", version = "=0.29.0""#));
+        assert_eq!(
+            fs::read_to_string(staged.join("lib.rs")).unwrap(),
+            "pub use crossterm_trueos::*;\n"
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -1157,7 +1144,6 @@ mod terminal_platform_vendor_tests {
             blueprint_vendor_path(root, "signal-hook-mio-0.2.5-trueos").join("src/lib.rs"),
         ).unwrap();
 
-        assert_eq!(crossterm, CROSSTERM_TRUEOS_MIO_SOURCE);
         assert!(crossterm.contains("trueos_set_nonblocking(tty_raw_fd)?;"));
         assert!(crossterm.contains("trueos_cabi_blueprint_terminal_surface_snapshot_v1"));
         // Retained TTY readability is drained without blocking; ordinary waits

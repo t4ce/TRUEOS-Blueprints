@@ -5,7 +5,8 @@
 A patch defines named chains. Write `name: node >> node` and end the chain
 with a newline or semicolon. A continued line starts with `>>`. Use `//`
 for comments. Names use lowercase letters, digits, and underscores, with a
-letter first after any `~` or `_` prefix.
+letter first after any `~` or `_` prefix. `~🥁` is an alias for `~drum`.
+Numbered drum names such as `~🥁2` are also valid private chains.
 
 Chains that start with `~` only play when routed into another chain. Other
 chains go to the main mix, so `out` is a conventional name for the final

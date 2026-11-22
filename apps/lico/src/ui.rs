@@ -1,4 +1,5 @@
 use crate::audio::{self, Command, DEFAULT_BPM, MONITOR_FRAMES, Status};
+use crate::drum;
 use crate::examples::{DEFAULT_PATCH, PATCHES};
 use crate::highlight::Highlight;
 use crate::mcp::{self, Session, SharedSession};
@@ -14,7 +15,7 @@ use ratatui::widgets::{
     Axis, Block, Chart, Clear, Dataset, GraphType, List, ListState, Paragraph, Sparkline, Wrap,
 };
 use ratatui::{DefaultTerminal, Frame};
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{CursorMove, TextArea};
 use rustfft::{FftPlanner, num_complex::Complex32};
 use std::error::Error;
 use std::io;
@@ -103,6 +104,7 @@ async fn editor(
     first_frame: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
     let mut first_frame = Some(first_frame);
+    let drum_menu = drum::register();
     let mut patch = patch_editor(&session.lock().expect("Lico session").draft);
     let mut highlight = None;
     let mut review: Option<(String, u16)> = None;
@@ -125,8 +127,19 @@ async fn editor(
     let docs: serde_json::Value = serde_json::from_str(include_str!("../assets/glicol-api.json"))
         .map_err(io::Error::other)?;
     let mut reference = mcp_error.map(|error| format!("Codex connection: {error}"));
+    let mut insert_drum = false;
 
     loop {
+        let menu_selected = drum_menu && drum::take_add_drum();
+        if (std::mem::take(&mut insert_drum) || menu_selected)
+            && review.is_none()
+            && examples.is_none()
+        {
+            add_drum(&mut patch, session);
+            highlight = None;
+            error = None;
+            reference = Some("Drum added. Alt+R to play.".into());
+        }
         while let Ok(update) = status.try_recv() {
             match update {
                 Status::Ready(rate) => {
@@ -358,6 +371,10 @@ async fn editor(
                     KeyCode::Char('q') if control => break,
                     KeyCode::Char('r') if alt => Some(Command::Run(patch.lines().join("\n"))),
                     KeyCode::Char('s') if alt => Some(Command::Stop),
+                    KeyCode::Char('i') if alt => {
+                        insert_drum = true;
+                        None
+                    }
                     KeyCode::Char('e') if alt => {
                         examples = Some(ListState::default().with_selected(Some(0)));
                         None
@@ -394,7 +411,23 @@ async fn editor(
                         None
                     }
                 };
-                if let Some(command) = command {
+                if let Some(mut command) = command {
+                    if let Command::Run(code) = &mut command
+                        && let Some(converted) = drum::display_alias(code)
+                    {
+                        let cursor = patch.cursor();
+                        patch = patch_editor(&converted);
+                        patch.move_cursor(CursorMove::Jump(
+                            cursor.0.min(u16::MAX as usize) as u16,
+                            cursor.1.min(u16::MAX as usize) as u16,
+                        ));
+                        highlight = None;
+                        session
+                            .lock()
+                            .expect("Lico session")
+                            .update_draft(converted.clone());
+                        *code = converted;
+                    }
                     reference = None;
                     let _ = commands.send(command).await;
                 }
@@ -413,6 +446,18 @@ async fn editor(
         }
     }
     Ok(())
+}
+
+fn add_drum(patch: &mut TextArea<'static>, session: &SharedSession) {
+    let addition = drum::track_to_append(&patch.lines().join("\n"));
+    patch.cancel_selection();
+    patch.move_cursor(CursorMove::Bottom);
+    patch.move_cursor(CursorMove::End);
+    patch.insert_str(addition);
+    session
+        .lock()
+        .expect("Lico session")
+        .update_draft(patch.lines().join("\n"));
 }
 
 fn patch_editor(code: &str) -> TextArea<'static> {

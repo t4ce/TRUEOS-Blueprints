@@ -2463,10 +2463,8 @@ fn source_overlay_patches(
 
     ensure_overlay_registry_sources(app_dir, manifest_path, work_dir, build_settings.flavor)?;
 
-    // Crossterm 0.29, Rustix 1.1, and signal-hook-mio are checked-in
-    // platform forks shared with TRUEOS and TRUEOS-Buildins. Crossterm 0.28 and Rustix 0.38 still need
-    // isolated overlays because their ABI-compatible platform forks have not
-    // been promoted yet.
+    // Crossterm 0.28 consumers share the native 0.29 backend through a
+    // compatibility overlay. Rustix 0.38 still uses its own staged overlay.
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
     let uses_crossterm_0_28 =
         uses_crossterm && manifest_or_lock_requires_crossterm_0_28_overlay(app_dir, manifest_path)?;
@@ -2787,7 +2785,7 @@ fn source_overlay_patches(
     }
 
     if uses_crossterm_0_28 {
-        let crossterm_0_28 = stage_crossterm_trueos_overlay(work_dir, "0.28.1")?;
+        let crossterm_0_28 = stage_crossterm_0_28_overlay(work_dir)?;
         out.retain(|patch| patch.key != "crossterm_0_28");
         out.push(CratePatch::alias(
             "crossterm_0_28",
@@ -3369,19 +3367,16 @@ fn stage_futures_timer_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String
     Ok(staged)
 }
 
-fn stage_crossterm_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf, String> {
-    let source_name = format!("crossterm-{version}");
-    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
-        format!(
-            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
-        )
-    })?;
+fn stage_crossterm_0_28_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     let staged = work_dir
         .join("source-overlay-crates")
-        .join(format!("crossterm-{version}-trueos"));
+        .join("crossterm-0.28.1-trueos");
     reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_crossterm_trueos_overlay(&staged)?;
+    // Ratatui 0.29 still requests Crossterm 0.28. Use the same terminal
+    // implementation and event state as direct Crossterm 0.29 callers.
+    fs::write(staged.join("Cargo.toml"), include_str!("crossterm_0_28_overlay.toml"))
+        .map_err(io_string)?;
+    fs::write(staged.join("lib.rs"), "pub use crossterm_trueos::*;\n").map_err(io_string)?;
     Ok(staged)
 }
 
@@ -3483,8 +3478,6 @@ fn ensure_overlay_registry_sources(
     flavor: BuildFlavor,
 ) -> Result<(), String> {
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
-    let uses_crossterm_0_28 =
-        uses_crossterm && manifest_or_lock_requires_crossterm_0_28_overlay(app_dir, manifest_path)?;
     let uses_rustix =
         uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")?;
     let uses_rustix_0_38 =
@@ -3492,7 +3485,6 @@ fn ensure_overlay_registry_sources(
     let uses_tonic = manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")?;
     let registry_overlays = [
         ("argmax", "0.4.0", "argmax-0.4.0"),
-        ("crossterm", "0.28.1", "crossterm-0.28.1"),
         ("ctrlc", "3.4.4", "ctrlc-3.4.4"),
         ("futures-timer", "3.0.4", "futures-timer-3.0.4"),
         ("hyper-timeout", "0.5.2", "hyper-timeout-0.5.2"),
@@ -3504,10 +3496,7 @@ fn ensure_overlay_registry_sources(
     ];
     let mut missing = Vec::new();
     for (crate_name, version, source_dir) in registry_overlays {
-        let required_by_crossterm = (uses_crossterm_0_28
-            && matches!((crate_name, source_dir), ("crossterm", "crossterm-0.28.1")))
-            || (uses_rustix_0_38
-                && matches!((crate_name, source_dir), ("rustix", "rustix-0.38.44")));
+        let required_by_crossterm = uses_rustix_0_38 && crate_name == "rustix";
         let required_by_tonic = uses_tonic && crate_name == "hyper-timeout";
         if find_cargo_registry_crate(source_dir).is_none()
             && (required_by_crossterm
@@ -3787,46 +3776,6 @@ fn patch_socket2_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         "    target_os = \"cygwin\",\n))]\ntype IovLen = c_int;",
         "    target_os = \"cygwin\",\n    target_os = \"trueos\",\n    target_os = \"zkvm\",\n))]\ntype IovLen = c_int;",
     )
-}
-
-const CROSSTERM_TRUEOS_MIO_SOURCE: &str =
-    include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix/mio.rs");
-
-fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    // The shared Mio backend depends on the fork's parser and input-discard
-    // interface. Stage that interface together for older Crossterm versions.
-    for (relative, source) in [
-        ("src/event/source/unix/mio.rs", CROSSTERM_TRUEOS_MIO_SOURCE),
-        ("src/event/source/unix/parser.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix/parser.rs")),
-        ("src/event/source/unix/tty.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix/tty.rs")),
-        ("src/event/source/unix.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source/unix.rs")),
-        ("src/event/source.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/source.rs")),
-        ("src/event/read.rs", include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event/read.rs")),
-    ] {
-        fs::write(crate_dir.join(relative), source).map_err(io_string)?;
-    }
-    let event_path = crate_dir.join("src/event.rs");
-    normalize_line_endings(&event_path)?;
-    let event = fs::read_to_string(&event_path).map_err(io_string)?;
-    if !event.contains("pub enum InputDiscardStatus") {
-        let shared_event = include_str!("../../TRUEOS-Buildins/vendor/crossterm-0.29.0-trueos/src/event.rs")
-            .replace("\r\n", "\n");
-        let start = shared_event.find("/// Whether discarding buffered input")
-            .ok_or_else(|| "missing shared Crossterm input-discard interface".to_string())?;
-        let end = shared_event[start..].find("/// Checks if there is an")
-            .ok_or_else(|| "missing end of shared Crossterm input-discard interface".to_string())?;
-        fs::write(&event_path, format!("{event}\n{}", &shared_event[start..start + end]))
-            .map_err(io_string)?;
-    }
-    Ok(())
-}
-
-fn normalize_line_endings(path: &Path) -> Result<(), String> {
-    let original = fs::read_to_string(path).map_err(io_string)?;
-    if original.contains("\r\n") {
-        fs::write(path, original.replace("\r\n", "\n")).map_err(io_string)?;
-    }
-    Ok(())
 }
 
 fn replace_file_text(path: &Path, needle: &str, replacement: &str) -> Result<(), String> {

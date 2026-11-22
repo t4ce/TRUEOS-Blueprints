@@ -323,7 +323,7 @@ impl<'ast> Node<'ast> for NumberOrRef<&'ast str> {
                 pair.try_to_parse().map(Self::Number)
             },
             Rule::reference => {
-                Ok(Self::Ref(pair.as_str()))
+                Ok(Self::Ref(crate::reference_name(pair)))
             },
         )
     }
@@ -415,7 +415,7 @@ impl<'ast> Node<'ast> for Get<'ast> {
             .next()
             .ok_or_else(|| span.as_end_span().to_err_with_positives([Rule::reference]))
             .map(|p| Self {
-                reference: p.as_str(),
+                reference: crate::reference_name(p),
             })
     }
 }
@@ -460,7 +460,7 @@ impl<'ast> Node<'ast> for UsizeOrRef<&'ast str> {
                 next.try_to_parse().map(Self::Usize)
             },
             Rule::reference => {
-                Ok(Self::Ref(next.as_str()))
+                Ok(Self::Ref(crate::reference_name(next)))
             },
         )
     }
@@ -545,7 +545,7 @@ impl<'ast> Node<'ast> for Seq<'ast> {
                                 Ok(None)
                             },
                             Rule::note_ref => {
-                                Ok(Some((time, UsizeOrRef::Ref(e.as_str()))))
+                                Ok(Some((time, UsizeOrRef::Ref(crate::reference_name(e)))))
                             },
                         )
                     })
@@ -610,7 +610,7 @@ impl<'ast> Node<'ast> for Mix<'ast> {
         _s: Span<'ast>,
     ) -> Result<Self, Box<Error<Rule>>> {
         Ok(Self {
-            nodes: pairs.map(|p| p.as_str()).collect(),
+            nodes: pairs.map(crate::reference_name).collect(),
         })
     }
 }
@@ -747,7 +747,7 @@ impl<'ast> Node<'ast> for Signal<'ast> {
                     .map(Self::Number)
             },
             Rule::reference => {
-                Ok(Self::Reference(paras.as_str()))
+                Ok(Self::Reference(crate::reference_name(paras)))
             },
             Rule::event => {
                 EventInner::parse(paras).map(Self::Event)
@@ -931,14 +931,12 @@ impl<'ast> Node<'ast> for Balance<'ast> {
         let end_span = span.as_end_span();
 
         Ok(Self {
-            left: pairs
-                .next()
-                .ok_or_else(|| end_span.to_err_with_positives([Rule::reference]))?
-                .as_str(),
-            right: pairs
-                .next()
-                .ok_or_else(|| end_span.to_err_with_positives([Rule::reference]))?
-                .as_str(),
+            left: crate::reference_name(
+                pairs.next().ok_or_else(|| end_span.to_err_with_positives([Rule::reference]))?,
+            ),
+            right: crate::reference_name(
+                pairs.next().ok_or_else(|| end_span.to_err_with_positives([Rule::reference]))?,
+            ),
         })
     }
 }
