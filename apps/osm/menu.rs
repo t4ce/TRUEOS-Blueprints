@@ -19,11 +19,11 @@ impl MapMenu {
     pub fn tick(
         &mut self,
         frame: &mut Frame,
-        view: &crate::viewport::Viewport,
+        coordinates_at: impl Fn(i32, i32) -> Option<(f64, f64)>,
     ) -> Result<(), Error> {
         while let Some(event) = frame.take_dynamic_context_menu_event()? {
             if event.closed.is_none() {
-                let point = view.coordinates_at(event.local_x, event.local_y);
+                let point = coordinates_at(event.local_x, event.local_y);
                 let label = point
                     .map(|(lon, lat)| format!("Frog {lon:.4},{lat:.4}"))
                     .unwrap_or_else(|| "Frog".into());

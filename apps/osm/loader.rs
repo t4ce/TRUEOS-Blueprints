@@ -38,7 +38,10 @@ impl Loader {
         }
     }
     pub fn request(&self, missing: Vec<TileKey>) -> Result<()> {
-        self.requests.send(missing).context("tile loader stopped")
+        if self.requests.is_closed() || *self.requests.borrow() != missing {
+            self.requests.send(missing).context("tile loader stopped")?;
+        }
+        Ok(())
     }
 }
 impl Drop for Loader {

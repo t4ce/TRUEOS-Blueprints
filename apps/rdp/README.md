@@ -1,23 +1,24 @@
-# RDP window viewer
+# RDP desktop viewer
 
-On-demand, view-only Blueprint for one Ubuntu window. Launch `rdp`, enter the
-Ubuntu machine's IP, and press Enter. The default port is UDP **43402**;
-`IP:port` overrides it. Esc disconnects; Ctrl+Q quits. Keyboard and pointer
-input are never sent to Ubuntu.
+On-demand, view-only Blueprint for one Ubuntu monitor or window. Launch
+`rdp` to connect immediately to **192.168.178.111:43402 (UDP)**. Use
+`rdp IP[:PORT]` to connect immediately to a different endpoint, or
+`rdp --configure` to edit the address interactively. In configuration mode,
+Enter connects, Esc disconnects, and Ctrl+Q quits. Keyboard and pointer input
+stay local.
 
-The TUI shows connection status. Video opens in a separate native UI4 video
-frame using TRUEOS's existing Intel media decode and GuC conversion path.
+Video opens directly in a native UI4 video frame using TRUEOS's existing
+Intel media decode and GuC conversion path. Closing the video frame disconnects.
 The stream is baseline H.264, normally 1280×720 at 30 fps. It needs a kernel
 containing the new `vmedia::LiveVideo` ingress operations (10–16); updating
 the Blueprint alone on an older kernel is insufficient.
 
 Start the Ubuntu side using the instructions in
 [TRUEOS-RDP/server](../../../TRUEOS-RDP/server/README.md). For the first
-hardware test, use its synthetic source, then select one X11 window. An Xorg
-desktop session is the supported first capture target. Native Wayland window
-capture is not implemented. This is a TRUEOS video protocol, without Microsoft
-RDP compatibility, audio, or remote control. Use a trusted LAN: the prototype
-does not authenticate or encrypt its UDP stream.
+hardware test, use its synthetic source or use `--portal` to select a Wayland
+monitor or window. A LAN portal listener requires an explicit rig IP. Use a
+trusted LAN because the prototype UDP transport is unauthenticated and
+unencrypted. The protocol carries video only.
 
 Build without publishing or deploying:
 
@@ -51,11 +52,24 @@ native decoder and waits for a new complete SPS/PPS/IDR picture. The server
 sends one every second. Disconnecting closes the UI4 playback session; the
 server expires the subscription after three seconds without a keepalive.
 
+For a receive-path baseline on TRUEOS, run `rdp --probe 30 192.168.178.111:43402`.
+The probe reports received UDP rate, time to first complete picture, longest
+gap between complete pictures (including the final wait), stream
+initializations, reassembly resets, and three-second media timeouts. It does
+not reserve a UI4 frame or use the decoder. Compare the same synthetic source,
+dimensions, and frame rate on wired and Wi-Fi clients. Reassembly resets count
+receiver recovery events, so they can result from late as well as lost packets.
+
+During direct playback, the shell prints a heartbeat every five seconds.
+It reports received video datagram bandwidth, pictures submitted per second,
+reassembly resets, and media timeouts for that interval. The picture rate
+measures input to native playback.
+
 Bare-metal acceptance checks:
 
 1. With the matching kernel and Blueprint available, run the Ubuntu server
    with `--test-source`, connect in `rdp`, and verify an animated native UI4
-   frame appears while the TUI remains responsive.
+   frame appears without using the configuration screen.
 2. Disconnect and reconnect; close the video frame and reconnect; verify slots
    are released and reused. Moving/resizing the UI4 frame should work through
    the existing video window controls.

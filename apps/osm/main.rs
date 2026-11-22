@@ -1,7 +1,8 @@
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod menu;
+mod camera;
 #[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
 mod logo;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod menu;
 // trueos-blueprint: features=["tokio-net-probe", "ui4-scene"]
 #[cfg(any(target_os = "trueos", target_os = "zkvm", test))]
 mod loader;
@@ -11,6 +12,7 @@ mod ram_cache;
 mod viewport;
 
 use anyhow::{Context, Result, ensure};
+use camera::Map;
 use image::RgbaImage;
 use std::{
     path::PathBuf,
@@ -21,56 +23,6 @@ const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
 const FOOTER: u32 = 24;
 const TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
-#[derive(Clone, Copy)]
-struct Map {
-    x: f64,
-    y: f64,
-    zoom: u8,
-    local_steps: i8,
-}
-impl Map {
-    fn new(lat: f64, lon: f64, zoom: u8) -> Self {
-        let n = (1u32 << zoom) as f64;
-        let lat = lat.clamp(-85.05112878, 85.05112878).to_radians();
-        Self {
-            x: (lon + 180.0) / 360.0 * n * 256.0,
-            y: (1.0 - (lat.tan() + 1.0 / lat.cos()).ln() / std::f64::consts::PI) / 2.0 * n * 256.0,
-            zoom,
-            local_steps: 0,
-        }
-    }
-    fn display_zoom(self) -> f64 {
-        self.zoom as f64 + self.local_steps as f64 / 4.0
-    }
-    fn tile_scale(self) -> f64 {
-        2f64.powf(self.local_steps as f64 / 4.0)
-    }
-    fn world_size(self) -> f64 {
-        256.0 * 2f64.powf(self.display_zoom())
-    }
-    fn zoom(&mut self, delta: i32) {
-        let before = self.display_zoom();
-        let next = (before + delta.signum() as f64 / 4.0).clamp(0.0, 19.0);
-        let steps = ((next - self.zoom as f64) * 4.0).round() as i8;
-        if steps.abs() == 4 {
-            self.zoom = next as u8;
-            self.local_steps = 0;
-        } else {
-            self.local_steps = steps;
-        }
-        let scale = 2f64.powf(next - before);
-        self.x *= scale;
-        self.y *= scale;
-        // A round trip through fractional scales must not move an exact pixel
-        // just below its integer boundary through floating-point roundoff.
-        for value in [&mut self.x, &mut self.y] {
-            if (*value - value.round()).abs() <= value.abs().max(1.0) * f64::EPSILON * 16.0 {
-                *value = value.round();
-            }
-        }
-    }
-}
 
 struct Tiles {
     client: reqwest::Client,
@@ -203,7 +155,15 @@ fn main() -> Result<()> {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 async fn run_ui() -> Result<()> {
-    use trueos::ui4_scene::{Error as UiError, Frame, PanPhase};
+    use tokio::time::{Instant, sleep_until};
+    use trueos::ui4_scene::{
+        Error as UiError, Frame, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY,
+    };
+
+    const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+    const RETRY_INTERVAL: Duration = Duration::from_millis(2);
+    const DRAG_BUTTONS: u32 = POINTER_BUTTON_PRIMARY | POINTER_BUTTON_MIDDLE;
+
     let tiles = Tiles::new()?;
     let mut loader = loader::Loader::start(tiles);
     trueos::logl::log(
@@ -213,20 +173,38 @@ async fn run_ui() -> Result<()> {
     let mut map = Map::new(51.471336, 13.827807, 17);
     let mut frame = Frame::open_immutable(80, 80, WIDTH, HEIGHT + FOOTER)
         .map_err(|e| anyhow::anyhow!("open map: {e:?}"))?;
+    frame
+        .set_primary_activation(true)
+        .map_err(|e| anyhow::anyhow!("map pointer setup: {e:?}"))?;
     let icon = logo::decode()?;
-    frame.enable_collapse(icon.width(), icon.height(), icon.as_raw())
+    frame
+        .enable_collapse(icon.width(), icon.height(), icon.as_raw())
         .map_err(|e| anyhow::anyhow!("map collapse setup: {e:?}"))?;
-    let mut menu = menu::MapMenu::new(&mut frame)
-        .map_err(|e| anyhow::anyhow!("map menu setup: {e:?}"))?;
+    let mut menu =
+        menu::MapMenu::new(&mut frame).map_err(|e| anyhow::anyhow!("map menu setup: {e:?}"))?;
     let mut view = viewport::Viewport::new(map, frame.width(), frame.height());
-    println!("OSM: pan gesture to move, wheel to zoom; https://www.openstreetmap.org/copyright");
-    let mut dirty = true;
-    let mut request = true;
+    let mut presenter = presenter::Presenter::default();
+    let mut displayed = (map, frame.width(), frame.height());
+    let mut submitting = displayed;
+    let mut revision = 1u64;
+    let mut published = 0u64;
     let mut pending_resize = None;
+    let mut drag = None;
     let mut presentations = 0u64;
     let mut discarded = 0u64;
+    loader.request(view.missing())?;
+
+    println!("OSM: drag to move, wheel to zoom; https://www.openstreetmap.org/copyright");
     loop {
-        menu.tick(&mut frame, &view).map_err(|e| anyhow::anyhow!("map menu: {e:?}"))?;
+        let frame_deadline = Instant::now() + FRAME_INTERVAL;
+        trueos::vsys::poll_once();
+        let (displayed_map, width, height) = displayed;
+        let map_height = height.saturating_sub(FOOTER);
+        menu.tick(&mut frame, |x, y| {
+            viewport::coordinates_at(displayed_map, width, height, x, y)
+        })
+        .map_err(|e| anyhow::anyhow!("map menu: {e:?}"))?;
+
         let mut navigated = false;
         while let Some(event) = frame
             .take_resize_event()
@@ -234,7 +212,43 @@ async fn run_ui() -> Result<()> {
         {
             pending_resize = Some((event.width, event.height));
         }
-        if let Some((width, height)) = pending_resize {
+        // UI4 also emits a middle-button pan event for each pointer sample.
+        // Handle the gestures and wheel in pointer queue order.
+        while frame
+            .take_pan_event()
+            .map_err(|e| anyhow::anyhow!("map pan event: {e:?}"))?
+            .is_some()
+        {}
+        while let Some(event) = frame
+            .take_pointer_event()
+            .map_err(|e| anyhow::anyhow!("map pointer event: {e:?}"))?
+        {
+            let over_map = (0..width as i32).contains(&event.local_x)
+                && (0..map_height as i32).contains(&event.local_y);
+            if let Some((source, x, y)) = drag
+                && source == event.source
+            {
+                let held = event.buttons_down & DRAG_BUTTONS != 0;
+                if held || event.buttons_released & DRAG_BUTTONS != 0 {
+                    navigated |= map.pan(event.x as i32 - x, event.y as i32 - y);
+                }
+                drag = held.then_some((source, event.x as i32, event.y as i32));
+            }
+            if drag.is_none() && over_map && event.buttons_pressed & DRAG_BUTTONS != 0 {
+                drag = Some((event.source, event.x as i32, event.y as i32));
+            }
+            if over_map && event.wheel != 0 {
+                navigated |= map.zoom_at(
+                    i32::from(event.wheel),
+                    f64::from(event.local_x) - f64::from(width / 2),
+                    f64::from(event.local_y) - f64::from(map_height / 2),
+                );
+            }
+        }
+
+        if !presenter.is_publishing()
+            && let Some((width, height)) = pending_resize
+        {
             if (width, height) == (frame.width(), frame.height()) {
                 pending_resize = None;
             } else {
@@ -252,72 +266,60 @@ async fn run_ui() -> Result<()> {
                 }
             }
         }
-        // Drain input before considering any completion from an older view.
-        while let Some(event) = frame
-            .take_pan_event()
-            .map_err(|e| anyhow::anyhow!("map pan event: {e:?}"))?
-        {
-            if matches!(event.phase, PanPhase::Begin | PanPhase::Update) {
-                map.x -= event.dx as f64;
-                map.y = (map.y - event.dy as f64).clamp(0.0, map.world_size());
-                navigated = true;
-            }
-        }
-        while let Some(event) = frame
-            .take_pointer_event()
-            .map_err(|e| anyhow::anyhow!("map pointer event: {e:?}"))?
-        {
-            if event.wheel != 0 {
-                map.zoom(event.wheel as i32);
-                navigated = true;
-            }
-        }
         if navigated {
             view.navigate(map, frame.width(), frame.height());
-            dirty = true;
-            request = true;
         }
-        dirty |= apply_completions(&mut loader, &mut view, &mut discarded)?;
-        if dirty {
-            if let Err(error) = presenter::present(&mut frame, view.pixels()).await {
-                trueos::logl::log(
-                    trueos::logl::level::ERROR,
-                    format_args!(
-                        "osm: presentation failed error={error:?} center=({:.0},{:.0}) zoom={:.2} tiles={} extent={}x{}",
-                        map.x,
-                        map.y,
-                        map.display_zoom(),
-                        map.zoom,
-                        frame.width(),
-                        frame.height()
-                    ),
-                );
-                return Err(anyhow::anyhow!("present map sprite: {error:?}"));
-            }
-            dirty = false;
-            presentations += 1;
-            if presentations <= 4 || presentations % 120 == 0 {
-                trueos::logl::log(
-                    trueos::logl::level::IMPORTANT,
-                    format_args!(
-                        "osm: immediate viewport frame={} zoom={:.2} tiles={} extent={}x{} missing={} stale-skipped={}",
-                        presentations,
-                        map.display_zoom(),
-                        map.zoom,
-                        frame.width(),
-                        frame.height(),
-                        view.missing().len(),
-                        discarded
-                    ),
-                );
-            }
-        }
-        if request {
+        let completed = apply_completions(&mut loader, &mut view, &mut discarded)?;
+        if navigated {
             loader.request(view.missing())?;
-            request = false;
         }
-        trueos::vsys::poll_once();
-        tokio::time::sleep(Duration::from_millis(16)).await;
+        if navigated || completed {
+            revision += 1;
+        }
+
+        let mut retry = pending_resize.is_some();
+        if published != revision {
+            if !presenter.is_publishing() {
+                submitting = (map, frame.width(), frame.height());
+            }
+            match presenter.step(&mut frame, revision, || view.pixels()) {
+                Ok(presenter::Status::Published(presented)) => {
+                    published = presented;
+                    displayed = submitting;
+                    retry |= published != revision;
+                    presentations += 1;
+                    if presentations <= 4 || presentations % 120 == 0 {
+                        let (map, width, height) = displayed;
+                        trueos::logl::log(
+                            trueos::logl::level::IMPORTANT,
+                            format_args!(
+                                "osm: immediate viewport frame={} zoom={:.2} tiles={} extent={}x{} stale-skipped={}",
+                                presentations,
+                                map.display_zoom(),
+                                map.zoom,
+                                width,
+                                height,
+                                discarded
+                            ),
+                        );
+                    }
+                }
+                Ok(presenter::Status::Busy) => retry = true,
+                Ok(presenter::Status::Idle) => {}
+                Err(error) => return Err(anyhow::anyhow!("present map sprite: {error:?}")),
+            }
+        }
+        let now = Instant::now();
+        if frame_deadline <= now {
+            tokio::task::yield_now().await;
+        } else {
+            let wake = if retry {
+                frame_deadline.min(now + RETRY_INTERVAL)
+            } else {
+                frame_deadline
+            };
+            sleep_until(wake).await;
+        }
     }
 }
 

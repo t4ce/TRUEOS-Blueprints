@@ -1,8 +1,14 @@
-//! Immediate display state. Only tiles contributing to the current viewport live here.
+//! Compose the current view from decoded tiles and recently visible zoom levels.
 use crate::{FOOTER, Map};
 use font8x8::UnicodeFonts;
 use image::{Rgba, RgbaImage};
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+};
+
+const RECENT_TILES: usize = 64;
+const TILE_PITCH: usize = 256 * 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TileKey {
@@ -24,143 +30,239 @@ struct Placement {
     scale: f64,
 }
 
+impl Placement {
+    fn bounds(self) -> Bounds {
+        let edge = 256.0 * self.scale;
+        Bounds {
+            left: first_pixel(self.x),
+            top: first_pixel(self.y),
+            right: first_pixel(self.x + edge),
+            bottom: first_pixel(self.y + edge),
+        }
+    }
+}
+
+// Rasterize tile edges at pixel centers so neighbouring tiles meet exactly.
+fn first_pixel(edge: f64) -> i64 {
+    (edge - 0.5).ceil() as i64
+}
+
+#[derive(Clone, Copy)]
+struct Bounds {
+    left: i64,
+    top: i64,
+    right: i64,
+    bottom: i64,
+}
+
+impl Bounds {
+    fn intersect(self, other: Self) -> Option<Self> {
+        let bounds = Self {
+            left: self.left.max(other.left),
+            top: self.top.max(other.top),
+            right: self.right.min(other.right),
+            bottom: self.bottom.min(other.bottom),
+        };
+        (bounds.left < bounds.right && bounds.top < bounds.bottom).then_some(bounds)
+    }
+}
+
+struct CachedTile {
+    pixels: RgbaImage,
+    last_visible: u64,
+}
+
 pub struct Viewport {
     map: Map,
     pixels: RgbaImage,
     placements: Vec<Placement>,
-    ready: HashMap<TileKey, RgbaImage>,
+    wanted: HashSet<TileKey>,
+    tiles: HashMap<TileKey, CachedTile>,
+    navigation: u64,
+    dirty: bool,
+    columns: Vec<usize>,
 }
 
 impl Viewport {
     pub fn new(map: Map, width: u32, height: u32) -> Self {
-        let mut pixels = RgbaImage::from_pixel(width, height, Rgba([255; 4]));
-        footer(&mut pixels);
+        let placements = placements(map, width, height);
         Self {
             map,
-            pixels,
-            placements: placements(map, width, height),
-            ready: HashMap::new(),
+            pixels: frame_pixels(width, height),
+            wanted: placements.iter().map(|p| p.key).collect(),
+            placements,
+            tiles: HashMap::new(),
+            navigation: 0,
+            dirty: false,
+            columns: Vec::new(),
         }
     }
-    pub fn coordinates_at(&self, x: i32, y: i32) -> Option<(f64, f64)> {
-        let height = self.pixels.height().saturating_sub(FOOTER);
-        if !(0..self.pixels.width() as i32).contains(&x) || !(0..height as i32).contains(&y) {
-            return None;
-        }
-        let (left, top) = origin(self.map, self.pixels.width(), height);
-        let world = self.map.world_size();
-        let px = (left as f64 + x as f64).rem_euclid(world);
-        let py = top as f64 + y as f64;
-        if !(0.0..=world).contains(&py) {
-            return None;
-        }
-        let lon = px / world * 360.0 - 180.0;
-        let lat = (std::f64::consts::PI * (1.0 - 2.0 * py / world))
-            .sinh()
-            .atan()
-            .to_degrees();
-        Some((lon, lat))
+
+    #[cfg(test)]
+    fn coordinates_at(&self, x: i32, y: i32) -> Option<(f64, f64)> {
+        coordinates_at(self.map, self.pixels.width(), self.pixels.height(), x, y)
     }
-    pub fn pixels(&self) -> &RgbaImage {
+
+    pub fn pixels(&mut self) -> &RgbaImage {
+        if self.dirty {
+            self.compose();
+            self.dirty = false;
+        }
         &self.pixels
     }
+
     pub fn missing(&self) -> Vec<TileKey> {
         let mut seen = HashSet::new();
         self.placements
             .iter()
             .filter_map(|p| {
-                (!self.ready.contains_key(&p.key) && seen.insert(p.key)).then_some(p.key)
+                (!self.tiles.contains_key(&p.key) && seen.insert(p.key)).then_some(p.key)
             })
             .collect()
     }
+
     pub fn navigate(&mut self, map: Map, width: u32, height: u32) {
-        let old_height = self.pixels.height().saturating_sub(FOOTER);
-        let map_height = height.saturating_sub(FOOTER);
-        let (old_left, old_top) = origin(self.map, self.pixels.width(), old_height);
-        let (left, top) = origin(map, width, map_height);
-        let scale = 2f64.powf(self.map.display_zoom() - map.display_zoom());
-        let mut pixels = RgbaImage::from_pixel(width, height, Rgba([255; 4]));
-        // Reproject displayed map pixels now. Uncovered areas stay opaque white;
-        // neither disk/cache lookup, PNG decode nor a network await runs here.
-        if scale == 1.0 {
-            // Pan and resize are plain clipped row copies.
-            let dx = left - old_left;
-            let dy = top - old_top;
-            let x0 = (-dx).max(0).min(width as i64);
-            let x1 = (self.pixels.width() as i64 - dx).min(width as i64).max(x0);
-            let y0 = (-dy).max(0).min(map_height as i64);
-            let y1 = (old_height as i64 - dy).min(map_height as i64).max(y0);
-            let bytes = (x1 - x0) as usize * 4;
-            for y in (y0..y1).filter(|_| bytes != 0) {
-                let source =
-                    ((y + dy) as usize * self.pixels.width() as usize + (x0 + dx) as usize) * 4;
-                let dest = (y as usize * width as usize + x0 as usize) * 4;
-                pixels.as_mut()[dest..dest + bytes]
-                    .copy_from_slice(&self.pixels.as_raw()[source..source + bytes]);
+        if self.pixels.dimensions() != (width, height) {
+            self.pixels = frame_pixels(width, height);
+        }
+        self.map = map;
+        self.placements = placements(map, width, height);
+        self.wanted.clear();
+        self.wanted.extend(self.placements.iter().map(|p| p.key));
+        self.navigation += 1;
+
+        let mut recent = Vec::new();
+        for (key, tile) in &mut self.tiles {
+            if self.wanted.contains(key) {
+                tile.last_visible = self.navigation;
+            } else {
+                recent.push((tile.last_visible, *key));
             }
-        } else {
-            // Precompute the zoom mapping once per column, not once per pixel.
-            let columns: Vec<_> = (0..width)
-                .map(|x| {
-                    let sx =
-                        (((left as f64 + x as f64 + 0.5) * scale) - old_left as f64).floor() as i64;
-                    (0..self.pixels.width() as i64)
-                        .contains(&sx)
-                        .then(|| sx as usize * 4)
-                })
-                .collect();
-            for y in 0..map_height {
-                let sy = (((top as f64 + y as f64 + 0.5) * scale) - old_top as f64).floor() as i64;
-                if !(0..old_height as i64).contains(&sy) {
-                    continue;
-                }
-                let source = sy as usize * self.pixels.width() as usize * 4;
-                let dest = y as usize * width as usize * 4;
-                for (pixel, column) in pixels.as_mut()[dest..dest + width as usize * 4]
-                    .chunks_exact_mut(4)
-                    .zip(&columns)
-                {
-                    if let Some(column) = column {
-                        pixel.copy_from_slice(
-                            &self.pixels.as_raw()[source + column..source + column + 4],
-                        );
+        }
+        if recent.len() > RECENT_TILES {
+            let remove = recent.len() - RECENT_TILES;
+            recent.select_nth_unstable_by_key(remove, |(last_visible, _)| *last_visible);
+            for (_, key) in recent.into_iter().take(remove) {
+                self.tiles.remove(&key);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Accept a completion only when the latest viewport still needs its key.
+    pub fn complete(&mut self, key: TileKey, tile: RgbaImage) -> bool {
+        if tile.dimensions() != (256, 256) || !self.wanted.contains(&key) {
+            return false;
+        }
+        self.tiles.insert(
+            key,
+            CachedTile {
+                pixels: opaque_tile(tile),
+                last_visible: self.navigation,
+            },
+        );
+        self.dirty = true;
+        true
+    }
+
+    fn compose(&mut self) {
+        let width = self.pixels.width();
+        let height = self.pixels.height().saturating_sub(FOOTER);
+        let map_bounds = Bounds {
+            left: 0,
+            top: 0,
+            right: i64::from(width),
+            bottom: i64::from(height),
+        };
+        let pitch = width as usize * 4;
+        let map_pixels = &mut self.pixels.as_mut()[..pitch * height as usize];
+        map_pixels.fill(255);
+        let mut gaps = Vec::new();
+        for &p in &self.placements {
+            let Some(bounds) = p.bounds().intersect(map_bounds) else {
+                continue;
+            };
+            if let Some(tile) = self.tiles.get(&p.key) {
+                paint_tile(
+                    map_pixels,
+                    pitch,
+                    &tile.pixels,
+                    p,
+                    bounds,
+                    &mut self.columns,
+                );
+            } else {
+                gaps.push(bounds);
+            }
+        }
+
+        if gaps.is_empty() {
+            return;
+        }
+        let mut fallback: Vec<_> = self
+            .tiles
+            .iter()
+            .filter(|(key, _)| key.z != self.map.zoom)
+            .collect();
+        // Nearer levels take precedence. Prefer more detail at equal distance.
+        fallback.sort_unstable_by_key(|(key, _)| (Reverse(key.z.abs_diff(self.map.zoom)), key.z));
+        let (left, top) = origin(self.map, width, height);
+        let world = self.map.world_size();
+        for (&key, tile) in fallback {
+            let scale = 2f64.powf(self.map.display_zoom() - f64::from(key.z));
+            let edge = 256.0 * scale;
+            let x = key.x as f64 * edge - left;
+            let y = key.y as f64 * edge - top;
+            if y + edge <= 0.0 || y >= f64::from(height) {
+                continue;
+            }
+            let first_wrap = ((-x - edge) / world).floor() as i64 + 1;
+            let end_wrap = ((f64::from(width) - x) / world).ceil() as i64;
+            for wrap in first_wrap..end_wrap {
+                let p = Placement {
+                    key,
+                    x: x + wrap as f64 * world,
+                    y,
+                    scale,
+                };
+                let bounds = p.bounds();
+                for &gap in &gaps {
+                    if let Some(clip) = bounds.intersect(gap) {
+                        paint_tile(map_pixels, pitch, &tile.pixels, p, clip, &mut self.columns);
                     }
                 }
             }
         }
-        self.map = map;
-        self.placements = placements(map, width, height);
-        let needed: HashSet<_> = self.placements.iter().map(|p| p.key).collect();
-        self.ready.retain(|key, _| needed.contains(key));
-        for placement in &self.placements {
-            if let Some(tile) = self.ready.get(&placement.key) {
-                paint_tile(&mut pixels, tile, *placement);
-            }
-        }
-        footer(&mut pixels);
-        self.pixels = pixels;
-    }
-    /// A completion is keyed by tile, not its old screen position or viewport.
-    /// Reuse it if still visible (including world wrap); otherwise do no copy.
-    pub fn complete(&mut self, key: TileKey, tile: RgbaImage) -> bool {
-        if tile.dimensions() != (256, 256) || !self.placements.iter().any(|p| p.key == key) {
-            return false;
-        }
-        for p in self.placements.iter().filter(|p| p.key == key) {
-            paint_tile(&mut self.pixels, &tile, *p);
-        }
-        footer(&mut self.pixels);
-        self.ready.insert(key, tile);
-        true
     }
 }
 
-fn origin(map: Map, width: u32, map_height: u32) -> (i64, i64) {
+pub fn coordinates_at(map: Map, width: u32, height: u32, x: i32, y: i32) -> Option<(f64, f64)> {
+    let height = height.saturating_sub(FOOTER);
+    if !(0..width as i32).contains(&x) || !(0..height as i32).contains(&y) {
+        return None;
+    }
+    let (left, top) = origin(map, width, height);
+    let world = map.world_size();
+    let px = (left + f64::from(x)).rem_euclid(world);
+    let py = top + f64::from(y);
+    if !(0.0..=world).contains(&py) {
+        return None;
+    }
+    let lon = px / world * 360.0 - 180.0;
+    let lat = (std::f64::consts::PI * (1.0 - 2.0 * py / world))
+        .sinh()
+        .atan()
+        .to_degrees();
+    Some((lon, lat))
+}
+
+fn origin(map: Map, width: u32, map_height: u32) -> (f64, f64) {
     (
-        map.x.floor() as i64 - width as i64 / 2,
-        map.y.floor() as i64 - map_height as i64 / 2,
+        map.x - f64::from(width / 2),
+        map.y - f64::from(map_height / 2),
     )
 }
+
 fn placements(map: Map, width: u32, height: u32) -> Vec<Placement> {
     let map_height = height.saturating_sub(FOOTER);
     let mut out = Vec::new();
@@ -170,14 +272,12 @@ fn placements(map: Map, width: u32, height: u32) -> Vec<Placement> {
     let (left, top) = origin(map, width, map_height);
     let n = 1i64 << map.zoom;
     let scale = map.tile_scale();
-    let tile_left = (left as f64 / scale / 256.0).floor() as i64;
-    let tile_right = ((left as f64 + width as f64) / scale / 256.0).ceil() as i64;
-    let tile_top = (top as f64 / scale / 256.0).floor() as i64;
-    let tile_bottom = ((top as f64 + map_height as f64) / scale / 256.0).ceil() as i64;
+    let edge = 256.0 * scale;
+    let tile_left = (left / edge).floor() as i64;
+    let tile_right = ((left + f64::from(width)) / edge).ceil() as i64;
+    let tile_top = ((top / edge).floor() as i64).max(0);
+    let tile_bottom = (((top + f64::from(map_height)) / edge).ceil() as i64).min(n);
     for ty in tile_top..tile_bottom {
-        if !(0..n).contains(&ty) {
-            continue;
-        }
         for tx in tile_left..tile_right {
             out.push(Placement {
                 key: TileKey {
@@ -185,58 +285,103 @@ fn placements(map: Map, width: u32, height: u32) -> Vec<Placement> {
                     x: tx.rem_euclid(n),
                     y: ty,
                 },
-                x: tx as f64 * 256.0 * scale - left as f64,
-                y: ty as f64 * 256.0 * scale - top as f64,
+                x: tx as f64 * edge - left,
+                y: ty as f64 * edge - top,
                 scale,
             });
         }
     }
+    // Issue visible requests from the center out.
+    let distance = |p: &Placement| {
+        let dx = p.x + edge / 2.0 - f64::from(width / 2);
+        let dy = p.y + edge / 2.0 - f64::from(map_height / 2);
+        dx * dx + dy * dy
+    };
+    out.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
     out
 }
-// Sample original decoded tiles at the display scale, avoiding cumulative
-// resampling blur and ensuring late arrivals use the latest local zoom.
-fn paint_tile(pixels: &mut RgbaImage, tile: &RgbaImage, p: Placement) {
+
+fn paint_tile(
+    pixels: &mut [u8],
+    pitch: usize,
+    tile: &RgbaImage,
+    p: Placement,
+    clip: Bounds,
+    columns: &mut Vec<usize>,
+) {
+    let dest_x = clip.left as usize * 4;
+    let row_len = (clip.right - clip.left) as usize * 4;
+    let source = tile.as_raw();
     if p.scale == 1.0 {
-        image::imageops::overlay(pixels, tile, p.x as i64, p.y as i64);
+        let source_x = (clip.left - first_pixel(p.x)) as usize * 4;
+        let source_y = first_pixel(p.y);
+        for y in clip.top..clip.bottom {
+            let src = (y - source_y) as usize * TILE_PITCH + source_x;
+            let dst = y as usize * pitch + dest_x;
+            pixels[dst..dst + row_len].copy_from_slice(&source[src..src + row_len]);
+        }
         return;
     }
-    let x0 = (p.x - 0.5).ceil().max(0.0) as u32;
-    let y0 = (p.y - 0.5).ceil().max(0.0) as u32;
-    let x1 = (p.x + 256.0 * p.scale - 0.5)
-        .ceil()
-        .clamp(0.0, pixels.width() as f64) as u32;
-    let y1 = (p.y + 256.0 * p.scale - 0.5)
-        .ceil()
-        .clamp(0.0, pixels.height().saturating_sub(FOOTER) as f64) as u32;
-    for y in y0..y1 {
-        let sy = ((y as f64 + 0.5 - p.y) / p.scale).floor().clamp(0.0, 255.0) as u32;
-        for x in x0..x1 {
-            let sx = ((x as f64 + 0.5 - p.x) / p.scale).floor().clamp(0.0, 255.0) as u32;
-            pixels.put_pixel(x, y, *tile.get_pixel(sx, sy));
+
+    let inverse = p.scale.recip();
+    let sample = |pixel: i64, origin: f64| {
+        ((pixel as f64 + 0.5 - origin) * inverse)
+            .floor()
+            .clamp(0.0, 255.0) as usize
+    };
+    columns.clear();
+    columns.extend((clip.left..clip.right).map(|x| sample(x, p.x) * 4));
+    let mut last_sample = None;
+    for y in clip.top..clip.bottom {
+        let sy = sample(y, p.y);
+        let dst = y as usize * pitch + dest_x;
+        if last_sample == Some(sy) {
+            pixels.copy_within(dst - pitch..dst - pitch + row_len, dst);
+        } else {
+            let row = &source[sy * TILE_PITCH..(sy + 1) * TILE_PITCH];
+            for (pixel, &sx) in pixels[dst..dst + row_len]
+                .chunks_exact_mut(4)
+                .zip(columns.iter())
+            {
+                pixel.copy_from_slice(&row[sx..sx + 4]);
+            }
+            last_sample = Some(sy);
         }
     }
 }
 
-fn footer(pixels: &mut RgbaImage) {
-    let footer_top = pixels.height().saturating_sub(FOOTER);
-    for y in footer_top..pixels.height() {
-        for x in 0..pixels.width() {
-            pixels.put_pixel(x, y, Rgba([255; 4]));
+fn opaque_tile(mut tile: RgbaImage) -> RgbaImage {
+    // Blend once against the map background, keeping the viewport suitable for
+    // UI4's opaque copy path even when an alternate provider returns alpha.
+    for pixel in tile.as_mut().chunks_exact_mut(4) {
+        if pixel[3] != 255 {
+            let alpha = u16::from(pixel[3]);
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+            }
+            pixel[3] = 255;
         }
     }
+    tile
+}
+
+fn frame_pixels(width: u32, height: u32) -> RgbaImage {
+    let mut pixels = RgbaImage::from_pixel(width, height, Rgba([255; 4]));
+    let footer_top = height.saturating_sub(FOOTER);
     for (i, ch) in "(c) OpenStreetMap contributors | ODbL".chars().enumerate() {
         if let Some(glyph) = font8x8::BASIC_FONTS.get(ch) {
             for (y, row) in glyph.iter().enumerate() {
                 for x in 0..8 {
                     let px = 8 + i as u32 * 8 + x;
                     let py = footer_top + 8 + y as u32;
-                    if row & (1 << x) != 0 && px < pixels.width() && py < pixels.height() {
+                    if row & (1 << x) != 0 && px < width && py < height {
                         pixels.put_pixel(px, py, Rgba([20, 20, 20, 255]));
                     }
                 }
             }
         }
     }
+    pixels
 }
 
 #[cfg(test)]
@@ -414,6 +559,60 @@ mod tests {
         assert!(!view.complete(key, tile([255, 0, 0, 255])));
         assert_eq!(*view.pixels(), before);
     }
+    #[test]
+    fn recent_tiles_make_pan_and_zoom_round_trips_immediate() {
+        let mut view = loaded();
+        let original = view.pixels().clone();
+        let mut camera = map();
+
+        camera.pan(-300, 0);
+        view.navigate(camera, 256, 256 + FOOTER);
+        assert_ne!(*view.pixels(), original);
+        camera.pan(300, 0);
+        view.navigate(camera, 256, 256 + FOOTER);
+        assert!(view.missing().is_empty());
+        assert_eq!(*view.pixels(), original);
+
+        camera.zoom_at(4, -32.0, 32.0);
+        view.navigate(camera, 256, 256 + FOOTER);
+        assert!(!view.missing().is_empty());
+        assert_eq!(*view.pixels().get_pixel(0, 255), Rgba([40, 80, 120, 255]));
+        camera.zoom_at(-4, -32.0, 32.0);
+        view.navigate(camera, 256, 256 + FOOTER);
+        assert!(view.missing().is_empty());
+        assert_eq!(*view.pixels(), original);
+    }
+
+    #[test]
+    fn wrapped_pan_keeps_tiles_aligned_across_the_antimeridian() {
+        let mut camera = Map { x: 8.0, ..map() };
+        let mut view = Viewport::new(camera, 32, 32 + FOOTER);
+        let west = Rgba([20, 40, 60, 255]);
+        let east = Rgba([60, 40, 20, 255]);
+        assert!(view.complete(TileKey { z: 2, x: 3, y: 1 }, tile(west.0)));
+        assert!(view.complete(TileKey { z: 2, x: 0, y: 1 }, tile(east.0)));
+        assert_eq!(*view.pixels().get_pixel(7, 0), west);
+        assert_eq!(*view.pixels().get_pixel(8, 0), east);
+        camera.pan(16, 0);
+        view.navigate(camera, 32, 32 + FOOTER);
+        assert!(view.missing().is_empty());
+        assert_eq!(*view.pixels().get_pixel(23, 0), west);
+        assert_eq!(*view.pixels().get_pixel(24, 0), east);
+    }
+
+    #[test]
+    fn exact_tiles_replace_fallback_and_keep_the_opaque_frame() {
+        let mut view = loaded();
+        let mut camera = map();
+        camera.zoom(4);
+        view.navigate(camera, 256, 256 + FOOTER);
+        let key = TileKey { z: 3, x: 2, y: 2 };
+        assert!(view.complete(key, tile([1, 5, 9, 128])));
+        assert_eq!(*view.pixels().get_pixel(0, 0), Rgba([128, 130, 132, 255]));
+        assert_eq!(*view.pixels().get_pixel(128, 0), Rgba([40, 80, 120, 255]));
+        assert!(view.pixels().pixels().all(|p| p[3] == 255));
+    }
+
     #[test]
     fn resize_preserves_center_and_reuses_full_visible_tile() {
         let mut view = loaded();

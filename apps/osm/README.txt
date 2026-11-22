@@ -1,19 +1,19 @@
 TRUEOS OSM demo
 
 Starts at 51.471336, 13.827807, zoom 17.
-TRUEOS: UI4 pan gestures move the map; wheel changes zoom (0..19).
-Each tick changes displayed zoom by 0.25 (about 19% scale). Three intermediate
-ticks reuse the current integer tile level; the fourth selects the next level.
-Reversing direction unwinds local steps. New tiles exposed by panning or local
-zoom-out still load at the current level. Tile arrivals are sampled at the latest
-display scale from decoded originals; the map center and footer stay fixed.
+TRUEOS: drag with the primary or middle button to pan. The wheel zooms around
+the pointer over the map (0..19). Each detent changes displayed zoom by 0.25,
+including every detent in a batched event. Intermediate steps reuse the current
+tile level until the view is one full level away. Reversing unwinds local steps.
+The attribution footer stays fixed.
 Host preview: run cargo run from apps/osm; output is osm-demo.png.
 OSM_CACHE_DIR selects a persistent writable directory (default osm-tile-cache).
 OSM_TILE_URL selects an HTTPS raster tile server base URL, using /z/x/y.png.
 Only current viewport tiles are fetched. Cache is retained for seven days.
-Keep it between launches. Failed tiles leave uncovered white areas while the
-loader retries with exponential backoff from one to thirty seconds. Retries
-continue without navigation and stop when a tile leaves the current demand.
+Keep it between launches. Failed tiles use recent imagery where available and
+leave any uncovered areas white. The loader retries with exponential backoff
+from one to thirty seconds. Retries continue without navigation and stop when
+a tile leaves the current demand.
 Hardware logs identify fetch request/status/body or PNG decode failures and
 the next retry delay. Invalid disk PNGs are evicted, and HTTP errors or invalid
 downloaded PNGs are never written to the cache.
@@ -24,32 +24,31 @@ than their disk source. The RAM database is never serialized or persisted.
 OSM_CACHE_MODE=ram disables the disk layer for an alternate provider whose
 policy allows it. The public tile.openstreetmap.org service retains disk caching.
 
-UI4 presentation uploads one opaque sprite using the same ID, then submits a
-full-frame 1:1 copy quad with source_over=false. This meets the existing kernel
-BCS0 XY_FAST_COPY_BLT fast path. Busy responses yield through Tokio timers.
-Upload/begin/publish retry their stage; draw Busy cancels the kernel write lease,
-so the presenter begins a fresh frame before resubmitting the retained sprite.
-This also applies to the compact logo. Admission retries emit "sprite admission
-busy action=restart-frame"; failures identify upload/begin/draw/publish.
-CPU still assembles and uploads each viewport. BCS0 replaces final framebuffer
-painting. Immediate pan/resize uses clipped CPU row copies; zoom reprojects the
-already displayed pixels with nearest-neighbor sampling. Kernel log evidence:
+UI4 presentation uploads one opaque sprite using the same ID and submits one
+full-frame 1:1 copy quad with source_over=false for the existing BCS0 fast path.
+The app polls input between Busy attempts. A newer view can replace an
+unsubmitted sprite. After a draw succeeds, the presenter finishes publishing
+its write lease before submitting the next view. Admission Busy cancels the
+lease and logs "sprite admission busy action=restart-frame". Kernel log evidence:
 ui4/blueprint: opaque viewport retired backend=bcs0
-The diagnostic is logged once globally, so it may already have been emitted by
-another app. Emulator and unsupported hardware can use UI4's fallback paths.
-The UI and sequential tile loader run as local tasks on one pinned Blueprint
-Tokio current-thread runtime. Viewport demand uses Tokio watch; completions use
-Tokio async channels. There is no OS thread spawn or spawn_blocking in this app.
-Pan, zoom and resize drain input first, then immediately publish the current
-view with opaque white uncovered areas. Network waits, disk I/O and PNG decoding
-run in the loader task; pending network I/O yields to the UI task. The existing URL/client/cache policy and limits are unchanged.
-Only decoded tiles contributing to the current view are held as display state.
-Tile completions are checked against the latest zoom and wrapped tile keys;
-a still-needed tile is placed at its current screen position, otherwise skipped.
-New navigation replaces queued old viewport work; an in-flight fetch finishes
-normally. Tile arrivals incrementally repaint through the same opaque BCS0 path.
+The diagnostic is logged once globally. Emulator and unsupported hardware can
+use UI4's fallback paths.
+
+The map composes directly from decoded tiles into a reusable frame buffer.
+Unscaled tiles use clipped row copies. Scaled tiles use nearest-neighbor
+sampling from the original pixels. The current viewport and up to 64 recently
+visible tiles stay resident. Recent tiles reappear immediately when panning
+back and cover gaps at other zoom levels until the requested tiles arrive.
+The loader requests visible missing tiles from the center out. Completions
+are checked against the latest tile keys, then composed at their current
+position and scale. Navigation and tile arrivals in one turn share a frame.
+
+The UI and sequential tile loader run as local tasks on a pinned Blueprint
+Tokio current-thread runtime. Viewport demand uses Tokio watch and completions
+use an async channel. Pending network I/O yields to the UI task. New navigation
+replaces queued old viewport work and lets an in-flight fetch finish.
 The first four/every 120 presentations emit an Important "immediate viewport"
-marker with zoom, extent, missing tiles and stale completions skipped.
+marker with zoom, extent and stale completions skipped.
 Attribution: https://www.openstreetmap.org/copyright
 Policy: https://operations.osmfoundation.org/policies/tiles/
 
@@ -60,9 +59,9 @@ a future geographic-data overlay can integrate it separately.
 TLS certificate validation is enabled.
 
 Resize/maximize/restore events are handled by staging frame.resize, rendering
-the immediate white/reprojected view at the requested extent, and publishing
-the replacement before waiting for tiles. The map center stays
-fixed. Footer text is clipped safely for small frames.
+the immediate cached view at the requested extent, and publishing the
+replacement while tiles load. The map center stays fixed. Footer text is
+clipped safely for small frames.
 Kernel retirement fix: begin_blueprint_frame must reap retired generations on
 the shared path, including guest vmcalls. Updating only osm.bp does not fix a
 kernel that still bypasses reclamation; boot the accompanying updated OS.
@@ -76,14 +75,13 @@ The host harness compiles the actual app and presenter sources with upstream
 reqwest/hyper and no TLS backend; network fixtures use HTTP on localhost.
 It avoids the kernel-only imports in patched hyper on Linux. Production builds
 continue using the app manifest and the patched TLS client.
-Includes a deliberately pending tile future on the same Tokio executor while
-pan/zoom and timers continue, stale
-completion rejection, latest-position tile painting, zoom scaling, resize,
-footer clipping and world wrap. Retry regressions cover transient PNG recovery
-without navigation, obsolete retry cancellation, and corrupt/HTTP error bodies
-never being retained as tiles. Host preview still waits for its final PNG.
-On-OS validation: pan/zoom while tiles arrive, maximize/restore and pan farther
-than one screen; movement should precede tile fills and white borders stay opaque.
+The fixtures cover coalesced wheel input, cursor anchoring, recent tile reuse,
+wrap, resize, footer clipping, stale completions, presentation Busy retries and
+navigation during a pending tile fetch. Retry fixtures also cover recovery,
+obsolete retries and invalid cache entries.
+On TRUEOS, drag and zoom while tiles arrive, reverse direction across a tile
+level, and maximize and restore while dragging. Cached coverage should move
+with the camera and remain visible until newer imagery arrives.
 
 Execution evidence at Important: "osm: execution=tokio-local runtime=current-thread loader=cooperative".
 

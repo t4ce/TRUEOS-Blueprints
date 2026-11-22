@@ -1,6 +1,101 @@
 //! One full opaque 1:1 quad meets UI4's retained BCS0 copy eligibility.
 use trueos::ui4_scene::{Damage, Error, Frame, SpriteCorner, SpriteQuad, rgba};
 const MAP_SPRITE: u32 = 1;
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum Status {
+    Idle,
+    Busy,
+    Published(u64),
+}
+
+#[derive(Default)]
+enum Stage {
+    #[default]
+    Idle,
+    Uploaded(u64),
+    Publishing(u64, Damage),
+    Published(u64),
+}
+
+#[derive(Default)]
+pub struct Presenter {
+    stage: Stage,
+}
+
+impl Presenter {
+    pub fn is_publishing(&self) -> bool {
+        matches!(self.stage, Stage::Publishing(..))
+    }
+
+    /// Attempt the latest opaque viewport. Advance the revision whenever its
+    /// pixels or extent change, so an unpublished sprite can be replaced.
+    pub fn step<'a>(
+        &mut self,
+        frame: &mut Frame,
+        revision: u64,
+        pixels: impl FnOnce() -> &'a image::RgbaImage,
+    ) -> Result<Status, Error> {
+        match self.stage {
+            // A successful draw owns a write lease until publication succeeds.
+            Stage::Publishing(submitted, damage) => return self.publish(frame, submitted, damage),
+            Stage::Published(published) if published == revision => return Ok(Status::Idle),
+            _ => {}
+        }
+
+        let (width, height) = (frame.width(), frame.height());
+        if !matches!(self.stage, Stage::Uploaded(uploaded) if uploaded == revision) {
+            let pixels = pixels();
+            if pixels.dimensions() != (width, height) {
+                return Err(Error::Invalid);
+            }
+            match frame.upload_sprite_rgba8(MAP_SPRITE, width, height, pixels.as_raw()) {
+                Ok(()) => self.stage = Stage::Uploaded(revision),
+                Err(Error::Busy) => return Ok(Status::Busy),
+                Err(error) => return Err(stage_error("upload", error)),
+            }
+        }
+
+        match frame.begin_sprite_frame(rgba(255, 255, 255, 255)) {
+            Ok(()) => {}
+            Err(Error::Busy) => return Ok(Status::Busy),
+            Err(error) => return Err(stage_error("begin", error)),
+        }
+        match frame.draw_sprite_quads(&[viewport_quad(width, height)]) {
+            Ok(()) => self.publish(frame, revision, Damage::full(width, height)),
+            Err(Error::Busy) => {
+                // Admission Busy cancels the write lease. The retained sprite
+                // can be drawn on a new lease or replaced by newer pixels.
+                trueos::logl::log(
+                    trueos::logl::level::IMPORTANT,
+                    format_args!("osm: sprite admission busy action=restart-frame"),
+                );
+                Ok(Status::Busy)
+            }
+            Err(error) => Err(stage_error("draw", error)),
+        }
+    }
+
+    fn publish(
+        &mut self,
+        frame: &mut Frame,
+        revision: u64,
+        damage: Damage,
+    ) -> Result<Status, Error> {
+        match frame.publish(damage) {
+            Ok(()) => {
+                self.stage = Stage::Published(revision);
+                Ok(Status::Published(revision))
+            }
+            Err(Error::Busy) => {
+                self.stage = Stage::Publishing(revision, damage);
+                Ok(Status::Busy)
+            }
+            Err(error) => Err(stage_error("publish", error)),
+        }
+    }
+}
+
 fn viewport_quad(width: u32, height: u32) -> SpriteQuad {
     SpriteQuad {
         sprite_id: MAP_SPRITE,
@@ -30,75 +125,6 @@ fn viewport_quad(width: u32, height: u32) -> SpriteQuad {
         },
         color_rgba: rgba(255, 255, 255, 255),
         source_over: false,
-    }
-}
-pub(crate) async fn retry(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Error> {
-    loop {
-        match operation() {
-            Err(Error::Busy) => {
-                trueos::vsys::poll_once();
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            }
-            result => return result,
-        }
-    }
-}
-pub async fn present(frame: &mut Frame, pixels: &image::RgbaImage) -> Result<(), Error> {
-    if pixels.dimensions() != (frame.width(), frame.height())
-        || pixels.pixels().any(|p| p[3] != 255)
-    {
-        return Err(Error::Invalid);
-    }
-    // Same sprite ID replaces the retained source instead of accumulating uploads.
-    retry(|| {
-        frame.upload_sprite_rgba8(MAP_SPRITE, pixels.width(), pixels.height(), pixels.as_raw())
-    })
-    .await
-    .map_err(|error| stage_error("upload", error))?;
-    present_uploaded(frame, rgba(255, 255, 255, 255), false).await
-}
-
-/// Keep PNG alpha through a straight-alpha sprite over a transparent frame.
-pub async fn present_logo(frame: &mut Frame, pixels: &image::RgbaImage) -> Result<(), Error> {
-    if pixels.dimensions() != (frame.width(), frame.height()) {
-        return Err(Error::Invalid);
-    }
-    retry(|| {
-        frame.upload_sprite_rgba8(MAP_SPRITE, pixels.width(), pixels.height(), pixels.as_raw())
-    })
-    .await
-    .map_err(|error| stage_error("upload", error))?;
-    present_uploaded(frame, rgba(0, 0, 0, 0), true).await
-}
-
-async fn present_uploaded(frame: &mut Frame, clear: u32, source_over: bool) -> Result<(), Error> {
-    loop {
-        retry(|| frame.begin_sprite_frame(clear))
-            .await
-            .map_err(|error| stage_error("begin", error))?;
-        let mut quad = viewport_quad(frame.width(), frame.height());
-        quad.source_over = source_over;
-        match frame.draw_sprite_quads(std::slice::from_ref(&quad)) {
-            // UI4 cancels the unsubmitted frame on admission Busy. Retrying
-            // only draw would use a cancelled lease and return InvalidState.
-            // Start a fresh frame after yielding; the uploaded sprite survives.
-            Err(Error::Busy) => {
-                trueos::logl::log(
-                    trueos::logl::level::IMPORTANT,
-                    format_args!("osm: sprite admission busy action=restart-frame"),
-                );
-                trueos::vsys::poll_once();
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                continue;
-            }
-            Err(error) => return Err(stage_error("draw", error)),
-            Ok(()) => {}
-        }
-        // Publish Busy retains the completed write lease: retry this stage,
-        // rather than beginning another frame or drawing the quad again.
-        return retry(|| frame.publish(Damage::full(frame.width(), frame.height())))
-            .await
-            .map_err(|error| stage_error("publish", error));
     }
 }
 
