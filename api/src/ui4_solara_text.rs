@@ -443,6 +443,8 @@ pub const SHADERTOY_VORONOI: u32 = 12;
 pub const SHADERTOY_RETRO_SUN: u32 = 13;
 pub const SHADERTOY_HIGH_WISPS: u32 = 14;
 pub const SHADERTOY_PARTICLE_CRAFT: u32 = 15;
+pub const SHADERTOY_LICO: u32 = 18;
+const SHADERTOY_AUDIO_PARAMS_VERSION: u32 = 2;
 /// Primary pointer held; accepted only by High Wisps.
 pub const SHADERTOY_FLAG_PRIMARY_DOWN: u32 = 2;
 /// F6 only: bypass automatic radial sampling for a full-resolution comparison.
@@ -467,6 +469,37 @@ pub struct ShadertoyParamsV1 {
     pub date_day: f32,
     pub date_seconds: f32,
 }
+
+impl ShadertoyParamsV1 {
+    fn wire(&self, version: u32) -> v::bp_abi::TrueosUi4ShadertoyParamsV1 {
+        v::bp_abi::TrueosUi4ShadertoyParamsV1 {
+            version,
+            shader_id: self.shader_id,
+            frame: self.frame,
+            flags: self.flags,
+            time_seconds: self.time_seconds,
+            delta_seconds: self.delta_seconds,
+            frame_rate: self.frame_rate,
+            sample_rate: self.sample_rate,
+            mouse_x: self.mouse_x,
+            mouse_y: self.mouse_y,
+            click_x: self.click_x,
+            click_y: self.click_y,
+            date_year: self.date_year,
+            date_month: self.date_month,
+            date_day: self.date_day,
+            date_seconds: self.date_seconds,
+        }
+    }
+}
+
+#[repr(C)]
+struct ShadertoyAudioParamsV2 {
+    header: v::bp_abi::TrueosUi4ShadertoyParamsV1,
+    analysis: [f32; 128],
+}
+
+const _: () = assert!(core::mem::size_of::<ShadertoyAudioParamsV2>() == 576);
 
 /// Pointer-free ParticleCraft v1 controls. Persistent particle state and GPU
 /// addresses are retained by the kernel for this frame and never cross ABI.
@@ -1749,25 +1782,40 @@ impl Frame {
         if !(1..=16).contains(&params.shader_id) {
             return Err(Error::Invalid);
         }
-        let raw = v::bp_abi::TrueosUi4ShadertoyParamsV1 {
-            version: SHADERTOY_PARAMS_VERSION,
-            shader_id: params.shader_id,
-            frame: params.frame,
-            flags: params.flags,
-            time_seconds: params.time_seconds,
-            delta_seconds: params.delta_seconds,
-            frame_rate: params.frame_rate,
-            sample_rate: params.sample_rate,
-            mouse_x: params.mouse_x,
-            mouse_y: params.mouse_y,
-            click_x: params.click_x,
-            click_y: params.click_y,
-            date_year: params.date_year,
-            date_month: params.date_month,
-            date_day: params.date_day,
-            date_seconds: params.date_seconds,
-        };
+        let raw = params.wire(SHADERTOY_PARAMS_VERSION);
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_shadertoy_render(self.window_id, &raw) })
+    }
+
+    /// Acquire a visual lease, render the registered Lico program with a
+    /// by-value analysis block, then publish the completed frame.
+    pub fn render_shadertoy_audio_v2(
+        &mut self,
+        params: ShadertoyParamsV1,
+        analysis: &[f32; 128],
+    ) -> Result<(), Error> {
+        if params.shader_id != SHADERTOY_LICO
+            || analysis.iter().any(|v| !(-1.0..=1.0).contains(v))
+        {
+            return Err(Error::Invalid);
+        }
+        let raw = ShadertoyAudioParamsV2 {
+            header: params.wire(SHADERTOY_AUDIO_PARAMS_VERSION),
+            analysis: *analysis,
+        };
+        self.begin_visual_gpu_frame()?;
+        // The wire begins with the common header. Version 2 supplies the
+        // following fixed-size array in the same allocation.
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_shadertoy_render(
+                self.window_id, core::ptr::from_ref(&raw).cast()
+            )
+        }).and_then(|()| self.publish_compute(Damage::full(self.width, self.height)))
+            .map_err(|error| match error {
+                // A Busy before acquiring the lease can be retried. A Busy
+                // here can leave a submission unretired and must close the frame.
+                Error::Busy => Error::Ui4,
+                error => error,
+            })
     }
 
     /// Retain paint records without fitting their collective bounds to a stamp.

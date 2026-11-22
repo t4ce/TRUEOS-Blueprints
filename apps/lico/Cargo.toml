@@ -24,7 +24,7 @@ serde_json = { workspace = true }
 tokio = { version = "=1.54.1", default-features = false, features = ["rt", "time", "sync", "macros", "net", "io-util"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
-trueos = { workspace = true, features = ["tokio-net-probe"] }
+trueos = { workspace = true, features = ["tokio-net-probe", "ui4-scene"] }
 v = { path = "../../crates/trueos-v" }
 mio = { version = "=1.2.0", default-features = false, features = ["std-compat", "native-net"] }
 

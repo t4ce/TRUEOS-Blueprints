@@ -8,6 +8,8 @@ pub struct SequencePlayhead {
     pub bar_frame: usize,
     /// Unrounded bar length used to position events within a bar.
     pub bar_length: f64,
+    /// Frames elapsed since the last positive trigger actually emitted.
+    pub frames_since_trigger: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -19,6 +21,7 @@ pub struct Sequencer {
     sr: usize,
     pub step: usize,
     bar_length: f64,
+    last_trigger: Option<usize>,
     input_order: Vec<usize>,
     // sidechain_lib: HashMap<String, usize>,
 }
@@ -34,6 +37,7 @@ impl Sequencer {
             sr: 44100,
             step: 0,
             bar_length: 0.0,
+            last_trigger: None,
         }
     }
     pub fn ref_order(self, ref_order: HashMap<String, usize>) -> Self {
@@ -72,6 +76,9 @@ impl<const N: usize> Node<N> for Sequencer {
                             }
                         }
                     }
+                    if *out > 0.0 {
+                        self.last_trigger = Some(self.step);
+                    }
                     self.step += 1;
                 }
             }
@@ -109,6 +116,9 @@ impl<const N: usize> Node<N> for Sequencer {
                             }
                         }
                     }
+                    if *out > 0.0 {
+                        self.last_trigger = Some(self.step);
+                    }
                     self.step += 1;
                 }
             }
@@ -138,6 +148,7 @@ impl<const N: usize> Node<N> for Sequencer {
         Some(SequencePlayhead {
             bar_frame: rendered % frames_per_bar,
             bar_length: self.bar_length,
+            frames_since_trigger: self.last_trigger.map(|trigger| rendered - trigger),
         })
     }
 }

@@ -11,7 +11,7 @@ use tokio::sync::{
 };
 
 const BLOCK: usize = 128;
-const SAMPLE_RATE: u32 = 48_000;
+pub const SAMPLE_RATE: u32 = 48_000;
 const BATCH_FRAMES: usize = 4 * BLOCK;
 const BATCH_BYTES: usize = 4 * BATCH_FRAMES;
 const STREAM_LIMIT: usize = SAMPLE_RATE as usize * 4 * 120;
@@ -98,10 +98,13 @@ pub enum Status {
     AudioError(String),
 }
 
+#[derive(Clone)]
 pub struct MonitorFrame {
     pub run: u64,
     pub waveform: [f32; MONITOR_FRAMES],
     pub sequences: Vec<Option<SequencePlayhead>>,
+    pub playing: bool,
+    pub beat_phase: f32,
 }
 
 impl Default for MonitorFrame {
@@ -110,7 +113,18 @@ impl Default for MonitorFrame {
             run: 0,
             waveform: [0.0; MONITOR_FRAMES],
             sequences: Vec::new(),
+            playing: false,
+            beat_phase: 0.0,
         }
+    }
+}
+
+impl MonitorFrame {
+    fn stop(&mut self) {
+        self.playing = false;
+        self.waveform.fill(0.0);
+        self.sequences.clear();
+        self.beat_phase = 0.0;
     }
 }
 
@@ -228,6 +242,7 @@ pub async fn serve(
     let mut run = 0_u64;
     let mut sequences = Vec::new();
     let mut bpm = DEFAULT_BPM;
+    let mut beat_phase = 0.0_f64;
     let mut stream = None;
     let mut midi_demo = None;
     let mut midi_playing = false;
@@ -267,6 +282,7 @@ pub async fn serve(
                                     Ok(output) => {
                                         stream = Some(output);
                                         playing = true;
+                                        beat_phase = 0.0;
                                         ticks.reset();
                                     }
                                     Err(error) => {
@@ -329,6 +345,7 @@ pub async fn serve(
                     engine.samples_dict = samples;
                     engine.set_sr(SAMPLE_RATE as usize);
                     engine.set_bpm(f32::from(bpm));
+                    monitor.send_modify(MonitorFrame::stop);
                     let _ = status.try_send(Status::Stopped);
                 }
                 None => return Ok(()),
@@ -359,14 +376,21 @@ pub async fn serve(
                     continue;
                 }
                 match tick(&mut stream, &mut engine, &mut pcm, &mut waveform, &mut midi_demo) {
-                    Ok(true) => monitor.send_modify(|frame| {
-                        frame.run = run;
-                        frame.waveform = waveform;
-                        frame.sequences.clear();
-                        frame.sequences.extend(sequences.iter().map(|node| {
-                            node.and_then(|node| engine.sequence_playhead(node))
-                        }));
-                    }),
+                    Ok(true) => {
+                        beat_phase = (beat_phase
+                            + BATCH_FRAMES as f64 * f64::from(bpm) / (60.0 * f64::from(SAMPLE_RATE)))
+                            .fract();
+                        monitor.send_modify(|frame| {
+                            frame.run = run;
+                            frame.waveform = waveform;
+                            frame.playing = true;
+                            frame.beat_phase = beat_phase as f32;
+                            frame.sequences.clear();
+                            frame.sequences.extend(sequences.iter().map(|node| {
+                                node.and_then(|node| engine.sequence_playhead(node))
+                            }));
+                        });
+                    }
                     Ok(false) => {},
                     Err(error) => {
                         stream = None;
@@ -375,6 +399,7 @@ pub async fn serve(
                         midi_playing = false;
                         midi_input.reset();
                         engine.release_midi_notes();
+                        monitor.send_modify(MonitorFrame::stop);
                         let _ = status.try_send(Status::AudioError(error.to_string()));
                     }
                 }

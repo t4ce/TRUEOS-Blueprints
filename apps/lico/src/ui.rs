@@ -5,6 +5,7 @@ use crate::highlight::Highlight;
 use crate::mcp::{self, Session, SharedSession};
 use crate::midi;
 use crate::playhead;
+use crate::visualizer::Visualizer;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
     MouseButton, MouseEvent, MouseEventKind,
@@ -143,6 +144,7 @@ async fn editor(
     let mut picker = None;
     let mut midi_source = midi::Source::Off;
     let mut midi_error = None;
+    let mut visualizer = Visualizer::new(monitor.clone());
 
     let transform = FftPlanner::new().plan_fft_forward(MONITOR_FRAMES);
     let mut fft_data = [Complex32::default(); MONITOR_FRAMES];
@@ -164,6 +166,9 @@ async fn editor(
     let mut insert_drum = false;
 
     loop {
+        if let Some(message) = visualizer.take_status() {
+            reference = Some(message);
+        }
         let menu_selected = drum_menu && drum::take_add_drum();
         if (std::mem::take(&mut insert_drum) || menu_selected)
             && review.is_none()
@@ -337,7 +342,7 @@ async fn editor(
                 );
                 frame.render_widget(
                     Line::from(
-                        " Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+N MIDI  Alt+D Docs  Alt+[/] Tempo  Esc Quit ",
+                        " Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+V Visualizer  Alt+N MIDI  Alt+D Docs  Alt+[/] Tempo  Ctrl+Q Quit ",
                     ),
                     footer,
                 );
@@ -483,11 +488,19 @@ async fn editor(
                     continue;
                 }
                 let command = match key.code {
+                    KeyCode::Esc if visualizer.close_if_open() => {
+                        reference = Some("Closing visualizer…".into());
+                        None
+                    }
                     KeyCode::Esc => break,
                     KeyCode::Char('q') if control => break,
                     KeyCode::Char('r') if alt => Some(Command::Run(patch.lines().join("\n"))),
                     KeyCode::Char('s') if alt => Some(Command::Stop),
                     KeyCode::Char('m') if alt => Some(Command::TestMidi),
+                    KeyCode::Char('v') if alt => {
+                        reference = Some(visualizer.toggle());
+                        None
+                    }
                     KeyCode::Char('i') if alt => {
                         insert_drum = true;
                         None

@@ -751,6 +751,7 @@ mod tests {
         let initial = SequencePlayhead {
             bar_frame: 127,
             bar_length: 12_000.0,
+            frames_since_trigger: None,
         };
         assert_eq!(engine.sequence_playhead(seq), Some(initial));
 
@@ -762,6 +763,7 @@ mod tests {
             Some(SequencePlayhead {
                 bar_frame: 255,
                 bar_length: 9_600.0,
+                frames_since_trigger: None,
             })
         );
 
@@ -774,6 +776,7 @@ mod tests {
             Some(SequencePlayhead {
                 bar_frame: 383,
                 bar_length: 9_600.0,
+                frames_since_trigger: None,
             })
         );
         assert_eq!(
@@ -781,6 +784,7 @@ mod tests {
             Some(SequencePlayhead {
                 bar_frame: 127,
                 bar_length: 76_800.0,
+                frames_since_trigger: Some(127),
             })
         );
     }

@@ -7,6 +7,9 @@ mod midi;
 mod piano_udp;
 mod playhead;
 mod ui;
+mod visualizer;
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+mod visualizer_data;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);

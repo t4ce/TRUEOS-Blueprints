@@ -15,7 +15,7 @@ The package is written to `dist/lico.bp`. Launch `lico` from Shell3 once the
 Blueprint is installed. Open `http://<TRUEOS-IP>:82/` to listen through the
 kernel audio server, then press **Alt+R** to play or apply edits. **Alt+S**
 stops playback, **Alt+D** shows node help, **Alt+[** and **Alt+]** change
-tempo, and **Esc** returns to the shell.
+tempo, and **Ctrl+Q** returns to the shell.
 
 Left-click in the patch editor to place the caret in Shell3 or over SSH.
 
@@ -29,6 +29,20 @@ The colors track the parsed draft until you edit it or load another patch.
 On a local UI4 Shell3 window, thin amber outlines follow the current `seq`
 notes and rests as Lico renders audio. Editing the draft clears the playheads
 until the next successful run.
+
+Press **Alt+V** to open or close Lico's native UI4 visualizer on the TRUEOS
+display. It runs in its own window at a target of 30 Hz. A precompiled Intel
+shader draws the output waveform, a 40-band spectrum, and up to eight
+sequencer lanes driven by the running graph's actual playheads and hits.
+**Esc** dismisses the visualizer while it is open and keeps playback and
+the editor running. With the visualizer closed, **Esc** returns to the shell.
+The visualizer needs the matching TRUEOS kernel shader catalog. Its worker
+samples the latest audio snapshot and handles GPU submission separately.
+For fullscreen profiling, the kernel entry `lico visualizer render` reports
+the backing size, strip count, page-table reuse, and render timings every 120
+frames.
+To check the embedded shader against its source and kernel contract, run
+`python3 apps/lico/tools/bake_visualizer.py --check` from the Blueprint root.
 
 Press **Alt+E** to browse the embedded patches. Use **↑** and **↓** to
 select an example, then press **Enter** to replace the draft. **Alt+R**

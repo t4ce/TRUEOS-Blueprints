@@ -113,6 +113,7 @@ mod tests {
                 &[Some(SequencePlayhead {
                     bar_frame,
                     bar_length: 96_000.0,
+                    frames_since_trigger: None,
                 })],
             );
             assert_eq!(rects, [Rect::new(x, 2, width, 1)]);
