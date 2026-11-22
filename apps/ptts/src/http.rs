@@ -98,6 +98,7 @@ fn respond(stream: &mut TcpStream, status: &str, value: serde_json::Value) -> io
 #[serde(deny_unknown_fields)]
 pub struct SpeechRequest {
     pub text: String,
+    pub intro: Option<crate::cues::Intro>,
     pub label: Option<String>,
     pub voice: Option<String>,
     #[serde(default = "normal_speed")]
@@ -136,6 +137,11 @@ pub struct SpeechResult {
     pub first_pcm_ms: Option<u128>,
     pub generation_ms: u128,
 }
+pub enum SpeechAudio<'a> {
+    /// Prepared, speakable text exists; start the intro before Lily/inference.
+    Start,
+    Pcm(&'a [f32]),
+}
 impl SpeechModel {
     pub fn load() -> Result<Self> {
         let started = Instant::now();
@@ -160,11 +166,14 @@ impl SpeechModel {
         &self,
         request: &SpeechRequest,
         deadline: Instant,
-        on_pcm: &mut dyn FnMut(&[f32]) -> Result<()>,
+        on_audio: &mut dyn FnMut(SpeechAudio<'_>) -> Result<()>,
     ) -> Result<SpeechResult> {
         request.validate()?;
         let started = Instant::now();
         let chunks = self.frontend.prepare(&request.text)?;
+        if !chunks.is_empty() {
+            on_audio(SpeechAudio::Start)?;
+        }
         let inferred_label = if request.label.is_none() && !chunks.is_empty() {
             lily_label(&request.text, deadline)
         } else {
@@ -192,7 +201,7 @@ impl SpeechModel {
                     if first_pcm_ms.is_none() {
                         first_pcm_ms = Some(started.elapsed().as_millis());
                     }
-                    on_pcm(samples)?;
+                    on_audio(SpeechAudio::Pcm(samples))?;
                     total_samples += samples.len();
                     Ok(())
                 },
@@ -230,6 +239,8 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
         startup.elapsed().as_millis()
     ));
     let mut job = 0u64;
+    #[cfg(target_os = "trueos")]
+    let mut previous_playback = None;
     for accepted in listener.incoming() {
         let mut stream = match accepted {
             Ok(s) => s,
@@ -255,7 +266,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
             Ok(r) if r.method == "GET" && r.path == "/health" => respond(
                 &mut stream,
                 "200 OK",
-                serde_json::json!({"protocol":"ptts-v1","ready":true,"tts":true,"stt":false,"language":"en","voice":"azelma","model":"english_2026-10","bundled":false}),
+                serde_json::json!({"protocol":"ptts-v1","ready":true,"tts":true,"stt":false,"language":"en","voice":"azelma","model":"english_2026-10","bundled":false,"turn_cues":true}),
             ),
             Ok(r) if r.method == "POST" && r.path == "/speech" => {
                 job = job.saturating_add(1);
@@ -265,17 +276,29 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                     let request: SpeechRequest = serde_json::from_slice(&r.body)?;
                     request.validate()?;
                     crate::notice(format!(
-                        "ptts: job={job} submitted bytes={} label={}",
+                        "ptts: job={job} submitted bytes={} label={} intro={:?}",
                         request.text.len(),
-                        request.label.as_deref().unwrap_or("auto")
+                        request.label.as_deref().unwrap_or("auto"),
+                        request.intro,
                     ));
                     #[cfg(target_os = "trueos")]
                     let (generated, first_stream_ms) = {
-                        let mut playback = crate::playback::Stream::new(deadline);
-                        let generated = model.synthesize(&request, deadline, &mut |samples| {
-                            playback.push(samples)
-                        })?;
+                        let mut playback =
+                            crate::playback::Stream::new(deadline, previous_playback);
+                        let generated =
+                            model.synthesize(&request, deadline, &mut |audio| match audio {
+                                SpeechAudio::Start => {
+                                    if let Some(intro) = request.intro {
+                                        playback.push_cue(intro.pcm())?;
+                                    }
+                                    Ok(())
+                                }
+                                SpeechAudio::Pcm(samples) => playback.push(samples),
+                            })?;
                         playback.finish()?;
+                        if let Some(id) = playback.completed_stream() {
+                            previous_playback = Some(id);
+                        }
                         (
                             generated,
                             playback.first_write().map(|at| (at - started).as_millis()),
@@ -283,21 +306,20 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                     };
                     #[cfg(not(target_os = "trueos"))]
                     let (generated, first_stream_ms) = {
-                        let mut pcm = Vec::new();
-                        let generated = model.synthesize(&request, deadline, &mut |samples| {
-                            pcm.try_reserve(samples.len())
-                                .map_err(|_| anyhow::anyhow!("speech PCM allocation failed"))?;
-                            pcm.extend_from_slice(samples);
-                            Ok(())
-                        })?;
-                        if !pcm.is_empty() {
-                            crate::playback::write_wav(
-                                output_dir
-                                    .join(format!("speech-{job:06}.wav"))
-                                    .to_str()
-                                    .ok_or_else(|| anyhow::anyhow!("invalid host output path"))?,
-                                &pcm,
-                            )?;
+                        let mut playback = crate::playback::HostClip::default();
+                        let generated =
+                            model.synthesize(&request, deadline, &mut |audio| match audio {
+                                SpeechAudio::Start => {
+                                    if let Some(intro) = request.intro {
+                                        playback.push_cue(intro.pcm());
+                                    }
+                                    Ok(())
+                                }
+                                SpeechAudio::Pcm(samples) => playback.push(samples),
+                            })?;
+                        playback.finish();
+                        if !playback.bytes.is_empty() {
+                            playback.write(&output_dir.join(format!("speech-{job:06}.wav")))?;
                         }
                         (generated, None::<u128>)
                     };
@@ -325,6 +347,41 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                             serde_json::json!({"error":format!("{e:#}")}),
                         )
                     }
+                }
+            }
+            Ok(r) if r.method == "POST" && r.path == "/cue" => {
+                job = job.saturating_add(1);
+                let result = (|| -> Result<()> {
+                    let request: crate::cues::CueRequest = serde_json::from_slice(&r.body)?;
+                    let crate::cues::Done::Done = request.cue;
+                    #[cfg(target_os = "trueos")]
+                    {
+                        let mut playback = crate::playback::Stream::new(
+                            Instant::now() + REQUEST_TIMEOUT,
+                            previous_playback,
+                        );
+                        playback.push_cue(crate::cues::done_pcm())?;
+                        playback.finish()?;
+                        previous_playback = playback.completed_stream();
+                    }
+                    #[cfg(not(target_os = "trueos"))]
+                    {
+                        let mut playback = crate::playback::HostClip::default();
+                        playback.push_cue(crate::cues::done_pcm());
+                        playback.write(&output_dir.join(format!("cue-{job:06}-done.wav")))?;
+                    }
+                    crate::notice(format!(
+                        "ptts: job={job} cue=done queued after previous audio"
+                    ));
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => respond(&mut stream, "200 OK", serde_json::json!({"ok":true})),
+                    Err(e) => respond(
+                        &mut stream,
+                        "422 Unprocessable Content",
+                        serde_json::json!({"error":format!("{e:#}")}),
+                    ),
                 }
             }
             Ok(_) => respond(

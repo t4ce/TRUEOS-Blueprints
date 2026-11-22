@@ -24,17 +24,21 @@ pub struct Stream {
     previous: Option<f32>,
     bytes: Vec<u8>,
     first_write: Option<Instant>,
+    previous_stream: Option<u64>,
+    completed_stream: Option<u64>,
 }
 
 #[cfg(target_os = "trueos")]
 impl Stream {
-    pub fn new(deadline: Instant) -> Self {
+    pub fn new(deadline: Instant, previous_stream: Option<u64>) -> Self {
         Self {
             deadline,
             token: None,
             previous: None,
             bytes: Vec::new(),
             first_write: None,
+            previous_stream,
+            completed_stream: None,
         }
     }
 
@@ -58,6 +62,7 @@ impl Stream {
                 bail!("native audio stream finish failed: {status}")
             }
             self.token = None;
+            self.completed_stream = Some(token);
         }
         Ok(())
     }
@@ -66,11 +71,35 @@ impl Stream {
         self.first_write
     }
 
+    pub fn completed_stream(&self) -> Option<u64> {
+        self.completed_stream
+    }
+
+    pub fn push_cue(&mut self, pcm: &[u8]) -> Result<()> {
+        self.bytes.clear();
+        flush_interpolation(&mut self.previous, &mut self.bytes);
+        self.write()?;
+        for block in pcm.chunks(64 * 1024) {
+            self.bytes.clear();
+            self.bytes.extend_from_slice(block);
+            self.write()?;
+        }
+        Ok(())
+    }
+
     fn write(&mut self) -> Result<()> {
         if self.bytes.is_empty() {
             return Ok(());
         }
         if self.token.is_none() {
+            if let Some(previous) = self.previous_stream.take() {
+                wait_until_idle_with(
+                    self.deadline,
+                    || source_playing(previous, self.deadline),
+                    Instant::now,
+                    std::thread::sleep,
+                )?;
+            }
             loop {
                 let remaining = self.deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
@@ -165,7 +194,6 @@ fn native_clip_bytes(mono: &[f32]) -> Result<Vec<u8>> {
 }
 
 /// Retain one mono sample so interpolation crosses decoder block boundaries.
-#[cfg(any(target_os = "trueos", test))]
 fn append_interpolated(
     mono: &[f32],
     previous: &mut Option<f32>,
@@ -183,14 +211,12 @@ fn append_interpolated(
     Ok(())
 }
 
-#[cfg(any(target_os = "trueos", test))]
 fn flush_interpolation(previous: &mut Option<f32>, bytes: &mut Vec<u8>) {
     if let Some(sample) = previous.take() {
         append_stereo_pair(bytes, sample, sample);
     }
 }
 
-#[cfg(any(target_os = "trueos", test))]
 fn append_stereo_pair(bytes: &mut Vec<u8>, sample: f32, next: f32) {
     for value in [sample, sample * 0.5 + next * 0.5] {
         let sample_bytes = pcm_sample_le(value);
@@ -233,6 +259,79 @@ fn sink_playing(deadline: Instant) -> Result<bool> {
     status_playing(&crate::loopback::exchange(82, request, deadline)?)
 }
 
+#[cfg(target_os = "trueos")]
+fn source_playing(id: u64, deadline: Instant) -> Result<bool> {
+    let request = b"GET /audio/status HTTP/1.1\r\nHost: 127.0.0.1:82\r\nConnection: close\r\n\r\n";
+    source_playing_in(&crate::loopback::exchange(82, request, deadline)?, id)
+}
+
+#[cfg(any(target_os = "trueos", test))]
+fn source_playing_in(body: &[u8], id: u64) -> Result<bool> {
+    if body.len() > crate::loopback::BODY_LIMIT {
+        bail!("audio status too large")
+    }
+    let value: serde_json::Value = serde_json::from_slice(body)?;
+    // Older kernels expose only global busy state. Waiting for all producers
+    // there is conservative; current kernels let other apps keep playing.
+    let Some(ids) = value.get("source_ids") else {
+        return status_playing(body);
+    };
+    let ids = ids
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("invalid source_ids"))?;
+    let mut found = false;
+    for source in ids {
+        let source = source
+            .as_str()
+            .and_then(|id| id.parse::<u64>().ok())
+            .ok_or_else(|| anyhow::anyhow!("invalid source ID"))?;
+        found |= source == id;
+    }
+    Ok(found)
+}
+
+/// Ubuntu's WAV capture uses exactly the same cue bytes and speech converter.
+#[cfg(not(target_os = "trueos"))]
+#[derive(Default)]
+pub struct HostClip {
+    previous: Option<f32>,
+    pub bytes: Vec<u8>,
+}
+#[cfg(not(target_os = "trueos"))]
+impl HostClip {
+    pub fn push(&mut self, mono: &[f32]) -> Result<()> {
+        append_interpolated(mono, &mut self.previous, &mut self.bytes)
+    }
+    pub fn push_cue(&mut self, pcm: &[u8]) {
+        flush_interpolation(&mut self.previous, &mut self.bytes);
+        self.bytes.extend_from_slice(pcm);
+    }
+    pub fn finish(&mut self) {
+        flush_interpolation(&mut self.previous, &mut self.bytes);
+    }
+    pub fn write(&self, path: &std::path::Path) -> Result<()> {
+        use std::io::Write;
+        let bytes = u32::try_from(self.bytes.len())?;
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(b"RIFF")?;
+        file.write_all(
+            &bytes
+                .checked_add(36)
+                .ok_or_else(|| anyhow::anyhow!("WAV too large"))?
+                .to_le_bytes(),
+        )?;
+        file.write_all(b"WAVEfmt \x10\0\0\0\x01\0\x02\0")?;
+        file.write_all(&48_000u32.to_le_bytes())?;
+        file.write_all(&192_000u32.to_le_bytes())?;
+        file.write_all(&4u16.to_le_bytes())?;
+        file.write_all(&16u16.to_le_bytes())?;
+        file.write_all(b"data")?;
+        file.write_all(&bytes.to_le_bytes())?;
+        file.write_all(&self.bytes)?;
+        Ok(())
+    }
+}
+
 #[cfg(any(target_os = "trueos", test))]
 fn status_playing(body: &[u8]) -> Result<bool> {
     if body.len() > crate::loopback::BODY_LIMIT {
@@ -249,6 +348,34 @@ fn status_playing(body: &[u8]) -> Result<bool> {
 mod tests {
     use super::*;
     use crate::loopback::{HEADER_LIMIT, response_body_length};
+
+    #[test]
+    fn waiting_for_pocket_does_not_wait_for_another_producer() {
+        assert!(source_playing_in(br#"{"playing":true,"source_ids":["7","9"]}"#, 7).unwrap());
+        assert!(!source_playing_in(br#"{"playing":true,"source_ids":["9"]}"#, 7).unwrap());
+        assert!(!source_playing_in(br#"{"playing":false,"source_ids":[]}"#, 7).unwrap());
+        // An older kernel must not accidentally overlap the previous clip.
+        assert!(source_playing_in(br#"{"playing":true}"#, 7).unwrap());
+        assert!(source_playing_in(br#"{"source_ids":null}"#, 7).is_err());
+        assert!(source_playing_in(br#"{"source_ids":["oops"]}"#, 7).is_err());
+        assert!(source_playing_in(br#"{}"#, 7).is_err());
+    }
+
+    #[test]
+    fn cues_surround_speech_without_losing_the_last_interpolated_frame() {
+        let intro = crate::cues::Intro::Starttalk.pcm();
+        let done = crate::cues::done_pcm();
+        let mut clip = HostClip::default();
+        clip.push_cue(intro);
+        clip.push(&[0.25, -0.5]).unwrap();
+        clip.push(&[0.75]).unwrap();
+        clip.push_cue(done);
+        clip.finish();
+        let voice = native_clip_bytes(&[0.25, -0.5, 0.75]).unwrap();
+        assert_eq!(&clip.bytes[..intro.len()], intro);
+        assert_eq!(&clip.bytes[intro.len()..intro.len() + voice.len()], &voice);
+        assert_eq!(&clip.bytes[intro.len() + voice.len()..], done);
+    }
 
     #[test]
     fn native_conversion_preserves_interpolation_stereo_and_clipping() {

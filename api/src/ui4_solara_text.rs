@@ -919,8 +919,8 @@ impl Frame {
         Ok(Some(MenuCloseReason::from_raw(event.reason)))
     }
 
-    /// Take the next selected-frame pointer event. The click which selected
-    /// this frame is absorbed by UI4 and is never returned here.
+    /// Take the next selected-frame pointer event. UI4 absorbs the click
+    /// which selected this frame unless primary activation is enabled.
     pub fn take_pointer_event(&mut self) -> Result<Option<PointerEvent>, Error> {
         let mut raw = v::bp_abi::TrueosUi4PointerEvent::default();
         let result = unsafe {
@@ -972,6 +972,30 @@ impl Frame {
             return Err(error_from_status(result));
         }
         Ok(Some(event))
+    }
+
+    /// Take the next logical key or text transition and its exact UI4 cursor.
+    /// This consumes one event from the same queue as `take_keyboard_event`.
+    pub fn take_cursor_keyboard_event(
+        &mut self,
+    ) -> Result<Option<(CursorSource, TrueosKeyboardOutputEvent)>, Error> {
+        let mut raw = v::bp_abi::TrueosUi4CursorKeyboardEventV1::default();
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_cursor_keyboard_event_take_v1(self.window_id, &mut raw)
+        };
+        if result == 1 {
+            return Ok(None);
+        }
+        status(result)?;
+        Ok(Some((
+            CursorSource {
+                controller_id: raw.cursor.controller_id,
+                slot_id: raw.cursor.slot_id,
+                ep_target: raw.cursor.ep_target,
+                hid_kind: raw.cursor.hid_kind,
+            },
+            raw.event,
+        )))
     }
 
     /// Take one physical transition routed to this frame. Kind PHYSICAL carries
