@@ -211,11 +211,11 @@
         "example": "o: sin 100 >> meta `output = input.map(|x|x*0.1);output`\n// more on https://glicol.org/tour#meta1"
     },
     "midisynth": {
-        "description": "Live MIDI sine instrument. Channel 0 listens to all channels. Channels 1–16 select one channel. Attack and release are in seconds. Alt+M sends a test phrase on channel 1.",
-        "parameters": [{"channel": "NonModulable(1)"}, {"attack": "NonModulable(0.012)"}, {"release": "NonModulable(0.12)"}],
+        "description": "Live MIDI instrument. Add piano for synthesized struck strings with velocity-sensitive brightness and natural decay. The default voice is a sine. Channel 0 listens to all channels. Attack and release are in seconds. Alt+M sends a test phrase on channel 1.",
+        "parameters": [{"channel": "NonModulable(0)"}, {"attack": "NonModulable(0.003)"}, {"release": "NonModulable(0.16)"}, {"voice": "Optional piano"}],
         "input": "MIDI notes and velocity",
-        "output": "up to eight simultaneous sine voices",
-        "example": "out: midisynth 1 0.012 0.12 >> mul 0.7;"
+        "output": "up to eight simultaneous voices",
+        "example": "out: midisynth 0 0.003 0.16 piano;"
     },
     "onepole": {
         "description": "an one pole low pass filter",

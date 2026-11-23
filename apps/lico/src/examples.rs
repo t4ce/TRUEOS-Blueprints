@@ -44,4 +44,8 @@ pub const PATCHES: &[(&str, &str)] = &[
         "MIDI instrument",
         include_str!("../assets/examples/midi.glicol"),
     ),
+    (
+        "Synthesized piano",
+        include_str!("../assets/examples/piano.glicol"),
+    ),
 ];

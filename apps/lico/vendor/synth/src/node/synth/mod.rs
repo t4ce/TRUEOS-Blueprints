@@ -4,3 +4,4 @@ mod msgsynth;
 pub use msgsynth::*;
 mod midi_synth;
 pub use midi_synth::MidiSynth;
+mod piano_voice;

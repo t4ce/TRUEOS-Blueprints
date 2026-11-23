@@ -1,0 +1,3 @@
+// Alt+R to run. Play MIDI notes or press Alt+M for a test phrase.
+// Strike harder for a brighter attack. Hold the key to let the strings ring.
+out: midisynth 0 0.003 0.16 piano;

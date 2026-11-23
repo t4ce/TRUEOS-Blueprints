@@ -624,6 +624,46 @@ mod tests {
     }
 
     #[test]
+    fn synthesized_piano_decays_and_releases_without_samples() {
+        let mut engine = Engine::<BLOCK>::new();
+        engine.set_sr(SAMPLE_RATE as usize);
+        engine
+            .update_with_code(include_str!("../assets/examples/piano.glicol"))
+            .unwrap();
+        assert!(engine.has_midi_input());
+
+        let rms = |engine: &mut Engine<BLOCK>, blocks: usize| {
+            let energy: f32 = (0..blocks)
+                .map(|_| {
+                    engine.next_block(Vec::new())[0]
+                        .iter()
+                        .map(|sample| sample * sample)
+                        .sum::<f32>()
+                })
+                .sum();
+            (energy / (BLOCK * blocks) as f32).sqrt()
+        };
+        assert_eq!(rms(&mut engine, 1), 0.0);
+        engine.send_midi(MidiEvent::NoteOn {
+            channel: 4,
+            note: 69,
+            velocity: 110,
+        });
+        let attack = rms(&mut engine, 20);
+        assert!(attack > 0.01);
+        rms(&mut engine, 375);
+        let held = rms(&mut engine, 20);
+        assert!(held > 0.0001 && held < attack * 0.8);
+        engine.send_midi(MidiEvent::NoteOff {
+            channel: 4,
+            note: 69,
+        });
+        assert!(rms(&mut engine, 1) > 0.0);
+        rms(&mut engine, 75);
+        assert_eq!(rms(&mut engine, 1), 0.0);
+    }
+
+    #[test]
     fn offbeat_sample_starts_in_the_second_slot() {
         let mut engine = engine().unwrap();
         engine

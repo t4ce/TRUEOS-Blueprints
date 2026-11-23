@@ -26,7 +26,8 @@ second = ${number ~ "_" ~ "s" }
 psampler = ${"psampler" ~ WHITESPACE+ ~ (pattern|event)}
 msgsynth = ${("msgsynth"|"msg_synth") ~ (WHITESPACE+ ~ !node_name ~ symbol) ~ (WHITESPACE+ ~ !node_name ~ number) ~ (WHITESPACE+ ~ !node_name ~ number)}
 midisynth_keyword = _{ "midisynth" ~ !(ASCII_ALPHANUMERIC | "_" | "..") }
-midisynth = ${ midisynth_keyword ~ WHITESPACE+ ~ integer ~ WHITESPACE+ ~ number ~ WHITESPACE+ ~ number }
+midi_piano = @{ "piano" ~ !(ASCII_ALPHANUMERIC | "_" | "..") }
+midisynth = ${ midisynth_keyword ~ WHITESPACE+ ~ integer ~ WHITESPACE+ ~ number ~ WHITESPACE+ ~ number ~ (WHITESPACE+ ~ midi_piano)? }
 pattern_synth = ${("psynth"|"p_synth"|"pattern_synth") ~ WHITESPACE+ ~ code ~ (WHITESPACE+ ~ !node_name ~ number)? }
 adc = ${"adc" ~ WHITESPACE+ ~ !node_name ~ (number ) }
 

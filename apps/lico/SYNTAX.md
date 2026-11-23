@@ -128,14 +128,16 @@ waveshapes the block.
 ## Live MIDI instrument
 
 ```glicol
-out: midisynth 1 0.012 0.12 >> mul 0.7;
+out: midisynth 0 0.003 0.16 piano;
 ```
 
-`midisynth CHANNEL ATTACK RELEASE` generates up to eight simultaneous sine
+`midisynth CHANNEL ATTACK RELEASE [piano]` generates up to eight simultaneous
 voices. Choose channel `1` through `16`, or `0` for all channels. Attack
-and release are in seconds. MIDI velocity controls level. A voice holds
-until Note Off or All Notes Off. The output connects to filters, effects,
-and other Glicol nodes like any other signal.
+and release are in seconds. The optional `piano` voice synthesizes the
+strike and string decay for each key. MIDI velocity controls its level and
+brightness. The default sine voice holds its level until Note Off or All
+Notes Off. Connect the output to filters, effects, and other Glicol nodes
+like any other signal.
 
 Run the patch with **Alt+R**, then press **Alt+M** to send Lico’s channel 1
 test phrase through its MIDI byte decoder.

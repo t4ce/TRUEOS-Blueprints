@@ -55,11 +55,15 @@ second adds crash, ride, and a descending fill across the three toms. Each
 sound has its own editable sequence and level. The recordings come from
 [Virtuosity Drums](https://versilian-studios.com/virtuosity-drums/).
 
-Choose **MIDI instrument** from the examples and press **Alt+R**. Then play
-the piano or press **Alt+M** to feed a built-in MIDI 1.0 test phrase on
-channel 1. In your own patch, `midisynth 1 0.012 0.12` listens on channel 1
-with attack and release times in seconds. Use channel `0` to listen on
-every channel.
+Choose **Synthesized piano** from the examples and press **Alt+R**. Play
+your MIDI keyboard or press **Alt+M** to hear the built-in test phrase.
+`midisynth 0 0.003 0.16 piano` models struck strings with a brighter attack
+at higher velocities and a natural decay while a key is held. It generates
+each note in real time from oscillators.
+
+The **MIDI instrument** example uses the default sine voice. Both voices
+take attack and release times in seconds. Use channel `0` to listen on
+every channel or `1`–`16` to choose a channel. The test phrase uses channel `1`.
 
 Press **Alt+N** to open MIDI input. Use **↑** and **↓** to choose a source
 and **Enter** to apply it. You can switch while a patch is playing.

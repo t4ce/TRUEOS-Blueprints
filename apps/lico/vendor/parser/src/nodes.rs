@@ -861,6 +861,7 @@ pub struct MidiSynth {
     pub channel: u8,
     pub attack: f32,
     pub release: f32,
+    pub piano: bool,
 }
 
 impl Node<'_> for MidiSynth {
@@ -906,6 +907,7 @@ impl Node<'_> for MidiSynth {
             channel,
             attack,
             release,
+            piano: pairs.next().is_some(),
         })
     }
 }

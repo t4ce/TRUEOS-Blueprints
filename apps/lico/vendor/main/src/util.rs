@@ -103,10 +103,15 @@ pub fn makenode<const N: usize>(
             channel,
             attack,
             release,
-        }) => (
-            MidiSynth::new(*channel, *attack, *release, sr).to_boxed_nodedata(1),
-            vec![],
-        ),
+            piano,
+        }) => {
+            let synth = if *piano {
+                MidiSynth::piano(*channel, *attack, *release, sr)
+            } else {
+                MidiSynth::new(*channel, *attack, *release, sr)
+            };
+            (synth.to_boxed_nodedata(1), vec![])
+        }
         Component::PatternSynth(nodes::PatternSynth { symbol, span }) => {
             let pattern = symbol.replace('`', "");
             let events = pattern
