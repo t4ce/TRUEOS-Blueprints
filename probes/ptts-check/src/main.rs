@@ -409,11 +409,117 @@ fn run(port: u16) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "trueos")]
+fn source_active(id: u64) -> Result<bool> {
+    unsafe extern "C" {
+        fn trueos_cabi_http_audio_stream_v1(
+            action: u32,
+            stream: u64,
+            pcm: *const u8,
+            bytes: usize,
+        ) -> i64;
+    }
+    match unsafe { trueos_cabi_http_audio_stream_v1(4, id, core::ptr::null(), 0) } {
+        0 => Ok(false),
+        1 => Ok(true),
+        error => Err(format!("native audio status query failed: {error}")),
+    }
+}
+
+fn run_turn_cues(port: u16) -> Result<()> {
+    let status = require_status(request(port, "GET", "/health", None, SMALL_TIMEOUT)?, 200)?;
+    if status["turn_cues"] != true {
+        return Err("service has no turn cues".into());
+    }
+    #[cfg(target_os = "trueos")]
+    let mut previous = None;
+    for (index, intro) in ["startthink", "starttalk"].into_iter().enumerate() {
+        let response = require_status(
+            request(
+                port,
+                "POST",
+                "/speech",
+                Some(serde_json::json!({
+                    "text":if index == 0 { "I will check this." } else { "The sounds are ready." },
+                    "label":"Static", "intro":intro,
+                })),
+                SPEECH_TIMEOUT,
+            )?,
+            200,
+        )?;
+        check_speech(&response, 0.3)?;
+        #[cfg(target_os = "trueos")]
+        {
+            if response["first_stream_ms"]
+                .as_u64()
+                .ok_or("missing cue write timing")?
+                > response["first_pcm_ms"]
+                    .as_u64()
+                    .ok_or("missing generated PCM timing")?
+            {
+                return Err("intro was not submitted before generated speech".into());
+            }
+            if let Some(old) = previous {
+                if source_active(old)? {
+                    return Err("previous Pocket speech still playing".into());
+                }
+            }
+            let id = response["stream_id"]
+                .as_u64()
+                .ok_or("missing speech source ID")?;
+            if !source_active(id)? {
+                return Err("speech unexpectedly drained before the transition check".into());
+            }
+            previous = Some(id);
+        }
+        notice(format!(
+            "ptts-check: cue={intro} first_stream_ms={} first_pcm_ms={} audio_ms={} stream_id={}",
+            response["first_stream_ms"],
+            response["first_pcm_ms"],
+            response["audio_ms"],
+            response["stream_id"]
+        ));
+    }
+    let response = require_status(
+        request(
+            port,
+            "POST",
+            "/cue",
+            Some(serde_json::json!({"cue":"done"})),
+            SPEECH_TIMEOUT,
+        )?,
+        200,
+    )?;
+    #[cfg(target_os = "trueos")]
+    {
+        if source_active(previous.ok_or("missing previous speech")?)? {
+            return Err("done overlapped the final speech".into());
+        }
+        let id = response["stream_id"]
+            .as_u64()
+            .ok_or("missing done source ID")?;
+        if !source_active(id)? {
+            return Err("done has no queued source".into());
+        }
+        notice(format!(
+            "ptts-check: done stream_id={id}; previous speech drained"
+        ));
+    }
+    #[cfg(not(target_os = "trueos"))]
+    let _ = response;
+    notice("ptts-check: all turn-cue checks passed");
+    Ok(())
+}
+
 fn entry() -> Result<()> {
     let mut port = DEFAULT_PORT;
+    // Shell3's normal Blueprint launch has no argv. Native bare launch checks
+    // the cue experiment; Ubuntu retains the existing service-policy checks.
+    let mut turn_cues = cfg!(target_os = "trueos");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--turn-cues" => turn_cues = true,
             "--port" => {
                 port = args
                     .next()
@@ -426,14 +532,18 @@ fn entry() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "ptts-check [--port PORT]\nFinite checks against a running ptts service (default 9773). Host skips native audio clip checks."
+                    "ptts-check [--port PORT] [--turn-cues]\nFinite checks against a running ptts service (default 9773). Native bare launch checks turn cues; host defaults to speech policy checks."
                 );
                 return Ok(());
             }
             _ => return Err(format!("unknown argument {arg:?}")),
         }
     }
-    run(port)
+    if turn_cues {
+        run_turn_cues(port)
+    } else {
+        run(port)
+    }
 }
 
 fn main() {

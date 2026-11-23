@@ -1,0 +1,79 @@
+{
+  "runtime_date": "2026-11-23",
+  "native_service_cue_sequence_verified": true,
+  "native_codex_live_turn_verified": false,
+  "codex_verification": "16 focused queue and chatwidget lifecycle tests; 12 additional queue/worker fixture tests",
+  "service_protocol": "ptts-v1",
+  "model": "english_2026-10",
+  "voice": "azelma",
+  "sequence": [
+    "startthink",
+    "speech",
+    "starttalk",
+    "speech",
+    "done"
+  ],
+  "ordering": "FIFO; each new Pocket source waits for the preceding Pocket source to drain using native audio stream action 4",
+  "speech_checks": [
+    {
+      "intro": "startthink",
+      "stream_id": 1,
+      "first_stream_ms": 1,
+      "first_pcm_ms": 137,
+      "audio_ms": 1760,
+      "generation_ms": 1316
+    },
+    {
+      "intro": "starttalk",
+      "stream_id": 2,
+      "first_stream_ms": 2477,
+      "first_pcm_ms": 2627,
+      "audio_ms": 1760,
+      "generation_ms": 3804
+    }
+  ],
+  "done": {
+    "stream_id": 3,
+    "previous_speech_drained": true
+  },
+  "capture": {
+    "format": "stereo s16le/48000",
+    "each_cue_exactly_matches_embedded_pcm": true,
+    "occurrences_per_cue": 1,
+    "preview_seconds": 9.84,
+    "preview": "target/ptts-turn-cues/native-cues-preview.wav"
+  },
+  "samples": {
+    "done.mp3": {
+      "bytes": 65280,
+      "sha256": "c83a356bf9fb5c2d31be3bcc74ef515a538872e981d250356864fc607b610802"
+    },
+    "starttalk.mp3": {
+      "bytes": 65280,
+      "sha256": "ab86379a423830555163f1ecff0e7c8a51a80470c08791f5dbe97abf88e55cbe"
+    },
+    "startthink.mp3": {
+      "bytes": 65280,
+      "sha256": "ed27da019354b5914ba1c11e2f279c41b451191b215f1f794c41901db4647ff8"
+    }
+  },
+  "artifacts": {
+    "ptts": {
+      "bytes": 11108881,
+      "sha256": "8627cbe05f8ba5082350fbc888a4594a7a85b3cb872ccd5d968a07234247564c"
+    },
+    "ptts-check": {
+      "bytes": 131112,
+      "sha256": "12057af87ff3e52d385846a5aecdb92a5cfb0a3efc05af328cb693391a88e209"
+    },
+    "codex": {
+      "bytes": 80821033,
+      "sha256": "024c1959268131cdde66928ffeadf88f518d4bb51f61edd2db598f50c6a467ec"
+    }
+  },
+  "limits": [
+    "Timing measures delivery to the native sink, not physical speaker latency.",
+    "The full two-second intro precedes spoken words; inference runs during it."
+  ],
+  "default_codex_bundle_built_and_published": true
+}

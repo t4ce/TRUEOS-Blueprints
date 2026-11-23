@@ -51,12 +51,31 @@ Codex submits utterances in FIFO order. Waiting text above 1 KiB produces a
 warning and stays queued. Pocket asks the local Lily service for the label of
 each utterance before generating its audio.
 
+Each live turn can use the three notification samples in `assets/`:
+`startthink` before its first spoken summary, `starttalk` before its first
+spoken answer, and `done` after all that turn's answer audio. An intro starts
+after text preparation, before Lily classification and generation. Its full
+two-second sample precedes speech in the same PCM stream, so inference runs
+while the notification plays. This makes the cue audible sooner; it does not
+make inference faster and can postpone the first spoken word until the intro
+ends. Later summary items and answer chunks do not repeat their phase intro.
+Turns without spoken answers do not play talk/done sounds; interrupted turns
+do not play a success sound.
+
+Pocket waits for its own preceding native source to drain before starting the
+next stream, including `done`. Other apps can keep playing in the second audio
+slot. There is no thought replacement, cancellation or transition chime:
+speech retains FIFO order. This uses the native audio interface's per-source
+playing query; it does not connect to the kernel's HTTP listener from the VM.
+
 ## Local service contract
 
 Bare native launch, `ptts serve` or `ptts --serve` starts a warm service at
 `127.0.0.1:9773`. It binds only loopback. `GET /health` reports `protocol:
 "ptts-v1"`, `ready: true`, `tts: true`, `stt: false`, `language: "en"`,
-`voice: "azelma"`, `model: "english_2026-10"` and `bundled: false` after loading.
+`voice: "azelma"`, `model: "english_2026-10"`, `bundled: false` and
+`turn_cues: true` after loading. Older services without this last capability
+remain usable for plain speech by Codex.
 
 `POST /speech` accepts JSON:
 
@@ -71,14 +90,31 @@ limited to 64 bytes, and selects the persisted temperature rules below.
 Unknown JSON fields are rejected. HTTP framing requires a bounded content length;
 chunked requests and duplicate content lengths are rejected.
 
+The optional `intro` field accepts only `startthink` or `starttalk`. It is
+silent for emoji-only input. `POST /cue` accepts `{"cue":"done"}`; Codex sends
+it once after successful turn completion, only if answer audio was generated.
+MP3 decoding happens at build time with the host-only decoder; native playback
+uses embedded stereo s16le/48 kHz PCM with no runtime codec or downloads.
+The native clip's 120-second limit includes its intro.
+
+The native cue probe passed on 2026-11-23. Its HTTP audio capture contains
+each embedded sample exactly once, in order, with the completion cue following
+the final voice frames. The first intro write took 1 ms; the first generated
+voice PCM arrived at 137 ms. These are sink-delivery timings rather than speaker
+latency. See [tools/TURN_CUES_RUNTIME.json](tools/TURN_CUES_RUNTIME.json).
+
 One service owner executes requests serially, with no separate application
 synthesis queue. The 180-second request-work deadline covers synthesis,
 conversion and waiting for the native audio sink. Clips are limited to 120
 seconds. A response is sent when generation and clip finalization complete.
 Successful JSON includes `audio_ms`, `temperature`, `chunks`, `first_pcm_ms`,
 `generation_ms` and `first_stream_ms`. The last field measures time from the
-start of the request to the first successful native PCM write and is null on
-Ubuntu or for silent input.
+start of the request to the first successful native PCM write, including the
+intro when present, and is null on Ubuntu or for silent input. `audio_ms`
+continues to count generated speech only. Host service WAV captures include
+the intro at 48 kHz stereo, with done cues captured separately in FIFO order.
+`stream_id` identifies the native source for diagnostics and is null on the host
+or for silent input.
 
 The frontend applies speech-only, case-insensitive whole-word aliases:
 `TRUEOS`/`TrueOS`/`trueos` become `True O S`, and `CPU`/`cpu` become `C P U`.

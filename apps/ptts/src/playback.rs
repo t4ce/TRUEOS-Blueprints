@@ -260,34 +260,17 @@ fn sink_playing(deadline: Instant) -> Result<bool> {
 }
 
 #[cfg(target_os = "trueos")]
-fn source_playing(id: u64, deadline: Instant) -> Result<bool> {
-    let request = b"GET /audio/status HTTP/1.1\r\nHost: 127.0.0.1:82\r\nConnection: close\r\n\r\n";
-    source_playing_in(&crate::loopback::exchange(82, request, deadline)?, id)
+fn source_playing(id: u64, _deadline: Instant) -> Result<bool> {
+    source_playing_result(stream_call(4, id, &[]))
 }
 
 #[cfg(any(target_os = "trueos", test))]
-fn source_playing_in(body: &[u8], id: u64) -> Result<bool> {
-    if body.len() > crate::loopback::BODY_LIMIT {
-        bail!("audio status too large")
+fn source_playing_result(status: i64) -> Result<bool> {
+    match status {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => bail!("native audio source status failed: {status}"),
     }
-    let value: serde_json::Value = serde_json::from_slice(body)?;
-    // Older kernels expose only global busy state. Waiting for all producers
-    // there is conservative; current kernels let other apps keep playing.
-    let Some(ids) = value.get("source_ids") else {
-        return status_playing(body);
-    };
-    let ids = ids
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("invalid source_ids"))?;
-    let mut found = false;
-    for source in ids {
-        let source = source
-            .as_str()
-            .and_then(|id| id.parse::<u64>().ok())
-            .ok_or_else(|| anyhow::anyhow!("invalid source ID"))?;
-        found |= source == id;
-    }
-    Ok(found)
 }
 
 /// Ubuntu's WAV capture uses exactly the same cue bytes and speech converter.
@@ -351,14 +334,13 @@ mod tests {
 
     #[test]
     fn waiting_for_pocket_does_not_wait_for_another_producer() {
-        assert!(source_playing_in(br#"{"playing":true,"source_ids":["7","9"]}"#, 7).unwrap());
-        assert!(!source_playing_in(br#"{"playing":true,"source_ids":["9"]}"#, 7).unwrap());
-        assert!(!source_playing_in(br#"{"playing":false,"source_ids":[]}"#, 7).unwrap());
-        // An older kernel must not accidentally overlap the previous clip.
-        assert!(source_playing_in(br#"{"playing":true}"#, 7).unwrap());
-        assert!(source_playing_in(br#"{"source_ids":null}"#, 7).is_err());
-        assert!(source_playing_in(br#"{"source_ids":["oops"]}"#, 7).is_err());
-        assert!(source_playing_in(br#"{}"#, 7).is_err());
+        assert!(source_playing_result(1).unwrap());
+        assert!(!source_playing_result(0).unwrap());
+        // An unsupported query or transport error must never be treated as
+        // permission to overlap or discard the preceding speech.
+        for error in [-22, -5, -2, 2] {
+            assert!(source_playing_result(error).is_err());
+        }
     }
 
     #[test]

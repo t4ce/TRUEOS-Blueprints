@@ -282,7 +282,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                         request.intro,
                     ));
                     #[cfg(target_os = "trueos")]
-                    let (generated, first_stream_ms) = {
+                    let (generated, first_stream_ms, stream_id) = {
                         let mut playback =
                             crate::playback::Stream::new(deadline, previous_playback);
                         let generated =
@@ -302,10 +302,11 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                         (
                             generated,
                             playback.first_write().map(|at| (at - started).as_millis()),
+                            playback.completed_stream(),
                         )
                     };
                     #[cfg(not(target_os = "trueos"))]
-                    let (generated, first_stream_ms) = {
+                    let (generated, first_stream_ms, stream_id) = {
                         let mut playback = crate::playback::HostClip::default();
                         let generated =
                             model.synthesize(&request, deadline, &mut |audio| match audio {
@@ -321,7 +322,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                         if !playback.bytes.is_empty() {
                             playback.write(&output_dir.join(format!("speech-{job:06}.wav")))?;
                         }
-                        (generated, None::<u128>)
+                        (generated, None::<u128>, None::<u64>)
                     };
                     let audio_ms = generated.samples / 24;
                     crate::notice(format!(
@@ -334,7 +335,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                         first_stream_ms.unwrap_or_default()
                     ));
                     Ok(
-                        serde_json::json!({"ok":true,"audio_ms":audio_ms,"temperature":generated.temperature,"chunks":generated.chunks,"first_pcm_ms":generated.first_pcm_ms,"generation_ms":generated.generation_ms,"first_stream_ms":first_stream_ms}),
+                        serde_json::json!({"ok":true,"audio_ms":audio_ms,"temperature":generated.temperature,"chunks":generated.chunks,"first_pcm_ms":generated.first_pcm_ms,"generation_ms":generated.generation_ms,"first_stream_ms":first_stream_ms,"stream_id":stream_id}),
                     )
                 })();
                 match result {
@@ -351,11 +352,11 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
             }
             Ok(r) if r.method == "POST" && r.path == "/cue" => {
                 job = job.saturating_add(1);
-                let result = (|| -> Result<()> {
+                let result = (|| -> Result<serde_json::Value> {
                     let request: crate::cues::CueRequest = serde_json::from_slice(&r.body)?;
                     let crate::cues::Done::Done = request.cue;
                     #[cfg(target_os = "trueos")]
-                    {
+                    let stream_id = {
                         let mut playback = crate::playback::Stream::new(
                             Instant::now() + REQUEST_TIMEOUT,
                             previous_playback,
@@ -363,20 +364,22 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                         playback.push_cue(crate::cues::done_pcm())?;
                         playback.finish()?;
                         previous_playback = playback.completed_stream();
-                    }
+                        previous_playback
+                    };
                     #[cfg(not(target_os = "trueos"))]
-                    {
+                    let stream_id = {
                         let mut playback = crate::playback::HostClip::default();
                         playback.push_cue(crate::cues::done_pcm());
                         playback.write(&output_dir.join(format!("cue-{job:06}-done.wav")))?;
-                    }
+                        None::<u64>
+                    };
                     crate::notice(format!(
                         "ptts: job={job} cue=done queued after previous audio"
                     ));
-                    Ok(())
+                    Ok(serde_json::json!({"ok":true,"stream_id":stream_id}))
                 })();
                 match result {
-                    Ok(()) => respond(&mut stream, "200 OK", serde_json::json!({"ok":true})),
+                    Ok(value) => respond(&mut stream, "200 OK", value),
                     Err(e) => respond(
                         &mut stream,
                         "422 Unprocessable Content",
