@@ -10,7 +10,7 @@ use trueos::ui4_scene::{
     Error, Frame, POINTER_BUTTON_PRIMARY, SHADERTOY_COSMIC_STRANDS, SHADERTOY_CUBE_FIELD,
     SHADERTOY_FLAG_NATIVE_RESOLUTION, SHADERTOY_FLAG_PRIMARY_DOWN, SHADERTOY_HIGH_WISPS,
     SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN, SHADERTOY_PALETTE_GRID, SHADERTOY_PROTEAN_CLOUDS,
-    ShadertoyParamsV1,
+    SHADERTOY_SINE_VISUALIZER, ShadertoyParamsV1,
 };
 use trueos::{clock, logl, vsys};
 
@@ -19,7 +19,6 @@ const FRAME_Y: i32 = 96;
 const INITIAL_WIDTH: u32 = 640;
 const INITIAL_HEIGHT: u32 = 360;
 const TARGET_HZ: u32 = 30;
-const SAMPLE_RATE: f32 = 48_000.0;
 
 #[derive(Copy, Clone)]
 struct Shader {
@@ -33,8 +32,8 @@ struct Shader {
 // Pending sources are in assets/candidates/hex_array_pulse/input.glsl (scratch)
 // and assets/candidates/aiekick_sphere/input.glsl (texture/cubemap channel ABI).
 // They have no executable catalog ID until those requirements are supported.
-// Packages contain the executable, SPIR-V, raw GLSL, generated C++ and bake
-// provenance. Kernel-owned hashes/contracts remain the authority for admission.
+// Packages contain the executable, SPIR-V, source and bake provenance.
+// Kernel-owned hashes/contracts remain the authority for admission.
 const SHADERS: [Shader; 15] = [
     Shader {
         id: SHADERTOY_MANDELBROT,
@@ -79,11 +78,11 @@ const SHADERS: [Shader; 15] = [
         artifact_sha256: "aad75d1acb31ae065420ee907d5c2bcbe9bb73b71f29c27943a0ec1504956e56",
     },
     Shader {
-        id: 7,
-        program_id: 7,
-        name: "Live audio visualizer",
-        package: include_bytes!("../assets/audio_visualizer.stpkg"),
-        artifact_sha256: "86cfdb6afdb08538d3d636130e8d4b9020adc499da28d0084efcb4854867ad9c",
+        id: SHADERTOY_SINE_VISUALIZER,
+        program_id: SHADERTOY_SINE_VISUALIZER,
+        name: "Sine wave visualizer",
+        package: include_bytes!("../assets/sine_visualizer.stpkg"),
+        artifact_sha256: "6ce209a9e365e2b550bf1fb658e468c202aeb04035afc929445b8d75482fe386",
     },
     Shader {
         id: 8,
@@ -325,7 +324,7 @@ fn main() {
             time_seconds: now_ns.saturating_sub(shader_started_ns) as f32 / 1_000_000_000.0,
             delta_seconds: now_ns.saturating_sub(previous_ns) as f32 / 1_000_000_000.0,
             frame_rate: TARGET_HZ as f32,
-            sample_rate: SAMPLE_RATE,
+            sample_rate: 0.0,
             mouse_x: mouse[0],
             mouse_y: mouse[1],
             click_x: mouse[2],

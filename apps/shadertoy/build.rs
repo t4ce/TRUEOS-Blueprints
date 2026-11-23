@@ -9,7 +9,7 @@ fn main() {
         "palette_grid",
         "cosmic_strands",
         "protean_clouds",
-        "audio_visualizer",
+        "sine_visualizer",
         "cpp_gallery",
         "particle_craft",
     ] {
@@ -17,10 +17,7 @@ fn main() {
         for file in [
             "kernel.bin",
             "kernel.spv",
-            if matches!(
-                shader,
-                "audio_visualizer" | "cpp_gallery" | "particle_craft"
-            ) {
+            if matches!(shader, "sine_visualizer" | "cpp_gallery" | "particle_craft") {
                 "input.sources.json"
             } else {
                 "input.glsl"

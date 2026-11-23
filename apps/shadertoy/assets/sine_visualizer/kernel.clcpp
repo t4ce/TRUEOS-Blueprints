@@ -1,0 +1,220 @@
+// Shadertoy instrument visual driven by a procedural sine wave.
+
+#if !defined(__OPENCL_CPP_VERSION__)
+#error "The Shadertoy sine visualizer requires C++ for OpenCL"
+#endif
+
+struct ShaderToyUniforms {
+    float4 resolution_time;
+    float4 mouse;
+    float4 date;
+    float4 timing;
+};
+
+namespace trueos::gpgpu::sine_visualizer {
+
+#define TRUEOS_SINE_VIZ_INLINE __attribute__((always_inline)) inline
+
+inline constexpr float tau = 6.28318530718f;
+inline constexpr float amplitude = 0.75f;
+
+TRUEOS_SINE_VIZ_INLINE float saturate(float value)
+{
+    return clamp(value, 0.0f, 1.0f);
+}
+
+TRUEOS_SINE_VIZ_INLINE float waveform(float position, float phase)
+{
+    return amplitude * native_sin(tau * (position * 4.0f - phase));
+}
+
+TRUEOS_SINE_VIZ_INLINE float spectrum(float position)
+{
+    const float distance = (position - 0.12f) * 14.0f;
+    return amplitude * native_exp(-distance * distance);
+}
+
+TRUEOS_SINE_VIZ_INLINE uint hash_u32(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    value *= 0x846CA68Bu;
+    value ^= value >> 16;
+    return value;
+}
+
+TRUEOS_SINE_VIZ_INLINE float hash_unit(int2 cell, uint seed)
+{
+    const uint mixed = hash_u32(
+        as_uint(cell.x) * 0x9E3779B9u
+        ^ as_uint(cell.y) * 0x85EBCA6Bu
+        ^ seed);
+    return static_cast<float>(mixed & 0x00FFFFFFu) * (1.0f / 16777216.0f);
+}
+
+TRUEOS_SINE_VIZ_INLINE float vector_length(float2 value)
+{
+    return native_sqrt(dot(value, value));
+}
+
+TRUEOS_SINE_VIZ_INLINE float3 palette(float phase)
+{
+    return (float3)(
+        0.50f + 0.50f * native_cos(tau * (phase + 0.00f)),
+        0.50f + 0.50f * native_cos(tau * (phase + 0.32f)),
+        0.50f + 0.50f * native_cos(tau * (phase + 0.67f)));
+}
+
+TRUEOS_SINE_VIZ_INLINE float line_glow(float distance, float sharpness)
+{
+    return native_exp(-sharpness * fabs(distance));
+}
+
+TRUEOS_SINE_VIZ_INLINE float3 render_instrument(
+    float2 normalized,
+    float aspect,
+    float time,
+    uint frame)
+{
+    const float2 centered = normalized * 2.0f - 1.0f;
+    const float2 uv = (float2)(centered.x * aspect, centered.y);
+    const float radius = vector_length(uv);
+    const float angle = atan2(uv.y, uv.x);
+    const float angle01 = (angle + 3.14159265359f) * (1.0f / tau);
+
+    constexpr float rms = amplitude * 0.70710678118f;
+    constexpr float stereo = 0.32f;
+    constexpr float low = amplitude;
+    constexpr float centroid = 0.12f;
+    const float cycles = time * 0.7f;
+    const float phase = cycles - floor(cycles);
+    const float beat = line_glow(phase, 5.0f);
+
+    const float band_x = spectrum(normalized.x);
+    const float angular_band = spectrum(angle01);
+    const float wave_l = waveform(normalized.x, phase);
+    const float wave_r = waveform(normalized.x, phase + stereo);
+    const float phase_l = waveform(angle01, phase);
+    const float phase_r = waveform(angle01, phase + stereo);
+    const float circular_wave = 0.5f * (phase_l + phase_r);
+
+    const float flow =
+        native_sin(uv.x * 2.7f + time * 0.23f + low * 4.0f)
+        + native_cos(uv.y * 3.1f - time * 0.19f)
+        + native_sin((uv.x + uv.y) * 1.9f + centroid * tau);
+    float3 color = (float3)(0.0035f, 0.006f, 0.018f);
+    color += palette(0.62f + centroid * 0.28f + flow * 0.025f)
+        * (0.012f + 0.026f * rms + 0.020f * low)
+        * (1.0f - saturate(radius * 0.52f));
+
+    // Mirrored spectrum architecture with a single tone.
+    const float lower_height = 0.08f + band_x * (0.18f + 0.42f * rms);
+    const float upper_height = 0.04f + band_x * 0.22f;
+    const float lower_edge = line_glow(normalized.y - (1.0f - lower_height), 170.0f);
+    const float upper_edge = line_glow(normalized.y - upper_height, 190.0f);
+    const float lower_fill =
+        1.0f - smoothstep(1.0f - lower_height - 0.018f, 1.0f - lower_height, normalized.y);
+    const float upper_fill =
+        smoothstep(upper_height, upper_height + 0.014f, normalized.y);
+    const float3 spectral_color = palette(0.88f - normalized.x * 0.52f + centroid * 0.18f);
+    color += spectral_color
+        * (lower_fill * (0.006f + band_x * 0.070f) + lower_edge * 0.72f);
+    color += spectral_color.zxy
+        * (upper_fill * (0.004f + band_x * 0.040f) + upper_edge * 0.35f);
+
+    // Two phase-shifted views of the same waveform.
+    const float left_path = -0.19f + wave_l * (0.08f + rms * 0.19f);
+    const float right_path = 0.19f + wave_r * (0.08f + rms * 0.19f);
+    const float left_ribbon = line_glow(uv.y - left_path, 135.0f);
+    const float right_ribbon = line_glow(uv.y - right_path, 135.0f);
+    color += (float3)(0.10f, 0.82f, 1.00f) * left_ribbon * (0.25f + rms * 0.85f);
+    color += (float3)(1.00f, 0.16f, 0.68f) * right_ribbon * (0.25f + rms * 0.85f);
+    color += (float3)(0.55f, 0.75f, 1.00f)
+        * line_glow(uv.y - 0.5f * (left_path + right_path), 42.0f)
+        * stereo * 0.20f;
+
+    // Circular waveform prism with spectrum-driven teeth.
+    const float prism_radius =
+        0.40f + circular_wave * (0.035f + 0.11f * rms) + angular_band * 0.095f;
+    const float prism = line_glow(radius - prism_radius, 115.0f);
+    const float prism_halo = line_glow(radius - prism_radius, 24.0f);
+    const float spokes =
+        0.52f + 0.48f * native_sin(angle * 64.0f + time * 0.7f + angular_band * 5.0f);
+    const float3 prism_color = palette(angle01 + centroid * 0.35f + time * 0.012f);
+    color += prism_color * prism * (0.42f + angular_band * 1.35f);
+    color += prism_color * prism_halo * spokes * 0.06f;
+
+    // Plot the relationship between the two phase-shifted views.
+    const float2 phase_point =
+        (float2)(phase_l + phase_r, phase_l - phase_r) * (0.20f + stereo * 0.16f);
+    const float phase_glow = native_exp(-34.0f * vector_length(uv - phase_point));
+    color += (float3)(0.72f, 0.46f, 1.00f) * phase_glow * (0.05f + stereo * 0.26f);
+
+    // One expanding wavefront per animation cycle.
+    const float beat_radius = 0.18f + 0.88f * phase;
+    const float beat_ring = line_glow(radius - beat_radius, 95.0f);
+    const float bass_bloom = native_exp(-3.6f * radius * radius);
+    color += palette(0.02f + centroid * 0.22f)
+        * beat_ring * beat * 0.65f;
+    color += (float3)(0.16f, 0.035f, 0.25f)
+        * bass_bloom * low * (0.28f + beat * 0.85f);
+
+    // Sparse particles on a stable cell lattice.
+    const float2 particle_grid = normalized * (float2)(72.0f, 40.5f);
+    const int2 particle_cell = convert_int2_rtn(floor(particle_grid));
+    const float2 particle_local = particle_grid - floor(particle_grid) - 0.5f;
+    const float particle_seed = hash_unit(particle_cell, frame >> 2);
+    const float particle_gate =
+        step(0.98f - beat * 0.025f, particle_seed);
+    const float particle = native_exp(-32.0f * dot(particle_local, particle_local))
+        * particle_gate;
+    color += palette(particle_seed + centroid) * particle * 0.28f;
+
+    // Sine amplitude glow and restrained scan texture.
+    color += (float3)(0.35f, 0.42f, 0.65f)
+        * native_exp(-5.0f * radius) * amplitude * amplitude * 0.16f;
+    color *= 0.975f + 0.025f * native_sin(normalized.y * 1440.0f * 0.42f);
+    color *= saturate(1.13f - 0.28f * dot(centered, centered));
+    color = color / (color + (float3)(1.0f));
+    color = native_sqrt(clamp(color, (float3)(0.0f), (float3)(1.0f)));
+    return color;
+}
+
+TRUEOS_SINE_VIZ_INLINE uint pack_opaque(float3 color)
+{
+    const float3 bounded = clamp(color, (float3)(0.0f), (float3)(1.0f));
+    const uint red = static_cast<uint>(bounded.x * 255.0f + 0.5f);
+    const uint green = static_cast<uint>(bounded.y * 255.0f + 0.5f);
+    const uint blue = static_cast<uint>(bounded.z * 255.0f + 0.5f);
+    return 0xFF000000u | (blue << 16) | (green << 8) | red;
+}
+
+} // namespace trueos::gpgpu::sine_visualizer
+
+#undef TRUEOS_SINE_VIZ_INLINE
+
+__attribute__((intel_reqd_sub_group_size(16)))
+__kernel void shadertoy_sine_visualizer(
+    __global uint *output,
+    __global const ShaderToyUniforms *uniforms,
+    uint width,
+    uint height,
+    uint pitch_bytes)
+{
+    using namespace trueos::gpgpu::sine_visualizer;
+
+    const uint x = get_global_id(0);
+    const uint y = get_global_id(1);
+    if (x >= width || y >= height) {
+        return;
+    }
+
+    const float2 normalized = (float2)(
+        (static_cast<float>(x) + 0.5f) / static_cast<float>(width),
+        (static_cast<float>(y) + 0.5f) / static_cast<float>(height));
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    const float3 color = render_instrument(
+        normalized, aspect, uniforms->resolution_time.w, static_cast<uint>(uniforms->timing.w));
+    output[(size_t)y * (pitch_bytes / sizeof(uint)) + x] = pack_opaque(color);
+}

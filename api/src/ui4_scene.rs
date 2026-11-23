@@ -3,6 +3,8 @@
 //! The implementation shares UI4's original Blueprint text transport, but
 //! this name describes the general frame boundary used by shaded scenes.
 
+#[allow(deprecated)]
+pub use crate::ui4_solara_text::SHADERTOY_AUDIO_VISUALIZER;
 pub use crate::ui4_solara_text::{
     BackgroundLayer, CloseRequest, CursorIcon, CursorSource, CursorStep, Damage, Error, Font,
     FontCanvasRow, FontSize, FontSpriteRequest, FontSpriteStatus, FontSpriteTicket, Frame,
@@ -11,11 +13,12 @@ pub use crate::ui4_solara_text::{
     PARTICLE_CRAFT_HEIGHT, PARTICLE_CRAFT_MAX_PARTICLES, PARTICLE_CRAFT_PARAMS_VERSION,
     PARTICLE_CRAFT_WIDTH, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY,
     PanEvent, PanPhase, ParticleCraftParamsV1, PointerEvent, ResizeEvent,
-    SHADERTOY_AUDIO_VISUALIZER, SHADERTOY_AURORA, SHADERTOY_COSMIC_STRANDS, SHADERTOY_CPP_GALLERY,
+    SHADERTOY_AURORA, SHADERTOY_COSMIC_STRANDS, SHADERTOY_CPP_GALLERY,
     SHADERTOY_CUBE_FIELD, SHADERTOY_FLAG_NATIVE_RESOLUTION, SHADERTOY_FLAG_PRIMARY_DOWN,
     SHADERTOY_HIGH_WISPS, SHADERTOY_JULIA, SHADERTOY_LICO, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
     SHADERTOY_PALETTE_GRID, SHADERTOY_PARAMS_VERSION, SHADERTOY_PARTICLE_CRAFT,
-    SHADERTOY_PROTEAN_CLOUDS, SHADERTOY_RETRO_SUN, SHADERTOY_SDF, SHADERTOY_VORONOI, SceneTextRow,
+    SHADERTOY_PROTEAN_CLOUDS, SHADERTOY_RETRO_SUN, SHADERTOY_SDF, SHADERTOY_SINE_VISUALIZER,
+    SHADERTOY_VORONOI, SceneTextRow,
     ShadertoyParamsV1, Shell2FontScaleStep, SkyboxRenderParams, SpriteCorner, SpriteQuad,
     UI4_VISUAL_SOFT_CAP_HZ, fit_frame_extent, font_sizes, frame_max_extent, output_dimensions, rgba, set_display_gamma_ramp,
     shell2_font_scale_steps, worker_slot,
