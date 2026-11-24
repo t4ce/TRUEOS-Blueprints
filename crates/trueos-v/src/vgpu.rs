@@ -453,6 +453,10 @@ pub const RETAINED_VERTEX_LAYOUT_POS_NORMAL: u32 = 0;
 /// Layout 11 versions pointer/raster inputs: older kernels must reject it
 /// rather than silently running the original time-only layout-10 shader.
 pub const RETAINED_VERTEX_LAYOUT_MAXPIX_TORNADO: u32 = 11;
+/// Five four-point wing outline patches. Each point is [x, y, straight_edge].
+/// The bfly shader uses jitter_frame.xy for the surface size and .z for time.
+pub const RETAINED_VERTEX_LAYOUT_BFLY_PATCHES: u32 = 12;
+pub const RETAINED_TOPOLOGY_BFLY_PATCHLIST_4: u32 = 0x23;
 /// Experimental baked beveled cube: one Float3 origin, 44 zero indices.
 /// Only valid with RETAINED_TOPOLOGY_CUBE_PATCHLIST_1. HS expands each patch
 /// to three control points; this is not arbitrary PATCHLIST shader admission.

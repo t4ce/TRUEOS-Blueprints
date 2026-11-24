@@ -1,0 +1,80 @@
+{
+  "id": 15,
+  "name": "bfly-direct-wings",
+  "bytes": 7036,
+  "sha256": "63b3df9e4d1d24bbc6378ffa95918610e9a1db18bc8920b8706544e575f0b2e6",
+  "vertex_layout": 12,
+  "topology": "patch-list-4",
+  "sources": {
+    "direct-wings.vert": "71801810f37e7418212016a5eef3f2a9d85a34eb3f897be6737083aeb6e629af",
+    "direct-wings.tesc": "c23b176f2e773e680efb1d1e29a2232b8a07f712398bdef791e88a8bb9503ec3",
+    "direct-wings.tese": "158aac89cedcb39ee0f524c41c4fd18e9cded58fd7e77368ffdc76401bc119e6",
+    "direct-wings.frag": "935fbcbce0978c549f50ed8a65f45a9259e43e027af7335f5f768b868a9899eb"
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "vs-simd8",
+      "kind": 1,
+      "bytes": 168,
+      "sha256": "e3594517b3ece398b8d98dc6d59c14db2ced5a59ee0cae5a17d2318893f6db62",
+      "capture_file": "vertex-simd8.bin"
+    },
+    {
+      "name": "hs-simd8",
+      "kind": 1,
+      "bytes": 6224,
+      "sha256": "38aed1e246d9291ff9b28914964d6dce4c58a9cc2fe82245aa25da1b96c316db",
+      "capture_file": "hull-simd8.bin"
+    },
+    {
+      "name": "ds-simd8",
+      "kind": 1,
+      "bytes": 544,
+      "sha256": "23607e9dcb90043121d7a886a5c9ae64f1a1a405bfb1d8b110c0777263834432",
+      "capture_file": "domain-simd8.bin"
+    },
+    {
+      "name": "ps-simd16",
+      "kind": 1,
+      "bytes": 48,
+      "sha256": "a7798f9eed0c359821b0f1956875d708f842d3398a33aed59a56ad488adf8016",
+      "capture_file": "fragment-simd16.bin"
+    }
+  ],
+  "offline_compiles": {
+    "compiler": "Mesa ANV 26.0.8",
+    "validation": "Compile-only with Mesa Intel no-op DRM shim",
+    "targets": [
+      {
+        "pci_vendor": "8086",
+        "pci_device": "4680",
+        "pci_revision": "0c",
+        "platform": "ADL-S GT1",
+        "directory": "4680",
+        "pipeline_cache_sha256": "3ea1a2212fb133b85765278f5a760d7f8b56ab67ff9d2526431f2328d8658150",
+        "stage_offsets": {
+          "vs-simd8": 20800,
+          "hs-simd8": 88,
+          "ds-simd8": 8344,
+          "ps-simd16": 7112
+        }
+      },
+      {
+        "pci_vendor": "8086",
+        "pci_device": "a780",
+        "pci_revision": "04",
+        "platform": "RPL-S",
+        "directory": "a780",
+        "pipeline_cache_sha256": "94eed7f2af4eed2d75fd329b445047d76542fc79cddb15d3f30a77a699d490f4",
+        "stage_offsets": {
+          "vs-simd8": 20800,
+          "hs-simd8": 88,
+          "ds-simd8": 8344,
+          "ps-simd16": 7112
+        }
+      }
+    ]
+  }
+}

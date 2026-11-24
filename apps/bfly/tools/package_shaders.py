@@ -27,7 +27,7 @@ def require(condition, message):
 
 
 def captured_package(record, capture):
-    directory = capture / record["capture_directory"] / "stock-bin"
+    directory = capture / record["capture_directory"] / record.get("stage_directory", "stock-bin")
     payload = bytearray(struct.pack("<I", len(record["stages"])))
     for stage in record["stages"]:
         data = (directory / stage["capture_file"]).read_bytes()
@@ -69,8 +69,10 @@ def verify_compiler_capture(record, stages, capture, root):
     device = int(capture["pci_device"], 16)
     require(struct.unpack_from("<IIII", cache) == (32, 1, vendor, device),
             f"Unexpected Vulkan pipeline cache header in {cache_path}")
+    offsets = (capture["stage_offsets"] if "stage_offsets" in capture
+               else record["offline_compiles"]["stage_offsets"])
     for metadata, (name, data) in zip(record["stages"], stages, strict=True):
-        offset = record["offline_compiles"]["stage_offsets"][name]
+        offset = offsets[name]
         captured_data = data + bytes.fromhex(metadata.get("capture_tail", ""))
         require(cache[offset:offset + len(captured_data)] == captured_data,
                 f"Compiled ISA differs for {record['name']} {name} on {device:04x}")
@@ -110,40 +112,53 @@ def blueprint_shader_section(path):
     return shader_data[0]
 
 
+def check_publication(record, trust, kernel_image, rebuild_from):
+    for name, expected in record["sources"].items():
+        require(digest((APP / "shaders" / name).read_bytes()) == expected,
+                f"GLSL source differs from native capture for {name}")
+    path = NATIVE / (record["name"] + ".apshader")
+    package = captured_package(record, rebuild_from) if rebuild_from else path.read_bytes()
+    stages = verify_package(record, package)
+    sha256 = bytes.fromhex(record["sha256"])
+    if kernel_image is not None:
+        require(sha256 in kernel_image, f"{record['name']} trust digest missing from kernel")
+        require(package not in kernel_image, f"{record['name']} package linked in kernel")
+        for name, stage in stages:
+            require(stage not in kernel_image, f"{record['name']} {name} stage linked in kernel")
+    signature = ", ".join(f"0x{byte:02x}" for byte in sha256)
+    require(f"({record['id']}, {len(package)}, [{signature}])" in trust,
+            f"Kernel trust record does not match {record['name']}")
+    return path, package, stages
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kernel", type=Path, default=KERNEL)
     parser.add_argument("--kernel-elf", type=Path)
-    parser.add_argument("--blueprint", type=Path)
-    parser.add_argument("--rebuild-from", type=Path, metavar="CAPTURE_DIR")
+    parser.add_argument("--blueprint", type=Path, help="check the direct tessellation package in the Blueprint")
+    parser.add_argument("--rebuild-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the archived texture demo bundle")
+    parser.add_argument("--rebuild-direct-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild and compare the direct tessellation stages against their native captures")
     parser.add_argument("--verify-offline-from", type=Path, metavar="CAPTURE_DIR",
-                        help="compare against the pinned ADL-S and RPL-S Vulkan pipeline caches")
+                        help="compare the archived texture demo against its pinned offline Vulkan pipeline caches")
     args = parser.parse_args()
     records = json.loads((NATIVE / "manifest.json").read_text())
     trust = " ".join((args.kernel / "src/gpu/app_shader_trust.rs").read_text().split())
     kernel_image = args.kernel_elf.read_bytes() if args.kernel_elf else None
     packages = {}
     for record in records:
-        for name, expected in record["sources"].items():
-            require(digest((APP / "shaders" / name).read_bytes()) == expected,
-                    f"GLSL source differs from native capture for {name}")
-        package_file = NATIVE / (record["name"] + ".apshader")
-        package = (captured_package(record, args.rebuild_from) if args.rebuild_from
-                   else package_file.read_bytes())
-        stages = verify_package(record, package)
+        path, package, stages = check_publication(record, trust, kernel_image, args.rebuild_from)
         if args.verify_offline_from:
             for capture in record["offline_compiles"]["targets"]:
                 verify_compiler_capture(record, stages, capture, args.verify_offline_from)
-        sha256 = bytes.fromhex(record["sha256"])
-        if kernel_image is not None:
-            require(sha256 in kernel_image, f"{record['name']} trust digest missing from kernel")
-            require(package not in kernel_image, f"{record['name']} package linked in kernel")
-            for name, stage in stages:
-                require(stage not in kernel_image, f"{record['name']} {name} stage linked in kernel")
-        signature = ", ".join(f"0x{byte:02x}" for byte in sha256)
-        require(f"({record['id']}, {len(package)}, [{signature}])" in trust,
-                f"Kernel trust record does not match {record['name']}")
-        packages[package_file] = package
+        packages[path] = package
+    direct_record = json.loads((NATIVE / "direct-wings-manifest.json").read_text())
+    direct_path, direct_package, direct_stages = check_publication(
+        direct_record, trust, kernel_image, args.rebuild_direct_from)
+    if args.rebuild_direct_from:
+        for capture in direct_record["offline_compiles"]["targets"]:
+            verify_compiler_capture(direct_record, direct_stages, capture, args.rebuild_direct_from)
     bundle = b"".join(packages.values())
     bundle_file = NATIVE / "app-shaders.bundle"
     if args.rebuild_from:
@@ -151,12 +166,16 @@ def main():
             path.write_bytes(package)
         bundle_file.write_bytes(bundle)
     require(bundle_file.read_bytes() == bundle, "bfly bundle differs from its packages")
+    if args.rebuild_direct_from:
+        direct_path.write_bytes(direct_package)
     if args.blueprint:
-        require(blueprint_shader_section(args.blueprint) == bundle,
-                f"Shader metadata differs from bfly's bundle in {args.blueprint}")
+        require(blueprint_shader_section(args.blueprint) == direct_package,
+                f"Shader metadata differs from bfly's direct tessellation package in {args.blueprint}")
     print("Verified bfly native shader sources, captured stages, and kernel SHA-256 records")
     if args.verify_offline_from:
-        print("Verified identical bfly ISA in the offline ADL-S and RPL-S pipeline caches")
+        print("Verified texture shader ISA in the offline ADL-S and RPL-S pipeline caches")
+    if args.rebuild_direct_from:
+        print("Verified direct tessellation ISA in the offline Vulkan pipeline caches")
 
 
 if __name__ == "__main__":

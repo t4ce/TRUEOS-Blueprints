@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render bfly's cached-wing shaders on a Linux EGL render node (uses Pillow)."""
+"""Render bfly's wing shaders on a Linux EGL render node (uses Pillow)."""
 
 import argparse
 import ctypes as C
@@ -23,6 +23,7 @@ PANEL_STRIPS = BUTTERFLIES
 DISPLAY_STRIPS = PANEL_STRIPS + 2 * BUTTERFLIES
 DEFAULT_SIZE = (3072, 1728)
 FRAME_RATE = 30
+FLIGHT_PERIOD_SECONDS = 12
 IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
 
 U, I, P, F = C.c_uint, C.c_int, C.c_void_p, C.c_float
@@ -31,6 +32,7 @@ EGL.eglGetProcAddress.argtypes = [C.c_char_p]
 EGL.eglGetProcAddress.restype = P
 
 ARRAY_BUFFER, UNIFORM_BUFFER = 0x8892, 0x8A11
+SHADER_STORAGE_BUFFER = 0x90D2
 STATIC_DRAW, DYNAMIC_DRAW = 0x88E4, 0x88E8
 TEXTURE_ARRAY = 0x8C1A
 FRAMEBUFFER, COLOR_ATTACHMENT0 = 0x8D40, 0x8CE0
@@ -176,14 +178,15 @@ def wing_control_points():
     return controls, bounds
 
 
-def upload_controls(controls):
+def upload_controls(controls, *, packed=False):
     vao = create_buffer("GenVertexArrays")
     vbo = create_buffer("GenBuffers")
     gl("BindVertexArray", U)(vao)
     gl("BindBuffer", U, U)(ARRAY_BUFFER, vbo)
     data = struct.pack(f"={len(controls) * 3}f", *(value for row in controls for value in row))
     gl("BufferData", U, C.c_ssize_t, P, U)(ARRAY_BUFFER, len(data), data, STATIC_DRAW)
-    for slot, components, offset in ((0, 2, 0), (1, 1, 8)):
+    attributes = ((0, 3, 0),) if packed else ((0, 2, 0), (1, 1, 8))
+    for slot, components, offset in attributes:
         gl("VertexAttribPointer", U, I, U, C.c_ubyte, I, P)(
             slot, components, 0x1406, False, 12, offset)
         gl("EnableVertexAttribArray", U)(slot)
@@ -298,7 +301,7 @@ def observed_panel_layers(time, query):
     return layers[:PANEL_STRIPS]
 
 
-def save_animation(output, ffmpeg, size, frames, first, later):
+def save_animation(output, ffmpeg, size, frames, first, later, render_frame):
     # Stream frames to the encoder rather than retaining full RGBA images.
     with TemporaryDirectory(dir=output.parent) as temporary:
         animation = Path(temporary) / "animation.png"
@@ -313,12 +316,52 @@ def save_animation(output, ffmpeg, size, frames, first, later):
                     video.write(first.tobytes())
                     video.write(later.tobytes())
                     for frame in range(2, frames):
-                        video.write(display_frame(size, frame / FRAME_RATE).tobytes())
+                        video.write(render_frame(size, frame / FRAME_RATE).tobytes())
             except BrokenPipeError as error:
                 raise RuntimeError("ffmpeg could not encode the wing animation") from error
             if encoder.wait():
                 raise RuntimeError("ffmpeg could not encode the wing animation")
         animation.replace(output)
+
+
+def render_direct(args, size, controls):
+    upload_controls(controls, packed=True)
+    camera = create_buffer("GenBuffers")
+    gl("BindBuffer", U, U)(SHADER_STORAGE_BUFFER, camera)
+    gl("BufferData", U, C.c_ssize_t, P, U)(SHADER_STORAGE_BUFFER, 368, None, DYNAMIC_DRAW)
+    gl("BindBufferBase", U, U, U)(SHADER_STORAGE_BUFFER, 0, camera)
+    program = compile_program("direct-wings", ((0x8B31, "vert"), (0x8E88, "tesc"),
+                                              (0x8E87, "tese"), (0x8B30, "frag")))
+    gl("UseProgram", U)(program)
+    gl("Viewport", I, I, I, I)(0, 0, *size)
+    gl("ClearColor", F, F, F, F)(8 / 255, 10 / 255, 12 / 255, 1)
+
+    def frame(size, time, expected=None, query=None):
+        data = struct.pack("=4f", *size, time, FLIGHT_PERIOD_SECONDS)
+        gl("BufferSubData", U, C.c_ssize_t, C.c_ssize_t, P)(
+            SHADER_STORAGE_BUFFER, 288, len(data), data)
+        gl("Clear", U)(COLOR_BUFFER_BIT)
+        draw(PATCHES, len(controls), 2 * BUTTERFLIES, expected, query)
+        return read_frame(size)
+
+    query = create_buffer("GenQueries")
+    frame((1, 1), 0.0, 0, query)
+    first = frame(size, 0.0)
+    later = frame(size, 1 / FRAME_RATE)
+    if size in ((1920, 1080), (1080, 1920), DEFAULT_SIZE, DEFAULT_SIZE[::-1]):
+        if first.tobytes() == later.tobytes():
+            raise RuntimeError("The direct flight shaders did not animate")
+        if frame(size, 2.0).tobytes() == first.tobytes():
+            raise RuntimeError("The butterfly pose did not advance after a complete wingbeat")
+        flight_closed = frame(size, FLIGHT_PERIOD_SECONDS)
+        if flight_closed.tobytes() != first.tobytes():
+            raise RuntimeError("The direct flight shaders did not return to their initial pose")
+        print(f"Direct flight shaders animated and closed their {FLIGHT_PERIOD_SECONDS}-second lap")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    first.save(args.output.with_suffix(".png"))
+    if args.frames > 1:
+        animation = args.output.with_name(args.output.stem + "-animated.png")
+        save_animation(animation, args.ffmpeg, size, args.frames, first, later, frame)
 
 
 def render(args):
@@ -328,6 +371,9 @@ def render(args):
         renderer = proc("glGetString", C.c_char_p, U)(0x1F01).decode()
         print(f"renderer={renderer}")
         controls, bounds = wing_control_points()
+        if args.direct:
+            render_direct(args, size, controls)
+            return
         upload_controls(controls)
         view = create_buffer("GenBuffers")
         gl("BindBuffer", U, U)(UNIFORM_BUFFER, view)
@@ -377,7 +423,7 @@ def render(args):
         first.save(args.output.with_suffix(".png"))
         if args.frames > 1:
             animation = args.output.with_name(args.output.stem + "-animated.png")
-            save_animation(animation, args.ffmpeg, size, args.frames, first, later)
+            save_animation(animation, args.ffmpeg, size, args.frames, first, later, display_frame)
     finally:
         egl("MakeCurrent", U, P, P, P, P)(display, None, None, None)
         egl("DestroyContext", U, P, P)(display, handle)
@@ -387,17 +433,20 @@ def render(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--direct", action="store_true", help="draw the GPU-tessellated outlines")
     parser.add_argument("--render-node", default="/dev/dri/renderD128")
     parser.add_argument("--size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
                         default=DEFAULT_SIZE, help="backing framebuffer dimensions")
-    parser.add_argument("--output", type=Path, default=ROOT / "target/bfly-panels.png",
-                        help="output PNG path")
+    parser.add_argument("--output", type=Path, help="output PNG path")
     parser.add_argument("--frames", type=int, default=1, help="number of frames sampled at 30 Hz")
     args = parser.parse_args()
     if min(args.size) < 1:
         parser.error("--size dimensions must be positive")
     if args.frames < 1:
         parser.error("--frames must be at least 1")
+    if args.output is None:
+        filename = "bfly-direct-wings.png" if args.direct else "bfly-panels.png"
+        args.output = ROOT / "target" / filename
     if args.frames > 1:
         args.ffmpeg = shutil.which("ffmpeg")
         if args.ffmpeg is None:

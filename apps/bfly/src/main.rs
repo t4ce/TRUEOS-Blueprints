@@ -1,18 +1,29 @@
-//! Native outline reference for the standalone butterfly renderer.
+//! Animated Bézier outlines through the retained GPU tessellation path.
 #![no_std]
 
 mod app_shader_packages;
 
-use bfly::geometry;
+use bfly::geometry::{INDEX_BYTES, PATCH_COUNT, VERTEX_BYTES, VERTEX_COUNT};
 use core::fmt;
+use trueos::clock;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame};
-use trueos::vgpu::{self, Buffer, Capabilities, Device, Queue, QueueClass, RenderPipeline};
+use trueos::vgpu::{
+    self, Buffer, Capabilities, Device, Queue, QueueClass, RetainedCamera, RetainedFrameSubmit,
+    RetainedMesh, RetainedMeshDescriptor, RetainedTransformSeed,
+};
 use trueos::vsys;
 
-const WIDTH: u32 = 640;
-const HEIGHT: u32 = 480;
-const RETRY_MS: u64 = 16;
+const WIDTH: u32 = 1920;
+const HEIGHT: u32 = 1080;
+const FRAME_RATE: u32 = 30;
+const RETRY_MS: u64 = 1;
+// Matches the shader's flight lap and spans six complete wingbeats.
+const FLIGHT_PERIOD_SECONDS: u64 = 12;
+const FLIGHT_PERIOD_NS: u64 = FLIGHT_PERIOD_SECONDS * 1_000_000_000;
+const IDENTITY: [f32; 16] = [
+    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+];
 // Surface import can return raw UI4 statuses as well as vGPU errors.
 const UI4_NOT_FOUND: i32 = -3;
 const UI4_BUSY: i32 = -7;
@@ -50,7 +61,7 @@ impl Drop for OwnedDevice {
 struct OutlineRenderer {
     device: OwnedDevice,
     queue: Queue,
-    pipeline: RenderPipeline,
+    mesh: RetainedMesh,
     vertices: Buffer,
     indices: Buffer,
 }
@@ -65,43 +76,56 @@ impl OutlineRenderer {
         let queue = gpu
             .create_queue(QueueClass::Render)
             .map_err(|code| Error::Vgpu("create queue", code))?;
-        let shader = gpu
-            .create_shader_module(vgpu::SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64)
-            .map_err(|code| Error::Vgpu("create shader", code))?;
-        let pipeline = gpu
-            .create_render_pipeline(shader, geometry::STRIDE as u32, 0)
-            .map_err(|code| Error::Vgpu("create pipeline", code))?;
         let vertices = gpu
             .create_buffer(
-                geometry::VERTEX_BYTES,
+                VERTEX_BYTES.len(),
                 vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_MAP_WRITE,
             )
             .map_err(|code| Error::Vgpu("create vertex buffer", code))?;
         let indices = gpu
             .create_buffer(
-                geometry::INDEX_BYTES.len(),
+                INDEX_BYTES.len(),
                 vgpu::BUFFER_USAGE_INDEX | vgpu::BUFFER_USAGE_MAP_WRITE,
             )
             .map_err(|code| Error::Vgpu("create index buffer", code))?;
-        write_exact(gpu, indices, &geometry::INDEX_BYTES)
+        write_exact(gpu, vertices, &VERTEX_BYTES)
+            .map_err(|code| Error::Vgpu("upload vertices", code))?;
+        write_exact(gpu, indices, &INDEX_BYTES)
             .map_err(|code| Error::Vgpu("upload indices", code))?;
+        let mesh = gpu
+            .create_retained_mesh(
+                vertices,
+                indices,
+                RetainedMeshDescriptor {
+                    vertex_count: VERTEX_COUNT as u32,
+                    index_count: VERTEX_COUNT as u32,
+                    vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_BFLY_PATCHES,
+                    topology: vgpu::RETAINED_TOPOLOGY_BFLY_PATCHLIST_4,
+                    ..RetainedMeshDescriptor::default()
+                },
+            )
+            .map_err(|code| Error::Vgpu("create retained wing patches", code))?;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "bfly retained patches={PATCH_COUNT} controls={VERTEX_COUNT} target-hz={FRAME_RATE}"
+            ),
+        );
         Ok(Self {
             device,
             queue,
-            pipeline,
+            mesh,
             vertices,
             indices,
         })
     }
 
-    fn draw(&self, frame: &mut Frame) -> Result<(), Error> {
+    fn draw(&self, frame: &mut Frame, started: u64) -> Result<(), Error> {
         let gpu = self.device.0;
         let (width, height) = (frame.width(), frame.height());
-        write_exact(gpu, self.vertices, &geometry::vertex_bytes(width, height))
-            .map_err(|code| Error::Vgpu("upload vertices", code))?;
 
         let point = loop {
-            retry_ui4("begin frame", || frame.begin_gpu_frame())?;
+            retry_ui4("begin frame", || frame.begin_visual_gpu_frame())?;
 
             // A failed import can leave the frame's write lease in place.
             // Retry import against that lease instead of beginning a new frame.
@@ -115,13 +139,15 @@ impl OutlineRenderer {
                     Err(code) => return Err(Error::Vgpu("import surface", code)),
                 }
             };
-            match gpu.submit_ui4_indexed_batch_v2(
+            let elapsed = clock::monotonic_nanos().saturating_sub(started) % FLIGHT_PERIOD_NS;
+            let time = elapsed as f32 * 1e-9;
+            match gpu.submit_retained_frame(
                 self.queue,
                 surface,
-                self.pipeline,
+                self.mesh,
                 self.vertices,
                 self.indices,
-                geometry::batch(),
+                frame_params(width, height, time),
             ) {
                 Ok(point) => break point,
                 // The consumed surface import is dropped on submission failure.
@@ -136,6 +162,35 @@ impl OutlineRenderer {
             frame.publish(Damage::full(width, height))
         })
     }
+}
+
+fn frame_params(width: u32, height: u32, time: f32) -> RetainedFrameSubmit {
+    let mut submit = RetainedFrameSubmit {
+        clear_rgba8_srgb: u32::from_le_bytes([8, 10, 12, 255]),
+        seed_count: 1,
+        camera: RetainedCamera {
+            view: IDENTITY,
+            projection: IDENTITY,
+            view_projection: IDENTITY,
+            inverse_view_projection: IDENTITY,
+            previous_view_projection: IDENTITY,
+            position_near: [0.0, 0.0, 0.0, 0.25],
+            forward_far: [0.0, 0.0, -1.0, 2048.0],
+            jitter_frame: [
+                width as f32,
+                height as f32,
+                time,
+                FLIGHT_PERIOD_SECONDS as f32,
+            ],
+        },
+        ..RetainedFrameSubmit::default()
+    };
+    submit.seeds[0] = RetainedTransformSeed {
+        scale: [1.0; 3],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        ..RetainedTransformSeed::default()
+    };
+    submit
 }
 
 fn write_exact(device: Device, buffer: Buffer, bytes: &[u8]) -> Result<(), i32> {
@@ -169,15 +224,16 @@ fn main() {
 }
 
 fn run() -> Result<(), Error> {
-    let mut frame = Frame::open_streaming(96, 72, WIDTH, HEIGHT)
+    let renderer = OutlineRenderer::open()?;
+    let mut frame = Frame::open_visual(96, 72, WIDTH, HEIGHT, FRAME_RATE)
         .map_err(|code| Error::Ui4("open window", code))?;
     frame
         .set_title("bfly")
         .map_err(|code| Error::Ui4("set title", code))?;
-    let renderer = OutlineRenderer::open()?;
-    renderer.draw(&mut frame)?;
-    logl::log(level::INFO, "bfly presented the native outline reference");
-
+    let started = clock::monotonic_nanos();
+    let mut frame_count = 0u32;
+    let mut measure_from = started;
+    let mut presented = false;
     loop {
         let mut pending_size = None;
         while let Some(event) = frame
@@ -190,8 +246,30 @@ fn run() -> Result<(), Error> {
             && (width, height) != (frame.width(), frame.height())
         {
             retry_ui4("resize window", || frame.resize(width, height))?;
-            renderer.draw(&mut frame)?;
         }
-        vsys::sleep_ms(RETRY_MS);
+        renderer.draw(&mut frame, started)?;
+        if !presented
+            && frame
+                .take_first_presentation()
+                .map_err(|code| Error::Ui4("read first presentation", code))?
+        {
+            presented = true;
+            logl::log(
+                level::IMPORTANT,
+                "bfly tessellated outline reached the display",
+            );
+        }
+        frame_count += 1;
+        let now = clock::monotonic_nanos();
+        let elapsed = now.saturating_sub(measure_from);
+        if elapsed >= 5_000_000_000 {
+            let fps = (frame_count as f64 * 1_000_000_000.0) / elapsed as f64;
+            logl::log(
+                level::INFO,
+                format_args!("bfly tessellated outline fps={fps:.1} frames={frame_count}"),
+            );
+            measure_from = now;
+            frame_count = 0;
+        }
     }
 }
