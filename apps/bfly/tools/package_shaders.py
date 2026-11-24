@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify bfly's native shaders and rebuild them from a pinned ANV capture."""
+"""Verify bfly's native shaders and rebuild them from pinned Intel compiles."""
 
 import argparse
 import hashlib
@@ -30,7 +30,9 @@ def captured_package(record, capture):
     directory = capture / record["capture_directory"] / record.get("stage_directory", "stock-bin")
     payload = bytearray(struct.pack("<I", len(record["stages"])))
     for stage in record["stages"]:
-        data = (directory / stage["capture_file"]).read_bytes()
+        path = (NATIVE / stage["asset_file"] if "asset_file" in stage
+                else directory / stage["capture_file"])
+        data = path.read_bytes()
         size = stage["bytes"]
         require(data[size:].hex() == stage.get("capture_tail", ""), "Unexpected capture padding")
         payload.extend(struct.pack("<II", stage["kind"], size))
@@ -112,13 +114,18 @@ def blueprint_shader_section(path):
     return shader_data[0]
 
 
-def check_publication(record, trust, kernel_image, rebuild_from):
-    for name, expected in record["sources"].items():
-        require(digest((APP / "shaders" / name).read_bytes()) == expected,
-                f"GLSL source differs from native capture for {name}")
+def check_publication(record, trust, kernel_image, rebuild_from, *, archived=False):
+    if not archived:
+        for name, expected in record["sources"].items():
+            require(digest((APP / "shaders" / name).read_bytes()) == expected,
+                    f"Shader source differs from native capture for {name}")
     path = NATIVE / (record["name"] + ".apshader")
     package = captured_package(record, rebuild_from) if rebuild_from else path.read_bytes()
     stages = verify_package(record, package)
+    for metadata, (name, data) in zip(record["stages"], stages, strict=True):
+        if "asset_file" in metadata:
+            require((NATIVE / metadata["asset_file"]).read_bytes() == data,
+                    f"Embedded asset differs for {record['name']} {name}")
     sha256 = bytes.fromhex(record["sha256"])
     if kernel_image is not None:
         require(sha256 in kernel_image, f"{record['name']} trust digest missing from kernel")
@@ -131,15 +138,39 @@ def check_publication(record, trust, kernel_image, rebuild_from):
     return path, package, stages
 
 
+def check_history_publication(record, trust, kernel_image, rebuild_from):
+    path, package, _ = check_publication(record, trust, kernel_image, rebuild_from)
+    if rebuild_from:
+        for capture in record["offline_compiles"]["targets"]:
+            directory = capture["directory"]
+            target_record = {**record, "capture_directory": directory}
+            require(captured_package(target_record, rebuild_from) == package,
+                    f"Compiled history package differs for target {directory}")
+            stage = record["stages"][0]["name"]
+            spirv = (rebuild_from / directory / (stage + ".spv")).read_bytes()
+            require(digest(spirv) == record["offline_compiles"]["spirv_sha256"],
+                    f"Compiled history SPIR-V differs for target {directory}")
+        path.write_bytes(package)
+    return package
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kernel", type=Path, default=KERNEL)
     parser.add_argument("--kernel-elf", type=Path)
-    parser.add_argument("--blueprint", type=Path, help="check the direct tessellation package in the Blueprint")
+    parser.add_argument("--blueprint", type=Path, help="check the shader packages in the Blueprint")
     parser.add_argument("--rebuild-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild the archived texture demo bundle")
     parser.add_argument("--rebuild-direct-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild and compare the direct tessellation stages against their native captures")
+    parser.add_argument("--rebuild-history-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild and compare the earlier monotone history kernel against its IGC compiles")
+    parser.add_argument("--rebuild-smoke-history-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the textured history package from its IGC compiles and embedded R8")
+    parser.add_argument("--rebuild-cloud-history-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the cloud history package from its IGC compiles and embedded R8")
+    parser.add_argument("--rebuild-cloud-trail-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the higher-contrast cloud history shader from its IGC compiles")
     parser.add_argument("--verify-offline-from", type=Path, metavar="CAPTURE_DIR",
                         help="compare the archived texture demo against its pinned offline Vulkan pipeline caches")
     args = parser.parse_args()
@@ -159,6 +190,22 @@ def main():
     if args.rebuild_direct_from:
         for capture in direct_record["offline_compiles"]["targets"]:
             verify_compiler_capture(direct_record, direct_stages, capture, args.rebuild_direct_from)
+    history_record = json.loads((NATIVE / "history-manifest.json").read_text())
+    history_package = check_history_publication(
+        history_record, trust, kernel_image, args.rebuild_history_from)
+    # The untextured capture predates the current outline shaders.
+    untextured_record = json.loads((NATIVE / "untextured-wings-manifest.json").read_text())
+    _, untextured_package, _ = check_publication(
+        untextured_record, trust, kernel_image, None, archived=True)
+    smoke_record = json.loads((NATIVE / "smoke-history-manifest.json").read_text())
+    smoke_package = check_history_publication(
+        smoke_record, trust, kernel_image, args.rebuild_smoke_history_from)
+    cloud_record = json.loads((NATIVE / "cloud-history-manifest.json").read_text())
+    cloud_package = check_history_publication(
+        cloud_record, trust, kernel_image, args.rebuild_cloud_history_from)
+    trail_record = json.loads((NATIVE / "cloud-trail-manifest.json").read_text())
+    trail_package = check_history_publication(
+        trail_record, trust, kernel_image, args.rebuild_cloud_trail_from)
     bundle = b"".join(packages.values())
     bundle_file = NATIVE / "app-shaders.bundle"
     if args.rebuild_from:
@@ -169,13 +216,23 @@ def main():
     if args.rebuild_direct_from:
         direct_path.write_bytes(direct_package)
     if args.blueprint:
-        require(blueprint_shader_section(args.blueprint) == direct_package,
-                f"Shader metadata differs from bfly's direct tessellation package in {args.blueprint}")
+        expected = b"".join((direct_package, smoke_package, cloud_package, trail_package,
+                             untextured_package, history_package))
+        require(blueprint_shader_section(args.blueprint) == expected,
+                f"Shader metadata differs from bfly's wings and history packages in {args.blueprint}")
     print("Verified bfly native shader sources, captured stages, and kernel SHA-256 records")
     if args.verify_offline_from:
         print("Verified texture shader ISA in the offline ADL-S and RPL-S pipeline caches")
     if args.rebuild_direct_from:
         print("Verified direct tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_history_from:
+        print("Verified outline history Zebin and SPIR-V for ADL-S and RPL-S")
+    if args.rebuild_smoke_history_from:
+        print("Verified textured history Zebin and SPIR-V for ADL-S and RPL-S, plus embedded R8")
+    if args.rebuild_cloud_history_from:
+        print("Verified cloud history Zebin and SPIR-V for ADL-S and RPL-S, plus embedded R8")
+    if args.rebuild_cloud_trail_from:
+        print("Verified higher-contrast cloud history Zebin and SPIR-V for ADL-S and RPL-S")
 
 
 if __name__ == "__main__":

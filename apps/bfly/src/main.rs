@@ -3,11 +3,16 @@
 
 mod app_shader_packages;
 
+use bfly::flock::{FRAME_PERIOD_NS, Flock, Snapshot};
 use bfly::geometry::{INDEX_BYTES, PATCH_COUNT, VERTEX_BYTES, VERTEX_COUNT};
 use core::fmt;
 use trueos::clock;
+use trueos::input::{
+    KEYBOARD_KEY_F1, KEYBOARD_KEY_F2, KEYBOARD_KEY_F3, KEYBOARD_OUTPUT_FLAG_PRESS,
+    KEYBOARD_OUTPUT_KIND_KEY,
+};
 use trueos::logl::{self, level};
-use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame};
+use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, POINTER_BUTTON_PRIMARY};
 use trueos::vgpu::{
     self, Buffer, Capabilities, Device, Queue, QueueClass, RetainedCamera, RetainedFrameSubmit,
     RetainedMesh, RetainedMeshDescriptor, RetainedTransformSeed,
@@ -19,11 +24,8 @@ const HEIGHT: u32 = 1080;
 const FRAME_RATE: u32 = 30;
 const RETRY_MS: u64 = 1;
 const FLIGHT_PERIOD_SECONDS: u64 = 12;
-// One complete mode cycle also spans whole flight laps and wingbeat patterns.
-const FRAME_PERIOD_NS: u64 = 60_000_000_000;
-const IDENTITY: [f32; 16] = [
-    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-];
+// Each of the seven splits swaps twice during one cycle.
+const SWAP_PERIOD_NS: u64 = 420_000_000_000;
 // Surface import can return raw UI4 statuses as well as vGPU errors.
 const UI4_NOT_FOUND: i32 = -3;
 const UI4_BUSY: i32 = -7;
@@ -58,10 +60,32 @@ impl Drop for OwnedDevice {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TrailMode {
+    Monochrome,
+    Smoke,
+    Cloud,
+}
+
+impl TrailMode {
+    fn describe(self, frame: &mut Frame) -> Result<(), Error> {
+        let (title, mode) = match self {
+            Self::Monochrome => ("bfly - monochrome", "monochrome"),
+            Self::Smoke => ("bfly - smoke", "smoke"),
+            Self::Cloud => ("bfly - cloud", "cloud"),
+        };
+        frame
+            .set_title(title)
+            .map_err(|code| Error::Ui4("set title", code))?;
+        logl::log(level::IMPORTANT, format_args!("bfly trail mode={mode}"));
+        Ok(())
+    }
+}
+
 struct OutlineRenderer {
     device: OwnedDevice,
     queue: Queue,
-    mesh: RetainedMesh,
+    meshes: [Option<RetainedMesh>; 3],
     vertices: Buffer,
     indices: Buffer,
 }
@@ -92,38 +116,63 @@ impl OutlineRenderer {
             .map_err(|code| Error::Vgpu("upload vertices", code))?;
         write_exact(gpu, indices, &INDEX_BYTES)
             .map_err(|code| Error::Vgpu("upload indices", code))?;
-        let mesh = gpu
-            .create_retained_mesh(
-                vertices,
-                indices,
-                RetainedMeshDescriptor {
-                    vertex_count: VERTEX_COUNT as u32,
-                    index_count: VERTEX_COUNT as u32,
-                    vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_BFLY_OPEN_PATCHES,
-                    topology: vgpu::RETAINED_TOPOLOGY_BFLY_PATCHLIST_4,
-                    ..RetainedMeshDescriptor::default()
-                },
-            )
-            .map_err(|code| Error::Vgpu("create retained wing patches", code))?;
+        let mut renderer = Self {
+            device,
+            queue,
+            meshes: [None; 3],
+            vertices,
+            indices,
+        };
+        renderer.mesh_for(TrailMode::Smoke)?;
         logl::log(
             level::IMPORTANT,
             format_args!(
                 "bfly retained patches={PATCH_COUNT} controls={VERTEX_COUNT} target-hz={FRAME_RATE}"
             ),
         );
-        Ok(Self {
-            device,
-            queue,
-            mesh,
-            vertices,
-            indices,
-        })
+        Ok(renderer)
     }
 
-    fn draw(&self, frame: &mut Frame, started: u64) -> Result<(), Error> {
+    fn mesh_for(&mut self, mode: TrailMode) -> Result<RetainedMesh, Error> {
+        let entry = &mut self.meshes[mode as usize];
+        if let Some(mesh) = *entry {
+            return Ok(mesh);
+        }
+        let vertex_layout = match mode {
+            TrailMode::Monochrome => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_TRAIL_FLOCK,
+            TrailMode::Smoke => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_SMOKE_FLOCK,
+            TrailMode::Cloud => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_CLOUD_TRAIL_FLOCK,
+        };
+        let mesh = self
+            .device
+            .0
+            .create_retained_mesh(
+                self.vertices,
+                self.indices,
+                RetainedMeshDescriptor {
+                    vertex_count: VERTEX_COUNT as u32,
+                    index_count: VERTEX_COUNT as u32,
+                    vertex_layout,
+                    topology: vgpu::RETAINED_TOPOLOGY_BFLY_PATCHLIST_4,
+                    ..RetainedMeshDescriptor::default()
+                },
+            )
+            .map_err(|code| Error::Vgpu("create retained wing patches", code))?;
+        *entry = Some(mesh);
+        Ok(mesh)
+    }
+
+    fn draw(
+        &self,
+        mesh: RetainedMesh,
+        frame: &mut Frame,
+        started: u64,
+        flock: &mut Flock,
+    ) -> Result<(), Error> {
         let gpu = self.device.0;
         let (width, height) = (frame.width(), frame.height());
 
+        let mut params = None;
         let point = loop {
             retry_ui4("begin frame", || frame.begin_visual_gpu_frame())?;
 
@@ -139,15 +188,30 @@ impl OutlineRenderer {
                     Err(code) => return Err(Error::Vgpu("import surface", code)),
                 }
             };
-            let elapsed = clock::monotonic_nanos().saturating_sub(started) % FRAME_PERIOD_NS;
-            let time = elapsed as f32 * 1e-9;
+            let params = *params.get_or_insert_with(|| {
+                let now = clock::monotonic_nanos();
+                let events = flock.tick(now);
+                if events.spawned != 0 || events.promoted != 0 || events.departed != 0 {
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "bfly flock spawned={} promoted={} departed={} population={}",
+                            events.spawned,
+                            events.promoted,
+                            events.departed,
+                            flock.population(),
+                        ),
+                    );
+                }
+                frame_params(width, height, now.saturating_sub(started), flock.snapshot())
+            });
             match gpu.submit_retained_frame(
                 self.queue,
                 surface,
-                self.mesh,
+                mesh,
                 self.vertices,
                 self.indices,
-                frame_params(width, height, time),
+                params,
             ) {
                 Ok(point) => break point,
                 // The consumed surface import is dropped on submission failure.
@@ -164,25 +228,38 @@ impl OutlineRenderer {
     }
 }
 
-fn frame_params(width: u32, height: u32, time: f32) -> RetainedFrameSubmit {
+fn frame_params(
+    width: u32,
+    height: u32,
+    elapsed_ns: u64,
+    snapshot: Snapshot,
+) -> RetainedFrameSubmit {
+    // The flock shader reads its instance records from the retained camera lanes.
+    let mut camera = RetainedCamera {
+        jitter_frame: [
+            width as f32,
+            height as f32,
+            (elapsed_ns % FRAME_PERIOD_NS) as f32 * 1e-9,
+            FLIGHT_PERIOD_SECONDS as f32,
+        ],
+        ..RetainedCamera::default()
+    };
+    let records = &snapshot.records;
+    camera.view.copy_from_slice(&records[..16]);
+    camera.projection.copy_from_slice(&records[16..32]);
+    camera.view_projection.copy_from_slice(&records[32..48]);
+    camera
+        .inverse_view_projection
+        .copy_from_slice(&records[48..64]);
+    camera.position_near.copy_from_slice(&records[64..68]);
+    camera.forward_far.copy_from_slice(&records[68..72]);
+    camera.previous_view_projection[..8].copy_from_slice(&records[72..]);
+    camera.previous_view_projection[8..12].copy_from_slice(&snapshot.motion);
+    camera.previous_view_projection[12] = (elapsed_ns % SWAP_PERIOD_NS) as f32 * 1e-9;
     let mut submit = RetainedFrameSubmit {
-        clear_rgba8_srgb: u32::from_le_bytes([8, 10, 12, 255]),
+        clear_rgba8_srgb: 0,
         seed_count: 1,
-        camera: RetainedCamera {
-            view: IDENTITY,
-            projection: IDENTITY,
-            view_projection: IDENTITY,
-            inverse_view_projection: IDENTITY,
-            previous_view_projection: IDENTITY,
-            position_near: [0.0, 0.0, 0.0, 0.25],
-            forward_far: [0.0, 0.0, -1.0, 2048.0],
-            jitter_frame: [
-                width as f32,
-                height as f32,
-                time,
-                FLIGHT_PERIOD_SECONDS as f32,
-            ],
-        },
+        camera,
         ..RetainedFrameSubmit::default()
     };
     submit.seeds[0] = RetainedTransformSeed {
@@ -224,17 +301,50 @@ fn main() {
 }
 
 fn run() -> Result<(), Error> {
-    let renderer = OutlineRenderer::open()?;
+    let mut renderer = OutlineRenderer::open()?;
     let mut frame = Frame::open_visual(96, 72, WIDTH, HEIGHT, FRAME_RATE)
         .map_err(|code| Error::Ui4("open window", code))?;
+    let mut mode = TrailMode::Smoke;
+    let mut mesh = renderer.mesh_for(mode)?;
+    mode.describe(&mut frame)?;
     frame
-        .set_title("bfly")
-        .map_err(|code| Error::Ui4("set title", code))?;
+        .set_primary_activation(true)
+        .map_err(|code| Error::Ui4("enable primary activation", code))?;
     let started = clock::monotonic_nanos();
+    let mut flock = Flock::new(started);
     let mut frame_count = 0u32;
     let mut measure_from = started;
     let mut presented = false;
     loop {
+        while let Some(event) = frame
+            .take_pointer_event()
+            .map_err(|code| Error::Ui4("read pointer event", code))?
+        {
+            if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0 {
+                flock.click();
+            }
+        }
+        let mut next_mode = mode;
+        while let Some(event) = frame
+            .take_keyboard_event()
+            .map_err(|code| Error::Ui4("read keyboard event", code))?
+        {
+            if event.kind == KEYBOARD_OUTPUT_KIND_KEY
+                && event.flags & KEYBOARD_OUTPUT_FLAG_PRESS != 0
+            {
+                match event.key_code {
+                    KEYBOARD_KEY_F1 => next_mode = TrailMode::Monochrome,
+                    KEYBOARD_KEY_F2 => next_mode = TrailMode::Smoke,
+                    KEYBOARD_KEY_F3 => next_mode = TrailMode::Cloud,
+                    _ => {}
+                }
+            }
+        }
+        if next_mode != mode {
+            mesh = renderer.mesh_for(next_mode)?;
+            mode = next_mode;
+            mode.describe(&mut frame)?;
+        }
         let mut pending_size = None;
         while let Some(event) = frame
             .take_resize_event()
@@ -247,7 +357,7 @@ fn run() -> Result<(), Error> {
         {
             retry_ui4("resize window", || frame.resize(width, height))?;
         }
-        renderer.draw(&mut frame, started)?;
+        renderer.draw(mesh, &mut frame, started, &mut flock)?;
         if !presented
             && frame
                 .take_first_presentation()

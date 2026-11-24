@@ -1,0 +1,53 @@
+{
+  "id": 28,
+  "name": "bfly-cloud-trail",
+  "bytes": 22916,
+  "sha256": "b3391c130ead432faee057a6da6829b1907c4f2ae99f68500fce43a777bfe645",
+  "sources": {
+    "bfly_smoke_history_rgba8.clcpp": "e87ac71b9f6c44ed61e8cc3f666e034869659d75156eca64ad223d79a0eb0bd9",
+    "bfly_cloud_trail_rgba8.clcpp": "56d260bb87ac603ceeb511b7933a873dc054f05c0bfb76e61b9bf2f5f2c2f073"
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "bfly_cloud_trail_rgba8",
+      "kind": 0,
+      "bytes": 22888,
+      "sha256": "be889825177ae0f06abe5a193b2ab8bbbdfda8c4817580cb90827eecb9fa8472",
+      "capture_file": "bfly_cloud_trail_rgba8.bin"
+    }
+  ],
+  "texture": {
+    "package_id": 27,
+    "stage_index": 1,
+    "window_width_for_tier": [
+      512,
+      512,
+      256,
+      128,
+      64,
+      64,
+      64,
+      64
+    ]
+  },
+  "offline_compiles": {
+    "frontend": "Clang 21.1.8 C++ for OpenCL through llvm-spirv",
+    "backend": "Intel IGC 2.28.4 through ocloc 26.05.037020",
+    "spirv_sha256": "e7496c5bd1d858a0519aa78017d9bbe8ccfabde93dbd013d2a908adb3b65fc92",
+    "reproducible_across_build_roots": true,
+    "targets": [
+      {
+        "directory": "4680",
+        "pci_device": "0x4680",
+        "revision": "0x0c"
+      },
+      {
+        "directory": "a780",
+        "pci_device": "0xa780",
+        "revision": "0x04"
+      }
+    ]
+  }
+}

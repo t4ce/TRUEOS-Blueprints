@@ -1,0 +1,68 @@
+{
+  "id": 25,
+  "name": "bfly-smoke-history",
+  "bytes": 30988,
+  "sha256": "9271aae6c3cc29ed0c9a993e35942dfb75cc82ed33c5026ffcb0694230a70339",
+  "sources": {
+    "bfly_smoke_history_rgba8.clcpp": "e87ac71b9f6c44ed61e8cc3f666e034869659d75156eca64ad223d79a0eb0bd9"
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "bfly_smoke_history_rgba8",
+      "kind": 0,
+      "bytes": 22760,
+      "sha256": "f282e82a6ec5c704342815990c849d19c56dba21c8f465823a34b9aa81c3d71f",
+      "capture_file": "bfly_smoke_history_rgba8.bin"
+    },
+    {
+      "name": "smoke_r8",
+      "kind": 0,
+      "bytes": 8192,
+      "sha256": "656ea983c7355fcb3f2ef4eec48421c97d2ed74eb14a5de44afd4e02cd200773",
+      "asset_file": "bfly-smoke.r8"
+    }
+  ],
+  "texture": {
+    "format": "R8_UNORM",
+    "width": 64,
+    "height": 128,
+    "row_stride_bytes": 64,
+    "origin": "top-left",
+    "source": "tools/vfx.jpg",
+    "source_sha256": "7f084027ee7133e5e34516491c9bac3337a94bbf48a2c52e17ccc539260efa12",
+    "bake": "tools/bake_smoke_texture.py",
+    "vertical_strips": 8,
+    "strip_width_texels": 8,
+    "pixels_per_texel": 2,
+    "strip_for_tier": [
+      3,
+      4,
+      2,
+      5,
+      1,
+      6,
+      0,
+      7
+    ]
+  },
+  "offline_compiles": {
+    "frontend": "Clang 21.1.8 C++ for OpenCL through llvm-spirv",
+    "backend": "Intel IGC 2.28.4 through ocloc 26.05.037020",
+    "spirv_sha256": "0beca5f89fb6221e2777cb3b644f9d225da8e157a5942fa8ed082da27098b3f7",
+    "reproducible_across_build_roots": true,
+    "targets": [
+      {
+        "directory": "4680",
+        "pci_device": "0x4680",
+        "revision": "0x0c"
+      },
+      {
+        "directory": "a780",
+        "pci_device": "0xa780",
+        "revision": "0x04"
+      }
+    ]
+  }
+}

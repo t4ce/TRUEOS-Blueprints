@@ -1,15 +1,15 @@
 {
-  "id": 16,
+  "id": 26,
   "name": "bfly-direct-wings",
-  "bytes": 7756,
-  "sha256": "b67028c10ca83449f8f8259d87877066d4011d8ccbc39aaa44814362d96cb13a",
-  "vertex_layout": 13,
+  "bytes": 14860,
+  "sha256": "cd23c4debf1a9934d077adcddc9e59e2a58da3410b27001ecb74d3ef439954fe",
+  "vertex_layout": 18,
   "topology": "patch-list-4",
   "sources": {
     "direct-wings.vert": "71801810f37e7418212016a5eef3f2a9d85a34eb3f897be6737083aeb6e629af",
-    "direct-wings.tesc": "3aa8d8bb7fafd226c798cd654c61e2c88c807fefe6904141564cb04fa7788233",
-    "direct-wings.tese": "158aac89cedcb39ee0f524c41c4fd18e9cded58fd7e77368ffdc76401bc119e6",
-    "direct-wings.frag": "935fbcbce0978c549f50ed8a65f45a9259e43e027af7335f5f768b868a9899eb"
+    "direct-wings.tesc": "92b6e800efd77f918ec43469a4906e46382056bcef6f91d0bae1bdbfbd6ad808",
+    "direct-wings.tese": "c17c57efbabf010537270136c0f0fe6f622cf4d4e60484c2cfacad9bd7d8b14b",
+    "direct-wings.frag": "f076f3ef201011711535b382971c4b5d0f5db9f0f580ca4f20395eadc5f60875"
   },
   "capture_directory": "4680",
   "stage_directory": ".",
@@ -24,22 +24,22 @@
     {
       "name": "hs-simd8",
       "kind": 1,
-      "bytes": 6944,
-      "sha256": "60197a9f8da279d5ef797e9825c4b7383c6aeebe62917e2b9d8998d6b4cf73ec",
+      "bytes": 13592,
+      "sha256": "c25a8197a1a8193f8895481e88366cfa32a0dda787677908f3e66d38a4d98671",
       "capture_file": "hull-simd8.bin"
     },
     {
       "name": "ds-simd8",
       "kind": 1,
-      "bytes": 544,
-      "sha256": "23607e9dcb90043121d7a886a5c9ae64f1a1a405bfb1d8b110c0777263834432",
+      "bytes": 784,
+      "sha256": "767e01280181a9f06cf0eed4c97c2706c4402e1c39e11cafa9e4237e25007d74",
       "capture_file": "domain-simd8.bin"
     },
     {
       "name": "ps-simd16",
       "kind": 1,
-      "bytes": 48,
-      "sha256": "a7798f9eed0c359821b0f1956875d708f842d3398a33aed59a56ad488adf8016",
+      "bytes": 264,
+      "sha256": "efff6b49dcb197576f4ffe62fd3ced049b0b98d4c7602ac10002f25a243107db",
       "capture_file": "fragment-simd16.bin"
     }
   ],
@@ -53,12 +53,12 @@
         "pci_revision": "0c",
         "platform": "ADL-S GT1",
         "directory": "4680",
-        "pipeline_cache_sha256": "2c542417e24c6295a2a623c91c9f16dacf8f90208972223d69e32bc8b1c4fe22",
+        "pipeline_cache_sha256": "a35ec40ceb5b482a75b82cfca84dc582b6b9dd8afee34c864526c3a4ed72fc60",
         "stage_offsets": {
-          "vs-simd8": 19296,
-          "hs-simd8": 88,
-          "ds-simd8": 9064,
-          "ps-simd16": 7832
+          "vs-simd8": 1480,
+          "hs-simd8": 2368,
+          "ds-simd8": 19280,
+          "ps-simd16": 88
         }
       },
       {
@@ -67,12 +67,12 @@
         "pci_revision": "04",
         "platform": "RPL-S",
         "directory": "a780",
-        "pipeline_cache_sha256": "eb48ed00ff9bf6567a2a2905b0d9dfc59cd6bee66e8c7854f684b4a2ce9aee28",
+        "pipeline_cache_sha256": "24ee2a6df2196e5ad7b9fe77bf0e1fff2b013b9b64c03d6adab725ad1b14bebb",
         "stage_offsets": {
-          "vs-simd8": 19296,
-          "hs-simd8": 88,
-          "ds-simd8": 9064,
-          "ps-simd16": 7832
+          "vs-simd8": 1480,
+          "hs-simd8": 2368,
+          "ds-simd8": 19280,
+          "ps-simd16": 88
         }
       }
     ]

@@ -1,0 +1,84 @@
+{
+  "id": 27,
+  "name": "bfly-cloud-history",
+  "bytes": 282916,
+  "sha256": "5e9dc96a2338385be253309ffab29429b138de2c813d8065b9d21294b3a59d70",
+  "sources": {
+    "bfly_smoke_history_rgba8.clcpp": "e87ac71b9f6c44ed61e8cc3f666e034869659d75156eca64ad223d79a0eb0bd9",
+    "bfly_cloud_history_rgba8.clcpp": "50f0a19d0f32a89c8054cf2b0693aa839dba4b6d8b3bc8bd8704bab091725c7f"
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "bfly_cloud_history_rgba8",
+      "kind": 0,
+      "bytes": 20736,
+      "sha256": "152be9b4dc3704c1dff6627f5253fc274f652bcbd866b7b618daf0ea2e8b1b19",
+      "capture_file": "bfly_cloud_history_rgba8.bin"
+    },
+    {
+      "name": "cloud_r8",
+      "kind": 0,
+      "bytes": 262144,
+      "sha256": "05006a99aceb0839a99e324c6c5f256df841d2af92d0b20397c215d2da231ae3",
+      "asset_file": "bfly-cloud.r8"
+    }
+  ],
+  "texture": {
+    "format": "R8_UNORM",
+    "width": 512,
+    "height": 512,
+    "row_stride_bytes": 512,
+    "origin": "top-left",
+    "source": "Zarte graue Rauchwolke.png",
+    "source_sha256": "a4e75247e7256159422c96f7c5f2567169ebefcbeca2a699f5e0628fc317bd2f",
+    "bake": "tools/bake_smoke_texture.py --cloud-source",
+    "density": "alpha-premultiplied luminance",
+    "source_crop": [
+      116,
+      112,
+      1140,
+      1136
+    ],
+    "pixels_per_texel": 1,
+    "window_width_for_tier": [
+      512,
+      256,
+      128,
+      64,
+      64,
+      64,
+      64,
+      64
+    ],
+    "strip_for_tier": [
+      3,
+      4,
+      2,
+      5,
+      1,
+      6,
+      0,
+      7
+    ]
+  },
+  "offline_compiles": {
+    "frontend": "Clang 21.1.8 C++ for OpenCL through llvm-spirv",
+    "backend": "Intel IGC 2.28.4 through ocloc 26.05.037020",
+    "spirv_sha256": "1a27c45f8854cf211714584d72e769cd13d04c1883dc1ef95f3575cfb946998c",
+    "reproducible_across_build_roots": true,
+    "targets": [
+      {
+        "directory": "4680",
+        "pci_device": "0x4680",
+        "revision": "0x0c"
+      },
+      {
+        "directory": "a780",
+        "pci_device": "0xa780",
+        "revision": "0x04"
+      }
+    ]
+  }
+}

@@ -2541,7 +2541,15 @@ fn source_overlay_patches(
     }
     if package_name(manifest_path)? == "codex-cli" {
         let packages = lock_packages(&app_lockfile(app_dir))?;
-        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2"), ("walkdir", "2.5.0", "walkdir"), ("gix-sec", "0.16.0", "gix-sec"), ("gix-fs", "0.24.0", "gix-fs"), ("ignore", "0.4.25", "ignore"), ("file-id", "0.2.3", "file-id"), ("gix-discover", "0.57.0", "gix-discover"), ("supports-color", "2.1.0", "supports-color")] {
+        let ignore_packages: Vec<_> = packages.iter().filter(|package| package.name == "ignore").collect();
+        let [ignore] = ignore_packages.as_slice() else {
+            return Err("Codex native file search requires exactly one ignore package in Cargo.lock".into());
+        };
+        let ignore_version = ignore.version.as_str();
+        if !matches!(ignore_version, "0.4.25" | "0.4.30") {
+            return Err(format!("Codex native file search requires ignore 0.4.25 or 0.4.30, found {ignore_version}"));
+        }
+        for (name, version, alias) in [("rand", "0.8.6", "rand_0_8"), ("memmap2", "0.9.11", "memmap2"), ("walkdir", "2.5.0", "walkdir"), ("gix-sec", "0.16.0", "gix-sec"), ("gix-fs", "0.24.0", "gix-fs"), ("ignore", ignore_version, "ignore"), ("file-id", "0.2.3", "file-id"), ("gix-discover", "0.57.0", "gix-discover"), ("supports-color", "2.1.0", "supports-color")] {
             if !packages.iter().any(|package| package.name == name && package.version == version) {
                 return Err(format!("Codex native data provider requires {name} {version} in Cargo.lock"));
             }
@@ -2553,7 +2561,7 @@ fn source_overlay_patches(
                 "walkdir" => codex_native_data_overlay::stage_walkdir(work_dir, &source)?,
                 "gix-sec" => codex_native_data_overlay::stage_gix_sec(work_dir, &source, &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("api"))?,
                 "gix-fs" => codex_native_data_overlay::stage_gix_fs(work_dir, &source)?,
-                "ignore" => codex_native_data_overlay::stage_ignore(work_dir, &source)?,
+                "ignore" => codex_native_data_overlay::stage_ignore_version(work_dir, &source, version)?,
                 "file-id" => codex_native_data_overlay::stage_file_id(work_dir, &source)?,
                 "gix-discover" => codex_native_data_overlay::stage_gix_discover(work_dir, &source)?,
                 "supports-color" => codex_native_data_overlay::stage_supports_color(work_dir, &source)?,

@@ -1,0 +1,38 @@
+{
+  "id": 24,
+  "name": "bfly-history",
+  "bytes": 14988,
+  "sha256": "3f70e9a78926358e2e2b237577f7c792f2028ad0426d857d23dc6bc4450fd611",
+  "sources": {
+    "bfly_history_rgba8.clcpp": "bc79fb58057e95e4fe4d7f18bdc0781e6ebb1d4bb4cb52387661d1dfcd457e6d"
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "bfly_history_rgba8",
+      "kind": 0,
+      "bytes": 14960,
+      "sha256": "db1d1fe65ea3efa61553bfc53d81068abf7f5e6a677fdc3d1c0c1ea858b7aea4",
+      "capture_file": "bfly_history_rgba8.bin"
+    }
+  ],
+  "offline_compiles": {
+    "frontend": "Clang 21.1.8 C++ for OpenCL through llvm-spirv",
+    "backend": "Intel IGC 2.28.4 through ocloc 26.05.037020",
+    "spirv_sha256": "59e445a6cdbefb18214d484367346aab95658007de045c3759e2dc42d2e2c665",
+    "reproducible_across_build_roots": true,
+    "targets": [
+      {
+        "directory": "4680",
+        "pci_device": "0x4680",
+        "revision": "0x0c"
+      },
+      {
+        "directory": "a780",
+        "pci_device": "0xa780",
+        "revision": "0x04"
+      }
+    ]
+  }
+}

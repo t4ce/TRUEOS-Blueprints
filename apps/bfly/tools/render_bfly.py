@@ -4,7 +4,7 @@
 import argparse
 import ctypes as C
 from functools import cache
-from math import isfinite, sqrt
+from math import isfinite, lcm, sqrt
 from pathlib import Path
 import re
 import shutil
@@ -24,7 +24,10 @@ DISPLAY_STRIPS = PANEL_STRIPS + 2 * BUTTERFLIES
 DEFAULT_SIZE = (3072, 1728)
 FRAME_RATE = 30
 FLIGHT_PERIOD_SECONDS = 12
-FRAME_PERIOD_SECONDS = 60
+FLAP_PHASE_PERIOD_SECONDS = 60
+FLOCK_PERIOD_SECONDS = 1200
+SWAP_PERIOD_SECONDS = 420
+MOTION_PERIOD_SECONDS = lcm(FLAP_PHASE_PERIOD_SECONDS, FLOCK_PERIOD_SECONDS, SWAP_PERIOD_SECONDS)
 IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
 
 U, I, P, F = C.c_uint, C.c_int, C.c_void_p, C.c_float
@@ -352,33 +355,59 @@ def render_direct(args, size, controls):
     gl("BindBuffer", U, U)(SHADER_STORAGE_BUFFER, camera)
     gl("BufferData", U, C.c_ssize_t, P, U)(SHADER_STORAGE_BUFFER, 368, None, DYNAMIC_DRAW)
     gl("BindBufferBase", U, U, U)(SHADER_STORAGE_BUFFER, 0, camera)
+    # Resting positions are expressed in sixteenths of a tier.
+    records = struct.pack(
+        f"={BUTTERFLIES}I",
+        *(0x20000000 | (seed << 22) | (position << 15) | (position << 8) | 255
+          for seed, position in enumerate(range(0, BUTTERFLIES * 16, 16))),
+    )
+    update_camera = gl("BufferSubData", U, C.c_ssize_t, C.c_ssize_t, P)
+    update_camera(SHADER_STORAGE_BUFFER, 0, len(records), records)
     program = compile_program("direct-wings", ((0x8B31, "vert"), (0x8E88, "tesc"),
                                               (0x8E87, "tese"), (0x8B30, "frag")))
     gl("UseProgram", U)(program)
     gl("Viewport", I, I, I, I)(0, 0, *size)
-    gl("ClearColor", F, F, F, F)(8 / 255, 10 / 255, 12 / 255, 1)
+    gl("LineWidth", F)(2.0)
+    gl("ClearColor", F, F, F, F)(0, 0, 0, 0)
 
     def frame(size, time, expected=None, query=None):
-        data = struct.pack("=4f", *size, time, FLIGHT_PERIOD_SECONDS)
-        gl("BufferSubData", U, C.c_ssize_t, C.c_ssize_t, P)(
-            SHADER_STORAGE_BUFFER, 288, len(data), data)
+        framebuffer = (*size, time % FLAP_PHASE_PERIOD_SECONDS, FLIGHT_PERIOD_SECONDS)
+        flock_motion = (time % FLOCK_PERIOD_SECONDS, 4.4, 4.4, BUTTERFLIES)
+        swap_time = time % SWAP_PERIOD_SECONDS
+        # Zero the eight unused records between framebuffer and flock_motion.
+        data = struct.pack("=4f32x5f", *framebuffer, *flock_motion, swap_time)
+        update_camera(SHADER_STORAGE_BUFFER, 288, len(data), data)
         gl("Clear", U)(COLOR_BUFFER_BIT)
         draw(PATCHES, len(controls), 2 * BUTTERFLIES, expected, query)
         return read_frame(size)
 
     query = create_buffer("GenQueries")
-    frame((1, 1), 0.0, 0, query)
+    # Even at this size, each butterfly contributes its single center line.
+    frame((1, 1), 0.0, BUTTERFLIES, query)
     first = frame(size, args.start)
     later = frame(size, args.start + 1 / FRAME_RATE)
     if size in ((1920, 1080), (1080, 1920), DEFAULT_SIZE, DEFAULT_SIZE[::-1]):
+        transparent = (0, 0, 0, 0)
+        primaries = ((255, 0, 0), (0, 255, 0), (0, 0, 255))
+        expected_rgba = {transparent} | {
+            (r ^ (tag & 3), g ^ ((tag >> 2) & 1), b ^ (tag >> 3), 255)
+            for r, g, b in primaries for tag in range(16)
+        }
+        rgba = {pixel for _, pixel in first.getcolors(len(expected_rgba)) or ()}
+        visible_primaries = {
+            tuple(255 if channel >= 128 else 0 for channel in pixel[:3])
+            for pixel in rgba if pixel != transparent
+        }
+        if transparent not in rgba or not rgba <= expected_rgba or visible_primaries != set(primaries):
+            raise RuntimeError("Expected transparent pixels and opaque tagged RGB lines in the direct framebuffer")
         if first.tobytes() == later.tobytes():
             raise RuntimeError("The direct flight shaders did not animate")
         initial = frame(size, 0.0)
         if frame(size, 4.0).tobytes() == initial.tobytes():
             raise RuntimeError("The butterfly pose did not advance after a complete wingbeat")
-        if frame(size, FRAME_PERIOD_SECONDS).tobytes() != initial.tobytes():
-            raise RuntimeError("The flight and flap modes did not return to their initial pose")
-        print(f"Direct flight shaders animated and closed their {FRAME_PERIOD_SECONDS}-second cycle")
+        if frame(size, MOTION_PERIOD_SECONDS).tobytes() != initial.tobytes():
+            raise RuntimeError("The direct framebuffer changed on a full motion cycle")
+        print("Direct flight shaders rendered opaque RGB lines over transparent pixels")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     first.save(args.output.with_suffix(".png"))
     if args.frames > 1:
@@ -471,7 +500,7 @@ def main():
         parser.error("--frames must be at least 1")
     if not isfinite(args.start) or args.start < 0 or (args.start != 0 and not args.direct):
         parser.error("--start needs a finite nonnegative time and --direct")
-    args.start %= FRAME_PERIOD_SECONDS
+    args.start %= MOTION_PERIOD_SECONDS
     if args.output is None:
         filename = "bfly-direct-wings.png" if args.direct else "bfly-panels.png"
         args.output = ROOT / "target" / filename

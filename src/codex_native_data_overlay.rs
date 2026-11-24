@@ -252,16 +252,12 @@ impl Capabilities {
     Ok(staged)
 }
 
-pub(crate) fn stage_ignore(work: &Path, source: &Path) -> Result<PathBuf, String> {
-    stage_ignore_version(work, source, "0.4.25")
-}
-
 pub(crate) fn stage_ignore_version(
     work: &Path,
     source: &Path,
     version: &str,
 ) -> Result<PathBuf, String> {
-    if !matches!(version, "0.4.25" | "0.4.32") {
+    if !matches!(version, "0.4.25" | "0.4.30" | "0.4.32") {
         return Err(format!("native ignore provider requires audited version, got {version}"));
     }
     validate(source, "ignore", version)?;
@@ -291,7 +287,7 @@ pub(crate) fn stage_ignore_version(
                     "native ignored-directory entry has no stable object identity")).with_path(ent.path()))?,"#,
         1,
     )?;
-    let metadata = if version == "0.4.32" {
+    let metadata = if matches!(version, "0.4.30" | "0.4.32") {
         r#"        let md = fs::metadata(&pb)
             .map_err(|err| Error::Io(err).with_depth(depth).with_path(&pb))?;"#
     } else {

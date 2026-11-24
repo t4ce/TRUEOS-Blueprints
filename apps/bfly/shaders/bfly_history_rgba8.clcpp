@@ -1,0 +1,38 @@
+// The copy-rectangle dispatch covers two linear RGBA8 pixels per work item.
+__attribute__((intel_reqd_sub_group_size(16)))
+__kernel void bfly_history_rgba8(
+    __global const uint *src_rgba,
+    __global uint *dst_rgba,
+    uint src_pitch_bytes,
+    uint dst_pitch_bytes,
+    uint src_x,
+    uint src_y,
+    uint dst_x,
+    uint dst_y,
+    uint width,
+    uint height)
+{
+    const uint base_x = static_cast<uint>(get_global_id(0)) << 1;
+    const uint y = static_cast<uint>(get_global_id(1));
+    if (base_x >= width || y >= height) {
+        return;
+    }
+
+    const uint src_row = (src_y + y) * (src_pitch_bytes / 4u) + src_x;
+    const uint dst_row = (dst_y + y) * (dst_pitch_bytes / 4u) + dst_x;
+    for (uint pixel = 0; pixel < 2; ++pixel) {
+        const uint x = base_x + pixel;
+        if (x >= width || dst_rgba[dst_row + x] >> 24 != 0u) {
+            continue;
+        }
+
+        const uint old_alpha = src_rgba[src_row + x] >> 24;
+        const uint alpha = old_alpha == 255u ? 64u : old_alpha - min(old_alpha, 8u);
+        if (alpha != 0u) {
+            // Premultiply the neutral gray reveal. Covered current outlines
+            // already have alpha and keep their original color.
+            const uint gray = alpha >> 1;
+            dst_rgba[dst_row + x] = (alpha << 24) | gray * 0x00010101u;
+        }
+    }
+}

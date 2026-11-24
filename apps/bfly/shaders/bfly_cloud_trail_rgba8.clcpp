@@ -1,0 +1,3 @@
+#define BFLY_CLOUD_HISTORY
+#define BFLY_CLOUD_TRAIL
+#include "bfly_smoke_history_rgba8.clcpp"

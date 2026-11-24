@@ -1,0 +1,120 @@
+#ifdef BFLY_CLOUD_HISTORY
+#ifdef BFLY_CLOUD_TRAIL
+#define BFLY_HISTORY_KERNEL bfly_cloud_trail_rgba8
+#else
+#define BFLY_HISTORY_KERNEL bfly_cloud_history_rgba8
+#endif
+
+static uint mirror_texel(uint position, uint span)
+{
+    const uint repeat = position & (2u * span - 1u);
+    return min(repeat, 2u * span - 1u - repeat);
+}
+#else
+#define BFLY_HISTORY_KERNEL bfly_smoke_history_rgba8
+#endif
+
+// The copy-rectangle dispatch covers two linear RGBA8 pixels per work item.
+__attribute__((intel_reqd_sub_group_size(16)))
+__kernel void BFLY_HISTORY_KERNEL(
+    __global const uint *src_rgba,
+    __global uint *dst_rgba,
+    uint src_pitch_bytes,
+    uint dst_pitch_bytes,
+    uint src_x,
+    uint src_y,
+    uint dst_x,
+    uint dst_y,
+    uint width,
+    uint height,
+    __global const uchar *smoke_r8)
+{
+    const uint base_x = static_cast<uint>(get_global_id(0)) << 1;
+    const uint y = static_cast<uint>(get_global_id(1));
+    if (base_x >= width || y >= height) {
+        return;
+    }
+
+    const uint src_row = (src_y + y) * (src_pitch_bytes / 4u) + src_x;
+    const uint dst_row = (dst_y + y) * (dst_pitch_bytes / 4u) + dst_x;
+#ifdef BFLY_CLOUD_HISTORY
+    // Center the 512-square cloud in the frame and reflect the tile at its edges.
+    const uint texture_row = mirror_texel(dst_y + y + 256u - height / 2u, 512u) * 512u;
+#else
+    // The 64x128 tile is stored top-down, with its smoke taper pointing up.
+    // Each tier uses an eight-column strip, with two screen pixels per texel.
+    const uint texture_row = (((dst_y + y) >> 1) & 127u) * 64u;
+#endif
+    for (uint pixel = 0; pixel < 2; ++pixel) {
+        const uint x = base_x + pixel;
+        if (x >= width || dst_rgba[dst_row + x] >> 24 != 0u) {
+            continue;
+        }
+
+        const uint old_rgba = src_rgba[src_row + x];
+        const uint old_alpha = old_rgba >> 24;
+#ifdef BFLY_CLOUD_TRAIL
+        // Trails still fading from smoke mode retain their original gray and step.
+        const uint rgb = old_rgba & 0x00ffffffu;
+        const bool cloud_trace = old_alpha == 255u || rgb != (old_alpha >> 1) * 0x00010101u;
+        const uint fade = cloud_trace ? 4u : 8u;
+        uint alpha = old_alpha - min(old_alpha, fade);
+#else
+        uint alpha = old_alpha - min(old_alpha, 8u);
+#endif
+        if (old_alpha == 255u) {
+            // Opaque outlines tag their projected tier and stroke direction in
+            // low RGB bits. Recover the tag relative to the original primary.
+#ifndef BFLY_CLOUD_TRAIL
+            const uint rgb = old_rgba & 0x00ffffffu;
+#endif
+            const uint primary = ((rgb & 0x00808080u) >> 7) * 255u;
+            const uint tag = rgb ^ primary;
+            if ((tag & 0x00010000u) == 0u) {
+                continue;
+            }
+            const uint tier = (tag & 3u) | ((tag >> 6) & 4u);
+            // Give the largest silhouettes the dense center strips, then
+            // alternate sides moving outward with each smaller tier.
+            const uint strip = (tier & 1u) != 0u ? 4u + (tier >> 1) : 3u - (tier >> 1);
+#ifdef BFLY_CLOUD_HISTORY
+            // Use the full cloud for the largest tier. Smaller tiers use
+            // narrower windows through the center 384 columns of the cloud.
+#ifdef BFLY_CLOUD_TRAIL
+            const uint span = 512u >> min(max(tier, 1u) - 1u, 3u);
+#else
+            const uint span = 512u >> min(tier, 3u);
+#endif
+            const uint half_span = span / 2u;
+            const uint center = 88u + 48u * strip;
+            const uint start = min(max(center, half_span) - half_span, 512u - span);
+            const uint texture_x = start + mirror_texel(dst_x + x + half_span - width / 2u, span);
+#else
+            const uint repeat_x = ((dst_x + x) >> 1) & 15u;
+            const uint texture_x = strip * 8u + min(repeat_x, 15u - repeat_x);
+#endif
+            const uint density = smoke_r8[texture_row + texture_x];
+#ifdef BFLY_CLOUD_TRAIL
+            // Lift the cloud's middle densities while keeping zero and the 25% cap.
+            alpha = (density * (510u - density) + 511u) >> 10;
+#else
+            alpha = (density * 64u + 127u) / 255u;
+#endif
+        }
+        if (alpha != 0u) {
+#ifdef BFLY_CLOUD_TRAIL
+            uint color = (alpha >> 1) * 0x00010101u;
+            if (cloud_trace) {
+                // Premultiplied slate blue distinguishes the cloud ribbon from gray smoke.
+                color = (alpha >> 2) | (((alpha * 3u) >> 3) << 8) | (((alpha * 5u) >> 3) << 16);
+            }
+            dst_rgba[dst_row + x] = (alpha << 24) | color;
+#else
+            // Premultiply neutral gray. Live RGB outlines already occupy
+            // their destination pixels and never enter the history branch.
+            const uint gray = alpha >> 1;
+            dst_rgba[dst_row + x] = (alpha << 24) | gray * 0x00010101u;
+#endif
+        }
+    }
+}
