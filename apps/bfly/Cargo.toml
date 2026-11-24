@@ -1,0 +1,26 @@
+[package]
+name = "bfly"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Butterfly geometry and GPU rendering experiments"
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+
+[[bin]]
+name = "bfly"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+trueos = { path = "../../api", features = ["ui4-scene"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[workspace]

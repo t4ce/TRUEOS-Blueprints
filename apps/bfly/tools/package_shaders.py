@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Verify bfly's native shaders and rebuild them from a pinned ANV capture."""
+
+import argparse
+import hashlib
+import io
+import json
+from pathlib import Path
+import struct
+import subprocess
+import tarfile
+
+
+APP = Path(__file__).resolve().parents[1]
+NATIVE = APP / "shaders/trueos"
+KERNEL = APP.parents[2] / "TRUEOS"
+MAGIC = b"APSHDR1\0"
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def captured_package(record, capture):
+    directory = capture / record["capture_directory"] / "stock-bin"
+    payload = bytearray(struct.pack("<I", len(record["stages"])))
+    for stage in record["stages"]:
+        data = (directory / stage["capture_file"]).read_bytes()
+        size = stage["bytes"]
+        require(data[size:].hex() == stage.get("capture_tail", ""), "Unexpected capture padding")
+        payload.extend(struct.pack("<II", stage["kind"], size))
+        payload.extend(data[:size])
+    return MAGIC + struct.pack("<II", record["id"], len(payload)) + payload
+
+
+def verify_package(record, package):
+    name = record["name"]
+    require(len(package) == record["bytes"] and digest(package) == record["sha256"],
+            f"Package digest or size mismatch for {name}")
+    expected_header = (record["id"], len(package) - 16, len(record["stages"]))
+    require(package[:8] == MAGIC and struct.unpack_from("<III", package, 8) == expected_header,
+            f"Invalid package header for {name}")
+    stages = []
+    offset = 20
+    for stage in record["stages"]:
+        kind, size = struct.unpack_from("<II", package, offset)
+        require((kind, size) == (stage["kind"], stage["bytes"]), f"Invalid stage in {name}")
+        offset += 8
+        data = package[offset:offset + size]
+        require(digest(data) == stage["sha256"],
+                f"Stage digest mismatch for {name} {stage['name']}")
+        stages.append((stage["name"], data))
+        offset += size
+    require(offset == len(package), f"Unexpected trailing data in {name}")
+    return stages
+
+
+def verify_compiler_capture(record, stages, capture, root):
+    cache_path = root / capture["directory"] / "pipeline_cache.bin"
+    cache = cache_path.read_bytes()
+    require(digest(cache) == capture["pipeline_cache_sha256"],
+            f"Pipeline cache digest mismatch for {record['name']}")
+    vendor = int(capture["pci_vendor"], 16)
+    device = int(capture["pci_device"], 16)
+    require(struct.unpack_from("<IIII", cache) == (32, 1, vendor, device),
+            f"Unexpected Vulkan pipeline cache header in {cache_path}")
+    for metadata, (name, data) in zip(record["stages"], stages, strict=True):
+        offset = record["offline_compiles"]["stage_offsets"][name]
+        captured_data = data + bytes.fromhex(metadata.get("capture_tail", ""))
+        require(cache[offset:offset + len(captured_data)] == captured_data,
+                f"Compiled ISA differs for {record['name']} {name} on {device:04x}")
+
+
+def blueprint_shader_section(path):
+    image = path.read_bytes()
+    if image[:4] == b"TRBP":
+        kind = struct.unpack_from("<H", image, 6)[0] & 255
+        size = struct.unpack_from("<I", image, 16)[0]
+        image = image[24:24 + size]
+        if kind == 3:
+            raw = subprocess.run(["lz4", "-d", "-c"], input=image,
+                                 capture_output=True, check=True).stdout
+            with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+                image = archive.extractfile("module.elf").read()
+        else:
+            require(kind == 1, f"Unsupported Blueprint payload in {path}")
+
+    header = struct.unpack_from("<16sHHIQQQIHHHHHH", image)
+    require(header[0][:6] == b"\x7fELF\x02\x01", f"Expected little-endian ELF64 in {path}")
+    table, stride, count, names_index = header[6], header[11], header[12], header[13]
+    require(stride == 64, f"Unexpected ELF section size in {path}")
+
+    def section(index):
+        return struct.unpack_from("<IIQQQQIIQQ", image, table + stride * index)
+
+    names_header = section(names_index)
+    names = image[names_header[4]:names_header[4] + names_header[5]]
+    shader_data = []
+    for index in range(count):
+        name_offset, _, flags, _, start, size, *_ = section(index)
+        if names[name_offset:].split(b"\0", 1)[0] == b".trueos.shaders":
+            require(flags & 2 == 0, f"Guest-allocated shader metadata in {path}")
+            shader_data.append(image[start:start + size])
+    require(len(shader_data) == 1, f"Expected one .trueos.shaders section in {path}")
+    return shader_data[0]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kernel", type=Path, default=KERNEL)
+    parser.add_argument("--kernel-elf", type=Path)
+    parser.add_argument("--blueprint", type=Path)
+    parser.add_argument("--rebuild-from", type=Path, metavar="CAPTURE_DIR")
+    parser.add_argument("--verify-offline-from", type=Path, metavar="CAPTURE_DIR",
+                        help="compare against the pinned ADL-S and RPL-S Vulkan pipeline caches")
+    args = parser.parse_args()
+    records = json.loads((NATIVE / "manifest.json").read_text())
+    trust = " ".join((args.kernel / "src/gpu/app_shader_trust.rs").read_text().split())
+    kernel_image = args.kernel_elf.read_bytes() if args.kernel_elf else None
+    packages = {}
+    for record in records:
+        for name, expected in record["sources"].items():
+            require(digest((APP / "shaders" / name).read_bytes()) == expected,
+                    f"GLSL source differs from native capture for {name}")
+        package_file = NATIVE / (record["name"] + ".apshader")
+        package = (captured_package(record, args.rebuild_from) if args.rebuild_from
+                   else package_file.read_bytes())
+        stages = verify_package(record, package)
+        if args.verify_offline_from:
+            for capture in record["offline_compiles"]["targets"]:
+                verify_compiler_capture(record, stages, capture, args.verify_offline_from)
+        sha256 = bytes.fromhex(record["sha256"])
+        if kernel_image is not None:
+            require(sha256 in kernel_image, f"{record['name']} trust digest missing from kernel")
+            require(package not in kernel_image, f"{record['name']} package linked in kernel")
+            for name, stage in stages:
+                require(stage not in kernel_image, f"{record['name']} {name} stage linked in kernel")
+        signature = ", ".join(f"0x{byte:02x}" for byte in sha256)
+        require(f"({record['id']}, {len(package)}, [{signature}])" in trust,
+                f"Kernel trust record does not match {record['name']}")
+        packages[package_file] = package
+    bundle = b"".join(packages.values())
+    bundle_file = NATIVE / "app-shaders.bundle"
+    if args.rebuild_from:
+        for path, package in packages.items():
+            path.write_bytes(package)
+        bundle_file.write_bytes(bundle)
+    require(bundle_file.read_bytes() == bundle, "bfly bundle differs from its packages")
+    if args.blueprint:
+        require(blueprint_shader_section(args.blueprint) == bundle,
+                f"Shader metadata differs from bfly's bundle in {args.blueprint}")
+    print("Verified bfly native shader sources, captured stages, and kernel SHA-256 records")
+    if args.verify_offline_from:
+        print("Verified identical bfly ISA in the offline ADL-S and RPL-S pipeline caches")
+
+
+if __name__ == "__main__":
+    main()

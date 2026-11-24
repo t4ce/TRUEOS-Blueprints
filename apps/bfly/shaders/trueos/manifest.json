@@ -1,0 +1,167 @@
+[
+  {
+    "id": 11,
+    "name": "bfly-mask-bake",
+    "bytes": 3308,
+    "sha256": "861b5d7bddde33dd470b148336f16ce5754d8a5edc92dedc379458d0f1c99cdb",
+    "target": {
+      "pci_vendor": "8086",
+      "pci_device": "a780",
+      "pci_revision": "04",
+      "platform": "RPL-S",
+      "gfx": "12.0",
+      "compiler": "Mesa ANV 26.0.8",
+      "validation": "GPU draw and readback"
+    },
+    "offline_compiles": {
+      "compiler": "Mesa ANV 26.0.8 with the Intel no-op DRM shim",
+      "targets": [
+        {
+          "pci_vendor": "8086",
+          "pci_device": "4680",
+          "pci_revision": "0c",
+          "platform": "ADL-S GT1",
+          "directory": "revision-cache-pass-4680",
+          "pipeline_cache_sha256": "765f5083323823fc0449c4cbf3181d25178bd8893dc226b75a7df59c9f4525c2"
+        },
+        {
+          "pci_vendor": "8086",
+          "pci_device": "a780",
+          "pci_revision": "04",
+          "platform": "RPL-S",
+          "directory": "revision-cache-pass-a780",
+          "pipeline_cache_sha256": "44eed9deda5e0dae7c970b4501a2e3dd3a8984d9c3f07e2e3e55a6caa3475ac9"
+        }
+      ],
+      "stage_offsets": {
+        "vs-simd8": 7224,
+        "hs-simd8": 12624,
+        "ds-simd8": 8208,
+        "ps-simd8": 5928,
+        "ps-simd16": 5992
+      }
+    },
+    "sources": {
+      "wings.vert": "08264560d5d0663789431b33436476c7c8f554d789b27fdb07fff2eaf0388fd0",
+      "wings.tesc": "85402cb3a92c4852e9e96a352dea0d15b9f10431f17ca95b056f2a9767d605b9",
+      "wings.tese": "67836a7c90c3785d242ca456c81dda82c9d75530d714fcb5744b4feaa6f59b51",
+      "wings.frag": "935fbcbce0978c549f50ed8a65f45a9259e43e027af7335f5f768b868a9899eb"
+    },
+    "capture_directory": "cache-pass",
+    "stages": [
+      {
+        "name": "vs-simd8",
+        "kind": 1,
+        "bytes": 272,
+        "sha256": "824bceda6e9613d23afeb09a23d438ca148e8088695ba5be5caa6e251a6018ab",
+        "capture_file": "bd82015348b99750dde4f6dbd074428dfce5a3ffda4ed0aac5f2e93830666ecb.bin"
+      },
+      {
+        "name": "hs-simd8",
+        "kind": 1,
+        "bytes": 2224,
+        "sha256": "42606b0c5d1aa6bb3daca73c6fbe8b61841f83f2a3eb8e0de08d89ac2ad175a9",
+        "capture_file": "8856f57cf06748f72065280a5549f32639afed8f0d918990c37333119760834e.bin"
+      },
+      {
+        "name": "ds-simd8",
+        "kind": 1,
+        "bytes": 656,
+        "sha256": "a82cd949badbab196f25b19d22c8bbc1f6aacb103563f365a66b39a994a63344",
+        "capture_file": "d178c1a5106ea54abb4382d540db4ed28d1eeaca8e211df7bb66683ec95a759d.bin"
+      },
+      {
+        "name": "ps-simd8",
+        "kind": 1,
+        "bytes": 48,
+        "sha256": "44b26e6e1f85935dc1967bd7abe47a43bacd36bd4c2bb1cfbf61199911f9f4f8",
+        "capture_file": "2be95ab0f3708a1792aabb5d67b4b6cc58a2a20653827641234a4bfe1cade8e0.bin"
+      },
+      {
+        "name": "ps-simd16",
+        "kind": 1,
+        "bytes": 48,
+        "sha256": "a7798f9eed0c359821b0f1956875d708f842d3398a33aed59a56ad488adf8016",
+        "capture_file": "c71e131aa91ca779c9c2324fec6a7a9fe128a2e581f7ccefbf3082b5d9c6b63a.bin"
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "name": "bfly-display",
+    "bytes": 13516,
+    "sha256": "0915c69b81c7356c0e57a6b74c67978e50f0d45fd556dd56b51a79f6f9a73996",
+    "target": {
+      "pci_vendor": "8086",
+      "pci_device": "a780",
+      "pci_revision": "04",
+      "platform": "RPL-S",
+      "gfx": "12.0",
+      "compiler": "Mesa ANV 26.0.8",
+      "validation": "GPU draw and readback"
+    },
+    "offline_compiles": {
+      "compiler": "Mesa ANV 26.0.8 with the Intel no-op DRM shim",
+      "targets": [
+        {
+          "pci_vendor": "8086",
+          "pci_device": "4680",
+          "pci_revision": "0c",
+          "platform": "ADL-S GT1",
+          "directory": "revision-closer-display-4680",
+          "pipeline_cache_sha256": "a59f76aea13aad3568f907c7c719d40b4f4c4cff4f67c093e5334566ff024bb2"
+        },
+        {
+          "pci_vendor": "8086",
+          "pci_device": "a780",
+          "pci_revision": "04",
+          "platform": "RPL-S",
+          "directory": "revision-closer-display-a780",
+          "pipeline_cache_sha256": "6c1d38815c63f99e05b92f8bac6bfb68aeb5769db267669ebbdc2bae26161519"
+        }
+      ],
+      "stage_offsets": {
+        "vs-simd8": 18504,
+        "ps-simd8": 9328,
+        "ps-simd16": 11248,
+        "ps-simd32": 13296
+      }
+    },
+    "sources": {
+      "cached-wings.vert": "01e8c422dc2eaa66c40e9d32a7507530177b9dfcaf6b69db5219f6e7cdb56794",
+      "cached-wings.frag": "0add1559c36d4ac0329e4e0f364be9ee9b6a87ab99bf66cd20588024953f564d"
+    },
+    "capture_directory": "closer-display",
+    "stages": [
+      {
+        "name": "vs-simd8",
+        "kind": 1,
+        "bytes": 5752,
+        "sha256": "35d9b8ac9f29984555f36a5d4861a330b639a7974dbaf5556921a4eb03d9d1f2",
+        "capture_file": "a1d19de30ccbc4b8c7e22357c76274eca591369e357215d2f322740452184853.bin",
+        "capture_tail": "6000002000000000"
+      },
+      {
+        "name": "ps-simd8",
+        "kind": 1,
+        "bytes": 1888,
+        "sha256": "4294b1c1bf8c23cddd7947af8a90130963de97552b49322b22d8a8c7f2e345f4",
+        "capture_file": "9cc0bf64cec070cd9b0db2f36e8a64b2734a8c3c17b9ce47a717f0f8d0425370.bin"
+      },
+      {
+        "name": "ps-simd16",
+        "kind": 1,
+        "bytes": 2048,
+        "sha256": "a80dd1377b52673cb6e89f2b4175002717a10c1deae3612cb3a0573fa3372505",
+        "capture_file": "b9ab45bafb09b145ef317eacfcdfdeef2ff12af5de6ecdfb85d976db93868266.bin"
+      },
+      {
+        "name": "ps-simd32",
+        "kind": 1,
+        "bytes": 3776,
+        "sha256": "bbbfb03856e49e9fdc4489376d68385f1dcdab0c306111d7af5dd0203c82af6b",
+        "capture_file": "b9e39d7b13f0a50f84d05a3fe451ab2243e4df24822bf5368184ea892fbd46cd.bin"
+      }
+    ]
+  }
+]
