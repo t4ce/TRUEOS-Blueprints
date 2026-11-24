@@ -4,7 +4,7 @@
 import argparse
 import ctypes as C
 from functools import cache
-from math import sqrt
+from math import isfinite, sqrt
 from pathlib import Path
 import re
 import shutil
@@ -24,6 +24,7 @@ DISPLAY_STRIPS = PANEL_STRIPS + 2 * BUTTERFLIES
 DEFAULT_SIZE = (3072, 1728)
 FRAME_RATE = 30
 FLIGHT_PERIOD_SECONDS = 12
+FRAME_PERIOD_SECONDS = 60
 IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
 
 U, I, P, F = C.c_uint, C.c_int, C.c_void_p, C.c_float
@@ -153,10 +154,10 @@ def cubic_bounds(values):
     return min(extrema), max(extrema)
 
 
-def wing_control_points():
+def wing_control_points(*, direct=False):
     source = (ROOT / "src/geometry.rs").read_text()
-    controls, cubics = [], []
-    for name, count in (("TOP_WING", 7), ("BOTTOM_WING", 4)):
+
+    def read_points(name, count):
         path = re.search(rf"const {name}: .*? = \[(.*?)\n\];", source, re.S)
         if not path:
             raise ValueError(f"Could not read control points in {name}")
@@ -164,14 +165,35 @@ def wing_control_points():
             r"\[([-+0-9.eE]+),\s*([-+0-9.eE]+)\]", path.group(1))]
         if len(points) != count:
             raise ValueError(f"Unexpected point count in {name}")
-        root_x = points[0][0]
+        return points
+
+    top = read_points("TOP_WING", 7)
+    if direct:
+        bottom = read_points("BOTTOM_WING", 4)
+        connector = read_points("ROOT_CONNECTOR", 2)
+    else:
+        # The cached demo uses the original lower curve and both closures.
+        bottom = [
+            (0.014813999645411968, 0.44999998807907104),
+            (0.9448009133338928, 0.3951452970504761),
+            (0.24930904805660248, 1.2085520029067993),
+            (0.014813999645411968, 0.4659808874130249),
+        ]
+
+    controls, cubics = [], []
+    for points in (top, bottom):
+        root_x = connector[0][0] if direct else points[0][0]
         points = [(x - root_x, 0.45 - y) for x, y in points]
-        for start in range(0, count - 1, 3):
+        for start in range(0, len(points) - 1, 3):
             cubic = points[start:start + 4]
             cubics.append(cubic)
             controls.extend((x, y, 0) for x, y in cubic)
-        first, last = points[0], points[-1]
-        controls.extend((x, y, 1) for x, y in (last, last, first, first))
+        if not direct:
+            first, last = points[0], points[-1]
+            controls.extend((x, y, 1) for x, y in (last, last, first, first))
+    if direct:
+        first, last = [(x - connector[0][0], 0.45 - y) for x, y in connector]
+        controls.extend((x, y, 1) for x, y in (first, first, last, last))
     xmax = max(cubic_bounds([point[0] for point in cubic])[1] for cubic in cubics)
     y_bounds = [cubic_bounds([point[1] for point in cubic]) for cubic in cubics]
     bounds = (0, min(y[0] for y in y_bounds), xmax, max(y[1] for y in y_bounds))
@@ -346,22 +368,23 @@ def render_direct(args, size, controls):
 
     query = create_buffer("GenQueries")
     frame((1, 1), 0.0, 0, query)
-    first = frame(size, 0.0)
-    later = frame(size, 1 / FRAME_RATE)
+    first = frame(size, args.start)
+    later = frame(size, args.start + 1 / FRAME_RATE)
     if size in ((1920, 1080), (1080, 1920), DEFAULT_SIZE, DEFAULT_SIZE[::-1]):
         if first.tobytes() == later.tobytes():
             raise RuntimeError("The direct flight shaders did not animate")
-        if frame(size, 2.0).tobytes() == first.tobytes():
+        initial = frame(size, 0.0)
+        if frame(size, 4.0).tobytes() == initial.tobytes():
             raise RuntimeError("The butterfly pose did not advance after a complete wingbeat")
-        flight_closed = frame(size, FLIGHT_PERIOD_SECONDS)
-        if flight_closed.tobytes() != first.tobytes():
-            raise RuntimeError("The direct flight shaders did not return to their initial pose")
-        print(f"Direct flight shaders animated and closed their {FLIGHT_PERIOD_SECONDS}-second lap")
+        if frame(size, FRAME_PERIOD_SECONDS).tobytes() != initial.tobytes():
+            raise RuntimeError("The flight and flap modes did not return to their initial pose")
+        print(f"Direct flight shaders animated and closed their {FRAME_PERIOD_SECONDS}-second cycle")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     first.save(args.output.with_suffix(".png"))
     if args.frames > 1:
         animation = args.output.with_name(args.output.stem + "-animated.png")
-        save_animation(animation, args.ffmpeg, size, args.frames, first, later, frame)
+        save_animation(animation, args.ffmpeg, size, args.frames, first, later,
+                       lambda size, time: frame(size, args.start + time))
 
 
 def render(args):
@@ -370,7 +393,7 @@ def render(args):
     try:
         renderer = proc("glGetString", C.c_char_p, U)(0x1F01).decode()
         print(f"renderer={renderer}")
-        controls, bounds = wing_control_points()
+        controls, bounds = wing_control_points(direct=args.direct)
         if args.direct:
             render_direct(args, size, controls)
             return
@@ -434,6 +457,8 @@ def render(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--direct", action="store_true", help="draw the GPU-tessellated outlines")
+    parser.add_argument("--start", type=float, default=0.0,
+                        help="start time in seconds for a direct render")
     parser.add_argument("--render-node", default="/dev/dri/renderD128")
     parser.add_argument("--size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
                         default=DEFAULT_SIZE, help="backing framebuffer dimensions")
@@ -444,6 +469,9 @@ def main():
         parser.error("--size dimensions must be positive")
     if args.frames < 1:
         parser.error("--frames must be at least 1")
+    if not isfinite(args.start) or args.start < 0 or (args.start != 0 and not args.direct):
+        parser.error("--start needs a finite nonnegative time and --direct")
+    args.start %= FRAME_PERIOD_SECONDS
     if args.output is None:
         filename = "bfly-direct-wings.png" if args.direct else "bfly-panels.png"
         args.output = ROOT / "target" / filename

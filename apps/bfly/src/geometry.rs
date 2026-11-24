@@ -1,9 +1,9 @@
-//! Wing-outline control points extracted from `butter-closed-wings.svg`.
+//! Control points from the revised wing SVG.
 
 type Point = [f64; 2];
 
-// Each path starts at the wing root. Every cubic contributes two control
-// points and an endpoint. A single line closes each path at the hinge.
+// Every cubic contributes two control points and an endpoint. The lower
+// curve starts outboard, and the SVG supplies the shared hinge line.
 const TOP_WING: [Point; 7] = [
     [0.014814138412475586, 0.4383479952812195],
     [0.34511280059814453, 0.019663125276565552],
@@ -14,15 +14,19 @@ const TOP_WING: [Point; 7] = [
     [0.014814138412475586, 0.44999998807907104],
 ];
 const BOTTOM_WING: [Point; 4] = [
-    [0.014813999645411968, 0.44999998807907104],
-    [0.9448009133338928, 0.3951452970504761],
-    [0.24930904805660248, 1.2085520029067993],
+    [0.3423464298248291, 0.4808717370033264],
+    [0.7294665575027466, 0.5889291763305664],
+    [0.2280963510274887, 1.109559416770935],
+    [0.014813999645411968, 0.4659808874130249],
+];
+const ROOT_CONNECTOR: [Point; 2] = [
+    [0.014814138412475586, 0.43834799528121948],
     [0.014813999645411968, 0.4659808874130249],
 ];
 
 const ROOT_Y: f64 = 0.45;
 const PATHS: [&[Point]; 2] = [&TOP_WING, &BOTTOM_WING];
-pub const PATCH_COUNT: usize = 5;
+pub const PATCH_COUNT: usize = 4;
 pub const VERTEX_COUNT: usize = 4 * PATCH_COUNT;
 const STRIDE: usize = 3 * size_of::<f32>();
 
@@ -36,32 +40,33 @@ const fn control_points() -> [[f32; 3]; VERTEX_COUNT] {
     let mut next = 0;
     while wing < PATHS.len() {
         let path = PATHS[wing];
-        let root_x = path[0][0];
         let mut curve = 0;
         while curve < path.len() - 1 {
             let mut point = 0;
             while point < 4 {
-                controls[next] = control(path[curve + point], root_x, 0.0);
+                controls[next] = control(path[curve + point], 0.0);
                 next += 1;
                 point += 1;
             }
             curve += 3;
         }
-        let last = control(path[path.len() - 1], root_x, 1.0);
-        let first = control(path[0], root_x, 1.0);
-        controls[next] = last;
-        controls[next + 1] = last;
-        controls[next + 2] = first;
-        controls[next + 3] = first;
-        next += 4;
         wing += 1;
     }
-    assert!(next == VERTEX_COUNT);
+    assert!(next + 4 == VERTEX_COUNT);
+    let [start, end] = ROOT_CONNECTOR;
+    controls[next] = control(start, 1.0);
+    controls[next + 1] = control(start, 1.0);
+    controls[next + 2] = control(end, 1.0);
+    controls[next + 3] = control(end, 1.0);
     controls
 }
 
-const fn control([x, y]: Point, root_x: f64, straight_edge: f32) -> [f32; 3] {
-    [(x - root_x) as f32, (ROOT_Y - y) as f32, straight_edge]
+const fn control([x, y]: Point, straight_edge: f32) -> [f32; 3] {
+    [
+        (x - ROOT_CONNECTOR[0][0]) as f32,
+        (ROOT_Y - y) as f32,
+        straight_edge,
+    ]
 }
 
 const fn vertex_bytes() -> [u8; VERTEX_COUNT * STRIDE] {
@@ -97,27 +102,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mesh_has_three_cubic_patches_and_two_hinge_closures() {
-        let [top_first, top_last, top_close, bottom, bottom_close] =
-            CONTROL_POINTS.as_chunks::<4>().0
-        else {
-            panic!("expected five wing control patches");
+    fn mesh_has_three_cubics_and_one_shared_connector() {
+        let [top_first, top_last, bottom, connector] = CONTROL_POINTS.as_chunks::<4>().0 else {
+            panic!("expected four wing control patches");
         };
         assert_eq!(top_first[3], top_last[0]);
         for patch in [top_first, top_last, bottom] {
             assert!(patch.iter().all(|p| p[2] == 0.0));
         }
-        for (close, start, end) in [
-            (top_close, top_first[0], top_last[3]),
-            (bottom_close, bottom[0], bottom[3]),
-        ] {
-            assert_eq!(close[0], [end[0], end[1], 1.0]);
-            assert_eq!(close[1], close[0]);
-            assert_eq!(close[2], [start[0], start[1], 1.0]);
-            assert_eq!(close[3], close[2]);
-            assert_eq!(start[0], 0.0);
-            assert_eq!(end[0], 0.0);
-        }
+        assert_eq!(bottom[0], control(BOTTOM_WING[0], 0.0));
+        assert!(bottom[0][0] > 0.3);
+        let start = [top_first[0][0], top_first[0][1], 1.0];
+        let end = [bottom[3][0], bottom[3][1], 1.0];
+        assert_eq!(*connector, [start, start, end, end]);
         for (i, position) in CONTROL_POINTS.iter().flatten().enumerate() {
             assert_eq!(&VERTEX_BYTES[i * 4..i * 4 + 4], &position.to_le_bytes());
         }

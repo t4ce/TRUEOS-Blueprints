@@ -18,9 +18,9 @@ const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 const FRAME_RATE: u32 = 30;
 const RETRY_MS: u64 = 1;
-// Matches the shader's flight lap and spans six complete wingbeats.
 const FLIGHT_PERIOD_SECONDS: u64 = 12;
-const FLIGHT_PERIOD_NS: u64 = FLIGHT_PERIOD_SECONDS * 1_000_000_000;
+// One complete mode cycle also spans whole flight laps and wingbeat patterns.
+const FRAME_PERIOD_NS: u64 = 60_000_000_000;
 const IDENTITY: [f32; 16] = [
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
@@ -99,7 +99,7 @@ impl OutlineRenderer {
                 RetainedMeshDescriptor {
                     vertex_count: VERTEX_COUNT as u32,
                     index_count: VERTEX_COUNT as u32,
-                    vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_BFLY_PATCHES,
+                    vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_BFLY_OPEN_PATCHES,
                     topology: vgpu::RETAINED_TOPOLOGY_BFLY_PATCHLIST_4,
                     ..RetainedMeshDescriptor::default()
                 },
@@ -139,7 +139,7 @@ impl OutlineRenderer {
                     Err(code) => return Err(Error::Vgpu("import surface", code)),
                 }
             };
-            let elapsed = clock::monotonic_nanos().saturating_sub(started) % FLIGHT_PERIOD_NS;
+            let elapsed = clock::monotonic_nanos().saturating_sub(started) % FRAME_PERIOD_NS;
             let time = elapsed as f32 * 1e-9;
             match gpu.submit_retained_frame(
                 self.queue,

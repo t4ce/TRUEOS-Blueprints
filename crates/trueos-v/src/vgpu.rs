@@ -456,6 +456,9 @@ pub const RETAINED_VERTEX_LAYOUT_MAXPIX_TORNADO: u32 = 11;
 /// Five four-point wing outline patches. Each point is [x, y, straight_edge].
 /// The bfly shader uses jitter_frame.xy for the surface size and .z for time.
 pub const RETAINED_VERTEX_LAYOUT_BFLY_PATCHES: u32 = 12;
+/// Three open cubic patches and one shared hinge connector, with four
+/// `[x, y, straight_edge]` control vertices in each patch.
+pub const RETAINED_VERTEX_LAYOUT_BFLY_OPEN_PATCHES: u32 = 13;
 pub const RETAINED_TOPOLOGY_BFLY_PATCHLIST_4: u32 = 0x23;
 /// Experimental baked beveled cube: one Float3 origin, 44 zero indices.
 /// Only valid with RETAINED_TOPOLOGY_CUBE_PATCHLIST_1. HS expands each patch

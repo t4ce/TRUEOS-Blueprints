@@ -1,13 +1,13 @@
 {
-  "id": 15,
+  "id": 16,
   "name": "bfly-direct-wings",
-  "bytes": 7036,
-  "sha256": "63b3df9e4d1d24bbc6378ffa95918610e9a1db18bc8920b8706544e575f0b2e6",
-  "vertex_layout": 12,
+  "bytes": 7756,
+  "sha256": "b67028c10ca83449f8f8259d87877066d4011d8ccbc39aaa44814362d96cb13a",
+  "vertex_layout": 13,
   "topology": "patch-list-4",
   "sources": {
     "direct-wings.vert": "71801810f37e7418212016a5eef3f2a9d85a34eb3f897be6737083aeb6e629af",
-    "direct-wings.tesc": "c23b176f2e773e680efb1d1e29a2232b8a07f712398bdef791e88a8bb9503ec3",
+    "direct-wings.tesc": "3aa8d8bb7fafd226c798cd654c61e2c88c807fefe6904141564cb04fa7788233",
     "direct-wings.tese": "158aac89cedcb39ee0f524c41c4fd18e9cded58fd7e77368ffdc76401bc119e6",
     "direct-wings.frag": "935fbcbce0978c549f50ed8a65f45a9259e43e027af7335f5f768b868a9899eb"
   },
@@ -24,8 +24,8 @@
     {
       "name": "hs-simd8",
       "kind": 1,
-      "bytes": 6224,
-      "sha256": "38aed1e246d9291ff9b28914964d6dce4c58a9cc2fe82245aa25da1b96c316db",
+      "bytes": 6944,
+      "sha256": "60197a9f8da279d5ef797e9825c4b7383c6aeebe62917e2b9d8998d6b4cf73ec",
       "capture_file": "hull-simd8.bin"
     },
     {
@@ -53,12 +53,12 @@
         "pci_revision": "0c",
         "platform": "ADL-S GT1",
         "directory": "4680",
-        "pipeline_cache_sha256": "3ea1a2212fb133b85765278f5a760d7f8b56ab67ff9d2526431f2328d8658150",
+        "pipeline_cache_sha256": "2c542417e24c6295a2a623c91c9f16dacf8f90208972223d69e32bc8b1c4fe22",
         "stage_offsets": {
-          "vs-simd8": 20800,
+          "vs-simd8": 19296,
           "hs-simd8": 88,
-          "ds-simd8": 8344,
-          "ps-simd16": 7112
+          "ds-simd8": 9064,
+          "ps-simd16": 7832
         }
       },
       {
@@ -67,12 +67,12 @@
         "pci_revision": "04",
         "platform": "RPL-S",
         "directory": "a780",
-        "pipeline_cache_sha256": "94eed7f2af4eed2d75fd329b445047d76542fc79cddb15d3f30a77a699d490f4",
+        "pipeline_cache_sha256": "eb48ed00ff9bf6567a2a2905b0d9dfc59cd6bee66e8c7854f684b4a2ce9aee28",
         "stage_offsets": {
-          "vs-simd8": 20800,
+          "vs-simd8": 19296,
           "hs-simd8": 88,
-          "ds-simd8": 8344,
-          "ps-simd16": 7112
+          "ds-simd8": 9064,
+          "ps-simd16": 7832
         }
       }
     ]
