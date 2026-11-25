@@ -2,13 +2,9 @@
 mod native {
     const WINGS_BYTES: usize =
         include_bytes!("../shaders/trueos/bfly-tier-width-wings.apshader").len();
+    const TWILIGHT_BYTES: usize =
+        include_bytes!("../shaders/trueos/bfly-twilight-ribbon.apshader").len();
     const HISTORY_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-smoke-history.apshader").len();
-    const CLOUD_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-cloud-history.apshader").len();
-    const CLOUD_TRAIL_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-cloud-trail.apshader").len();
-    const UNTEXTURED_HISTORY_BYTES: usize =
         include_bytes!("../shaders/trueos/bfly-history.apshader").len();
     const FILLED_WINGS_BYTES: usize =
         include_bytes!("../shaders/trueos/bfly-translucent-wings.apshader").len();
@@ -35,10 +31,8 @@ mod native {
     #[repr(C)]
     struct ShaderPackages {
         wings: [u8; WINGS_BYTES],
+        twilight: [u8; TWILIGHT_BYTES],
         history: [u8; HISTORY_BYTES],
-        cloud: [u8; CLOUD_BYTES],
-        cloud_trail: [u8; CLOUD_TRAIL_BYTES],
-        untextured_history: [u8; UNTEXTURED_HISTORY_BYTES],
         filled_wings: [u8; FILLED_WINGS_BYTES],
         inset_outline: [u8; INSET_OUTLINE_BYTES],
         celestial_masks: CelestialMasks,
@@ -49,10 +43,8 @@ mod native {
     #[unsafe(link_section = ".trueos.shaders")]
     static APP_SHADER_PACKAGES: ShaderPackages = ShaderPackages {
         wings: *include_bytes!("../shaders/trueos/bfly-tier-width-wings.apshader"),
-        history: *include_bytes!("../shaders/trueos/bfly-smoke-history.apshader"),
-        cloud: *include_bytes!("../shaders/trueos/bfly-cloud-history.apshader"),
-        cloud_trail: *include_bytes!("../shaders/trueos/bfly-cloud-trail.apshader"),
-        untextured_history: *include_bytes!("../shaders/trueos/bfly-history.apshader"),
+        twilight: *include_bytes!("../shaders/trueos/bfly-twilight-ribbon.apshader"),
+        history: *include_bytes!("../shaders/trueos/bfly-history.apshader"),
         filled_wings: *include_bytes!("../shaders/trueos/bfly-translucent-wings.apshader"),
         inset_outline: *include_bytes!("../shaders/trueos/bfly-inset-outline.apshader"),
         celestial_masks: CelestialMasks {

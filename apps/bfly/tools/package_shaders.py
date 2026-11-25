@@ -74,6 +74,8 @@ def verify_compiler_capture(record, stages, capture, root):
     offsets = (capture["stage_offsets"] if "stage_offsets" in capture
                else record["offline_compiles"]["stage_offsets"])
     for metadata, (name, data) in zip(record["stages"], stages, strict=True):
+        if "asset_file" in metadata:
+            continue
         offset = offsets[name]
         captured_data = data + bytes.fromhex(metadata.get("capture_tail", ""))
         require(cache[offset:offset + len(captured_data)] == captured_data,
@@ -184,6 +186,8 @@ def main():
                         help="rebuild the seeded wing-fill shader from its native captures")
     parser.add_argument("--rebuild-translucent-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild the translucent wing-fill shader from its native captures")
+    parser.add_argument("--rebuild-twilight-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the Twilight ribbon pipeline from its native captures")
     parser.add_argument("--rebuild-inset-outline-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild the outline over the inset wing fill from its native captures")
     parser.add_argument("--rebuild-history-from", type=Path, metavar="CAPTURE_DIR",
@@ -226,6 +230,9 @@ def main():
     translucent_record = json.loads((NATIVE / "translucent-wings-manifest.json").read_text())
     translucent_package = check_graphics_publication(
         translucent_record, trust, kernel_image, args.rebuild_translucent_from)
+    twilight_record = json.loads((NATIVE / "twilight-ribbon-manifest.json").read_text())
+    twilight_package = check_graphics_publication(
+        twilight_record, trust, kernel_image, args.rebuild_twilight_from)
     inset_outline_record = json.loads((NATIVE / "inset-outline-manifest.json").read_text())
     inset_outline_package = check_graphics_publication(
         inset_outline_record, trust, kernel_image, args.rebuild_inset_outline_from)
@@ -238,13 +245,13 @@ def main():
     untextured_record = json.loads((NATIVE / "untextured-wings-manifest.json").read_text())
     check_publication(untextured_record, trust, kernel_image, None, archived=True)
     smoke_record = json.loads((NATIVE / "smoke-history-manifest.json").read_text())
-    smoke_package = check_history_publication(
+    check_history_publication(
         smoke_record, trust, kernel_image, args.rebuild_smoke_history_from)
     cloud_record = json.loads((NATIVE / "cloud-history-manifest.json").read_text())
-    cloud_package = check_history_publication(
+    check_history_publication(
         cloud_record, trust, kernel_image, args.rebuild_cloud_history_from)
     trail_record = json.loads((NATIVE / "cloud-trail-manifest.json").read_text())
-    trail_package = check_history_publication(
+    check_history_publication(
         trail_record, trust, kernel_image, args.rebuild_cloud_trail_from)
     bundle = b"".join(packages.values())
     bundle_file = NATIVE / "app-shaders.bundle"
@@ -254,8 +261,8 @@ def main():
         bundle_file.write_bytes(bundle)
     require(bundle_file.read_bytes() == bundle, "bfly bundle differs from its packages")
     if args.blueprint:
-        expected = b"".join((widths_package, smoke_package, cloud_package, trail_package,
-                             history_package, translucent_package, inset_outline_package,
+        expected = b"".join((widths_package, twilight_package, history_package,
+                             translucent_package, inset_outline_package,
                              celestial_masks))
         require(blueprint_shader_section(args.blueprint) == expected,
                 f"Shader metadata differs from bfly's wings and history packages in {args.blueprint}")
@@ -276,6 +283,8 @@ def main():
         print("Verified seeded wing-fill tessellation ISA in the offline Vulkan pipeline caches")
     if args.rebuild_translucent_from:
         print("Verified translucent wing-fill tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_twilight_from:
+        print("Verified Twilight ribbon tessellation ISA in the offline Vulkan pipeline caches")
     if args.rebuild_inset_outline_from:
         print("Verified inset wing-outline tessellation ISA in the offline Vulkan pipeline caches")
     if args.rebuild_history_from:

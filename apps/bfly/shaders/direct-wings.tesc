@@ -7,6 +7,10 @@ layout(location = 1) patch out int straight_edge;
 layout(location = 2) patch out vec3 clip_from_x;
 layout(location = 3) patch out vec3 clip_from_y;
 layout(location = 4) patch out vec3 clip_from_origin;
+#ifdef BFLY_TWILIGHT_RIBBON
+layout(location = 5) patch out vec3 clip_from_mid_x;
+layout(location = 6) patch out vec3 clip_from_tail_x;
+#endif
 
 layout(std430, binding = 0) readonly buffer Camera {
     float records0[72];
@@ -16,6 +20,9 @@ layout(std430, binding = 0) readonly buffer Camera {
     layout(offset = 352) float swap_time;
 #ifdef BFLY_MIXED_WINGS
     layout(offset = 356) float textured_trail;
+#endif
+#ifdef BFLY_TWILIGHT_RIBBON
+    layout(offset = 364) float twilight_mode;
 #endif
 };
 
@@ -376,7 +383,9 @@ void main() {
 #else
     straight_edge = int(gl_in[0].gl_Position.z);
 #endif
-#ifdef BFLY_FILL_WINGS
+#ifdef BFLY_TWILIGHT_RIBBON
+    if (index >= int(flock_motion.w) || index >= 80 || straight_edge != 0 || twilight_mode < 0.5) {
+#elif defined(BFLY_FILL_WINGS)
     if (index >= int(flock_motion.w) || index >= 80) {
 #else
     // Both mirrored sides meet at the same straight connector.
@@ -429,7 +438,64 @@ void main() {
 #endif
     );
     vec2 extent = hi - lo;
-#ifdef BFLY_FILL_WINGS
+#if defined(BFLY_TWILIGHT_RIBBON)
+    float span = max(extent.x, extent.y);
+    if (span < 24.0) {
+        gl_TessLevelOuter[0] = 0.0;
+        gl_TessLevelOuter[1] = 0.0;
+        return;
+    }
+
+    bool long_sweep = twilight_mode >= 1.5;
+    bool descending = right_side ? downstroke.x : downstroke.y;
+    if (!long_sweep && !descending) {
+        gl_TessLevelOuter[0] = 0.0;
+        gl_TessLevelOuter[1] = 0.0;
+        return;
+    }
+
+    // Sweep the actual flap angle while holding the short-lived flight pose.
+    // The middle sample bends the ribbon around the wing's hinge.
+    float age = long_sweep ? 0.22 : 0.14;
+    bvec2 unused_direction;
+    vec2 mid_angles = flap_angles(seed & 7, mod(time - 0.5 * age, 60.0),
+                                 fast_weight, weight_rate, unused_direction);
+    vec2 tail_angles = flap_angles(seed & 7, mod(time - age, 60.0),
+                                  fast_weight, weight_rate, unused_direction);
+    float mid_angle = right_side ? mid_angles.x : mid_angles.y;
+    float tail_angle = right_side ? tail_angles.x : tail_angles.y;
+    float side = right_side ? 1.0 : -1.0;
+    vec3 mid_x = pose * vec3(side * cos(mid_angle), 0.0, sin(mid_angle));
+    vec3 tail_x = pose * vec3(side * cos(tail_angle), 0.0, sin(tail_angle));
+    vec3 head_x = right_side ? right : left;
+    float tip = (artwork == 0 ? SIDE_BOUNDS : SECOND_SIDE_BOUNDS).y;
+    vec2 head_px = project(position + tip * head_x, depth);
+    vec2 mid_px = project(position + tip * mid_x, depth);
+    vec2 tail_px = project(position + tip * tail_x, depth);
+    float sweep = length(head_px - mid_px) + length(mid_px - tail_px);
+    float margin = 8.0 + 2.0 * sweep;
+    if (sweep < 1.5 || any(lessThan(hi + center_px, vec2(-margin))) ||
+        any(greaterThan(lo + center_px, frame.xy + margin))) {
+        gl_TessLevelOuter[0] = 0.0;
+        gl_TessLevelOuter[1] = 0.0;
+        return;
+    }
+
+    vec2 scale = (2.0 * FOCAL_LENGTH) / frame.xy;
+    vec2 center = 2.0 * center_px / frame.xy - 1.0;
+    clip_from_mid_x = clip_basis(mid_x, scale, center);
+    clip_from_tail_x = clip_basis(tail_x, scale, center);
+    // These two existing patch lanes carry appearance data for the ribbon.
+    isoline_count = int(round(255.0 * smoothstep(1.5, 12.0, sweep))) | (int(long_sweep) << 8);
+    straight_edge = seed;
+    float segments = float(1 << findMSB(uint(clamp(span * 0.25, 8.0, 32.0))));
+    gl_TessLevelOuter[0] = 2.0;
+    gl_TessLevelOuter[1] = segments;
+    gl_TessLevelOuter[2] = 2.0;
+    gl_TessLevelOuter[3] = segments;
+    gl_TessLevelInner[0] = segments;
+    gl_TessLevelInner[1] = 2.0;
+#elif defined(BFLY_FILL_WINGS)
     if (any(lessThan(hi + center_px, vec2(0.0))) ||
         any(greaterThan(lo + center_px, frame.xy))) {
         gl_TessLevelOuter[0] = 0.0;
@@ -499,7 +565,7 @@ void main() {
     vec2 scale = (2.0 * FOCAL_LENGTH) / frame.xy;
     vec2 center = 2.0 * center_px / frame.xy - 1.0;
     vec3 x_basis = right_side ? right : left;
-#ifndef BFLY_FILL_WINGS
+#if !defined(BFLY_FILL_WINGS) && !defined(BFLY_TWILIGHT_RIBBON)
     if (hinge_only) {
         // Keep a two-pixel centerline at the projected hinge midpoint even
         // when the authored connector is too short to cover a sample.

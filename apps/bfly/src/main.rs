@@ -62,22 +62,18 @@ impl Drop for OwnedDevice {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RenderMode {
     Monochrome,
-    Smoke,
-    Cloud,
+    Twilight,
+    TwilightWide,
     Fill,
     Layered,
 }
 
 impl RenderMode {
-    fn has_fill(self) -> bool {
-        matches!(self, Self::Fill | Self::Layered)
-    }
-
     fn describe(self, frame: &mut Frame) -> Result<(), Error> {
         let (title, mode) = match self {
             Self::Monochrome => ("bfly - monochrome", "monochrome"),
-            Self::Smoke => ("bfly - smoke", "smoke"),
-            Self::Cloud => ("bfly - cloud", "cloud"),
+            Self::Twilight => ("bfly - twilight", "twilight"),
+            Self::TwilightWide => ("bfly - twilight wide", "twilight-wide"),
             Self::Fill => ("bfly - fill", "fill"),
             Self::Layered => ("bfly - layered", "layered"),
         };
@@ -92,7 +88,7 @@ impl RenderMode {
 struct Renderer {
     device: OwnedDevice,
     queue: Queue,
-    meshes: [Option<RetainedMesh>; 5],
+    meshes: [Option<RetainedMesh>; 4],
     vertices: Buffer,
     indices: Buffer,
 }
@@ -126,11 +122,11 @@ impl Renderer {
         let mut renderer = Self {
             device,
             queue,
-            meshes: [None; 5],
+            meshes: [None; 4],
             vertices,
             indices,
         };
-        renderer.mesh_for(RenderMode::Smoke)?;
+        renderer.mesh_for(RenderMode::Twilight)?;
         logl::log(
             level::IMPORTANT,
             format_args!(
@@ -141,16 +137,17 @@ impl Renderer {
     }
 
     fn mesh_for(&mut self, mode: RenderMode) -> Result<RetainedMesh, Error> {
-        if let Some(mesh) = self.meshes[mode as usize] {
+        let (cache_index, vertex_layout) = match mode {
+            RenderMode::Monochrome => (0, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_TRAIL_FLOCK),
+            RenderMode::Twilight | RenderMode::TwilightWide => {
+                (1, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_TWILIGHT_FLOCK)
+            }
+            RenderMode::Fill => (2, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_OUTLINED_INSET_FLOCK),
+            RenderMode::Layered => (3, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_LAYERED_FLOCK),
+        };
+        if let Some(mesh) = self.meshes[cache_index] {
             return Ok(mesh);
         }
-        let vertex_layout = match mode {
-            RenderMode::Monochrome => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_TRAIL_FLOCK,
-            RenderMode::Smoke => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_SMOKE_FLOCK,
-            RenderMode::Cloud => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_CLOUD_TRAIL_FLOCK,
-            RenderMode::Fill => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_OUTLINED_INSET_FLOCK,
-            RenderMode::Layered => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_LAYERED_FLOCK,
-        };
         let (vertex_offset, index_offset, vertex_count) = match mode {
             RenderMode::Fill => (0, 0, FILL_VERTEX_COUNT),
             RenderMode::Layered => (0, 0, LAYERED_VERTEX_COUNT),
@@ -177,7 +174,7 @@ impl Renderer {
                 },
             )
             .map_err(|code| Error::Vgpu("create retained wing patches", code))?;
-        self.meshes[mode as usize] = Some(mesh);
+        self.meshes[cache_index] = Some(mesh);
         Ok(mesh)
     }
 
@@ -286,14 +283,14 @@ fn frame_params(
     camera.previous_view_projection[..8].copy_from_slice(&records[72..]);
     camera.previous_view_projection[8..12].copy_from_slice(&snapshot.motion);
     camera.previous_view_projection[12] = (elapsed_ns % SWAP_PERIOD_NS) as f32 * 1e-9;
-    camera.previous_view_projection[13] = if matches!(mode, RenderMode::Smoke | RenderMode::Cloud) {
-        1.0
-    } else {
-        0.0
-    };
     if reset_history {
         camera.previous_view_projection[14] = 1.0;
     }
+    camera.previous_view_projection[15] = match mode {
+        RenderMode::Twilight => 1.0,
+        RenderMode::TwilightWide => 2.0,
+        _ => 0.0,
+    };
     let mut submit = RetainedFrameSubmit {
         clear_rgba8_srgb: 0,
         seed_count: 1,
@@ -354,7 +351,7 @@ fn run() -> Result<(), Error> {
     let mut renderer = Renderer::open()?;
     let mut frame = Frame::open_layered(96, 72, WIDTH, HEIGHT, BACKGROUND_HZ)
         .map_err(|code| Error::Ui4("open window", code))?;
-    let mut mode = RenderMode::Smoke;
+    let mut mode = RenderMode::Twilight;
     let mut previous_mode = mode;
     let mut mesh = renderer.mesh_for(mode)?;
     mode.describe(&mut frame)?;
@@ -389,8 +386,8 @@ fn run() -> Result<(), Error> {
             {
                 match event.key_code {
                     KEYBOARD_KEY_F1 => next_mode = RenderMode::Monochrome,
-                    KEYBOARD_KEY_F2 => next_mode = RenderMode::Smoke,
-                    KEYBOARD_KEY_F3 => next_mode = RenderMode::Cloud,
+                    KEYBOARD_KEY_F2 => next_mode = RenderMode::Twilight,
+                    KEYBOARD_KEY_F3 => next_mode = RenderMode::TwilightWide,
                     KEYBOARD_KEY_F4 => next_mode = RenderMode::Fill,
                     KEYBOARD_KEY_F5 => next_mode = RenderMode::Layered,
                     _ => {}
@@ -414,7 +411,7 @@ fn run() -> Result<(), Error> {
         {
             pending_size = None;
         }
-        let reset_history = previous_mode.has_fill() && !mode.has_fill();
+        let reset_history = mode == RenderMode::Monochrome && previous_mode != mode;
         renderer.draw(mesh, mode, reset_history, &mut frame, started, &mut flock)?;
         previous_mode = mode;
         if !presented
