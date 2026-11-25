@@ -1,0 +1,14 @@
+// Play the keyboard over an 808 beat. Alt+M plays a test phrase.
+// Each key starts a quiet fifth, octave, fifth answer after the strike.
+~piano: midisynth 0 0.003 0.16 piano >> mul 0.72;
+~phrase: midiarp 0 0.25 7 12 7;
+~pitch: ~phrase >> eval `x := x * (in <= 0) + in * 261.6256; x`;
+~shape: ~phrase >> eval `in > 0` >> envperc 0.004 0.085;
+~answer: sin ~pitch >> mul ~shape >> lpf 2300 0.8 >> mul 0.12 >> pan 0.25;
+
+// Eight eighth-note slots. A 60 plays the sample at its original pitch.
+~kick: seq 60 _ _ 60 60 _ _ _ >> sp \808bd >> mul 0.32;
+~snare: seq _ _ 60 _ _ _ 60 _ >> sp \808sd >> mul 0.17;
+~hat: seq _ 60 _ 60 _ 60 _ 60 >> sp \808ch >> mul 0.092 >> pan -0.24;
+~beat: mix ~kick ~snare ~hat >> mul 0.92;
+out: mix ~piano ~answer ~beat >> mul 0.9;

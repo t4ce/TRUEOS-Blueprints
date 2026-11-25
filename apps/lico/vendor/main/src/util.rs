@@ -8,7 +8,7 @@ use glicol_synth::{
     oscillator::{SawOsc, SinOsc, SquOsc, TriOsc},
     sequencer::{Arrange, Choose, Sequencer, Speed},
     signal::{ConstSig, Impulse, Noise, Points},
-    synth::{MidiSynth, MsgSynth, PatternSynth},
+    synth::{MidiArp, MidiSynth, MsgSynth, PatternSynth},
     Node, Pass, Sum2,
 };
 
@@ -112,6 +112,14 @@ pub fn makenode<const N: usize>(
             };
             (synth.to_boxed_nodedata(1), vec![])
         }
+        Component::MidiArp(nodes::MidiArp {
+            channel,
+            step_beats,
+            offsets,
+        }) => (
+            MidiArp::new(*channel, *step_beats, offsets.clone(), sr, bpm).to_boxed_nodedata(1),
+            vec![],
+        ),
         Component::PatternSynth(nodes::PatternSynth { symbol, span }) => {
             let pattern = symbol.replace('`', "");
             let events = pattern
@@ -354,15 +362,18 @@ pub fn makenode<const N: usize>(
         Component::Bd(nodes::Bd { param }) => get_one_para_from_number_or_ref::<N, Bd<N>>(param, 2),
         Component::Hh(nodes::Hh { param }) => get_one_para_from_number_or_ref::<N, Hh<N>>(param, 2),
         Component::Sn(nodes::Sn { param }) => get_one_para_from_number_or_ref::<N, Sn<N>>(param, 2),
-        Component::SawSynth(nodes::SawSynth { attack, decay }) => {
-            (SawSynth::new(*attack, *decay).to_boxed_nodedata(2), vec![])
-        }
-        Component::SquSynth(nodes::SquSynth { attack, decay }) => {
-            (SquSynth::new(*attack, *decay).to_boxed_nodedata(2), vec![])
-        }
-        Component::TriSynth(nodes::TriSynth { attack, decay }) => {
-            (TriSynth::new(*attack, *decay).to_boxed_nodedata(2), vec![])
-        }
+        Component::SawSynth(nodes::SawSynth { attack, decay }) => (
+            SawSynth::with_sample_rate(*attack, *decay, sr).to_boxed_nodedata(2),
+            vec![],
+        ),
+        Component::SquSynth(nodes::SquSynth { attack, decay }) => (
+            SquSynth::with_sample_rate(*attack, *decay, sr).to_boxed_nodedata(2),
+            vec![],
+        ),
+        Component::TriSynth(nodes::TriSynth { attack, decay }) => (
+            TriSynth::with_sample_rate(*attack, *decay, sr).to_boxed_nodedata(2),
+            vec![],
+        ),
         Component::Get(nodes::Get { reference }) => (
             NodeData::new2(BoxedNodeSend::new(Pass {})),
             vec![reference.to_string()],

@@ -5,7 +5,7 @@ chain = ${ node ~ (WHITESPACE* ~ "\n"? ~ WHITESPACE* ~ ((chain_operator ~ WHITES
 chain_operator = { ">>" }
 
 node = ${ (reverb|arrange|psampler|mix|seq|choose|mul|add|sin|saw|squ|tri|pan|speed|noise|onepole|
-sp|constsig|lpf|rhpf|onepole|imp|delayn|delayms|envperc|apfmsgain|plate|sendpass|midisynth|
+sp|constsig|lpf|rhpf|onepole|imp|delayn|delayms|envperc|apfmsgain|plate|sendpass|midisynth|midiarp|
 get|bd|sn|hh|expr|eval|points|meta|sawsynth|squsynth|trisynth|balance|adc|pattern_synth|msgsynth|adsr) }
 
 points = ${ points_inner ~ws*~(math_expression)? ~ws*~(is_looping)? }
@@ -28,6 +28,8 @@ msgsynth = ${("msgsynth"|"msg_synth") ~ (WHITESPACE+ ~ !node_name ~ symbol) ~ (W
 midisynth_keyword = _{ "midisynth" ~ !(ASCII_ALPHANUMERIC | "_" | "..") }
 midi_piano = @{ "piano" ~ !(ASCII_ALPHANUMERIC | "_" | "..") }
 midisynth = ${ midisynth_keyword ~ WHITESPACE+ ~ integer ~ WHITESPACE+ ~ number ~ WHITESPACE+ ~ number ~ (WHITESPACE+ ~ midi_piano)? }
+midiarp_keyword = _{ "midiarp" ~ !(ASCII_ALPHANUMERIC | "_" | "..") }
+midiarp = ${ midiarp_keyword ~ WHITESPACE+ ~ integer ~ WHITESPACE+ ~ number ~ (WHITESPACE+ ~ integer)+ }
 pattern_synth = ${("psynth"|"p_synth"|"pattern_synth") ~ WHITESPACE+ ~ code ~ (WHITESPACE+ ~ !node_name ~ number)? }
 adc = ${"adc" ~ WHITESPACE+ ~ !node_name ~ (number ) }
 
@@ -113,7 +115,7 @@ integer = ${ ("+" | "-")? ~(ASCII_DIGIT)+ ~ !"." }
 WHITESPACE = _{" "|","|"|"|"\t"}
 ws = _{" "|","|"|"|"\t"|"\n"}
 
-node_name = ${"reverb"|"arrange"|"adsr"|"sig"|"psampler"|"synth"|"msgsynth"|midisynth_keyword|"psynth"|"p_synth"|"pattern_synth"|
+node_name = ${"reverb"|"arrange"|"adsr"|"sig"|"psampler"|"synth"|"msgsynth"|midisynth_keyword|midiarp_keyword|"psynth"|"p_synth"|"pattern_synth"|
 "bd"|"sn"|"hh"|"squsynth"|"trisynth"|"seq"|"speed"|"choose"|"mul"|"add"|
 "linrange"|"apfdecay"|"delayn"|"delaymod"|"expr"|"eval"|
 "sin"|"squ"|"imp"|"envperc"|"sampler"|"noiz"|"lpf"|"plate"|"onepole"|

@@ -2,8 +2,9 @@
 
 Lico is an on-demand TRUEOS Blueprint for live-coding sound in a terminal.
 The starter patch plays a sequenced lead and kick. The compiler embeds the
-Glicol engine, parser, DSP code, node reference, thirteen example patches, and
-fourteen samples. The examples and samples require no runtime file access.
+Glicol engine, parser, DSP code, node reference, examples, and fourteen samples.
+The examples and samples require no runtime file access. Follow a patch from
+trigger to stereo output in the [animated DSP cheat sheet](assets/lico-dsp-cheat-sheet.gif).
 
 From the Blueprint SDK root, build a local package with:
 
@@ -55,11 +56,25 @@ second adds crash, ride, and a descending fill across the three toms. Each
 sound has its own editable sequence and level. The recordings come from
 [Virtuosity Drums](https://versilian-studios.com/virtuosity-drums/).
 
+**Tidepool** is an eight-bar groove inspired by eddyflux's “coastline” in
+[the Strudel workshop](https://strudel.cc/workshop/getting-started/#examples).
+It combines the acoustic kit, four soft chord voices, a synthesized
+upright-style bass, and an FM melody with stereo delay. The bass layers a
+filtered triangle body, a short second harmonic, and the sound of a finger
+attack made from filtered noise. A muted ride accents the second half, and
+the melody answers the chords in bars 3–4 and 7–8. Edit the named chains in
+[the patch](assets/examples/tidepool.glicol) to change individual parts.
+
 Choose **Synthesized piano** from the examples and press **Alt+R**. Play
 your MIDI keyboard or press **Alt+M** to hear the built-in test phrase.
 `midisynth 0 0.003 0.16 piano` models struck strings with a brighter attack
 at higher velocities and a natural decay while a key is held. It generates
 each note in real time from oscillators.
+
+Choose **Piano and 808** to play the same piano over a kick, snare, and
+closed hi-hat loop. A second voice answers each key-down with a fifth,
+octave, and fifth above the played note. Use `~beat` to adjust the drum
+level and the offsets in `midiarp` to change the answer.
 
 The **MIDI instrument** example uses the default sine voice. Both voices
 take attack and release times in seconds. Use channel `0` to listen on
@@ -93,10 +108,18 @@ Below 25 rows, the editor fills the screen, and **Alt+E** still opens
 the example picker.
 
 The editor and renderer run cooperatively on the same current-thread Tokio
-runtime. Each audio tick renders up to four 128-frame blocks and hands one
-48 kHz stereo PCM batch to the kernel. The sink accepts one producer at a time
-and caps each stream at two minutes. Lico lets the tail drain before opening
-the next stream, so rollover can introduce a short gap.
+runtime. Each tick submits 48 kHz stereo PCM to the kernel. Regular patches
+render four 128-frame blocks per tick. MIDI patches poll input and render two
+blocks per tick, about 5.33 ms apart.
+
+For live monitoring through the rig's mainboard jack, enable Lico's **Jack**
+route in **Audio Link**. When Lico opens a stream for a MIDI patch, a supporting
+TRUEOS kernel uses a 32 ms prebuffer for that jack. Earlier kernels accept the
+ordinary stream request. The port 82 player uses the HTTP route, which
+prebuffers 120 ms in TRUEOS and schedules audio ahead in the browser.
+
+The sink caps each stream at two minutes. Lico lets the tail drain before
+opening the next stream, so rollover can introduce a short gap.
 
 To verify that every embedded patch renders audio on the development host:
 

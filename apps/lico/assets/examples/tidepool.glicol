@@ -1,0 +1,61 @@
+// Tidepool. Inspired by "coastline" by eddyflux (Strudel).
+// Eight bars: Fm9, Dbmaj9, Bbm9, Cm9, two bars each.
+
+// Acoustic kit. A muted ride accents the second half of the loop.
+~kick: speed 0.5 >> seq 60 _ _ 60 _ 60 _ _   60 _ _ _ 60 _ 60 _
+>> sp \kit_kick >> mul 0.17;
+~snare: speed 0.5 >> seq _ _ 60 _ _ _ 60 _   _ _ 60 _ _ _ 60 _
+>> sp \kit_snare >> delayms 11 >> mul 0.12;
+~hat_accent: [0=>1 1/8=>0.62 1/2=>0.83 5/8=>0.59 7/8=>0.71 1=>1] * 2 !;
+~hat: speed 0.5 >> seq 60 60 _ 60 60 _ 60 60   60 _ 60 60 _ 60 60 _
+>> sp \kit_hat_closed >> mul ~hat_accent >> mul 0.06 >> pan -0.30;
+~pedal: speed 0.5 >> seq _ _ 60 _ _ 60 _ _   _ 60 _ _ _ _ _ 60
+>> sp \kit_hat_pedal >> mul 0.048 >> pan -0.30;
+~ride: speed 0.125 >> seq _ _ _ _   _ _ _ _   _ 60 _ _   _ 60 _ _
+>> sp \kit_ride >> hpf 650 0.8 >> lpf 3600 0.7 >> mul 0.032 >> pan 0.36;
+~drums: mix ~kick ~snare ~hat ~pedal ~ride;
+
+// Soft keys. Each lane holds one note of the voicing on the bar grid.
+~key1: speed 0.125 >> seq 56 _ 56 _   53 _ 53 _   53 _ 53 _   55 _ 55 _
+>> trisynth 0.011 0.84 >> mul 0.31;
+~key2: speed 0.125 >> seq 60 _ 60 _   56 _ 56 _   56 _ 56 _   58 _ 58 _
+>> trisynth 0.013 0.76 >> mul 0.29;
+~key3: speed 0.125 >> seq 63 _ 63 _   60 _ 60 _   61 _ 61 _   63 _ 63 _
+>> trisynth 0.015 0.81 >> mul 0.25;
+~key4: speed 0.125 >> seq 67 _ _67 _   63 _ _63 _   72 _ _72 _   74 _ _74 _
+>> trisynth 0.017 0.72 >> mul 0.16;
+~keys: mix ~key1 ~key2 ~key3 ~key4 >> lpf 1500 0.78;
+~key_delay: sin 0.29 >> mul 2.1 >> add 3.3;
+~keys_left: ~keys >> mul 0.65 >> pan -0.24;
+~keys_right: ~keys >> apfgain ~key_delay 0.54 >> mul 0.40 >> pan 0.38;
+~harmony: mix ~keys_left ~keys_right;
+
+// Upright-style bass. Hold each seq pitch between triggers.
+// The triangle body rings longer than the second harmonic and finger noise.
+~bass_notes: speed 0.125 >> seq 41 _ 48 _  41 _ 44 39  37 _ 44 _  37 39_41 44 _  34 _ 41 _  34 _ 37 41  36 _ 43 _  36 38 39 40;
+~bass_hz: ~bass_notes >> eval `x := x * (in <= 0) + in * 261.6256; x`;
+~bass_harmonic: ~bass_hz >> mul 2;
+~bass_body_env: ~bass_notes >> envperc 0.006 0.27;
+~bass_attack: ~bass_notes >> envperc 0.002 0.024;
+~bass_body: tri ~bass_hz >> lpf 420 0.76 >> mul ~bass_body_env >> mul 0.70;
+~bass_ring: sin ~bass_harmonic >> mul ~bass_attack >> mul 0.19;
+~bass_touch: noise 67 >> hpf 700 0.8 >> lpf 2300 0.8 >> mul ~bass_attack >> mul 0.053;
+~bass: mix ~bass_body ~bass_ring ~bass_touch;
+
+// FM droplets answer the keys in bars 3–4 and 7–8.
+~lead_notes: speed 0.125 >> seq _ _ _ _  _ _ _ _  75 _ 72 _  68_70 _ 72 _  _ _ _ _  _ _ _ _  74 _ 70 _  67 _ 63_65 _;
+~lead_hz: ~lead_notes >> eval `x := x * (in <= 0) + in * 261.6256; x`;
+~lead_ratio: ~lead_hz >> mul 2.005;
+~lead_air: sin 0.11 >> mul 28 >> add 45;
+~lead_index: ~lead_notes >> envperc 0.004 0.11 >> mul ~lead_air;
+~lead_carrier: sin ~lead_ratio >> mul ~lead_index >> add ~lead_hz;
+~lead_env: ~lead_notes >> envperc 0.008 0.28;
+~lead_cut: [0=>670 1/4=>1050 1/2=>730 3/4=>1250 1=>670] * 8 !;
+~lead: sin ~lead_carrier >> mul ~lead_env >> lpf ~lead_cut 1.3 >> mul 0.12;
+~lead_dry: ~lead >> pan 0.15;
+~lead_echo_l: ~lead >> delayms 167 >> mul 0.37 >> pan -0.64;
+~lead_echo_r: ~lead >> delayms 301 >> lpf 1700 0.8 >> mul 0.23 >> pan 0.68;
+~lead_space: ~lead >> plate 1 >> mul 0.19;
+~melody: mix ~lead_dry ~lead_echo_l ~lead_echo_r ~lead_space;
+
+out: mix ~drums ~harmony ~bass ~melody >> mul 0.72;

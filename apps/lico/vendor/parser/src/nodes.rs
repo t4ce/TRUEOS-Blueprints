@@ -80,6 +80,7 @@ pub enum Component<'ast> {
     TriSynth(TriSynth),
     MsgSynth(MsgSynth<'ast>),
     MidiSynth(MidiSynth),
+    MidiArp(MidiArp),
     PatternSynth(PatternSynth<'ast>),
     Lpf(Lpf<'ast>),
     PSampler(PSampler<'ast>),
@@ -870,22 +871,7 @@ impl Node<'_> for MidiSynth {
         span: Span<'_>,
     ) -> Result<Self, Box<Error<Rule>>> {
         let end = span.as_end_span();
-        let channel = pairs
-            .next()
-            .ok_or_else(|| end.to_err_with_positives([Rule::integer]))?;
-        let channel = channel
-            .as_str()
-            .parse::<u8>()
-            .ok()
-            .filter(|channel| *channel <= 16)
-            .ok_or_else(|| {
-                Box::new(Error::new_from_span(
-                    ErrorVariant::CustomError {
-                        message: "MIDI channel must be 0 (omni) or 1 through 16".into(),
-                    },
-                    channel.as_span(),
-                ))
-            })?;
+        let channel = parse_midi_channel(pairs, end)?;
         let mut envelope_time = |parameter: &str| {
             let pair = pairs
                 .next()
@@ -908,6 +894,78 @@ impl Node<'_> for MidiSynth {
             attack,
             release,
             piano: pairs.next().is_some(),
+        })
+    }
+}
+
+fn parse_midi_channel(pairs: &mut Pairs<'_, Rule>, end: Span<'_>) -> Result<u8, Box<Error<Rule>>> {
+    let channel = pairs
+        .next()
+        .ok_or_else(|| end.to_err_with_positives([Rule::integer]))?;
+    channel
+        .as_str()
+        .parse::<u8>()
+        .ok()
+        .filter(|channel| *channel <= 16)
+        .ok_or_else(|| {
+            Box::new(Error::new_from_span(
+                ErrorVariant::CustomError {
+                    message: "MIDI channel must be 0 (omni) or 1 through 16".into(),
+                },
+                channel.as_span(),
+            ))
+        })
+}
+
+#[derive(PartialEq, Debug)]
+pub struct MidiArp {
+    pub channel: u8,
+    pub step_beats: f32,
+    pub offsets: Vec<i8>,
+}
+
+impl Node<'_> for MidiArp {
+    fn parse_from_iter(
+        pairs: &mut Pairs<'_, Rule>,
+        span: Span<'_>,
+    ) -> Result<Self, Box<Error<Rule>>> {
+        let end = span.as_end_span();
+        let channel = parse_midi_channel(pairs, end)?;
+        let step = pairs
+            .next()
+            .ok_or_else(|| end.to_err_with_positives([Rule::number]))?;
+        let step_beats: f32 = step.try_to_parse()?;
+        if step_beats <= 0.0 || !step_beats.is_finite() {
+            return Err(Box::new(Error::new_from_span(
+                ErrorVariant::CustomError {
+                    message: "MIDI arpeggio spacing must be a finite, positive number of beats"
+                        .into(),
+                },
+                step.as_span(),
+            )));
+        }
+        let offsets = pairs
+            .map(|offset| {
+                offset
+                    .as_str()
+                    .parse::<i8>()
+                    .ok()
+                    .filter(|offset| *offset >= -127)
+                    .ok_or_else(|| {
+                        Box::new(Error::new_from_span(
+                            ErrorVariant::CustomError {
+                                message: "MIDI arpeggio offsets must be from -127 to 127 semitones"
+                                    .into(),
+                            },
+                            offset.as_span(),
+                        ))
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            channel,
+            step_beats,
+            offsets,
         })
     }
 }

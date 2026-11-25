@@ -142,6 +142,19 @@ like any other signal.
 Run the patch with **Alt+R**, then press **Alt+M** to send Lico’s channel 1
 test phrase through its MIDI byte decoder.
 
+```glicol
+~piano: midisynth 0 0.003 0.16 piano;
+~answer: midiarp 0 0.25 7 12 7 >> trisynth 0.004 0.085 >> mul 0.015;
+out: mix ~piano ~answer;
+```
+
+`midiarp CHANNEL STEP_BEATS OFFSET ...` starts a one-shot phrase from each
+matching Note On. Channel `0` listens to every channel. The positive step
+length is measured in beats and the first step waits that long after key-down.
+Offsets are signed semitones relative to the pressed key. Each step sends a
+`seq`-style pitch pulse to the next node. A new key restarts the phrase from
+its own pitch. Releasing a key lets its phrase finish.
+
 ## Forms outside the Lico playback workflow
 
 - `msgsynth` (also `msg_synth`) parses a sample-style symbol, attack, and

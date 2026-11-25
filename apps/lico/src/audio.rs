@@ -14,6 +14,7 @@ use tokio::sync::{
 pub(crate) const BLOCK: usize = 128;
 pub const SAMPLE_RATE: u32 = 48_000;
 const BATCH_FRAMES: usize = 4 * BLOCK;
+const LIVE_MIDI_FRAMES: usize = 2 * BLOCK;
 const BATCH_BYTES: usize = 4 * BATCH_FRAMES;
 const STREAM_LIMIT: usize = SAMPLE_RATE as usize * 4 * 120;
 pub const MONITOR_FRAMES: usize = BATCH_FRAMES;
@@ -185,7 +186,7 @@ pub(crate) fn engine() -> io::Result<Engine<BLOCK>> {
     Ok(engine)
 }
 
-fn render(engine: &mut Engine<BLOCK>, pcm: &mut [u8], waveform: &mut [f32; MONITOR_FRAMES]) {
+fn render(engine: &mut Engine<BLOCK>, pcm: &mut [u8], waveform: &mut [f32]) {
     for (bytes, wave) in pcm
         .chunks_exact_mut(BLOCK * 4)
         .zip(waveform.chunks_exact_mut(BLOCK))
@@ -201,9 +202,9 @@ fn render(engine: &mut Engine<BLOCK>, pcm: &mut [u8], waveform: &mut [f32; MONIT
     }
 }
 
-fn feed_midi_demo(engine: &mut Engine<BLOCK>, demo: &mut Option<MidiDemo>) {
+fn feed_midi_demo(engine: &mut Engine<BLOCK>, demo: &mut Option<MidiDemo>, frames: usize) {
     if let Some(source) = demo
-        && !source.advance(SAMPLE_RATE, BATCH_FRAMES, |event| engine.send_midi(event))
+        && !source.advance(SAMPLE_RATE, frames, |event| engine.send_midi(event))
     {
         *demo = None;
     }
@@ -247,7 +248,7 @@ pub fn self_check() -> Result<(), Box<dyn Error>> {
         let mut energy = 0.0;
         let mut peak = 0.0_f64;
         for _ in 0..batches {
-            feed_midi_demo(&mut engine, &mut midi_demo);
+            feed_midi_demo(&mut engine, &mut midi_demo, BATCH_FRAMES);
             render(&mut engine, &mut pcm, &mut waveform);
             for bytes in pcm.chunks_exact(2) {
                 let sample = f64::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.0;
@@ -288,10 +289,7 @@ pub async fn serve(
     // The kernel validates append buffers against the VM heap.
     let mut pcm = vec![0; BATCH_BYTES];
     let mut waveform = [0.; MONITOR_FRAMES];
-    let mut ticks = tokio::time::interval(Duration::from_nanos(
-        1_000_000_000 * BATCH_FRAMES as u64 / u64::from(SAMPLE_RATE),
-    ));
-    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut next_render = tokio::time::Instant::now();
     let _ = status.try_send(Status::Ready {
         rate: SAMPLE_RATE,
         midi_source: midi_input.source(),
@@ -348,8 +346,9 @@ pub async fn serve(
                         code: code.clone(),
                         source,
                     });
+                    let next_midi = engine.has_midi_input();
                     if playing.is_none() || restarting {
-                        match Stream::open() {
+                        match Stream::open(next_midi) {
                             Ok(output) => stream = Some(output),
                             // The previous stream's tail can still be draining at rollover.
                             Err(error) if playing.is_some() && error.kind() == io::ErrorKind::WouldBlock => {},
@@ -364,9 +363,10 @@ pub async fn serve(
                             }
                         }
                         beat_phase = 0.0;
-                        ticks.reset();
+                        next_render = tokio::time::Instant::now();
                     }
-                    midi_playing = engine.has_midi_input();
+                    waveform.fill(0.0);
+                    midi_playing = next_midi;
                     if !midi_playing {
                         midi_input.reset();
                     } else if midi_input.source() != MidiSource::Off {
@@ -403,7 +403,7 @@ pub async fn serve(
                         midi_demo = Some(MidiDemo::default());
                         "MIDI test phrase · channel 1"
                     } else {
-                        "Run a patch with midisynth first. The test uses channel 1."
+                        "Run a patch with a MIDI node first. The test uses channel 1."
                     };
                     let _ = status.try_send(Status::Midi(message.into()));
                 }
@@ -424,7 +424,7 @@ pub async fn serve(
                 }
                 None => return Ok(()),
             },
-            _ = ticks.tick(), if playing.is_some() || midi_input.needs_idle_poll() => {
+            _ = tokio::time::sleep_until(next_render), if playing.is_some() || midi_input.needs_idle_poll() => {
                 let received = midi_input.poll(midi_playing, |event| {
                     if midi_demo.is_some() {
                         // A physical key press takes over from the test phrase.
@@ -446,40 +446,59 @@ pub async fn serve(
                         error: Some(format!("MIDI input stopped: {error}")),
                     });
                 }
-                if playing.is_none() {
-                    continue;
+                let mut elapsed_frames = render_frames(midi_playing);
+                if playing.is_some() {
+                    match tick(&mut stream, &mut engine, &mut pcm, &mut waveform, &mut midi_demo, midi_playing) {
+                        Ok(frames) if frames != 0 => {
+                            elapsed_frames = frames;
+                            beat_phase = (beat_phase
+                                + frames as f64 * f64::from(bpm) / (60.0 * f64::from(SAMPLE_RATE)))
+                                .fract();
+                            monitor.send_modify(|frame| {
+                                frame.run = run;
+                                frame.waveform = waveform;
+                                frame.playing = true;
+                                frame.beat_phase = beat_phase as f32;
+                                frame.sequences.clear();
+                                frame.sequences.extend(sequences.iter().map(|node| {
+                                    node.and_then(|node| engine.sequence_playhead(node))
+                                }));
+                            });
+                        }
+                        Ok(_) => {},
+                        Err(error) => {
+                            stream = None;
+                            playing = None;
+                            midi_demo = None;
+                            midi_playing = false;
+                            midi_input.reset();
+                            engine.release_midi_notes();
+                            monitor.send_modify(MonitorFrame::stop);
+                            let _ = status.try_send(Status::AudioError(error.to_string()));
+                        }
+                    }
                 }
-                match tick(&mut stream, &mut engine, &mut pcm, &mut waveform, &mut midi_demo) {
-                    Ok(true) => {
-                        beat_phase = (beat_phase
-                            + BATCH_FRAMES as f64 * f64::from(bpm) / (60.0 * f64::from(SAMPLE_RATE)))
-                            .fract();
-                        monitor.send_modify(|frame| {
-                            frame.run = run;
-                            frame.waveform = waveform;
-                            frame.playing = true;
-                            frame.beat_phase = beat_phase as f32;
-                            frame.sequences.clear();
-                            frame.sequences.extend(sequences.iter().map(|node| {
-                                node.and_then(|node| engine.sequence_playhead(node))
-                            }));
-                        });
-                    }
-                    Ok(false) => {},
-                    Err(error) => {
-                        stream = None;
-                        playing = None;
-                        midi_demo = None;
-                        midi_playing = false;
-                        midi_input.reset();
-                        engine.release_midi_notes();
-                        monitor.send_modify(MonitorFrame::stop);
-                        let _ = status.try_send(Status::AudioError(error.to_string()));
-                    }
+                let period = Duration::from_nanos(
+                    1_000_000_000 * elapsed_frames as u64 / u64::from(SAMPLE_RATE),
+                );
+                next_render += period;
+                let now = tokio::time::Instant::now();
+                if next_render <= now {
+                    // Skip missed deadlines without shifting the render clock.
+                    let phase = (now - next_render).as_nanos() % period.as_nanos();
+                    next_render = now + period - Duration::from_nanos(phase as u64);
                 }
                 tokio::task::yield_now().await;
             }
         }
+    }
+}
+
+fn render_frames(live_midi: bool) -> usize {
+    if live_midi {
+        LIVE_MIDI_FRAMES
+    } else {
+        BATCH_FRAMES
     }
 }
 
@@ -489,23 +508,28 @@ fn tick(
     pcm: &mut [u8],
     waveform: &mut [f32; MONITOR_FRAMES],
     midi_demo: &mut Option<MidiDemo>,
-) -> io::Result<bool> {
+    live_midi: bool,
+) -> io::Result<usize> {
     if stream.is_none() {
-        match Stream::open() {
+        match Stream::open(live_midi) {
             Ok(output) => *stream = Some(output),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(0),
             Err(error) => return Err(error),
         }
     }
     let output = stream.as_mut().expect("stream opened");
-    feed_midi_demo(engine, midi_demo);
-    render(engine, pcm, waveform);
+    let bytes = (4 * render_frames(live_midi)).min(STREAM_LIMIT - output.written);
+    let frames = bytes / 4;
+    let pcm = &mut pcm[..bytes];
+    waveform.copy_within(frames.., 0);
+    feed_midi_demo(engine, midi_demo, frames);
+    render(engine, pcm, &mut waveform[MONITOR_FRAMES - frames..]);
     output.append(pcm)?;
     if output.written == STREAM_LIMIT {
         output.finish()?;
         *stream = None;
     }
-    Ok(true)
+    Ok(frames)
 }
 
 struct Stream {
@@ -514,8 +538,19 @@ struct Stream {
 }
 
 impl Stream {
-    fn open() -> io::Result<Self> {
-        match audio_call(0, 0, &[]) {
+    fn open(live_midi: bool) -> io::Result<Self> {
+        Self::open_with(live_midi, |action| audio_call(action, 0, &[]))
+    }
+
+    fn open_with(live_midi: bool, mut begin: impl FnMut(u32) -> i64) -> io::Result<Self> {
+        let status = if live_midi { begin(5) } else { begin(0) };
+        // Older kernels reject the instrument stream action with -EINVAL.
+        let status = if live_midi && status == -22 {
+            begin(0)
+        } else {
+            status
+        };
+        match status {
             id if id > 0 => Ok(Self {
                 token: Some(id as u64),
                 written: 0,
@@ -576,7 +611,7 @@ fn audio_call(action: u32, token: u64, pcm: &[u8]) -> i64 {
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 fn audio_call(action: u32, _token: u64, _pcm: &[u8]) -> i64 {
     // Desktop preview exercises the TUI and DSP without a kernel audio sink.
-    i64::from(action == 0)
+    i64::from(matches!(action, 0 | 5))
 }
 
 #[cfg(test)]
@@ -713,6 +748,103 @@ mod tests {
 
     #[test]
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    fn changing_batch_size_preserves_monitor_history_and_finishes_the_stream() {
+        let mut engine = engine().unwrap();
+        let mut pcm = [0; BATCH_BYTES];
+        let mut waveform = [0.0; MONITOR_FRAMES];
+        let mut stream = None;
+        let mut demo = None;
+
+        engine.update_with_code("out: constsig 0.125").unwrap();
+        assert_eq!(
+            tick(
+                &mut stream,
+                &mut engine,
+                &mut pcm,
+                &mut waveform,
+                &mut demo,
+                false
+            )
+            .unwrap(),
+            BATCH_FRAMES
+        );
+        engine.update_with_code("out: constsig 0.25").unwrap();
+        assert_eq!(
+            tick(
+                &mut stream,
+                &mut engine,
+                &mut pcm,
+                &mut waveform,
+                &mut demo,
+                true
+            )
+            .unwrap(),
+            LIVE_MIDI_FRAMES
+        );
+        assert_eq!(waveform[..LIVE_MIDI_FRAMES], [0.125; LIVE_MIDI_FRAMES]);
+        assert_eq!(waveform[LIVE_MIDI_FRAMES..], [0.25; LIVE_MIDI_FRAMES]);
+        assert_eq!(
+            stream.as_ref().unwrap().written,
+            4 * (BATCH_FRAMES + LIVE_MIDI_FRAMES)
+        );
+
+        // A larger batch after a smaller one can leave half a batch at the end.
+        stream.as_mut().unwrap().written = STREAM_LIMIT - 4 * LIVE_MIDI_FRAMES;
+        engine.update_with_code("out: constsig 0.5").unwrap();
+        assert_eq!(
+            tick(
+                &mut stream,
+                &mut engine,
+                &mut pcm,
+                &mut waveform,
+                &mut demo,
+                false
+            )
+            .unwrap(),
+            LIVE_MIDI_FRAMES
+        );
+        assert!(stream.is_none());
+        assert_eq!(waveform[..LIVE_MIDI_FRAMES], [0.25; LIVE_MIDI_FRAMES]);
+        assert_eq!(waveform[LIVE_MIDI_FRAMES..], [0.5; LIVE_MIDI_FRAMES]);
+        assert_eq!(
+            tick(
+                &mut stream,
+                &mut engine,
+                &mut pcm,
+                &mut waveform,
+                &mut demo,
+                false
+            )
+            .unwrap(),
+            BATCH_FRAMES
+        );
+        assert_eq!(waveform, [0.5; MONITOR_FRAMES]);
+        assert_eq!(stream.as_ref().unwrap().written, BATCH_BYTES);
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    fn instrument_stream_falls_back_only_when_the_kernel_rejects_the_new_action() {
+        let mut actions = Vec::new();
+        let stream = Stream::open_with(true, |action| {
+            actions.push(action);
+            if action == 5 { -22 } else { 12 }
+        })
+        .unwrap();
+        assert_eq!(actions, [5, 0]);
+        assert_eq!(stream.token, Some(12));
+
+        let error = Stream::open_with(true, |action| {
+            assert_eq!(action, 5);
+            -16
+        })
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn raw_midi_demo_renders_and_releases_through_the_live_path() {
         let mut engine = engine().unwrap();
         engine
@@ -729,6 +861,7 @@ mod tests {
             &mut pcm,
             &mut waveform,
             &mut midi_demo,
+            true,
         )
         .unwrap();
         assert!(pcm.iter().all(|byte| *byte == 0));
@@ -739,16 +872,18 @@ mod tests {
             &mut pcm,
             &mut waveform,
             &mut midi_demo,
+            true,
         )
         .unwrap();
         assert!(pcm.iter().any(|byte| *byte != 0));
-        for _ in 0..(2 * SAMPLE_RATE as usize).div_ceil(BATCH_FRAMES) {
+        for _ in 0..(2 * SAMPLE_RATE as usize).div_ceil(LIVE_MIDI_FRAMES) {
             tick(
                 &mut stream,
                 &mut engine,
                 &mut pcm,
                 &mut waveform,
                 &mut midi_demo,
+                true,
             )
             .unwrap();
         }

@@ -114,7 +114,7 @@ impl<const N: usize> Engine<N> {
                 .nodes
                 .values()
                 .flatten()
-                .any(|component| matches!(component, Component::MidiSynth(_)))
+                .any(|component| matches!(component, Component::MidiSynth(_) | Component::MidiArp(_)))
         })
     }
 
@@ -699,6 +699,46 @@ mod tests {
     }
 
     #[test]
+    fn pitched_synths_use_the_engine_sample_rate() {
+        const BLOCK: usize = 128;
+        for sample_rate in [44_100_usize, 48_000] {
+            for synth in ["sawsynth", "squsynth", "trisynth"] {
+                let mut engine = Engine::<BLOCK>::new();
+                engine.set_sr(sample_rate);
+                let patch = format!("out: seq 60 _ >> {synth} 0.01 0.3");
+                engine.update_with_code(&patch).unwrap();
+
+                let at_ms = |ms| sample_rate * ms / 1_000;
+                let mut samples = Vec::new();
+                for _ in 0..at_ms(330).div_ceil(BLOCK) {
+                    samples.extend_from_slice(&engine.next_block(Vec::new())[0][..]);
+                }
+                let crossings: Vec<_> = samples[at_ms(40)..at_ms(240)]
+                    .windows(2)
+                    .enumerate()
+                    .filter_map(|(i, pair)| (pair[0] <= 0.0 && pair[1] > 0.0).then_some(i))
+                    .collect();
+                let span = crossings.last().unwrap() - crossings[0];
+                let measured_hz = sample_rate as f32 * (crossings.len() - 1) as f32 / span as f32;
+                assert!(
+                    (261.2..262.0).contains(&measured_hz),
+                    "{synth} at {sample_rate}: {measured_hz} Hz"
+                );
+                assert!(
+                    samples[at_ms(295)..at_ms(300)]
+                        .iter()
+                        .any(|s| s.abs() > 0.001),
+                    "{synth} at {sample_rate}: envelope ended early"
+                );
+                assert!(
+                    samples[at_ms(312)..].iter().all(|&s| s == 0.0),
+                    "{synth} at {sample_rate}: envelope did not end"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn midi_synth_filters_channels_and_sustains_until_note_off() {
         let mut engine = Engine::<128>::new();
         engine.set_sr(48_000);
@@ -736,6 +776,64 @@ mod tests {
         assert!((0.11..=0.12).contains(&midi_test_peak(&mut engine)));
         engine.release_midi_notes();
         assert_eq!(midi_test_peak(&mut engine), 0.0);
+    }
+
+    #[test]
+    fn midi_arp_emits_one_transposed_phrase_from_the_latest_matching_key() {
+        let mut engine = Engine::<128>::new();
+        engine.set_sr(1024);
+        engine.set_bpm(120.0);
+        engine
+            .update_with_code("out: midiarp 2 0.125 -12 +12")
+            .unwrap();
+        assert!(engine.has_midi_input());
+
+        let note_on = |channel, note| MidiEvent::NoteOn {
+            channel,
+            note,
+            velocity: 80,
+        };
+        engine.send_midi(note_on(0, 60));
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+        engine.send_midi(note_on(1, 48));
+        engine.send_midi(note_on(1, 60));
+        engine.send_midi(MidiEvent::NoteOff { channel: 1, note: 60 });
+
+        let mut pulses = Vec::new();
+        for block in 0..3 {
+            let rendered = engine.next_block(Vec::new());
+            pulses.extend(
+                rendered[0]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(sample, &value)| {
+                        (value != 0.0).then_some((block * 128 + sample, value))
+                    }),
+            );
+        }
+        assert_eq!(pulses, vec![(64, 0.5), (128, 2.0)]);
+
+        engine.send_midi(note_on(1, 72));
+        engine.send_midi(MidiEvent::AllNotesOff { channel: 1 });
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+        engine.send_midi(note_on(1, 72));
+        engine.release_midi_notes();
+        assert_eq!(midi_test_peak(&mut engine), 0.0);
+    }
+
+    #[test]
+    fn midi_arp_requires_a_valid_channel_positive_step_and_signed_offsets() {
+        for patch in [
+            "out: midiarp 17 0.125 0",
+            "out: midiarp 0 0 0",
+            "out: midiarp 0 -0.125 0",
+            "out: midiarp 0 0.125",
+            "out: midiarp 0 0.125 127.5",
+            "out: midiarp 0 0.125 -128",
+            "out: midiarp 0 0.125 +128",
+        ] {
+            assert!(get_ast(patch).is_err(), "{patch}");
+        }
     }
 
     #[test]

@@ -18,15 +18,23 @@ pub struct SquSynth<const N: usize> {
 
 impl<const N: usize> SquSynth<N> {
     pub fn new(attack: f32, decay: f32) -> Self {
-        let mut context = crate::AudioContextBuilder::<N>::new().channels(2).build();
+        Self::with_sample_rate(attack, decay, 44_100)
+    }
+
+    pub fn with_sample_rate(attack: f32, decay: f32, sample_rate: usize) -> Self {
+        let mut context = crate::AudioContextBuilder::<N>::new()
+            .channels(2)
+            .sr(sample_rate)
+            .build();
         let input = context.add_mono_node(Pass {});
 
-        let source = context.add_mono_node(SquOsc::new());
+        let source = context.add_mono_node(SquOsc::new().sr(sample_rate));
         let amp = context.add_stereo_node(Mul::new(0.));
 
         context.chain(vec![source, amp, context.destination]);
 
-        let env_amp = context.add_mono_node(EnvPerc::new().attack(attack).decay(decay));
+        let env_amp =
+            context.add_mono_node(EnvPerc::new().attack(attack).decay(decay).sr(sample_rate));
         context.tags.insert("d", env_amp);
         context.chain(vec![input, env_amp, amp]);
 

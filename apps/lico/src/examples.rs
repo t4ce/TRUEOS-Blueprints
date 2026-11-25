@@ -19,6 +19,7 @@ pub const PATCHES: &[(&str, &str)] = &[
         include_str!("../assets/examples/bass.glicol"),
     ),
     ("FM bells", include_str!("../assets/examples/fm.glicol")),
+    ("Tidepool", include_str!("../assets/examples/tidepool.glicol")),
     (
         "Cosmic soundscape",
         include_str!("../assets/examples/cosmic.glicol"),
@@ -47,5 +48,9 @@ pub const PATCHES: &[(&str, &str)] = &[
     (
         "Synthesized piano",
         include_str!("../assets/examples/piano.glicol"),
+    ),
+    (
+        "Piano and 808",
+        include_str!("../assets/examples/piano_808.glicol"),
     ),
 ];

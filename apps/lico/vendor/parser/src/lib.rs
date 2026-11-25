@@ -144,6 +144,7 @@ fn ast_from_block<'ast>(
                     Rule::arrange => { Component::Arrange(nodes::Arrange::parse(node)?) },
                     Rule::msgsynth => { Component::MsgSynth(nodes::MsgSynth::parse(node)?) },
                     Rule::midisynth => { Component::MidiSynth(nodes::MidiSynth::parse(node)?) },
+                    Rule::midiarp => { Component::MidiArp(nodes::MidiArp::parse(node)?) },
                     Rule::pattern_synth => { Component::PatternSynth(nodes::PatternSynth::parse(node)?) },
                 );
 

@@ -83,6 +83,13 @@
         "output": "relative pitch converted by the midi notes (60=>1.0; 72=>2.0; 48=>0.5).\nthis pitch float will only come once based on the timing in pattern.\nthe rest of the float stream will be zeroes.",
         "example": "o: speed 1.0 >> seq 72 _72 _48 60__60 >> sawsynth 0.001 0.05 \n>> lpf 300.0 1.0"
     },
+    "midiarp": {
+        "description": "Play a one-shot phrase transposed from a MIDI key-down. The newest key restarts the phrase.",
+        "parameters": [{"channel": "0 for all, or 1 to 16"}, {"stepBeats": "Positive beats per step, including the initial wait"}, {"offsets": "Space-separated semitone offsets"}],
+        "input": "MIDI note events",
+        "output": "One seq-compatible pitch pulse per step",
+        "example": "out: midiarp 0 0.25 7 12 7 >> trisynth 0.004 0.085 >> mul 0.015"
+    },
     "choose": {
         "description": "choose a number from the provided sequence.",
         "parameters": [{"seq": "Seq"}],
