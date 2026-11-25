@@ -33,12 +33,18 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
-    watch,
+    oneshot, watch,
 };
 
 enum Picker {
     Examples(ListState),
     Midi(ListState),
+}
+
+struct PatchUndo {
+    editor: TextArea<'static>,
+    applied: String,
+    playing: Option<String>,
 }
 
 pub fn run(midi_input: midi::Input) -> Result<(), Box<dyn Error>> {
@@ -140,7 +146,7 @@ async fn editor(
     let mut outlines = Vec::new();
     let mut published_outlines = Vec::new();
     let mut published_area = Rect::default();
-    let mut review: Option<(String, u16)> = None;
+    let mut undo_patch: Option<PatchUndo> = None;
     let mut picker = None;
     let mut midi_source = midi::Source::Off;
     let mut midi_error = None;
@@ -170,10 +176,7 @@ async fn editor(
             reference = Some(message);
         }
         let menu_selected = drum_menu && drum::take_add_drum();
-        if (std::mem::take(&mut insert_drum) || menu_selected)
-            && review.is_none()
-            && picker.is_none()
-        {
+        if (std::mem::take(&mut insert_drum) || menu_selected) && picker.is_none() {
             add_drum(&mut patch, session);
             highlight = None;
             error = None;
@@ -248,6 +251,30 @@ async fn editor(
                 }
             }
         }
+        let incoming = session.lock().expect("Lico session").take_patch();
+        if let Some(request) = incoming {
+            let code = drum::display_alias(&request.code).unwrap_or(request.code);
+            let result = match restart_patch(commands, &code).await {
+                Ok(previous_playing) => {
+                    undo_patch = Some(PatchUndo {
+                        editor: std::mem::replace(&mut patch, patch_editor(&code)),
+                        applied: code.clone(),
+                        playing: previous_playing,
+                    });
+                    highlight = None;
+                    error = None;
+                    reference = Some(format!("Codex applied · {}", request.summary));
+                    let mut session = session.lock().expect("Lico session");
+                    session.playing = Some(code.clone());
+                    Ok(session.update_draft(code))
+                }
+                Err(message) => {
+                    error = Some(message.clone());
+                    Err(message)
+                }
+            };
+            let _ = request.reply.send(result);
+        }
         if monitor.has_changed().unwrap_or(false) {
             let frame = monitor.borrow_and_update();
             if playing && frame.run == active_run {
@@ -263,7 +290,6 @@ async fn editor(
             }
         }
 
-        let pending = session.lock().expect("Lico session").proposal.is_some();
         let mut editor_area = Rect::default();
         if playing {
             queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
@@ -311,9 +337,7 @@ async fn editor(
                             Style::default().bg(Color::Cyan).fg(Color::Black).bold(),
                         ),
                         Span::raw(r"  Samples  \808bd  \808sd  \808ch  \blip"),
-                        Span::raw(if pending {
-                            "  • Alt+P review Codex edit"
-                        } else if mcp_error.is_none() {
+                        Span::raw(if mcp_error.is_none() {
                             "  • Codex ready"
                         } else {
                             "  • Codex unavailable"
@@ -342,7 +366,7 @@ async fn editor(
                 );
                 frame.render_widget(
                     Line::from(
-                        " Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+V Visualizer  Alt+N MIDI  Alt+D Docs  Alt+[/] Tempo  Ctrl+Q Quit ",
+                        " Ctrl+U Undo  Alt+R Run  Alt+S Stop  Alt+E Examples  Alt+V Visualizer  Alt+N MIDI  Alt+D Docs  Alt+[/] Tempo  Ctrl+Q Quit ",
                     ),
                     footer,
                 );
@@ -354,30 +378,13 @@ async fn editor(
                 }
                 None => {}
             }
-            if let Some((diff, scroll)) = &review {
-                let area = frame.area().inner(ratatui::layout::Margin {
-                    horizontal: 2,
-                    vertical: 1,
-                });
-                frame.render_widget(Clear, area);
-                frame.render_widget(
-                    Paragraph::new(diff.as_str())
-                        .wrap(Wrap { trim: false })
-                        .scroll((*scroll, 0))
-                        .block(
-                            Block::bordered()
-                                .title(" Codex proposal · Alt+A accept · Alt+X reject · Esc back "),
-                        ),
-                    area,
-                );
-            }
         }).map(|frame| frame.area);
 
         if let Ok(area) = drawn.as_ref()
             && cfg!(any(target_os = "trueos", target_os = "zkvm"))
         {
             outlines.clear();
-            if playing && highlight.is_some() && review.is_none() && picker.is_none() {
+            if playing && highlight.is_some() && picker.is_none() {
                 let frame = monitor.borrow();
                 if frame.run == active_run {
                     playhead::visible_outlines(
@@ -459,31 +466,33 @@ async fn editor(
                     }
                     continue;
                 }
-                if let Some((_, scroll)) = &mut review {
-                    match key.code {
-                        KeyCode::Esc => review = None,
-                        KeyCode::Up => *scroll = scroll.saturating_sub(1),
-                        KeyCode::Down => *scroll = scroll.saturating_add(1),
-                        KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
-                        KeyCode::PageDown => *scroll = scroll.saturating_add(10),
-                        KeyCode::Char('a') if alt => {
+                if control
+                    && !alt
+                    && key.code == KeyCode::Char('u')
+                    && let Some(undo) = undo_patch
+                        .take_if(|undo| session.lock().expect("Lico session").draft == undo.applied)
+                {
+                    let result = match undo.playing.as_deref() {
+                        Some(code) => restart_patch(commands, code).await.map(|_| ()),
+                        None => commands
+                            .send(Command::Stop)
+                            .await
+                            .map_err(|_| "Lico audio closed".into()),
+                    };
+                    match result {
+                        Ok(()) => {
+                            patch = undo.editor;
+                            highlight = None;
+                            error = None;
+                            reference = Some("Codex patch undone".into());
                             let mut session = session.lock().expect("Lico session");
-                            if let Some(proposal) = session.proposal.take() {
-                                patch = patch_editor(&proposal.code);
-                                highlight = None;
-                                session.update_draft(patch.lines().join("\n"));
-                                reference = Some(
-                                    "Proposal accepted. Alt+R to play the edited patch.".into(),
-                                );
-                                error = None;
-                            }
-                            review = None;
+                            session.playing = undo.playing;
+                            session.update_draft(patch.lines().join("\n"));
                         }
-                        KeyCode::Char('x') if alt => {
-                            session.lock().expect("Lico session").proposal = None;
-                            review = None;
+                        Err(message) => {
+                            undo_patch = Some(undo);
+                            error = Some(message);
                         }
-                        _ => {}
                     }
                     continue;
                 }
@@ -516,13 +525,6 @@ async fn editor(
                             .iter()
                             .position(|&source| source == midi_source);
                         picker = Some(Picker::Midi(ListState::default().with_selected(index)));
-                        None
-                    }
-                    KeyCode::Char('p') if alt && pending => {
-                        let session = session.lock().expect("Lico session");
-                        if let Some(proposal) = &session.proposal {
-                            review = Some((proposal_diff(&session.draft, proposal), 0));
-                        }
                         None
                     }
                     KeyCode::Char('[') if alt => Some(Command::ChangeTempo(-5)),
@@ -571,7 +573,7 @@ async fn editor(
                     let _ = commands.send(command).await;
                 }
             }
-            Event::Paste(text) if review.is_none() && picker.is_none() => {
+            Event::Paste(text) if picker.is_none() => {
                 reference = None;
                 if patch.insert_str(text) {
                     highlight = None;
@@ -586,7 +588,7 @@ async fn editor(
                 column,
                 row,
                 ..
-            }) if review.is_none() && picker.is_none() => {
+            }) if picker.is_none() => {
                 if place_patch_cursor(&mut patch, editor_area, Position::new(column, row)) {
                     reference = None;
                 }
@@ -595,6 +597,18 @@ async fn editor(
         }
     }
     Ok(())
+}
+
+async fn restart_patch(commands: &Sender<Command>, code: &str) -> Result<Option<String>, String> {
+    let (finished, result) = oneshot::channel();
+    commands
+        .send(Command::Restart {
+            code: code.to_owned(),
+            finished,
+        })
+        .await
+        .map_err(|_| "Lico audio closed")?;
+    result.await.map_err(|_| "Lico audio closed")?
 }
 
 fn add_drum(patch: &mut TextArea<'static>, session: &SharedSession) {
@@ -769,31 +783,6 @@ mod tests {
                 .any(|cell| cell.symbol() == "5" && cell.bg == Color::Blue)
         );
     }
-}
-
-fn proposal_diff(draft: &str, proposal: &mcp::Proposal) -> String {
-    use std::fmt::Write;
-    let before: Vec<_> = draft.lines().collect();
-    let after: Vec<_> = proposal.code.lines().collect();
-    let prefix = before
-        .iter()
-        .zip(&after)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let suffix = before[prefix..]
-        .iter()
-        .rev()
-        .zip(after[prefix..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut diff = format!("{}\n\nChanges from line {}\n", proposal.summary, prefix + 1);
-    for line in &before[prefix..before.len() - suffix] {
-        let _ = writeln!(diff, "- {line}");
-    }
-    for line in &after[prefix..after.len() - suffix] {
-        let _ = writeln!(diff, "+ {line}");
-    }
-    diff
 }
 
 fn node_reference(patch: &TextArea<'_>, docs: &serde_json::Value) -> String {

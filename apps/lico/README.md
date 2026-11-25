@@ -123,9 +123,25 @@ signed-in account. The TRUEOS kernel authorizes the connection by app and
 account. If Codex is already open, it discovers Lico on the next request.
 Use the updated kernel and both updated Blueprints.
 
-Codex can read the draft and its revision with `get_patch`, check Glicol syntax
-with `validate_patch`, and send a proposal with `propose_patch`. In Lico,
-**Alt+P** opens the proposal diff. Use **Alt+A** to accept it into the draft,
-**Alt+X** to reject it, or **Esc** to close the review. **Alt+R** applies the
-draft to the running audio engine. Editing the draft while a proposal is
-pending clears that proposal so it cannot overwrite newer work.
+Codex reads the current draft and revision with `get_patch`. Before applying a
+musical change, it can use `audit_patch` to render the candidate and the live
+patch at the current tempo in separate, silent Glicol engines. When playback
+is stopped, the editor draft supplies the comparison. The report shows peaks,
+RMS levels, clipping, frequency balance, and how the levels change over the
+beat grid, with level and frequency balance differences calculated for Codex.
+An optional `focus_chain` measures one instrument alongside the mix.
+The report gives Codex measurements to reason from and leaves the listening
+judgment to the DJ.
+
+The audit covers the first eight seconds by default. Use `start_seconds` and
+`seconds` for a later section, such as an eight-second break at 48 seconds.
+Each audit starts the engines at the beginning and runs them to the chosen
+window. It measures the generated patch audio with zero external MIDI events.
+
+`apply_patch` replaces the draft and restarts live playback from the beginning.
+`validate_patch` is available for a syntax check. If the draft changes in the
+meantime, Codex needs to read the new revision before applying.
+
+Press **Ctrl+U** in Lico to restore the draft and playback state from before
+the latest Codex edit. If you typed after the Codex edit, **Ctrl+U** undoes
+your typing first. **Alt+R** and **Alt+S** control playback for manual editing.

@@ -4,13 +4,14 @@ use glicol::{Engine, MidiEvent, SequencePlayhead};
 use glicol_parser::SourceMap;
 use std::error::Error;
 use std::io::{self, Cursor};
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::sync::{
     mpsc::{Receiver, Sender},
-    watch,
+    oneshot, watch,
 };
 
-const BLOCK: usize = 128;
+pub(crate) const BLOCK: usize = 128;
 pub const SAMPLE_RATE: u32 = 48_000;
 const BATCH_FRAMES: usize = 4 * BLOCK;
 const BATCH_BYTES: usize = 4 * BATCH_FRAMES;
@@ -70,6 +71,10 @@ pub fn sample_names() -> impl Iterator<Item = &'static str> {
 
 pub enum Command {
     Run(String),
+    Restart {
+        code: String,
+        finished: oneshot::Sender<Result<Option<String>, String>>,
+    },
     ChangeTempo(i16),
     SelectMidiInput(MidiSource),
     TestMidi,
@@ -128,10 +133,15 @@ impl MonitorFrame {
     }
 }
 
-fn engine() -> Result<Engine<BLOCK>, hound::Error> {
-    let mut engine = Engine::new();
-    engine.set_sr(SAMPLE_RATE as usize);
-    for &(name, wav) in SAMPLES {
+struct DecodedSample {
+    name: &'static str,
+    planar: Vec<f32>,
+    channels: usize,
+    sample_rate: usize,
+}
+
+impl DecodedSample {
+    fn read(name: &'static str, wav: &[u8]) -> Result<Self, hound::Error> {
         let mut reader = hound::WavReader::new(Cursor::new(wav))?;
         let spec = reader.spec();
         let channels = usize::from(spec.channels);
@@ -141,7 +151,36 @@ fn engine() -> Result<Engine<BLOCK>, hound::Error> {
             let offset = (index % channels) * frames + index / channels;
             planar[offset] = f32::from(sample?) / 32768.0;
         }
-        engine.add_sample(name, planar.leak(), channels, spec.sample_rate as usize);
+        Ok(Self {
+            name,
+            planar,
+            channels,
+            sample_rate: spec.sample_rate as usize,
+        })
+    }
+}
+
+pub(crate) fn engine() -> io::Result<Engine<BLOCK>> {
+    static DECODED_SAMPLES: LazyLock<Result<Vec<DecodedSample>, hound::Error>> =
+        LazyLock::new(|| {
+            SAMPLES
+                .iter()
+                .map(|&(name, wav)| DecodedSample::read(name, wav))
+                .collect()
+        });
+
+    let samples = DECODED_SAMPLES
+        .as_ref()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    let mut engine = Engine::new();
+    engine.set_sr(SAMPLE_RATE as usize);
+    for sample in samples {
+        engine.add_sample(
+            sample.name,
+            &sample.planar,
+            sample.channels,
+            sample.sample_rate,
+        );
     }
     Ok(engine)
 }
@@ -238,7 +277,7 @@ pub async fn serve(
     mut midi_input: MidiInput,
 ) -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
-    let mut playing = false;
+    let mut playing = None;
     let mut run = 0_u64;
     let mut sequences = Vec::new();
     let mut bpm = DEFAULT_BPM;
@@ -261,47 +300,82 @@ pub async fn serve(
     loop {
         tokio::select! {
             command = commands.recv() => match command {
-                Some(Command::Run(code)) => {
-                    match engine.update_with_code_and_source(&code) {
-                        Ok(source) => {
-                            if midi_demo.take().is_some() {
-                                engine.release_midi_notes();
-                            }
-                            run = run.wrapping_add(1);
-                            sequences.clear();
-                            sequences.extend(source.sequences.iter().map(|seq| {
-                                engine.sequence_node(&seq.chain, seq.node)
-                            }));
-                            let _ = status.try_send(Status::PatchParsed {
-                                run,
-                                code: code.clone(),
-                                source,
-                            });
-                            if !playing {
-                                match Stream::open() {
-                                    Ok(output) => {
-                                        stream = Some(output);
-                                        playing = true;
-                                        beat_phase = 0.0;
-                                        ticks.reset();
-                                    }
-                                    Err(error) => {
-                                        let _ = status.try_send(Status::AudioError(error.to_string()));
-                                        continue;
-                                    }
-                                }
-                            }
-                            midi_playing = engine.has_midi_input();
-                            if !midi_playing {
-                                midi_input.reset();
-                            } else if midi_input.source() != MidiSource::Off {
-                                let label = midi_input.source().label();
-                                let _ = status.try_send(Status::Midi(format!("MIDI input · {label}")));
-                            }
-                            let _ = status.try_send(Status::Playing(code));
+                Some(command @ (Command::Run(_) | Command::Restart { .. })) => {
+                    let (code, finished) = match command {
+                        Command::Run(code) => (code, None),
+                        Command::Restart { code, finished } => (code, Some(finished)),
+                        _ => unreachable!(),
+                    };
+                    let restarting = finished.is_some();
+                    let complete = |result| {
+                        if let Some(finished) = finished {
+                            let _ = finished.send(result);
                         }
-                        Err(error) => { let _ = status.try_send(Status::PatchError(error.to_string())); }
+                    };
+                    // Build the replacement graph while the current stream is still active.
+                    let mut replacement = restarting.then(|| {
+                        let mut fresh = Engine::new();
+                        fresh.samples_dict.clone_from(&engine.samples_dict);
+                        fresh.set_sr(SAMPLE_RATE as usize);
+                        fresh.set_bpm(f32::from(bpm));
+                        fresh
+                    });
+                    let target = replacement.as_mut().unwrap_or(&mut engine);
+                    let source = match target.update_with_code_and_source(&code) {
+                        Ok(source) => source,
+                        Err(error) => {
+                            let message = error.to_string();
+                            let _ = status.try_send(Status::PatchError(message.clone()));
+                            complete(Err(message));
+                            continue;
+                        }
+                    };
+                    if let Some(fresh) = replacement {
+                        engine = fresh;
+                        stream = None;
+                        midi_demo = None;
+                        midi_input.reset();
+                    } else if midi_demo.take().is_some() {
+                        engine.release_midi_notes();
                     }
+                    run = run.wrapping_add(1);
+                    sequences.clear();
+                    sequences.extend(source.sequences.iter().map(|seq| {
+                        engine.sequence_node(&seq.chain, seq.node)
+                    }));
+                    let _ = status.try_send(Status::PatchParsed {
+                        run,
+                        code: code.clone(),
+                        source,
+                    });
+                    if playing.is_none() || restarting {
+                        match Stream::open() {
+                            Ok(output) => stream = Some(output),
+                            // The previous stream's tail can still be draining at rollover.
+                            Err(error) if playing.is_some() && error.kind() == io::ErrorKind::WouldBlock => {},
+                            Err(error) => {
+                                playing = None;
+                                midi_playing = false;
+                                monitor.send_modify(MonitorFrame::stop);
+                                let message = error.to_string();
+                                let _ = status.try_send(Status::AudioError(message.clone()));
+                                complete(Err(message));
+                                continue;
+                            }
+                        }
+                        beat_phase = 0.0;
+                        ticks.reset();
+                    }
+                    midi_playing = engine.has_midi_input();
+                    if !midi_playing {
+                        midi_input.reset();
+                    } else if midi_input.source() != MidiSource::Off {
+                        let label = midi_input.source().label();
+                        let _ = status.try_send(Status::Midi(format!("MIDI input · {label}")));
+                    }
+                    let previous = playing.replace(code.clone());
+                    let _ = status.try_send(Status::Playing(code));
+                    complete(Ok(previous));
                 }
                 Some(Command::ChangeTempo(delta)) => {
                     bpm = bpm.saturating_add_signed(delta).clamp(20, 400);
@@ -334,7 +408,7 @@ pub async fn serve(
                     let _ = status.try_send(Status::Midi(message.into()));
                 }
                 Some(Command::Stop) => {
-                    playing = false;
+                    playing = None;
                     stream = None;
                     midi_demo = None;
                     midi_playing = false;
@@ -350,7 +424,7 @@ pub async fn serve(
                 }
                 None => return Ok(()),
             },
-            _ = ticks.tick(), if playing || midi_input.needs_idle_poll() => {
+            _ = ticks.tick(), if playing.is_some() || midi_input.needs_idle_poll() => {
                 let received = midi_input.poll(midi_playing, |event| {
                     if midi_demo.is_some() {
                         // A physical key press takes over from the test phrase.
@@ -372,7 +446,7 @@ pub async fn serve(
                         error: Some(format!("MIDI input stopped: {error}")),
                     });
                 }
-                if !playing {
+                if playing.is_none() {
                     continue;
                 }
                 match tick(&mut stream, &mut engine, &mut pcm, &mut waveform, &mut midi_demo) {
@@ -394,7 +468,7 @@ pub async fn serve(
                     Ok(false) => {},
                     Err(error) => {
                         stream = None;
-                        playing = false;
+                        playing = None;
                         midi_demo = None;
                         midi_playing = false;
                         midi_input.reset();
@@ -508,6 +582,65 @@ fn audio_call(action: u32, _token: u64, _pcm: &[u8]) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    async fn restart_keeps_the_live_patch_on_error_and_resets_the_beat_on_success() {
+        let (commands, rx) = tokio::sync::mpsc::channel(8);
+        let (status, _updates) = tokio::sync::mpsc::channel(16);
+        let (monitor, mut frames) = watch::channel(MonitorFrame::default());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let (result, ()) =
+                tokio::join!(serve(rx, status, monitor, MidiInput::Disabled), async {
+                    let restart = async |code: &str| {
+                        let (finished, result) = oneshot::channel();
+                        commands
+                            .send(Command::Restart {
+                                code: code.into(),
+                                finished,
+                            })
+                            .await
+                            .unwrap();
+                        result.await.unwrap()
+                    };
+                    commands.send(Command::ChangeTempo(30)).await.unwrap();
+                    commands
+                        .send(Command::Run("out: constsig 0.125".into()))
+                        .await
+                        .unwrap();
+                    while frames.borrow().beat_phase < 0.1 {
+                        frames.changed().await.unwrap();
+                    }
+                    let previous_run = frames.borrow().run;
+
+                    assert!(restart("out: ~missing").await.is_err());
+                    frames.changed().await.unwrap();
+                    assert_eq!(frames.borrow().run, previous_run);
+                    assert_eq!(frames.borrow().waveform, [0.125; MONITOR_FRAMES]);
+
+                    assert_eq!(
+                        restart("out: constsig 0.25").await.unwrap().as_deref(),
+                        Some("out: constsig 0.125")
+                    );
+                    while frames.borrow().run == previous_run {
+                        frames.changed().await.unwrap();
+                    }
+                    let frame = frames.borrow();
+                    assert!(frame.playing);
+                    assert_eq!(frame.waveform, [0.25; MONITOR_FRAMES]);
+                    let first_beat = BATCH_FRAMES as f32 * 150.0 / (60.0 * SAMPLE_RATE as f32);
+                    assert!((frame.beat_phase - first_beat).abs() < f32::EPSILON);
+                    drop(frame);
+
+                    commands.send(Command::Stop).await.unwrap();
+                    assert!(restart("out: constsig 0.25").await.unwrap().is_none());
+                    drop(commands);
+                });
+            result.unwrap();
+        })
+        .await
+        .expect("the audio worker should acknowledge both restarts and advance playback");
+    }
 
     #[tokio::test]
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]

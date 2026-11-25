@@ -1,4 +1,5 @@
 mod audio;
+mod audit;
 mod drum;
 mod examples;
 mod highlight;
