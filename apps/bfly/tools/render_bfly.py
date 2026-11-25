@@ -43,6 +43,7 @@ FRAMEBUFFER, COLOR_ATTACHMENT0 = 0x8D40, 0x8CE0
 COLOR_BUFFER_BIT = 0x4000
 PATCHES, TRIANGLE_STRIP = 0x000E, 0x0005
 PRIMITIVES_GENERATED = 0x8C87
+BLEND, ONE, ONE_MINUS_SRC_ALPHA = 0x0BE2, 1, 0x0303
 
 
 @cache
@@ -107,15 +108,21 @@ def create_buffer(create):
     return name
 
 
-def compile_program(name, stages, varyings=()):
+def compile_program(name, stages, varyings=(), *, defines=(), stage_names=None):
     program = proc("glCreateProgram", U)()
     shaders = []
     for stage, suffix in stages:
         shader = proc("glCreateShader", U, U)(stage)
-        code = C.c_char_p((ROOT / "shaders" / f"{name}.{suffix}").read_bytes())
+        stage_name = stage_names.get(suffix, name) if stage_names else name
+        source = (ROOT / "shaders" / f"{stage_name}.{suffix}").read_bytes()
+        if defines:
+            version, newline, rest = source.partition(b"\n")
+            prelude = b"".join(b"#define " + define + b"\n" for define in defines)
+            source = version + newline + prelude + rest
+        code = C.c_char_p(source)
         gl("ShaderSource", U, I, P, P)(shader, 1, C.byref(code), None)
         gl("CompileShader", U)(shader)
-        check_status(shader, 0x8B81, "Shader", f"{name}.{suffix}")
+        check_status(shader, 0x8B81, "Shader", f"{stage_name}.{suffix}")
         gl("AttachShader", U, U)(program, shader)
         shaders.append(shader)
     if varyings:
@@ -157,7 +164,7 @@ def cubic_bounds(values):
     return min(extrema), max(extrema)
 
 
-def wing_control_points(*, direct=False):
+def wing_control_points(*, direct=False, fill=False):
     source = (ROOT / "src/geometry.rs").read_text()
 
     def read_points(name, count):
@@ -170,33 +177,41 @@ def wing_control_points(*, direct=False):
             raise ValueError(f"Unexpected point count in {name}")
         return points
 
-    top = read_points("TOP_WING", 7)
-    if direct:
-        bottom = read_points("BOTTOM_WING", 4)
-        connector = read_points("ROOT_CONNECTOR", 2)
+    if fill:
+        outlines = [((read_points("FILL_WING", 10),), None),
+                    ((read_points("ALTERNATE_FILL_WING", 16),), None)]
     else:
-        # The cached demo uses the original lower curve and both closures.
-        bottom = [
-            (0.014813999645411968, 0.44999998807907104),
-            (0.9448009133338928, 0.3951452970504761),
-            (0.24930904805660248, 1.2085520029067993),
-            (0.014813999645411968, 0.4659808874130249),
-        ]
+        top = read_points("TOP_WING", 7)
+        if direct:
+            outlines = [((top, read_points("BOTTOM_WING", 4)), read_points("ROOT_CONNECTOR", 2)),
+                        ((read_points("ALTERNATE_TOP_WING", 10), read_points("ALTERNATE_BOTTOM_WING", 7)),
+                         read_points("ALTERNATE_ROOT_CONNECTOR", 2))]
+        else:
+            # The cached demo uses the original lower curve and both closures.
+            bottom = [
+                (0.014813999645411968, 0.44999998807907104),
+                (0.9448009133338928, 0.3951452970504761),
+                (0.24930904805660248, 1.2085520029067993),
+                (0.014813999645411968, 0.4659808874130249),
+            ]
+            outlines = [((top, bottom), None)]
 
     controls, cubics = [], []
-    for points in (top, bottom):
-        root_x = connector[0][0] if direct else points[0][0]
-        points = [(x - root_x, 0.45 - y) for x, y in points]
-        for start in range(0, len(points) - 1, 3):
-            cubic = points[start:start + 4]
-            cubics.append(cubic)
-            controls.extend((x, y, 0) for x, y in cubic)
-        if not direct:
-            first, last = points[0], points[-1]
-            controls.extend((x, y, 1) for x, y in (last, last, first, first))
-    if direct:
-        first, last = [(x - connector[0][0], 0.45 - y) for x, y in connector]
-        controls.extend((x, y, 1) for x, y in (first, first, last, last))
+    for artwork, (paths, connector) in enumerate(outlines):
+        tag = (4 if fill else 2) * artwork
+        for points in paths:
+            root_x = connector[0][0] if connector is not None else points[0][0]
+            points = [(x - root_x, 0.45 - y) for x, y in points]
+            for start in range(0, len(points) - 1, 3):
+                cubic = points[start:start + 4]
+                cubics.append(cubic)
+                controls.extend((x, y, tag) for x, y in cubic)
+            if connector is None:
+                first, last = points[0], points[-1]
+                controls.extend((x, y, tag + 1) for x, y in (last, last, first, first))
+        if connector is not None:
+            first, last = [(x - connector[0][0], 0.45 - y) for x, y in connector]
+            controls.extend((x, y, tag + 1) for x, y in (first, first, last, last))
     xmax = max(cubic_bounds([point[0] for point in cubic])[1] for cubic in cubics)
     y_bounds = [cubic_bounds([point[1] for point in cubic]) for cubic in cubics]
     bounds = (0, min(y[0] for y in y_bounds), xmax, max(y[1] for y in y_bounds))
@@ -224,10 +239,17 @@ def update_view(*values):
     gl("BufferSubData", U, C.c_ssize_t, C.c_ssize_t, P)(UNIFORM_BUFFER, 0, len(data), data)
 
 
-def draw(topology, vertices, instances, expected=None, query=None):
+def draw(topology, vertices, instances, expected=None, query=None, *, first=0, tier_widths=False):
     if expected is not None:
         gl("BeginQuery", U, U)(PRIMITIVES_GENERATED, query)
-    gl("DrawArraysInstanced", U, I, I, I)(topology, 0, vertices, instances)
+    if tier_widths:
+        line_width = gl("LineWidth", F)
+        draw_pass = gl("DrawArraysInstancedBaseInstance", U, I, I, I, U)
+        for width_class, width in enumerate((2.0, 3.0, 4.0)):
+            line_width(width)
+            draw_pass(topology, first, vertices, instances, width_class * 256)
+    else:
+        gl("DrawArraysInstanced", U, I, I, I)(topology, first, vertices, instances)
     if expected is not None:
         gl("EndQuery", U)(PRIMITIVES_GENERATED)
         count = U()
@@ -349,8 +371,25 @@ def save_animation(output, ffmpeg, size, frames, first, later, render_frame):
         animation.replace(output)
 
 
-def render_direct(args, size, controls):
-    upload_controls(controls, packed=True)
+def fill_family(color):
+    red, green, blue, alpha = color
+    if alpha != 217:
+        return None
+    if red == 201 and blue == 32 and 52 <= green <= 196:
+        return 0
+    if green == 32 and ((blue == 201 and 167 <= red <= 201) or (red == 201 and 54 <= blue <= 201)):
+        return 1
+    return None
+
+
+def straight_alpha(image):
+    # The compositor consumes premultiplied RGB, while PNG stores straight RGB.
+    return Image.frombytes("RGBa", image.size, image.tobytes()).convert("RGBA")
+
+
+def render_direct(args, size, controls, *, fill=False, layered=False):
+    original_controls = wing_control_points(direct=True)[0] if layered else []
+    upload_controls(controls + original_controls, packed=True)
     camera = create_buffer("GenBuffers")
     gl("BindBuffer", U, U)(SHADER_STORAGE_BUFFER, camera)
     gl("BufferData", U, C.c_ssize_t, P, U)(SHADER_STORAGE_BUFFER, 368, None, DYNAMIC_DRAW)
@@ -363,57 +402,96 @@ def render_direct(args, size, controls):
     )
     update_camera = gl("BufferSubData", U, C.c_ssize_t, C.c_ssize_t, P)
     update_camera(SHADER_STORAGE_BUFFER, 0, len(records), records)
-    program = compile_program("direct-wings", ((0x8B31, "vert"), (0x8E88, "tesc"),
-                                              (0x8E87, "tese"), (0x8B30, "frag")))
-    gl("UseProgram", U)(program)
+    stages = ((0x8B31, "vert"), (0x8E88, "tesc"), (0x8E87, "tese"), (0x8B30, "frag"))
+    line_defines = (b"BFLY_MIXED_WINGS", b"BFLY_TIER_WIDTH")
+    overlay_program = compile_program("direct-wings", stages, defines=line_defines) if layered else None
+    fill_program = None
+    if fill:
+        line_defines += (b"BFLY_INSET_OUTLINE",)
+        fill_program = compile_program("direct-wings", stages,
+                                       defines=(b"BFLY_MIXED_WINGS", b"BFLY_FILL_WINGS",
+                                                b"BFLY_INSET_FILL", b"BFLY_BREED_FILL",
+                                                b"BFLY_TRANSLUCENT_FILL"),
+                                       stage_names={"tese": "filled-wings", "frag": "filled-wings"})
+    line_program = compile_program("direct-wings", stages, defines=line_defines)
+    use_program = gl("UseProgram", U)
+    use_program(line_program)
     gl("Viewport", I, I, I, I)(0, 0, *size)
-    gl("LineWidth", F)(2.0)
     gl("ClearColor", F, F, F, F)(0, 0, 0, 0)
+    gl("Disable", U)(BLEND)
 
-    def frame(size, time, expected=None, query=None):
+    def frame(size, time, expected=None, query=None, *, first=0, count=len(controls)):
         framebuffer = (*size, time % FLAP_PHASE_PERIOD_SECONDS, FLIGHT_PERIOD_SECONDS)
         flock_motion = (time % FLOCK_PERIOD_SECONDS, 4.4, 4.4, BUTTERFLIES)
         swap_time = time % SWAP_PERIOD_SECONDS
         # Zero the eight unused records between framebuffer and flock_motion.
-        data = struct.pack("=4f32x5f", *framebuffer, *flock_motion, swap_time)
+        data = struct.pack("=4f32x6f", *framebuffer, *flock_motion, swap_time, float(not fill))
         update_camera(SHADER_STORAGE_BUFFER, 288, len(data), data)
         gl("Clear", U)(COLOR_BUFFER_BIT)
-        draw(PATCHES, len(controls), 2 * BUTTERFLIES, expected, query)
+        if fill_program is not None:
+            use_program(fill_program)
+            draw(PATCHES, count, 2 * BUTTERFLIES, first=first)
+            use_program(line_program)
+        draw(PATCHES, count, 2 * BUTTERFLIES, expected, query, first=first, tier_widths=True)
+        if overlay_program is not None:
+            use_program(overlay_program)
+            draw(PATCHES, len(original_controls), 2 * BUTTERFLIES, first=len(controls), tier_widths=True)
         return read_frame(size)
 
-    query = create_buffer("GenQueries")
-    # Even at this size, each butterfly contributes its single center line.
-    frame((1, 1), 0.0, BUTTERFLIES, query)
+    if not fill:
+        # Both halves of the startup flock contribute four hinges, one per butterfly.
+        query = create_buffer("GenQueries")
+        alternate = next(i for i, (_, _, tag) in enumerate(controls) if tag >= 2)
+        frame((1, 1), 0.0, BUTTERFLIES // 2, query, count=alternate)
+        frame((1, 1), 0.0, BUTTERFLIES // 2, query, first=alternate, count=len(controls) - alternate)
+        frame((1, 1), 0.0, BUTTERFLIES, query)
     first = frame(size, args.start)
     later = frame(size, args.start + 1 / FRAME_RATE)
     if size in ((1920, 1080), (1080, 1920), DEFAULT_SIZE, DEFAULT_SIZE[::-1]):
         transparent = (0, 0, 0, 0)
         primaries = ((255, 0, 0), (0, 255, 0), (0, 0, 255))
-        expected_rgba = {transparent} | {
-            (r ^ (tag & 3), g ^ ((tag >> 2) & 1), b ^ (tag >> 3), 255)
-            for r, g, b in primaries for tag in range(16)
-        }
-        rgba = {pixel for _, pixel in first.getcolors(len(expected_rgba)) or ()}
-        visible_primaries = {
-            tuple(255 if channel >= 128 else 0 for channel in pixel[:3])
-            for pixel in rgba if pixel != transparent
-        }
-        if transparent not in rgba or not rgba <= expected_rgba or visible_primaries != set(primaries):
-            raise RuntimeError("Expected transparent pixels and opaque tagged RGB lines in the direct framebuffer")
+        non_fill = {transparent, *(rgb + (255,) for rgb in primaries)}
+        palette_size = len(non_fill) + BUTTERFLIES
+        if fill:
+            rgba = {pixel for _, pixel in first.getcolors(palette_size) or ()}
+            families = {fill_family(pixel) for pixel in rgba - non_fill}
+            if not non_fill <= rgba or families != {0, 1}:
+                raise RuntimeError("Expected translucent fill palettes and opaque RGB outlines over transparent pixels")
+        else:
+            expected_rgba = {transparent} | {
+                (r ^ (tag & 3), g ^ ((tag >> 2) & 1), b ^ (tag >> 3), 255)
+                for r, g, b in primaries for tag in range(16)
+            }
+            rgba = {pixel for _, pixel in first.getcolors(len(expected_rgba)) or ()}
+            visible_primaries = {
+                tuple(255 if channel >= 128 else 0 for channel in pixel[:3])
+                for pixel in rgba if pixel != transparent
+            }
+            if transparent not in rgba or not rgba <= expected_rgba or visible_primaries != set(primaries):
+                raise RuntimeError("Expected transparent pixels and opaque tagged RGB lines in the direct framebuffer")
         if first.tobytes() == later.tobytes():
             raise RuntimeError("The direct flight shaders did not animate")
         initial = frame(size, 0.0)
-        if frame(size, 4.0).tobytes() == initial.tobytes():
+        after_flap = frame(size, 4.0)
+        if after_flap.tobytes() == initial.tobytes():
             raise RuntimeError("The butterfly pose did not advance after a complete wingbeat")
         if frame(size, MOTION_PERIOD_SECONDS).tobytes() != initial.tobytes():
             raise RuntimeError("The direct framebuffer changed on a full motion cycle")
-        print("Direct flight shaders rendered opaque RGB lines over transparent pixels")
+        if fill:
+            areas = {sum(count for count, pixel in (image.getcolors(palette_size) or ()) if pixel not in non_fill)
+                     for image in (first, later, initial, after_flap)}
+            if len(areas) < 2:
+                raise RuntimeError("The projected fill area did not change during flight")
+            print("Direct flight shaders rendered both 85% fill palettes beneath opaque RGB outlines")
+        else:
+            print("Direct flight shaders rendered opaque RGB lines over transparent pixels")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    first.save(args.output.with_suffix(".png"))
+    export = straight_alpha if fill else lambda image: image
+    export(first).save(args.output.with_suffix(".png"))
     if args.frames > 1:
         animation = args.output.with_name(args.output.stem + "-animated.png")
-        save_animation(animation, args.ffmpeg, size, args.frames, first, later,
-                       lambda size, time: frame(size, args.start + time))
+        save_animation(animation, args.ffmpeg, size, args.frames, export(first), export(later),
+                       lambda size, time: export(frame(size, args.start + time)))
 
 
 def render(args):
@@ -422,9 +500,11 @@ def render(args):
     try:
         renderer = proc("glGetString", C.c_char_p, U)(0x1F01).decode()
         print(f"renderer={renderer}")
-        controls, bounds = wing_control_points(direct=args.direct)
-        if args.direct:
-            render_direct(args, size, controls)
+        layered = getattr(args, "layered", False)
+        fill = getattr(args, "fill", False) or layered
+        controls, bounds = wing_control_points(direct=args.direct, fill=fill)
+        if args.direct or fill:
+            render_direct(args, size, controls, fill=fill, layered=layered)
             return
         upload_controls(controls)
         view = create_buffer("GenBuffers")
@@ -447,8 +527,8 @@ def render(args):
         gl("UseProgram", U)(program)
         gl("Viewport", I, I, I, I)(0, 0, *size)
         gl("ClearColor", F, F, F, F)(0, 0, 0, 1)
-        gl("Enable", U)(0x0BE2)  # GL_BLEND
-        gl("BlendFunc", U, U)(1, 0x0303)  # GL_ONE, GL_ONE_MINUS_SRC_ALPHA
+        gl("Enable", U)(BLEND)
+        gl("BlendFunc", U, U)(ONE, ONE_MINUS_SRC_ALPHA)
         camera_distance = 6.0
         update_view(*scene_projection(size, 1.0), *IDENTITY, *bounds, *size, 0, camera_distance)
         if observed_panel_layers(0.0, query) != [-1] * BUTTERFLIES:
@@ -486,6 +566,8 @@ def render(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--direct", action="store_true", help="draw the GPU-tessellated outlines")
+    parser.add_argument("--fill", action="store_true", help="draw the translucent insets with RGB outlines")
+    parser.add_argument("--layered", action="store_true", help="add the original RGB outlines over the filled wings")
     parser.add_argument("--start", type=float, default=0.0,
                         help="start time in seconds for a direct render")
     parser.add_argument("--render-node", default="/dev/dri/renderD128")
@@ -498,11 +580,16 @@ def main():
         parser.error("--size dimensions must be positive")
     if args.frames < 1:
         parser.error("--frames must be at least 1")
-    if not isfinite(args.start) or args.start < 0 or (args.start != 0 and not args.direct):
-        parser.error("--start needs a finite nonnegative time and --direct")
+    if not isfinite(args.start) or args.start < 0 or (args.start != 0 and not (args.direct or args.fill or args.layered)):
+        parser.error("--start needs a finite nonnegative time and --direct, --fill, or --layered")
     args.start %= MOTION_PERIOD_SECONDS
     if args.output is None:
-        filename = "bfly-direct-wings.png" if args.direct else "bfly-panels.png"
+        if args.layered:
+            filename = "bfly-layered-wings.png"
+        elif args.fill:
+            filename = "bfly-filled-wings.png"
+        else:
+            filename = "bfly-direct-wings.png" if args.direct else "bfly-panels.png"
         args.output = ROOT / "target" / filename
     if args.frames > 1:
         args.ffmpeg = shutil.which("ffmpeg")

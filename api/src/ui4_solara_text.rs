@@ -446,6 +446,8 @@ pub const SHADERTOY_RETRO_SUN: u32 = 13;
 pub const SHADERTOY_HIGH_WISPS: u32 = 14;
 pub const SHADERTOY_PARTICLE_CRAFT: u32 = 15;
 pub const SHADERTOY_LICO: u32 = 18;
+pub const SHADERTOY_BFLY_UNDERLAY: u32 = 19;
+pub const SHADERTOY_BFLY_CELESTIAL: u32 = 20;
 const SHADERTOY_AUDIO_PARAMS_VERSION: u32 = 2;
 /// Primary pointer held; accepted only by High Wisps.
 pub const SHADERTOY_FLAG_PRIMARY_DOWN: u32 = 2;
@@ -1198,6 +1200,15 @@ impl Frame {
         })
     }
 
+    /// Read the shared bottom color of the primary display through this frame.
+    pub fn display_bottom_color(&self) -> Result<[u8; 3], Error> {
+        let rgb = unsafe { v::bp_abi::trueos_cabi_ui4_scene_get_display_bottom_color(self.window_id) };
+        if rgb < 0 {
+            return Err(error_from_status(rgb));
+        }
+        Ok([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8])
+    }
+
     /// Set the primary display's opaque hardware backdrop, beneath all planes.
     /// This is shared display state (currently Pipe A), not this frame's fill.
     /// The last writer wins, including UI4's color picker, and closing this
@@ -1805,7 +1816,7 @@ impl Frame {
         &mut self,
         params: &ShadertoyParamsV1,
     ) -> Result<(), Error> {
-        if !(1..=16).contains(&params.shader_id) {
+        if !matches!(params.shader_id, 1..=16 | SHADERTOY_BFLY_UNDERLAY | SHADERTOY_BFLY_CELESTIAL) {
             return Err(Error::Invalid);
         }
         let raw = params.wire(SHADERTOY_PARAMS_VERSION);

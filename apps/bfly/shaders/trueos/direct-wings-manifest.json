@@ -6,8 +6,8 @@
   "vertex_layout": 18,
   "topology": "patch-list-4",
   "sources": {
-    "direct-wings.vert": "71801810f37e7418212016a5eef3f2a9d85a34eb3f897be6737083aeb6e629af",
-    "direct-wings.tesc": "92b6e800efd77f918ec43469a4906e46382056bcef6f91d0bae1bdbfbd6ad808",
+    "direct-wings.vert": "4ece6d883cdf18dcedd57608580c1f5ae88b654d9b64402870a84a6de01bab04",
+    "direct-wings.tesc": "7f34f1b4954d2c35bca15337362705b7339f3e8054d9b6ec7c6b0a4c38c84a78",
     "direct-wings.tese": "c17c57efbabf010537270136c0f0fe6f622cf4d4e60484c2cfacad9bd7d8b14b",
     "direct-wings.frag": "f076f3ef201011711535b382971c4b5d0f5db9f0f580ca4f20395eadc5f60875"
   },

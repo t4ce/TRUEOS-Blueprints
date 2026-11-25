@@ -73,9 +73,9 @@ playing query; it does not connect to the kernel's HTTP listener from the VM.
 Bare native launch, `ptts serve` or `ptts --serve` starts a warm service at
 `127.0.0.1:9773`. It binds only loopback. `GET /health` reports `protocol:
 "ptts-v1"`, `ready: true`, `tts: true`, `stt: false`, `language: "en"`,
-`voice: "azelma"`, `model: "english_2026-10"`, `bundled: false` and
-`turn_cues: true` after loading. Older services without this last capability
-remain usable for plain speech by Codex.
+`voice: "azelma"`, `model: "english_2026-10"`, `bundled: false`,
+`turn_cues: true` and `spirit_talk: true` after loading. Older services remain
+usable for the capabilities they report.
 
 `POST /speech` accepts JSON:
 
@@ -93,6 +93,12 @@ chunked requests and duplicate content lengths are rejected.
 The optional `intro` field accepts only `startthink` or `starttalk`. It is
 silent for emoji-only input. `POST /cue` accepts `{"cue":"done"}`; Codex sends
 it once after successful turn completion, only if answer audio was generated.
+Clients can set a nonzero `spirit_turn` on speech and cue requests when the service
+advertises `spirit_talk`. Native playback signals Spirit after the first PCM write.
+`POST /cue` with `{"cue":"end","spirit_turn":1}` lets a turn end silently after its
+queued audio drains. The `abort` cue does the same for an interrupted or failed
+turn and drops its pending gestures. Without `spirit_turn`, speech and `done`
+remain audio-only.
 MP3 decoding happens at build time with the host-only decoder; native playback
 uses embedded stereo s16le/48 kHz PCM with no runtime codec or downloads.
 The native clip's 120-second limit includes its intro.

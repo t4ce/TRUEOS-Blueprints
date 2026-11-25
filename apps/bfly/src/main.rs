@@ -1,15 +1,19 @@
-//! Animated Bézier outlines through the retained GPU tessellation path.
-#![no_std]
+//! Animated Bézier wings through the retained GPU tessellation path.
 
 mod app_shader_packages;
+mod celestial_scene;
 
 use bfly::flock::{FRAME_PERIOD_NS, Flock, Snapshot};
-use bfly::geometry::{INDEX_BYTES, PATCH_COUNT, VERTEX_BYTES, VERTEX_COUNT};
+use bfly::geometry::{
+    FILL_INDEX_BYTES, FILL_PATCH_COUNT, FILL_VERTEX_BYTES, FILL_VERTEX_COUNT, LAYERED_INDEX_BYTES,
+    LAYERED_VERTEX_BYTES, LAYERED_VERTEX_COUNT, PATCH_COUNT, VERTEX_COUNT,
+};
+use celestial_scene::{BACKGROUND_HZ, CelestialScene};
 use core::fmt;
 use trueos::clock;
 use trueos::input::{
-    KEYBOARD_KEY_F1, KEYBOARD_KEY_F2, KEYBOARD_KEY_F3, KEYBOARD_OUTPUT_FLAG_PRESS,
-    KEYBOARD_OUTPUT_KIND_KEY,
+    KEYBOARD_KEY_F1, KEYBOARD_KEY_F2, KEYBOARD_KEY_F3, KEYBOARD_KEY_F4, KEYBOARD_KEY_F5,
+    KEYBOARD_OUTPUT_FLAG_PRESS, KEYBOARD_OUTPUT_KIND_KEY,
 };
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, POINTER_BUTTON_PRIMARY};
@@ -22,6 +26,7 @@ use trueos::vsys;
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 const FRAME_RATE: u32 = 30;
+const DRAW_INTERVAL_NS: u64 = 1_000_000_000 / FRAME_RATE as u64;
 const RETRY_MS: u64 = 1;
 const FLIGHT_PERIOD_SECONDS: u64 = 12;
 // Each of the seven splits swaps twice during one cycle.
@@ -30,17 +35,10 @@ const SWAP_PERIOD_NS: u64 = 420_000_000_000;
 const UI4_NOT_FOUND: i32 = -3;
 const UI4_BUSY: i32 = -7;
 
-#[global_allocator]
-static ALLOCATOR: trueos::TrueosAllocator = trueos::TrueosAllocator;
-
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
-    trueos::panic_abort("bfly panic\n")
-}
-
 enum Error {
     Ui4(&'static str, Ui4Error),
     Vgpu(&'static str, i32),
+    BackgroundWorker(trueos::worker::SpawnError),
 }
 
 impl fmt::Display for Error {
@@ -48,6 +46,7 @@ impl fmt::Display for Error {
         match self {
             Self::Ui4(stage, code) => write!(output, "UI4 {stage} failed ({code:?})"),
             Self::Vgpu(stage, code) => write!(output, "vGPU {stage} failed ({code})"),
+            Self::BackgroundWorker(code) => write!(output, "background start failed ({code})"),
         }
     }
 }
@@ -61,36 +60,44 @@ impl Drop for OwnedDevice {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum TrailMode {
+enum RenderMode {
     Monochrome,
     Smoke,
     Cloud,
+    Fill,
+    Layered,
 }
 
-impl TrailMode {
+impl RenderMode {
+    fn has_fill(self) -> bool {
+        matches!(self, Self::Fill | Self::Layered)
+    }
+
     fn describe(self, frame: &mut Frame) -> Result<(), Error> {
         let (title, mode) = match self {
             Self::Monochrome => ("bfly - monochrome", "monochrome"),
             Self::Smoke => ("bfly - smoke", "smoke"),
             Self::Cloud => ("bfly - cloud", "cloud"),
+            Self::Fill => ("bfly - fill", "fill"),
+            Self::Layered => ("bfly - layered", "layered"),
         };
         frame
             .set_title(title)
             .map_err(|code| Error::Ui4("set title", code))?;
-        logl::log(level::IMPORTANT, format_args!("bfly trail mode={mode}"));
+        logl::log(level::IMPORTANT, format_args!("bfly render mode={mode}"));
         Ok(())
     }
 }
 
-struct OutlineRenderer {
+struct Renderer {
     device: OwnedDevice,
     queue: Queue,
-    meshes: [Option<RetainedMesh>; 3],
+    meshes: [Option<RetainedMesh>; 5],
     vertices: Buffer,
     indices: Buffer,
 }
 
-impl OutlineRenderer {
+impl Renderer {
     fn open() -> Result<Self, Error> {
         let device = OwnedDevice(
             Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))
@@ -102,46 +109,56 @@ impl OutlineRenderer {
             .map_err(|code| Error::Vgpu("create queue", code))?;
         let vertices = gpu
             .create_buffer(
-                VERTEX_BYTES.len(),
+                LAYERED_VERTEX_BYTES.len(),
                 vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_MAP_WRITE,
             )
             .map_err(|code| Error::Vgpu("create vertex buffer", code))?;
         let indices = gpu
             .create_buffer(
-                INDEX_BYTES.len(),
+                LAYERED_INDEX_BYTES.len(),
                 vgpu::BUFFER_USAGE_INDEX | vgpu::BUFFER_USAGE_MAP_WRITE,
             )
             .map_err(|code| Error::Vgpu("create index buffer", code))?;
-        write_exact(gpu, vertices, &VERTEX_BYTES)
+        write_exact(gpu, vertices, &LAYERED_VERTEX_BYTES)
             .map_err(|code| Error::Vgpu("upload vertices", code))?;
-        write_exact(gpu, indices, &INDEX_BYTES)
+        write_exact(gpu, indices, &LAYERED_INDEX_BYTES)
             .map_err(|code| Error::Vgpu("upload indices", code))?;
         let mut renderer = Self {
             device,
             queue,
-            meshes: [None; 3],
+            meshes: [None; 5],
             vertices,
             indices,
         };
-        renderer.mesh_for(TrailMode::Smoke)?;
+        renderer.mesh_for(RenderMode::Smoke)?;
         logl::log(
             level::IMPORTANT,
             format_args!(
-                "bfly retained patches={PATCH_COUNT} controls={VERTEX_COUNT} target-hz={FRAME_RATE}"
+                "bfly retained patches={PATCH_COUNT} controls={VERTEX_COUNT} fill-patches={FILL_PATCH_COUNT} fill-controls={FILL_VERTEX_COUNT} target-hz={FRAME_RATE}"
             ),
         );
         Ok(renderer)
     }
 
-    fn mesh_for(&mut self, mode: TrailMode) -> Result<RetainedMesh, Error> {
-        let entry = &mut self.meshes[mode as usize];
-        if let Some(mesh) = *entry {
+    fn mesh_for(&mut self, mode: RenderMode) -> Result<RetainedMesh, Error> {
+        if let Some(mesh) = self.meshes[mode as usize] {
             return Ok(mesh);
         }
         let vertex_layout = match mode {
-            TrailMode::Monochrome => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_TRAIL_FLOCK,
-            TrailMode::Smoke => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_SMOKE_FLOCK,
-            TrailMode::Cloud => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_CLOUD_TRAIL_FLOCK,
+            RenderMode::Monochrome => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_TRAIL_FLOCK,
+            RenderMode::Smoke => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_SMOKE_FLOCK,
+            RenderMode::Cloud => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_CLOUD_TRAIL_FLOCK,
+            RenderMode::Fill => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_OUTLINED_INSET_FLOCK,
+            RenderMode::Layered => vgpu::RETAINED_VERTEX_LAYOUT_BFLY_LAYERED_FLOCK,
+        };
+        let (vertex_offset, index_offset, vertex_count) = match mode {
+            RenderMode::Fill => (0, 0, FILL_VERTEX_COUNT),
+            RenderMode::Layered => (0, 0, LAYERED_VERTEX_COUNT),
+            _ => (
+                FILL_VERTEX_BYTES.len(),
+                FILL_INDEX_BYTES.len(),
+                VERTEX_COUNT,
+            ),
         };
         let mesh = self
             .device
@@ -150,21 +167,25 @@ impl OutlineRenderer {
                 self.vertices,
                 self.indices,
                 RetainedMeshDescriptor {
-                    vertex_count: VERTEX_COUNT as u32,
-                    index_count: VERTEX_COUNT as u32,
+                    vertex_offset: vertex_offset as u64,
+                    index_offset: index_offset as u64,
+                    vertex_count: vertex_count as u32,
+                    index_count: vertex_count as u32,
                     vertex_layout,
                     topology: vgpu::RETAINED_TOPOLOGY_BFLY_PATCHLIST_4,
                     ..RetainedMeshDescriptor::default()
                 },
             )
             .map_err(|code| Error::Vgpu("create retained wing patches", code))?;
-        *entry = Some(mesh);
+        self.meshes[mode as usize] = Some(mesh);
         Ok(mesh)
     }
 
     fn draw(
         &self,
         mesh: RetainedMesh,
+        mode: RenderMode,
+        reset_history: bool,
         frame: &mut Frame,
         started: u64,
         flock: &mut Flock,
@@ -174,7 +195,7 @@ impl OutlineRenderer {
 
         let mut params = None;
         let point = loop {
-            retry_ui4("begin frame", || frame.begin_visual_gpu_frame())?;
+            retry_ui4("begin frame", || frame.begin_gpu_frame())?;
 
             // A failed import can leave the frame's write lease in place.
             // Retry import against that lease instead of beginning a new frame.
@@ -203,7 +224,14 @@ impl OutlineRenderer {
                         ),
                     );
                 }
-                frame_params(width, height, now.saturating_sub(started), flock.snapshot())
+                frame_params(
+                    width,
+                    height,
+                    now.saturating_sub(started),
+                    flock.snapshot(),
+                    mode,
+                    reset_history,
+                )
             });
             match gpu.submit_retained_frame(
                 self.queue,
@@ -233,6 +261,8 @@ fn frame_params(
     height: u32,
     elapsed_ns: u64,
     snapshot: Snapshot,
+    mode: RenderMode,
+    reset_history: bool,
 ) -> RetainedFrameSubmit {
     // The flock shader reads its instance records from the retained camera lanes.
     let mut camera = RetainedCamera {
@@ -256,6 +286,14 @@ fn frame_params(
     camera.previous_view_projection[..8].copy_from_slice(&records[72..]);
     camera.previous_view_projection[8..12].copy_from_slice(&snapshot.motion);
     camera.previous_view_projection[12] = (elapsed_ns % SWAP_PERIOD_NS) as f32 * 1e-9;
+    camera.previous_view_projection[13] = if matches!(mode, RenderMode::Smoke | RenderMode::Cloud) {
+        1.0
+    } else {
+        0.0
+    };
+    if reset_history {
+        camera.previous_view_projection[14] = 1.0;
+    }
     let mut submit = RetainedFrameSubmit {
         clear_rgba8_srgb: 0,
         seed_count: 1,
@@ -300,22 +338,39 @@ fn main() {
     }
 }
 
+fn wait_for_draw(next_draw: &mut u64) {
+    let remaining_ns = next_draw.saturating_sub(clock::monotonic_nanos());
+    if remaining_ns != 0 {
+        vsys::sleep_ms(remaining_ns.div_ceil(1_000_000));
+    }
+    *next_draw = next_draw.saturating_add(DRAW_INTERVAL_NS);
+    let now = clock::monotonic_nanos();
+    if *next_draw <= now {
+        *next_draw = now.saturating_add(DRAW_INTERVAL_NS);
+    }
+}
+
 fn run() -> Result<(), Error> {
-    let mut renderer = OutlineRenderer::open()?;
-    let mut frame = Frame::open_visual(96, 72, WIDTH, HEIGHT, FRAME_RATE)
+    let mut renderer = Renderer::open()?;
+    let mut frame = Frame::open_layered(96, 72, WIDTH, HEIGHT, BACKGROUND_HZ)
         .map_err(|code| Error::Ui4("open window", code))?;
-    let mut mode = TrailMode::Smoke;
+    let mut mode = RenderMode::Smoke;
+    let mut previous_mode = mode;
     let mut mesh = renderer.mesh_for(mode)?;
     mode.describe(&mut frame)?;
     frame
         .set_primary_activation(true)
         .map_err(|code| Error::Ui4("enable primary activation", code))?;
+    let background = CelestialScene::start(&frame)?;
     let started = clock::monotonic_nanos();
     let mut flock = Flock::new(started);
     let mut frame_count = 0u32;
     let mut measure_from = started;
     let mut presented = false;
+    let mut next_draw = started;
+    let mut pending_size = None;
     loop {
+        wait_for_draw(&mut next_draw);
         while let Some(event) = frame
             .take_pointer_event()
             .map_err(|code| Error::Ui4("read pointer event", code))?
@@ -333,9 +388,11 @@ fn run() -> Result<(), Error> {
                 && event.flags & KEYBOARD_OUTPUT_FLAG_PRESS != 0
             {
                 match event.key_code {
-                    KEYBOARD_KEY_F1 => next_mode = TrailMode::Monochrome,
-                    KEYBOARD_KEY_F2 => next_mode = TrailMode::Smoke,
-                    KEYBOARD_KEY_F3 => next_mode = TrailMode::Cloud,
+                    KEYBOARD_KEY_F1 => next_mode = RenderMode::Monochrome,
+                    KEYBOARD_KEY_F2 => next_mode = RenderMode::Smoke,
+                    KEYBOARD_KEY_F3 => next_mode = RenderMode::Cloud,
+                    KEYBOARD_KEY_F4 => next_mode = RenderMode::Fill,
+                    KEYBOARD_KEY_F5 => next_mode = RenderMode::Layered,
                     _ => {}
                 }
             }
@@ -345,7 +402,6 @@ fn run() -> Result<(), Error> {
             mode = next_mode;
             mode.describe(&mut frame)?;
         }
-        let mut pending_size = None;
         while let Some(event) = frame
             .take_resize_event()
             .map_err(|code| Error::Ui4("read resize event", code))?
@@ -353,11 +409,14 @@ fn run() -> Result<(), Error> {
             pending_size = Some((event.width, event.height));
         }
         if let Some((width, height)) = pending_size
-            && (width, height) != (frame.width(), frame.height())
+            && ((width, height) == (frame.width(), frame.height())
+                || background.try_resize(&mut frame, width, height)?)
         {
-            retry_ui4("resize window", || frame.resize(width, height))?;
+            pending_size = None;
         }
-        renderer.draw(mesh, &mut frame, started, &mut flock)?;
+        let reset_history = previous_mode.has_fill() && !mode.has_fill();
+        renderer.draw(mesh, mode, reset_history, &mut frame, started, &mut flock)?;
+        previous_mode = mode;
         if !presented
             && frame
                 .take_first_presentation()

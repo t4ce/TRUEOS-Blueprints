@@ -1,5 +1,9 @@
 use anyhow::{Result, bail};
 
+#[cfg(target_os = "trueos")]
+use crate::cues::SpiritCue;
+#[cfg(target_os = "trueos")]
+use std::num::NonZeroU64;
 #[cfg(any(target_os = "trueos", test))]
 use std::time::{Duration, Instant};
 
@@ -26,11 +30,16 @@ pub struct Stream {
     first_write: Option<Instant>,
     previous_stream: Option<u64>,
     completed_stream: Option<u64>,
+    spirit_cue: Option<(NonZeroU64, SpiritCue)>,
 }
 
 #[cfg(target_os = "trueos")]
 impl Stream {
-    pub fn new(deadline: Instant, previous_stream: Option<u64>) -> Self {
+    pub fn new(
+        deadline: Instant,
+        previous_stream: Option<u64>,
+        spirit_cue: Option<(NonZeroU64, SpiritCue)>,
+    ) -> Self {
         Self {
             deadline,
             token: None,
@@ -39,6 +48,7 @@ impl Stream {
             first_write: None,
             previous_stream,
             completed_stream: None,
+            spirit_cue,
         }
     }
 
@@ -118,11 +128,15 @@ impl Stream {
         if Instant::now() >= self.deadline {
             bail!("native audio stream deadline expired before writing")
         }
-        let status = stream_call(1, self.token.expect("stream reserved"), &self.bytes);
+        let token = self.token.expect("stream reserved");
+        let status = stream_call(1, token, &self.bytes);
         if status != 0 {
             bail!("native audio stream write failed: {status}")
         }
         self.first_write.get_or_insert_with(Instant::now);
+        if let Some((turn, cue)) = self.spirit_cue.take() {
+            notify_spirit(token, turn, cue);
+        }
         Ok(())
     }
 }
@@ -144,6 +158,48 @@ fn stream_call(action: u32, token: u64, bytes: &[u8]) -> i64 {
         bytes.as_ptr()
     };
     unsafe { trueos_cabi_http_audio_stream_v1(action, token, ptr, bytes.len()) }
+}
+
+#[cfg(target_os = "trueos")]
+fn notify_spirit(token: u64, turn: NonZeroU64, cue: SpiritCue) {
+    let signal = cue.payload(turn);
+    // The guest stream ABI accepts payload pointers from the guest heap.
+    let mut payload = Vec::new();
+    if let Err(error) = payload.try_reserve_exact(signal.len()) {
+        crate::notice(format!(
+            "ptts: Spirit cue {cue:?} turn={turn} allocation failed: {error}"
+        ));
+        return;
+    }
+    payload.extend_from_slice(&signal);
+    let status = stream_call(6, token, &payload);
+    if status != 0 {
+        crate::notice(format!(
+            "ptts: Spirit cue {cue:?} turn={turn} unavailable: {status}"
+        ));
+    }
+}
+
+#[cfg(target_os = "trueos")]
+pub fn close_spirit_turn(
+    turn: NonZeroU64,
+    preceding_stream: Option<u64>,
+    deadline: Instant,
+    cue: SpiritCue,
+) {
+    if let Some(id) = preceding_stream
+        && let Err(error) = wait_until_idle_with(
+            deadline,
+            || source_playing(id, deadline),
+            Instant::now,
+            std::thread::sleep,
+        )
+    {
+        crate::notice(format!(
+            "ptts: Spirit cue {cue:?} turn={turn} playback wait failed: {error:#}"
+        ));
+    }
+    notify_spirit(0, turn, cue);
 }
 
 #[cfg(target_os = "trueos")]

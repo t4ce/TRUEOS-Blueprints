@@ -1,0 +1,54 @@
+// Render premultiplied RGBA8 in UI4's top-origin coordinates.
+static float celestial_alpha(__global const uchar *atlas, uint2 pixel, uint size, uint body)
+{
+    const float2 sample = (convert_float2(pixel) + 0.5f) * (512.0f / convert_float(size)) - 0.5f;
+    const float2 uv = clamp(sample, 0.0f, 511.0f);
+    const uint2 lo = convert_uint2(uv);
+    const uint2 hi = min(lo + 1u, 511u);
+    const float2 fraction = uv - convert_float2(lo);
+    const uint base = (body - 1u) * 512u * 512u;
+    const uint top = base + lo.y * 512u;
+    const uint bottom = base + hi.y * 512u;
+    const float upper = mix(convert_float(atlas[top + lo.x]),
+                            convert_float(atlas[top + hi.x]), fraction.x);
+    const float lower = mix(convert_float(atlas[bottom + lo.x]),
+                            convert_float(atlas[bottom + hi.x]), fraction.x);
+    return mix(upper, lower, fraction.y) / 255.0f;
+}
+
+kernel __attribute__((intel_reqd_sub_group_size(16))) void shadertoy_bfly_celestial(
+    __global uint *output,
+    __global const float4 *uniforms,
+    uint width,
+    uint height,
+    uint pitch_bytes,
+    __global const uchar *atlas)
+{
+    const uint x = get_global_id(0);
+    const uint y = get_global_id(1);
+    if (x >= width || y >= height) {
+        return;
+    }
+
+    const float4 sprite = uniforms[1];
+    const uint size = convert_uint_sat_rtn(sprite.z);
+    const uint2 origin = convert_uint2(convert_int2_sat_rtn(sprite.xy));
+    const uint2 pixel = (uint2)(x, y) - origin;
+    const bool inside = all(pixel < size);
+    if (as_uint(uniforms[4].x) == 0u && !inside) {
+        return;
+    }
+
+    const float u = width > 1 ? convert_float(x) / convert_float(width - 1) : 0.5f;
+    const float v = height > 1 ? convert_float(y) / convert_float(height - 1) : 0.5f;
+    const float t = clamp(v - u, 0.0f, 1.0f);
+    const float gradient = 0.33f * t * t * (3.0f - 2.0f * t);
+    const float body = uniforms[0].w;
+    float opacity = 0.0f;
+    if (inside && sprite.w > 0.0f && (body == 1.0f || body == 2.0f)) {
+        opacity = clamp(sprite.w, 0.0f, 1.0f) * celestial_alpha(atlas, pixel, size, convert_uint(body));
+    }
+    const uint white = convert_uint_sat_rte(255.0f * opacity);
+    const uint alpha = convert_uint_sat_rte(255.0f * (opacity + (1.0f - opacity) * gradient));
+    output[(size_t)y * (pitch_bytes / sizeof(uint)) + x] = (alpha << 24) | (white * 0x010101u);
+}

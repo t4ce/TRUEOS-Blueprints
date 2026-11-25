@@ -138,6 +138,15 @@ def check_publication(record, trust, kernel_image, rebuild_from, *, archived=Fal
     return path, package, stages
 
 
+def check_graphics_publication(record, trust, kernel_image, rebuild_from):
+    path, package, stages = check_publication(record, trust, kernel_image, rebuild_from)
+    if rebuild_from:
+        for capture in record["offline_compiles"]["targets"]:
+            verify_compiler_capture(record, stages, capture, rebuild_from)
+        path.write_bytes(package)
+    return package
+
+
 def check_history_publication(record, trust, kernel_image, rebuild_from):
     path, package, _ = check_publication(record, trust, kernel_image, rebuild_from)
     if rebuild_from:
@@ -162,7 +171,21 @@ def main():
     parser.add_argument("--rebuild-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild the archived texture demo bundle")
     parser.add_argument("--rebuild-direct-from", type=Path, metavar="CAPTURE_DIR",
-                        help="rebuild and compare the direct tessellation stages against their native captures")
+                        help="rebuild the archived single-design tessellation stages from their native captures")
+    parser.add_argument("--rebuild-mixed-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the mixed flock tessellation stages from their native captures")
+    parser.add_argument("--rebuild-tier-widths-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the tiered line-width tessellation stages from their native captures")
+    parser.add_argument("--rebuild-fill-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the original lobe-fill shader from its native captures")
+    parser.add_argument("--rebuild-inset-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the inset wing-fill shader from its native captures")
+    parser.add_argument("--rebuild-breed-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the seeded wing-fill shader from its native captures")
+    parser.add_argument("--rebuild-translucent-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the translucent wing-fill shader from its native captures")
+    parser.add_argument("--rebuild-inset-outline-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the outline over the inset wing fill from its native captures")
     parser.add_argument("--rebuild-history-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild and compare the earlier monotone history kernel against its IGC compiles")
     parser.add_argument("--rebuild-smoke-history-from", type=Path, metavar="CAPTURE_DIR",
@@ -185,18 +208,35 @@ def main():
                 verify_compiler_capture(record, stages, capture, args.verify_offline_from)
         packages[path] = package
     direct_record = json.loads((NATIVE / "direct-wings-manifest.json").read_text())
-    direct_path, direct_package, direct_stages = check_publication(
+    check_graphics_publication(
         direct_record, trust, kernel_image, args.rebuild_direct_from)
-    if args.rebuild_direct_from:
-        for capture in direct_record["offline_compiles"]["targets"]:
-            verify_compiler_capture(direct_record, direct_stages, capture, args.rebuild_direct_from)
+    mixed_record = json.loads((NATIVE / "mixed-wings-manifest.json").read_text())
+    check_graphics_publication(
+        mixed_record, trust, kernel_image, args.rebuild_mixed_from)
+    widths_record = json.loads((NATIVE / "tier-width-wings-manifest.json").read_text())
+    widths_package = check_graphics_publication(
+        widths_record, trust, kernel_image, args.rebuild_tier_widths_from)
+    fill_record = json.loads((NATIVE / "filled-wings-manifest.json").read_text())
+    check_graphics_publication(
+        fill_record, trust, kernel_image, args.rebuild_fill_from)
+    inset_record = json.loads((NATIVE / "inset-wings-manifest.json").read_text())
+    check_graphics_publication(inset_record, trust, kernel_image, args.rebuild_inset_from)
+    breed_record = json.loads((NATIVE / "breed-wings-manifest.json").read_text())
+    check_graphics_publication(breed_record, trust, kernel_image, args.rebuild_breed_from)
+    translucent_record = json.loads((NATIVE / "translucent-wings-manifest.json").read_text())
+    translucent_package = check_graphics_publication(
+        translucent_record, trust, kernel_image, args.rebuild_translucent_from)
+    inset_outline_record = json.loads((NATIVE / "inset-outline-manifest.json").read_text())
+    inset_outline_package = check_graphics_publication(
+        inset_outline_record, trust, kernel_image, args.rebuild_inset_outline_from)
+    celestial_record = json.loads((NATIVE / "celestial-masks-manifest.json").read_text())
+    _, celestial_masks, _ = check_publication(celestial_record, trust, kernel_image, NATIVE)
     history_record = json.loads((NATIVE / "history-manifest.json").read_text())
     history_package = check_history_publication(
         history_record, trust, kernel_image, args.rebuild_history_from)
     # The untextured capture predates the current outline shaders.
     untextured_record = json.loads((NATIVE / "untextured-wings-manifest.json").read_text())
-    _, untextured_package, _ = check_publication(
-        untextured_record, trust, kernel_image, None, archived=True)
+    check_publication(untextured_record, trust, kernel_image, None, archived=True)
     smoke_record = json.loads((NATIVE / "smoke-history-manifest.json").read_text())
     smoke_package = check_history_publication(
         smoke_record, trust, kernel_image, args.rebuild_smoke_history_from)
@@ -213,11 +253,10 @@ def main():
             path.write_bytes(package)
         bundle_file.write_bytes(bundle)
     require(bundle_file.read_bytes() == bundle, "bfly bundle differs from its packages")
-    if args.rebuild_direct_from:
-        direct_path.write_bytes(direct_package)
     if args.blueprint:
-        expected = b"".join((direct_package, smoke_package, cloud_package, trail_package,
-                             untextured_package, history_package))
+        expected = b"".join((widths_package, smoke_package, cloud_package, trail_package,
+                             history_package, translucent_package, inset_outline_package,
+                             celestial_masks))
         require(blueprint_shader_section(args.blueprint) == expected,
                 f"Shader metadata differs from bfly's wings and history packages in {args.blueprint}")
     print("Verified bfly native shader sources, captured stages, and kernel SHA-256 records")
@@ -225,6 +264,20 @@ def main():
         print("Verified texture shader ISA in the offline ADL-S and RPL-S pipeline caches")
     if args.rebuild_direct_from:
         print("Verified direct tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_mixed_from:
+        print("Verified mixed flock tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_tier_widths_from:
+        print("Verified tiered line-width tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_fill_from:
+        print("Verified filled-wing tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_inset_from:
+        print("Verified inset wing-fill tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_breed_from:
+        print("Verified seeded wing-fill tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_translucent_from:
+        print("Verified translucent wing-fill tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_inset_outline_from:
+        print("Verified inset wing-outline tessellation ISA in the offline Vulkan pipeline caches")
     if args.rebuild_history_from:
         print("Verified outline history Zebin and SPIR-V for ADL-S and RPL-S")
     if args.rebuild_smoke_history_from:

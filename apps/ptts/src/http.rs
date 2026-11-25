@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 use serde::Deserialize;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 pub const PORT: u16 = 9773;
@@ -99,6 +100,7 @@ fn respond(stream: &mut TcpStream, status: &str, value: serde_json::Value) -> io
 pub struct SpeechRequest {
     pub text: String,
     pub intro: Option<crate::cues::Intro>,
+    pub spirit_turn: Option<NonZeroU64>,
     pub label: Option<String>,
     pub voice: Option<String>,
     #[serde(default = "normal_speed")]
@@ -240,7 +242,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
     ));
     let mut job = 0u64;
     #[cfg(target_os = "trueos")]
-    let mut previous_playback = None;
+    let mut previous_playback: Option<(u64, Option<NonZeroU64>)> = None;
     for accepted in listener.incoming() {
         let mut stream = match accepted {
             Ok(s) => s,
@@ -266,7 +268,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
             Ok(r) if r.method == "GET" && r.path == "/health" => respond(
                 &mut stream,
                 "200 OK",
-                serde_json::json!({"protocol":"ptts-v1","ready":true,"tts":true,"stt":false,"language":"en","voice":"azelma","model":"english_2026-10","bundled":false,"turn_cues":true}),
+                serde_json::json!({"protocol":"ptts-v1","ready":true,"tts":true,"stt":false,"language":"en","voice":"azelma","model":"english_2026-10","bundled":false,"turn_cues":true,"spirit_talk":true}),
             ),
             Ok(r) if r.method == "POST" && r.path == "/speech" => {
                 job = job.saturating_add(1);
@@ -276,15 +278,21 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                     let request: SpeechRequest = serde_json::from_slice(&r.body)?;
                     request.validate()?;
                     crate::notice(format!(
-                        "ptts: job={job} submitted bytes={} label={} intro={:?}",
+                        "ptts: job={job} submitted bytes={} label={} intro={:?} spirit_turn={:?}",
                         request.text.len(),
                         request.label.as_deref().unwrap_or("auto"),
                         request.intro,
+                        request.spirit_turn,
                     ));
                     #[cfg(target_os = "trueos")]
                     let (generated, first_stream_ms, stream_id) = {
-                        let mut playback =
-                            crate::playback::Stream::new(deadline, previous_playback);
+                        let mut playback = crate::playback::Stream::new(
+                            deadline,
+                            previous_playback.map(|(id, _)| id),
+                            request
+                                .spirit_turn
+                                .map(|turn| (turn, crate::cues::SpiritCue::speech(request.intro))),
+                        );
                         let generated =
                             model.synthesize(&request, deadline, &mut |audio| match audio {
                                 SpeechAudio::Start => {
@@ -297,7 +305,7 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                             })?;
                         playback.finish()?;
                         if let Some(id) = playback.completed_stream() {
-                            previous_playback = Some(id);
+                            previous_playback = Some((id, request.spirit_turn));
                         }
                         (
                             generated,
@@ -354,17 +362,48 @@ pub fn serve(port: u16, host_wav_dir: Option<PathBuf>) -> Result<()> {
                 job = job.saturating_add(1);
                 let result = (|| -> Result<serde_json::Value> {
                     let request: crate::cues::CueRequest = serde_json::from_slice(&r.body)?;
-                    let crate::cues::Done::Done = request.cue;
+                    if matches!(request.cue, crate::cues::Cue::End | crate::cues::Cue::Abort) {
+                        let abort = matches!(request.cue, crate::cues::Cue::Abort);
+                        let cue = if abort { "abort" } else { "end" };
+                        let turn = request.spirit_turn.ok_or_else(|| {
+                            anyhow::anyhow!("spirit_turn is required for the {cue} cue")
+                        })?;
+                        #[cfg(target_os = "trueos")]
+                        {
+                            // A later stream could only start after this turn's PCM drained.
+                            let preceding = previous_playback
+                                .filter(|&(_, owner)| owner == Some(turn))
+                                .map(|(id, _)| id);
+                            crate::playback::close_spirit_turn(
+                                turn,
+                                preceding,
+                                Instant::now() + REQUEST_TIMEOUT,
+                                if abort {
+                                    crate::cues::SpiritCue::Abort
+                                } else {
+                                    crate::cues::SpiritCue::End
+                                },
+                            );
+                        }
+                        crate::notice(format!("ptts: job={job} cue={cue} spirit_turn={turn}"));
+                        return Ok(serde_json::json!({"ok":true,"stream_id":null}));
+                    }
                     #[cfg(target_os = "trueos")]
                     let stream_id = {
                         let mut playback = crate::playback::Stream::new(
                             Instant::now() + REQUEST_TIMEOUT,
-                            previous_playback,
+                            previous_playback.map(|(id, _)| id),
+                            request
+                                .spirit_turn
+                                .map(|turn| (turn, crate::cues::SpiritCue::Done)),
                         );
                         playback.push_cue(crate::cues::done_pcm())?;
                         playback.finish()?;
-                        previous_playback = playback.completed_stream();
-                        previous_playback
+                        let stream_id = playback.completed_stream();
+                        if let Some(id) = stream_id {
+                            previous_playback = Some((id, request.spirit_turn));
+                        }
+                        stream_id
                     };
                     #[cfg(not(target_os = "trueos"))]
                     let stream_id = {
@@ -409,6 +448,11 @@ mod tests {
             serde_json::from_str(r#"{"text":"TrueOS is ready.","label":"Happy"}"#).unwrap();
         request.validate().unwrap();
         assert_eq!(request.speed, 1.0);
+        assert!(request.spirit_turn.is_none());
+        let marked: SpeechRequest =
+            serde_json::from_str(r#"{"text":"Hello.","spirit_turn":18446744073709551615}"#)
+                .unwrap();
+        assert_eq!(marked.spirit_turn.map(NonZeroU64::get), Some(u64::MAX));
         for bad in [
             r#"{"text":""}"#,
             r#"{"text":"hello","voice":"af_heart"}"#,
@@ -423,6 +467,9 @@ mod tests {
         }
         assert!(
             serde_json::from_str::<SpeechRequest>(r#"{"text":"hello","unknown":true}"#).is_err()
+        );
+        assert!(
+            serde_json::from_str::<SpeechRequest>(r#"{"text":"hello","spirit_turn":0}"#).is_err()
         );
     }
     #[test]

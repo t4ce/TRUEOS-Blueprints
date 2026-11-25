@@ -15,7 +15,7 @@ test = false
 bench = false
 
 [dependencies]
-trueos = { path = "../../api", features = ["ui4-scene"] }
+trueos = { path = "../../api", features = ["tokio-runtime", "ui4-scene"] }
 
 [profile.dev]
 panic = "abort"

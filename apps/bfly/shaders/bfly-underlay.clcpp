@@ -1,0 +1,21 @@
+// One premultiplied RGBA8 pixel per lane, in UI4's top-origin coordinates.
+kernel __attribute__((intel_reqd_sub_group_size(16))) void shadertoy_bfly_underlay(
+    __global uint *output,
+    __global const float4 *uniforms,
+    uint width,
+    uint height,
+    uint pitch_bytes)
+{
+    (void)uniforms;
+    const uint x = get_global_id(0);
+    const uint y = get_global_id(1);
+    if (x >= width || y >= height) {
+        return;
+    }
+
+    const float u = width > 1 ? convert_float(x) / convert_float(width - 1) : 0.5f;
+    const float v = height > 1 ? convert_float(y) / convert_float(height - 1) : 0.5f;
+    const float t = clamp(v - u, 0.0f, 1.0f);
+    const uint alpha = convert_uint_sat_rte(255.0f * 0.33f * t * t * (3.0f - 2.0f * t));
+    output[(size_t)y * (pitch_bytes / sizeof(uint)) + x] = alpha << 24;
+}

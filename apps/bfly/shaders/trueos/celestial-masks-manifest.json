@@ -1,0 +1,25 @@
+{
+  "id": 35,
+  "name": "bfly-celestial-masks",
+  "bytes": 524324,
+  "sha256": "6f350e823dbf0d63841f505ec2f1693940f34cc74513e4d93d2b7f1e1fcf2b56",
+  "sources": {},
+  "capture_directory": ".",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "bfly-moon",
+      "kind": 0,
+      "bytes": 262144,
+      "sha256": "95f4b19edad5347a3f0b11f9ae75abbe561250d36bfc3149bae84753c1c98311",
+      "asset_file": "bfly-moon.r8"
+    },
+    {
+      "name": "bfly-earth",
+      "kind": 0,
+      "bytes": 262144,
+      "sha256": "575403c9e70d4f60235275a2dfcf01055d1ec8e561c87e2ec1072d2c1fb4645b",
+      "asset_file": "bfly-earth.r8"
+    }
+  ]
+}

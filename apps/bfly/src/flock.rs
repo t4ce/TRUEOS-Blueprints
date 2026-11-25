@@ -8,6 +8,7 @@ const TIER_STEP: u8 = 16;
 const TINY: u8 = (TIER_COUNT as u8 - 1) * TIER_STEP;
 const OUTSIDE: u8 = 127;
 const SEED_MASK: u8 = 127;
+const EVEN_SEEDS: u128 = u128::MAX / 3;
 const MAX_PROGRESS: u32 = 255;
 const MOVE_BASE_SECONDS: f32 = 4.4;
 const MOVE_BASE_NS: u64 = 4_400_000_000;
@@ -215,9 +216,20 @@ impl Flock {
     }
 
     fn spawn(&mut self, now: u64) {
+        // Seed parity selects the wing artwork for the butterfly's lifetime.
+        let first_artwork = (self.active_seeds & EVEN_SEEDS).count_ones() as usize;
+        let second_artwork = self.count - first_artwork;
+        let parity = match first_artwork.cmp(&second_artwork) {
+            core::cmp::Ordering::Equal => self.next_seed & 1,
+            core::cmp::Ordering::Less => 0,
+            core::cmp::Ordering::Greater => 1,
+        };
         let mut seed = self.next_seed;
-        while self.active_seeds & (1 << seed) != 0 {
+        if seed & 1 != parity {
             seed = (seed + 1) & SEED_MASK;
+        }
+        while self.active_seeds & (1 << seed) != 0 {
+            seed = (seed + 2) & SEED_MASK;
         }
         self.active_seeds |= 1 << seed;
         self.next_seed = (seed + 1) & SEED_MASK;
@@ -339,6 +351,7 @@ mod tests {
         let mut flock = Flock::new(1);
         let initial = flock.snapshot();
         assert_eq!(initial.motion, [0.0, 4.4, 4.4, 8.0]);
+        assert_eq!((flock.active_seeds & EVEN_SEEDS).count_ones(), 4);
         assert_eq!(flock.tick(1 + 10 * SECOND), Events::default());
 
         flock.click();
@@ -426,6 +439,7 @@ mod tests {
         assert_eq!(flock.tick(13 * SECOND).spawned, 1);
         assert_eq!(flock.population(), CAPACITY);
         assert_eq!(flock.pending, 0);
+        assert_eq!((flock.active_seeds & EVEN_SEEDS).count_ones(), 40);
 
         let snapshot = flock.snapshot();
         let mut seen = 0u128;
@@ -450,6 +464,7 @@ mod tests {
             assert_eq!(flock.tick(now + 6 * SECOND).spawned, 1);
             assert_eq!(flock.population(), CAPACITY);
             assert_eq!(flock.active_seeds.count_ones(), CAPACITY as u32);
+            assert_eq!((flock.active_seeds & EVEN_SEEDS).count_ones(), 40);
         }
     }
 

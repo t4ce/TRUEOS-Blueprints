@@ -14,6 +14,9 @@ layout(std430, binding = 0) readonly buffer Camera {
     layout(offset = 304) float records1[8];
     layout(offset = 336) vec4 flock_motion;
     layout(offset = 352) float swap_time;
+#ifdef BFLY_MIXED_WINGS
+    layout(offset = 356) float textured_trail;
+#endif
 };
 
 const int PANEL_COUNT = 8;
@@ -28,6 +31,9 @@ const float FOCAL_LENGTH = 8000.0;
 const float TAU = 6.2831853;
 const float LN_2 = 0.6931472;
 const vec3 SIDE_BOUNDS = vec3(-0.33208677881903803, 0.6622233225082153, 0.3311099279079387);
+#ifdef BFLY_MIXED_WINGS
+const vec3 SECOND_SIDE_BOUNDS = vec3(-0.3989315986135583, 0.6520235040581799, 0.2859345017392921);
+#endif
 
 struct PanelSwap {
     uint flipped;
@@ -291,16 +297,23 @@ vec2 project(vec3 view, float depth) {
 }
 
 void projected_bounds(vec3 right, vec3 left, vec3 y_basis, vec3 position, float depth,
-                      out vec2 lo, out vec2 hi) {
-    vec3 bottom = position + SIDE_BOUNDS.x * y_basis;
-    vec3 top = position + SIDE_BOUNDS.z * y_basis;
+                      out vec2 lo, out vec2 hi
+#ifdef BFLY_MIXED_WINGS
+                      , vec3 side_bounds
+#endif
+) {
+#ifndef BFLY_MIXED_WINGS
+    const vec3 side_bounds = SIDE_BOUNDS;
+#endif
+    vec3 bottom = position + side_bounds.x * y_basis;
+    vec3 top = position + side_bounds.z * y_basis;
     vec2 corners[6] = vec2[6](
         project(bottom, depth),
         project(top, depth),
-        project(bottom + SIDE_BOUNDS.y * right, depth),
-        project(top + SIDE_BOUNDS.y * right, depth),
-        project(bottom + SIDE_BOUNDS.y * left, depth),
-        project(top + SIDE_BOUNDS.y * left, depth)
+        project(bottom + side_bounds.y * right, depth),
+        project(top + side_bounds.y * right, depth),
+        project(bottom + side_bounds.y * left, depth),
+        project(top + side_bounds.y * left, depth)
     );
     lo = corners[0];
     hi = corners[0];
@@ -314,17 +327,61 @@ vec3 clip_basis(vec3 axis, vec2 scale, vec2 center) {
     return vec3(axis.xy * scale - center * axis.z, -axis.z);
 }
 
+#ifdef BFLY_BREED_FILL
+uint breed_fill_rgb(int seed, int artwork) {
+    // The seed persists across growth, flock compaction, and both wing sides.
+    uint shade = (uint(seed >> 1) * 37u + uint(artwork) * 17u + 13u) & 63u;
+    float roll = (float(shade) + 0.5) / 64.0;
+    float toward_red = roll * mix(0.45, 1.0, roll);
+    vec3 hue;
+    if (artwork == 0) {
+        float angle = mix(58.0, 7.0, toward_red);
+        hue = vec3(1.0, angle / 60.0, 0.0);
+    } else {
+        float angle = mix(288.0, 352.0, toward_red);
+        hue = vec3(min(1.0, (angle - 240.0) / 60.0),
+                   0.0, min(1.0, (360.0 - angle) / 60.0));
+    }
+    uvec3 rgb = uvec3(round(38.0 + 198.0 * hue));
+    return rgb.r | (rgb.g << 8u) | (rgb.b << 16u);
+}
+#endif
+
 void main() {
     gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
     if (gl_InvocationID != 0) {
         return;
     }
 
+#ifdef BFLY_TIER_WIDTH
+    // The draw's base instance selects the raster width. The low byte still
+    // identifies the original butterfly and side (at most 160 instances).
+    int width_pass = panel_side[0] >> 8;
+    int index = (panel_side[0] & 255) >> 1;
+#else
     int index = panel_side[0] >> 1;
+#endif
     bool right_side = (panel_side[0] & 1) == 0;
+#if defined(BFLY_FILL_WINGS)
     straight_edge = int(gl_in[0].gl_Position.z);
+    int artwork = straight_edge >> 2;
+#elif defined(BFLY_MIXED_WINGS)
+    int patch_kind = int(gl_in[0].gl_Position.z);
+#ifdef BFLY_INSET_OUTLINE
+    int artwork = patch_kind >> 2;
+#else
+    int artwork = patch_kind >> 1;
+#endif
+    straight_edge = patch_kind & 1;
+#else
+    straight_edge = int(gl_in[0].gl_Position.z);
+#endif
+#ifdef BFLY_FILL_WINGS
+    if (index >= int(flock_motion.w) || index >= 80) {
+#else
     // Both mirrored sides meet at the same straight connector.
     if (index >= int(flock_motion.w) || index >= 80 || (straight_edge != 0 && !right_side)) {
+#endif
         gl_TessLevelOuter[0] = 0.0;
         gl_TessLevelOuter[1] = 0.0;
         return;
@@ -334,6 +391,14 @@ void main() {
     float record = index < 72 ? records0[index] : records1[index - 72];
     uint packed_record = floatBitsToUint(record);
     int seed = int((packed_record >> 22) & 127u);
+#ifdef BFLY_MIXED_WINGS
+    // Each seed keeps the same artwork while the flock moves and compacts.
+    if (artwork != (seed & 1)) {
+        gl_TessLevelOuter[0] = 0.0;
+        gl_TessLevelOuter[1] = 0.0;
+        return;
+    }
+#endif
     int source = int((packed_record >> 15) & 127u);
     int target = int((packed_record >> 8) & 127u);
     float progress = float(packed_record & 255u) / 255.0;
@@ -358,11 +423,48 @@ void main() {
     vec3 left = pose * vec3(-across.y, 0.0, depth_offset.y);
     vec3 y_basis = pose[1];
     vec2 lo, hi;
-    projected_bounds(right, left, y_basis, position, depth, lo, hi);
+    projected_bounds(right, left, y_basis, position, depth, lo, hi
+#ifdef BFLY_MIXED_WINGS
+                     , artwork == 0 ? SIDE_BOUNDS : SECOND_SIDE_BOUNDS
+#endif
+    );
     vec2 extent = hi - lo;
+#ifdef BFLY_FILL_WINGS
+    if (any(lessThan(hi + center_px, vec2(0.0))) ||
+        any(greaterThan(lo + center_px, frame.xy))) {
+        gl_TessLevelOuter[0] = 0.0;
+        gl_TessLevelOuter[1] = 0.0;
+        return;
+    }
+    // U follows the contour and V runs out from the interior of the wing.
+    // Each straight closure contributes a single wedge. The quad domain
+    // samples the cubics using the projected span, up to its 64-segment limit.
+    uint span = uint(clamp(max(extent.x, extent.y), 4.0, 64.0));
+    float segments = (straight_edge & 1) != 0 ? 1.0 : float(1 << findMSB(span));
+    gl_TessLevelOuter[0] = 1.0;
+    gl_TessLevelOuter[1] = segments;
+    gl_TessLevelOuter[2] = 1.0;
+    gl_TessLevelOuter[3] = segments;
+    gl_TessLevelInner[0] = segments;
+    gl_TessLevelInner[1] = 1.0;
+#ifdef BFLY_BREED_FILL
+    // The three low bits still identify the edge and its artwork.
+    straight_edge |= int(breed_fill_rgb(seed, artwork) << 3u);
+#endif
+#else
     bool hinge_only = any(lessThan(extent, vec2(4.0)));
     float margin = hinge_only ? 2.0 : 1.0;
+#ifdef BFLY_TIER_WIDTH
+    uint span = uint(clamp(max(extent.x, extent.y), 4.0, 1024.0));
+    int log_span = findMSB(span);
+    int tier = hinge_only || span < 16u ? 7 : 10 - log_span;
+    int width_class = max(0, 2 - tier);
+    margin += 0.5 * float(width_class);
+    bool wrong_width_pass = width_pass != width_class;
+    if (wrong_width_pass || (hinge_only && straight_edge == 0) ||
+#else
     if ((hinge_only && straight_edge == 0) ||
+#endif
         any(lessThan(hi + center_px, vec2(-margin))) ||
         any(greaterThan(lo + center_px, frame.xy + margin))) {
         gl_TessLevelOuter[0] = 0.0;
@@ -370,24 +472,34 @@ void main() {
         return;
     }
 
+#ifndef BFLY_TIER_WIDTH
     uint span = uint(clamp(max(extent.x, extent.y), 4.0, 1024.0));
     int log_span = findMSB(span);
+#endif
     int curve_segments = span < 16u ? 4 : 1 << log_span;
     int segments = (straight_edge != 0) ? 1 : curve_segments;
+#ifndef BFLY_TIER_WIDTH
     int tier = hinge_only || span < 16u ? 7 : 10 - log_span;
+#endif
     bool deposit = straight_edge == 0 && (right_side ? downstroke.x : downstroke.y);
     // Keep the connector kind in the low two bits, and carry the texture
     // strip and downstroke bit alongside it to the fragment stage.
     int edge_kind = hinge_only ? 2 : straight_edge;
+#ifdef BFLY_MIXED_WINGS
+    straight_edge = textured_trail > 0.0 ? edge_kind | (tier << 2) | (deposit ? 32 : 0) : edge_kind;
+#else
     straight_edge = edge_kind | (tier << 2) | (deposit ? 32 : 0);
+#endif
     // Every isoline covers one interval of the same cubic.
     isoline_count = max(1, segments / 64);
     gl_TessLevelOuter[0] = float(isoline_count);
     gl_TessLevelOuter[1] = float(segments / isoline_count);
+#endif
 
     vec2 scale = (2.0 * FOCAL_LENGTH) / frame.xy;
     vec2 center = 2.0 * center_px / frame.xy - 1.0;
     vec3 x_basis = right_side ? right : left;
+#ifndef BFLY_FILL_WINGS
     if (hinge_only) {
         // Keep a two-pixel centerline at the projected hinge midpoint even
         // when the authored connector is too short to cover a sample.
@@ -403,6 +515,7 @@ void main() {
         clip_from_origin = vec3(midpoint, 1.0) - 0.5 * clip_from_y;
         return;
     }
+#endif
     clip_from_x = clip_basis(x_basis, scale, center);
     clip_from_y = clip_basis(y_basis, scale, center);
     clip_from_origin = clip_basis(position, scale, center) + vec3(center, 1.0) * depth;
