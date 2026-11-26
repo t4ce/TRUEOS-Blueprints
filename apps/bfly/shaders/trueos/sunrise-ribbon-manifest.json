@@ -1,0 +1,122 @@
+{
+  "id": 38,
+  "name": "bfly-sunrise-ribbon",
+  "bytes": 821076,
+  "sha256": "95ac8d6a2a07e3ed53bf7017e55405e4f6b5938a8872816f5c5089072311e5a3",
+  "vertex_layouts": [
+    29
+  ],
+  "topology": "patch-list-4",
+  "sources": {
+    "direct-wings.vert": "4ece6d883cdf18dcedd57608580c1f5ae88b654d9b64402870a84a6de01bab04",
+    "direct-wings.tesc": "21b6c5d7fc5a54a7f258d293544722ebede9e41c5caf56626b834ecd69421508",
+    "sunrise-ribbon.tese": "a5bbfb06c31d8f3302dab24768ea15e0a05f69f45a32f11dc6b458ee2b438b6b",
+    "sunrise-ribbon.frag": "f71e653e21f3199388199e309893b9437bde884a533e1d9c2e19984d28f9d5ca"
+  },
+  "compiler_defines": {
+    "direct-wings.tesc": {
+      "BFLY_MIXED_WINGS": 1,
+      "BFLY_INSET_OUTLINE": 1,
+      "BFLY_SUNRISE": 1,
+      "BFLY_TWILIGHT_RIBBON": 1
+    }
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "vs-simd8",
+      "kind": 1,
+      "bytes": 168,
+      "sha256": "e3594517b3ece398b8d98dc6d59c14db2ced5a59ee0cae5a17d2318893f6db62",
+      "capture_file": "vertex-simd8.bin"
+    },
+    {
+      "name": "hs-simd8",
+      "kind": 1,
+      "bytes": 29456,
+      "sha256": "d8c0f5e8978345051a81498f4812ed9244cfe1b0cde1b8a44fadb7124938eea0",
+      "capture_file": "hull-simd8.bin"
+    },
+    {
+      "name": "ds-simd8",
+      "kind": 1,
+      "bytes": 1336,
+      "sha256": "52ada6e9bebdcbdcaeb45bc33ef3d89c36dcbfc31bddef3927d4ff0115ccd035",
+      "capture_file": "domain-simd8.bin"
+    },
+    {
+      "name": "ps-simd16",
+      "kind": 1,
+      "bytes": 3624,
+      "sha256": "ae26b332497b5c28239d96777d56485ebc7580683244ab79ce68dd8b42499623",
+      "capture_file": "fragment-simd16.bin"
+    },
+    {
+      "name": "wake-rgb-tiles-and-shared-tear-alpha",
+      "kind": 0,
+      "bytes": 786432,
+      "sha256": "e09b7c53d16e199d95ee79fdf11c0dd51c7233c3ee337cea29e8e0ccd680c86b",
+      "asset_file": "bfly-sunrise.rgba8"
+    }
+  ],
+  "offline_compiles": {
+    "compiler": "Mesa ANV 26.0.8",
+    "validation": "Compile-only with Mesa Intel no-op DRM shim",
+    "targets": [
+      {
+        "pci_vendor": "8086",
+        "pci_device": "4680",
+        "pci_revision": "0c",
+        "platform": "ADL-S GT1",
+        "directory": "4680",
+        "pipeline_cache_sha256": "1fd6d4fe2ce2ff9dcadc767a914411e470ef20bf7f56ca855b12e82a3243663b",
+        "stage_offsets": {
+          "vs-simd8": 79640,
+          "hs-simd8": 44648,
+          "ds-simd8": 42616,
+          "ps-simd16": 74840
+        }
+      },
+      {
+        "pci_vendor": "8086",
+        "pci_device": "a780",
+        "pci_revision": "04",
+        "platform": "RPL-S",
+        "directory": "a780",
+        "pipeline_cache_sha256": "5e21d253ed27629dddcb432609eb449235e28dba8cd4251daae2f03c4f9ef688",
+        "stage_offsets": {
+          "vs-simd8": 79640,
+          "hs-simd8": 44648,
+          "ds-simd8": 42616,
+          "ps-simd16": 74840
+        }
+      }
+    ]
+  },
+  "texture_provenance": {
+    "width": 256,
+    "height": 768,
+    "format": "R8G8B8A8_UNORM",
+    "rgb": "Sunrise, Twilight and Universe source skies resized to three 256\u00d7256 tiles with Lanczos",
+    "alpha": "Original 256\u00d7256 tear mask",
+    "sunrise_source": "tools/dwn/600px-Sunrise_background.jpg",
+    "sunrise_sha256": "84d329e6098721da64905bce566c1e85dd6fd618a74d2f6e4bf05155ecc52f2e",
+    "twilight_source": "tools/dwn/600px-Twilight_background.png",
+    "twilight_sha256": "de39e74ad19df6ee90ee664bf8433fffb35baf465f249c1a050058f6b9a9eb3d",
+    "alpha_source": "tools/twilight-lab/wake-tear.r8",
+    "alpha_sha256": "39e069a85b7300a237006995b3989ed2ca368e0c2a25ca82a2984c4629ec10bd",
+    "universe_source": "tools/uni.jpg",
+    "universe_sha256": "77f43c88f17e2c65031743dca075411f27e9ec785b557c45006a942198cdc802",
+    "atlas_generator_sha256": "ba09067e651a003b33868954ddc479bd27ed3349f50a41e8ae1e04898272f48a"
+  },
+  "flight_turn_source": {
+    "generated_tesc_sha256": "947d8996832ea07d0a64c7cfae94c6abcd8ee38a1dbed57a0c2d34e403e80b41",
+    "generator_sha256": "06ea420dc6ba51ed536a3f0bcbe192115acea4f19cfe7569e7c253de68b004e8",
+    "snippet_sha256": "93a4c1ef77fb9e038c66013fcc1842816dffc411d9b980f9089ff1ba87f2772b"
+  },
+  "stage_wake_source": {
+    "generator_sha256": "049b4faae5e417d4543fb0cfca3d53f62a04ca8b01064f99d62ef1c1aae67011",
+    "generated_tesc_sha256": "3d26108a2876e8b0cd53ac4774c693a1458f7ac59716d837c2ced8e9e0c769dd"
+  }
+}

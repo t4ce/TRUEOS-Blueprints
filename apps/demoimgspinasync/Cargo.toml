@@ -1,0 +1,17 @@
+[package]
+name = "demoimgspinasync"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Independent UI4 Sun rotation probe"
+
+[dependencies]
+trueos = { path = "../../api", features = ["ui4-scene"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[workspace]

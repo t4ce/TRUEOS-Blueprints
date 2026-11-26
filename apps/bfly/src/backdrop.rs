@@ -8,6 +8,20 @@ const INTRO_LEVELS_PER_STEP: u8 = 6;
 const WEIGHT: u64 = 1 << 16;
 const SWEEP_NS: u64 = sweep_duration_ns();
 
+pub struct Sample {
+    pub rgb: [u8; 3],
+    pub precise_rgb: [f32; 3],
+}
+
+impl Sample {
+    fn from_ratio(numerators: [u64; 3], scale: u64) -> Self {
+        Self {
+            rgb: numerators.map(|value| ((value + scale / 2) / scale) as u8),
+            precise_rgb: numerators.map(|value| value as f32 / scale as f32),
+        }
+    }
+}
+
 pub struct Backdrop {
     initial: [u8; 3],
     entry_rgb: [u8; 3],
@@ -21,7 +35,7 @@ pub struct Backdrop {
 impl Backdrop {
     pub fn new(initial: [u8; 3], now_ns: u64) -> Self {
         let swatch = nearest_swatch(initial);
-        let entry_rgb = swatch_color(swatch, swatch, 0);
+        let entry_rgb = swatch_sample(swatch, swatch, 0).rgb;
         let max_delta = initial[0]
             .abs_diff(entry_rgb[0])
             .max(initial[1].abs_diff(entry_rgb[1]))
@@ -38,7 +52,7 @@ impl Backdrop {
         }
     }
 
-    pub fn rgb_at(&mut self, now_ns: u64) -> [u8; 3] {
+    pub fn sample_at(&mut self, now_ns: u64) -> Sample {
         self.last_ns = self.last_ns.max(now_ns);
         let elapsed_ns = self.last_ns - self.started_ns;
         let intro_ns = self.intro_steps * INTRO_STEP_NS;
@@ -47,11 +61,12 @@ impl Backdrop {
             let step_elapsed_ns = elapsed_ns % INTRO_STEP_NS;
             let weight = step * WEIGHT + eased_weight(step_elapsed_ns, INTRO_STEP_NS);
             let total = self.intro_steps * WEIGHT;
-            return core::array::from_fn(|channel| {
+            let numerators = core::array::from_fn(|channel| {
                 let a = u64::from(self.initial[channel]);
                 let b = u64::from(self.entry_rgb[channel]);
-                ((a * (total - weight) + b * weight + total / 2) / total) as u8
+                a * (total - weight) + b * weight
             });
+            return Sample::from_ratio(numerators, total);
         }
 
         let elapsed_since_segment = elapsed_ns - self.segment_started_ns;
@@ -62,7 +77,7 @@ impl Backdrop {
             let duration_ns = step_duration_ns(self.swatch);
             let next = next_swatch(self.swatch);
             if segment_elapsed_ns < duration_ns {
-                return swatch_color(
+                return swatch_sample(
                     self.swatch,
                     next,
                     eased_weight(segment_elapsed_ns, duration_ns),
@@ -72,6 +87,11 @@ impl Backdrop {
             self.segment_started_ns += duration_ns;
             self.swatch = next;
         }
+    }
+
+    #[cfg(test)]
+    fn rgb_at(&mut self, now_ns: u64) -> [u8; 3] {
+        self.sample_at(now_ns).rgb
     }
 }
 
@@ -121,7 +141,7 @@ fn eased_weight(elapsed_ns: u64, duration_ns: u64) -> u64 {
     (t * t * (3 * WEIGHT - 2 * t) + scale / 2) / scale
 }
 
-fn swatch_color(start: usize, end: usize, weight: u64) -> [u8; 3] {
+fn swatch_sample(start: usize, end: usize, weight: u64) -> Sample {
     let (start_column, start_row) = grid_point(start);
     let (end_column, end_row) = grid_point(end);
     let mix = |a: u64, b: u64| a * (WEIGHT - weight) + b * weight;
@@ -140,7 +160,7 @@ fn swatch_color(start: usize, end: usize, weight: u64) -> [u8; 3] {
         3 => [0, chroma - rising, chroma],
         _ => [rising, 0, chroma],
     };
-    rgb.map(|component| (((component + base) * 255 + light_scale / 2) / light_scale) as u8)
+    Sample::from_ratio(rgb.map(|component| (component + base) * 255), light_scale)
 }
 
 fn nearest_swatch(initial: [u8; 3]) -> usize {
@@ -151,7 +171,7 @@ fn nearest_swatch(initial: [u8; 3]) -> usize {
         if achromatic && grid_point(swatch).0 != 0 {
             continue;
         }
-        let candidate = swatch_color(swatch, swatch, 0);
+        let candidate = swatch_sample(swatch, swatch, 0).rgb;
         let distance = (0..3)
             .map(|channel| u32::from(initial[channel].abs_diff(candidate[channel])).pow(2))
             .sum();
@@ -166,6 +186,10 @@ fn nearest_swatch(initial: [u8; 3]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn swatch_color(start: usize, end: usize, weight: u64) -> [u8; 3] {
+        swatch_sample(start, end, weight).rgb
+    }
 
     #[test]
     fn sweep_visits_every_adjacent_swatch_once() {

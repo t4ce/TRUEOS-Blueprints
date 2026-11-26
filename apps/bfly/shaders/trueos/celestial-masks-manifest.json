@@ -1,8 +1,8 @@
 {
-  "id": 35,
+  "id": 40,
   "name": "bfly-celestial-masks",
-  "bytes": 524324,
-  "sha256": "6f350e823dbf0d63841f505ec2f1693940f34cc74513e4d93d2b7f1e1fcf2b56",
+  "bytes": 1084332,
+  "sha256": "edcb51d15e08f532acf310489055078afddb1a4583114f597e93dec0f539ad8f",
   "sources": {},
   "capture_directory": ".",
   "stage_directory": ".",
@@ -20,6 +20,19 @@
       "bytes": 262144,
       "sha256": "575403c9e70d4f60235275a2dfcf01055d1ec8e561c87e2ec1072d2c1fb4645b",
       "asset_file": "bfly-earth.r8"
+    },
+    {
+      "name": "bfly-sun",
+      "kind": 0,
+      "bytes": 560000,
+      "sha256": "a93b82df2d7d5caebf5168874fcd54ee9c64b39d2f3ca9bc89341faef0513a10",
+      "asset_file": "bfly-sun.r8"
     }
-  ]
+  ],
+  "sun_provenance": {
+    "width": 1000,
+    "height": 560,
+    "source": "https://stock.adobe.com/Rest/Libraries/Watermarked/Download/770084273/2",
+    "source_sha256": "164ab2aa0937797043dfcf85fc8925620c0407f30ff8c473a3ae364d55f9f123"
+  }
 }

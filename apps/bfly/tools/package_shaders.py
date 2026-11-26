@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import runpy
 import struct
 import subprocess
 import tarfile
@@ -116,11 +117,34 @@ def blueprint_shader_section(path):
     return shader_data[0]
 
 
+def verify_sources(record):
+    for name, expected in record["sources"].items():
+        require(digest((APP / "shaders" / name).read_bytes()) == expected,
+                f"Shader source differs from native capture for {name}")
+    if turn := record.get("flight_turn_source"):
+        generator = APP / "tools/bake_flight_turn.py"
+        snippet = APP / "shaders/direct-flight-turn.glsl"
+        require("direct-wings.tesc" in record["sources"],
+                f"Flight-turn source in {record['name']} has no base hull shader")
+        require(digest(generator.read_bytes()) == turn["generator_sha256"],
+                f"Flight-turn source generator differs for {record['name']}")
+        require(digest(snippet.read_bytes()) == turn["snippet_sha256"],
+                f"Flight-turn GLSL differs for {record['name']}")
+        source = runpy.run_path(str(generator))["flight_turn_source"]()
+        require(digest(source.encode()) == turn["generated_tesc_sha256"],
+                f"Generated flight-turn hull source differs for {record['name']}")
+        if wake := record.get("stage_wake_source"):
+            wake_generator = APP / "tools/bake_stage_wake.py"
+            require(digest(wake_generator.read_bytes()) == wake["generator_sha256"],
+                    f"Stage wake source generator differs for {record['name']}")
+            source = runpy.run_path(str(wake_generator))["stage_wake_source"](source)
+            require(digest(source.encode()) == wake["generated_tesc_sha256"],
+                    f"Generated stage wake hull source differs for {record['name']}")
+
+
 def check_publication(record, trust, kernel_image, rebuild_from, *, archived=False):
     if not archived:
-        for name, expected in record["sources"].items():
-            require(digest((APP / "shaders" / name).read_bytes()) == expected,
-                    f"Shader source differs from native capture for {name}")
+        verify_sources(record)
     path = NATIVE / (record["name"] + ".apshader")
     package = captured_package(record, rebuild_from) if rebuild_from else path.read_bytes()
     stages = verify_package(record, package)
@@ -188,8 +212,12 @@ def main():
                         help="rebuild the translucent wing-fill shader from its native captures")
     parser.add_argument("--rebuild-twilight-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild the Twilight ribbon pipeline from its native captures")
+    parser.add_argument("--rebuild-sunrise-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild both Sunrise passes from captures in ribbon/ and outline/")
     parser.add_argument("--rebuild-inset-outline-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild the outline over the inset wing fill from its native captures")
+    parser.add_argument("--rebuild-neutral-outlines-from", type=Path, metavar="CAPTURE_DIR",
+                        help="rebuild the white outlines from captures in mixed/, inset/, and sky/")
     parser.add_argument("--rebuild-history-from", type=Path, metavar="CAPTURE_DIR",
                         help="rebuild and compare the earlier monotone history kernel against its IGC compiles")
     parser.add_argument("--rebuild-smoke-history-from", type=Path, metavar="CAPTURE_DIR",
@@ -218,7 +246,7 @@ def main():
     check_graphics_publication(
         mixed_record, trust, kernel_image, args.rebuild_mixed_from)
     widths_record = json.loads((NATIVE / "tier-width-wings-manifest.json").read_text())
-    widths_package = check_graphics_publication(
+    check_graphics_publication(
         widths_record, trust, kernel_image, args.rebuild_tier_widths_from)
     fill_record = json.loads((NATIVE / "filled-wings-manifest.json").read_text())
     check_graphics_publication(
@@ -231,13 +259,28 @@ def main():
     translucent_package = check_graphics_publication(
         translucent_record, trust, kernel_image, args.rebuild_translucent_from)
     twilight_record = json.loads((NATIVE / "twilight-ribbon-manifest.json").read_text())
-    twilight_package = check_graphics_publication(
-        twilight_record, trust, kernel_image, args.rebuild_twilight_from)
+    check_graphics_publication(twilight_record, trust, kernel_image, args.rebuild_twilight_from)
+    sunrise_packages = []
+    for stage in ("ribbon", "outline"):
+        record = json.loads((NATIVE / f"sunrise-{stage}-manifest.json").read_text())
+        if stage == "ribbon":
+            provenance = record["texture_provenance"]
+            for asset in ("sunrise", "twilight", "universe", "alpha"):
+                source = APP / provenance[f"{asset}_source"]
+                require(digest(source.read_bytes()) == provenance[f"{asset}_sha256"],
+                        f"Sunrise atlas source differs from manifest for {source.name}")
+        rebuild = args.rebuild_sunrise_from / stage if args.rebuild_sunrise_from else None
+        sunrise_packages.append(check_graphics_publication(record, trust, kernel_image, rebuild))
     inset_outline_record = json.loads((NATIVE / "inset-outline-manifest.json").read_text())
-    inset_outline_package = check_graphics_publication(
+    check_graphics_publication(
         inset_outline_record, trust, kernel_image, args.rebuild_inset_outline_from)
+    neutral_outlines = {}
+    for kind, directory in (("mixed", "mixed"), ("inset", "inset"), ("wake", "sky")):
+        record = json.loads((NATIVE / f"neutral-{kind}-outline-manifest.json").read_text())
+        rebuild = args.rebuild_neutral_outlines_from / directory if args.rebuild_neutral_outlines_from else None
+        neutral_outlines[kind] = check_graphics_publication(record, trust, kernel_image, rebuild)
     celestial_record = json.loads((NATIVE / "celestial-masks-manifest.json").read_text())
-    _, celestial_masks, _ = check_publication(celestial_record, trust, kernel_image, NATIVE)
+    check_publication(celestial_record, trust, kernel_image, NATIVE)
     history_record = json.loads((NATIVE / "history-manifest.json").read_text())
     history_package = check_history_publication(
         history_record, trust, kernel_image, args.rebuild_history_from)
@@ -261,9 +304,8 @@ def main():
         bundle_file.write_bytes(bundle)
     require(bundle_file.read_bytes() == bundle, "bfly bundle differs from its packages")
     if args.blueprint:
-        expected = b"".join((widths_package, twilight_package, history_package,
-                             translucent_package, inset_outline_package,
-                             celestial_masks))
+        expected = b"".join((neutral_outlines["mixed"], sunrise_packages[0], neutral_outlines["wake"],
+                             history_package, translucent_package, neutral_outlines["inset"]))
         require(blueprint_shader_section(args.blueprint) == expected,
                 f"Shader metadata differs from bfly's wings and history packages in {args.blueprint}")
     print("Verified bfly native shader sources, captured stages, and kernel SHA-256 records")
@@ -285,8 +327,12 @@ def main():
         print("Verified translucent wing-fill tessellation ISA in the offline Vulkan pipeline caches")
     if args.rebuild_twilight_from:
         print("Verified Twilight ribbon tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_sunrise_from:
+        print("Verified Sunrise ribbon and outline ISA in the offline Vulkan pipeline caches")
     if args.rebuild_inset_outline_from:
         print("Verified inset wing-outline tessellation ISA in the offline Vulkan pipeline caches")
+    if args.rebuild_neutral_outlines_from:
+        print("Verified the three neutral outline captures in the offline Vulkan pipeline caches")
     if args.rebuild_history_from:
         print("Verified outline history Zebin and SPIR-V for ADL-S and RPL-S")
     if args.rebuild_smoke_history_from:

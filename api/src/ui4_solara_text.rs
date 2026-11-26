@@ -1666,6 +1666,7 @@ impl Frame {
                             SpriteBackend::Compositor => 0,
                             SpriteBackend::PremultipliedCompositor => 1 << 30,
                             SpriteBackend::Bcs0 => 1 << 31,
+                            SpriteBackend::Bcs0Overwrite => (1 << 29) | (1 << 31),
                         },
                 }
             })

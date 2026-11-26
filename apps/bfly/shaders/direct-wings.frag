@@ -1,8 +1,15 @@
 #version 450 core
 
+#ifndef BFLY_NEUTRAL_OUTLINE
 layout(location = 0) flat in uint segment_color;
+#endif
 layout(location = 0) out vec4 color;
 
+#ifdef BFLY_NEUTRAL_OUTLINE
+void main() {
+    color = vec4(1.0);
+}
+#else
 void main() {
     uint palette = segment_color & 3u;
     uint trail = segment_color >> 2;
@@ -12,3 +19,4 @@ void main() {
     uvec3 tag = uvec3(trail & 3u, (trail >> 2) & 1u, (trail >> 3) & 1u);
     color = vec4(vec3(primary ^ tag) * (1.0 / 255.0), 1.0);
 }
+#endif

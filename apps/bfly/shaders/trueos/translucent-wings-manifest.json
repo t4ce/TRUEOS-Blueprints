@@ -1,15 +1,15 @@
 {
   "id": 36,
   "name": "bfly-translucent-wings",
-  "bytes": 14052,
-  "sha256": "c2c00bf3e6423420ea9098766f186a531b88d5c04073de4d9f6aaeaa86563380",
+  "bytes": 27876,
+  "sha256": "9060e55db560f2ce3bebe84fee859818f24c995bd3a755d1c02d12c726ad4853",
   "vertex_layouts": [
     25
   ],
   "topology": "patch-list-4",
   "sources": {
     "direct-wings.vert": "4ece6d883cdf18dcedd57608580c1f5ae88b654d9b64402870a84a6de01bab04",
-    "direct-wings.tesc": "7f34f1b4954d2c35bca15337362705b7339f3e8054d9b6ec7c6b0a4c38c84a78",
+    "direct-wings.tesc": "21b6c5d7fc5a54a7f258d293544722ebede9e41c5caf56626b834ecd69421508",
     "filled-wings.tese": "e442056d137c613e3a4e3b60312221621b599b57333b95d97544ba45a4a3a811",
     "filled-wings.frag": "71ec89abb29a3c603a68d15c029d2bbd788bc52336971ce04ab0fba41973ef2e"
   },
@@ -41,8 +41,8 @@
     {
       "name": "hs-simd8",
       "kind": 1,
-      "bytes": 13088,
-      "sha256": "5887ea1616e0ce1d87aaf32db114fcab8a0eae7676aa0cf1263d5267a63f41db",
+      "bytes": 26912,
+      "sha256": "1509eab541c2abe9b64470f4f63a0b7af91e0102e6c4ed9fb47cafae60bf9776",
       "capture_file": "hull-simd8.bin"
     },
     {
@@ -70,12 +70,12 @@
         "pci_revision": "0c",
         "platform": "ADL-S GT1",
         "directory": "4680",
-        "pipeline_cache_sha256": "f610d6510480a870207c848adbc687103681f9a9897af20a951a677e690aa4b7",
+        "pipeline_cache_sha256": "5a1f6d82326d117fe30244fdf9d6206b88f0fa2bdf574ef4e2073edd36ef312c",
         "stage_offsets": {
-          "vs-simd8": 2296,
-          "hs-simd8": 22216,
+          "vs-simd8": 40104,
+          "hs-simd8": 43176,
           "ds-simd8": 984,
-          "ps-simd16": 36976
+          "ps-simd16": 41928
         }
       },
       {
@@ -84,14 +84,19 @@
         "pci_revision": "04",
         "platform": "RPL-S",
         "directory": "a780",
-        "pipeline_cache_sha256": "0f01e5caaf2ab57e4dbe9b1e5211ad1272eabb3a9c3e3bef155c6f595295f977",
+        "pipeline_cache_sha256": "604dab92ec0771ccd0703280097940e21f7b2c05eb30be97c4753cebb5751e68",
         "stage_offsets": {
-          "vs-simd8": 2296,
-          "hs-simd8": 22216,
+          "vs-simd8": 40104,
+          "hs-simd8": 43176,
           "ds-simd8": 984,
-          "ps-simd16": 36976
+          "ps-simd16": 41928
         }
       }
     ]
+  },
+  "flight_turn_source": {
+    "generated_tesc_sha256": "947d8996832ea07d0a64c7cfae94c6abcd8ee38a1dbed57a0c2d34e403e80b41",
+    "generator_sha256": "06ea420dc6ba51ed536a3f0bcbe192115acea4f19cfe7569e7c253de68b004e8",
+    "snippet_sha256": "93a4c1ef77fb9e038c66013fcc1842816dffc411d9b980f9089ff1ba87f2772b"
   }
 }

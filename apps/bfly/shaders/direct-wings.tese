@@ -6,17 +6,21 @@ layout(location = 1) patch in int straight_edge;
 layout(location = 2) patch in vec3 clip_from_x;
 layout(location = 3) patch in vec3 clip_from_y;
 layout(location = 4) patch in vec3 clip_from_origin;
+#ifndef BFLY_NEUTRAL_OUTLINE
 layout(location = 0) flat out uint segment_color;
+#endif
 
 void main() {
     float lines = float(isoline_count);
     float interval = round(gl_TessCoord.y * lines);
     float t = (interval + gl_TessCoord.x) / lines;
+#ifndef BFLY_NEUTRAL_OUTLINE
     // Count across isolines so the palette continues through each cubic.
     // The provoking vertex supplies a single color index for the entire line.
     float segments_per_line = gl_TessLevelOuter[1];
     uint segment = uint(interval * segments_per_line + round(gl_TessCoord.x * segments_per_line));
     segment_color = (segment % 3u) | (uint(straight_edge) & ~3u);
+#endif
 
     vec2 p0 = gl_in[0].gl_Position.xy;
     vec2 p3 = gl_in[3].gl_Position.xy;

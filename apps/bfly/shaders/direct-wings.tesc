@@ -374,7 +374,9 @@ void main() {
     int artwork = straight_edge >> 2;
 #elif defined(BFLY_MIXED_WINGS)
     int patch_kind = int(gl_in[0].gl_Position.z);
-#ifdef BFLY_INSET_OUTLINE
+#ifdef BFLY_SUNRISE
+    int artwork = (patch_kind >> 2) & 1;
+#elif defined(BFLY_INSET_OUTLINE)
     int artwork = patch_kind >> 2;
 #else
     int artwork = patch_kind >> 1;
@@ -383,7 +385,9 @@ void main() {
 #else
     straight_edge = int(gl_in[0].gl_Position.z);
 #endif
-#ifdef BFLY_TWILIGHT_RIBBON
+#if defined(BFLY_TWILIGHT_RIBBON) && defined(BFLY_SUNRISE)
+    if (index >= int(flock_motion.w) || index >= 80 || straight_edge != 0) {
+#elif defined(BFLY_TWILIGHT_RIBBON)
     if (index >= int(flock_motion.w) || index >= 80 || straight_edge != 0 || twilight_mode < 0.5) {
 #elif defined(BFLY_FILL_WINGS)
     if (index >= int(flock_motion.w) || index >= 80) {
@@ -446,6 +450,12 @@ void main() {
         return;
     }
 
+#ifdef BFLY_SUNRISE
+    const float age = 0.590;
+    bool twilight_sky = twilight_mode >= 1.5;
+    float stretch = twilight_sky ? 0.75 : 0.8;
+    float head_angle = right_side ? angles.x : angles.y;
+#else
     bool long_sweep = twilight_mode >= 1.5;
     bool descending = right_side ? downstroke.x : downstroke.y;
     if (!long_sweep && !descending) {
@@ -454,9 +464,10 @@ void main() {
         return;
     }
 
+    float age = long_sweep ? 0.22 : 0.14;
+#endif
     // Sweep the actual flap angle while holding the short-lived flight pose.
     // The middle sample bends the ribbon around the wing's hinge.
-    float age = long_sweep ? 0.22 : 0.14;
     bvec2 unused_direction;
     vec2 mid_angles = flap_angles(seed & 7, mod(time - 0.5 * age, 60.0),
                                  fast_weight, weight_rate, unused_direction);
@@ -464,6 +475,10 @@ void main() {
                                   fast_weight, weight_rate, unused_direction);
     float mid_angle = right_side ? mid_angles.x : mid_angles.y;
     float tail_angle = right_side ? tail_angles.x : tail_angles.y;
+#ifdef BFLY_SUNRISE
+    mid_angle = mix(head_angle, mid_angle, stretch);
+    tail_angle = mix(head_angle, tail_angle, stretch);
+#endif
     float side = right_side ? 1.0 : -1.0;
     vec3 mid_x = pose * vec3(side * cos(mid_angle), 0.0, sin(mid_angle));
     vec3 tail_x = pose * vec3(side * cos(tail_angle), 0.0, sin(tail_angle));
@@ -481,13 +496,22 @@ void main() {
         return;
     }
 
-    vec2 scale = (2.0 * FOCAL_LENGTH) / frame.xy;
-    vec2 center = 2.0 * center_px / frame.xy - 1.0;
-    clip_from_mid_x = clip_basis(mid_x, scale, center);
-    clip_from_tail_x = clip_basis(tail_x, scale, center);
+    vec2 ribbon_scale = (2.0 * FOCAL_LENGTH) / frame.xy;
+    vec2 ribbon_center = 2.0 * center_px / frame.xy - 1.0;
+    clip_from_mid_x = clip_basis(mid_x, ribbon_scale, ribbon_center);
+    clip_from_tail_x = clip_basis(tail_x, ribbon_scale, ribbon_center);
     // These two existing patch lanes carry appearance data for the ribbon.
+#ifdef BFLY_SUNRISE
+    float phase = 0.25 * time + float(seed & 7) / float(PANEL_COUNT);
+    float wing_phase = TAU * fract(phase + (right_side ? 0.0 : 0.135));
+    uint tag = (uint(patch_kind) >> 3u) << 2u;
+    tag |= (uint(twilight_sky) << 5u) | (uint(artwork) << 1u) | uint(!right_side);
+    isoline_count = int(packHalf2x16(vec2(smoothstep(1.5, 12.0, sweep), head_angle)));
+    straight_edge = int((tag << 16u) | packHalf2x16(vec2(wing_phase, 0.0)));
+#else
     isoline_count = int(round(255.0 * smoothstep(1.5, 12.0, sweep))) | (int(long_sweep) << 8);
     straight_edge = seed;
+#endif
     float segments = float(1 << findMSB(uint(clamp(span * 0.25, 8.0, 32.0))));
     gl_TessLevelOuter[0] = 2.0;
     gl_TessLevelOuter[1] = segments;
@@ -542,8 +566,16 @@ void main() {
     uint span = uint(clamp(max(extent.x, extent.y), 4.0, 1024.0));
     int log_span = findMSB(span);
 #endif
+#ifdef BFLY_NEUTRAL_OUTLINE
+    // Keep the projected width class and give larger curves half as many segments.
+    int curve_segments = span < 16u ? 4 : 1 << (log_span - 1);
+#else
     int curve_segments = span < 16u ? 4 : 1 << log_span;
+#endif
     int segments = (straight_edge != 0) ? 1 : curve_segments;
+#ifdef BFLY_NEUTRAL_OUTLINE
+    straight_edge = hinge_only ? 2 : straight_edge;
+#else
 #ifndef BFLY_TIER_WIDTH
     int tier = hinge_only || span < 16u ? 7 : 10 - log_span;
 #endif
@@ -555,6 +587,7 @@ void main() {
     straight_edge = textured_trail > 0.0 ? edge_kind | (tier << 2) | (deposit ? 32 : 0) : edge_kind;
 #else
     straight_edge = edge_kind | (tier << 2) | (deposit ? 32 : 0);
+#endif
 #endif
     // Every isoline covers one interval of the same cubic.
     isoline_count = max(1, segments / 64);

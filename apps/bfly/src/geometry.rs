@@ -93,19 +93,28 @@ pub const VERTEX_COUNT: usize = 4 * PATCH_COUNT;
 pub const FILL_PATCH_COUNT: usize = 10;
 pub const FILL_VERTEX_COUNT: usize = 4 * FILL_PATCH_COUNT;
 pub const LAYERED_VERTEX_COUNT: usize = FILL_VERTEX_COUNT + VERTEX_COUNT;
+pub const SCENE_VERTEX_COUNT: usize = LAYERED_VERTEX_COUNT + FILL_VERTEX_COUNT;
 const STRIDE: usize = 3 * size_of::<f32>();
 
 const CONTROL_POINTS: [[f32; 3]; VERTEX_COUNT] = control_points();
 pub const VERTEX_BYTES: [u8; VERTEX_COUNT * STRIDE] = vertex_bytes(&CONTROL_POINTS);
 pub const INDEX_BYTES: [u8; VERTEX_COUNT * size_of::<u32>()] = index_bytes();
-const FILL_CONTROL_POINTS: [[f32; 3]; FILL_VERTEX_COUNT] = fill_control_points();
+const FILL_CONTROL_POINTS: [[f32; 3]; FILL_VERTEX_COUNT] = fill_control_points(0.0);
+// Bit 0 marks the hinge, bit 2 the artwork, and bits 3+ the cubic index.
+const SUNRISE_CONTROL_POINTS: [[f32; 3]; FILL_VERTEX_COUNT] = fill_control_points(8.0);
 pub const FILL_VERTEX_BYTES: [u8; FILL_VERTEX_COUNT * STRIDE] = vertex_bytes(&FILL_CONTROL_POINTS);
 pub const FILL_INDEX_BYTES: [u8; FILL_VERTEX_COUNT * size_of::<u32>()] = index_bytes();
 pub const LAYERED_VERTEX_BYTES: [u8; LAYERED_VERTEX_COUNT * STRIDE] =
     join_bytes(&FILL_VERTEX_BYTES, &VERTEX_BYTES);
+const SUNRISE_VERTEX_BYTES: [u8; FILL_VERTEX_COUNT * STRIDE] =
+    vertex_bytes(&SUNRISE_CONTROL_POINTS);
+pub const SCENE_VERTEX_BYTES: [u8; SCENE_VERTEX_COUNT * STRIDE] =
+    join_bytes(&LAYERED_VERTEX_BYTES, &SUNRISE_VERTEX_BYTES);
 // The two draw views each index their own vertex window starting from zero.
 pub const LAYERED_INDEX_BYTES: [u8; LAYERED_VERTEX_COUNT * size_of::<u32>()] =
     join_bytes(&FILL_INDEX_BYTES, &INDEX_BYTES);
+pub const SCENE_INDEX_BYTES: [u8; SCENE_VERTEX_COUNT * size_of::<u32>()] =
+    join_bytes(&LAYERED_INDEX_BYTES, &FILL_INDEX_BYTES);
 
 const fn control_points() -> [[f32; 3]; VERTEX_COUNT] {
     let mut controls = [[0.0; 3]; VERTEX_COUNT];
@@ -118,7 +127,7 @@ const fn control_points() -> [[f32; 3]; VERTEX_COUNT] {
         let tag = (artwork * 2) as f32;
         let mut wing = 0;
         while wing < paths.len() {
-            next = append_cubic_path(&mut controls, next, paths[wing], root_x, tag);
+            next = append_cubic_path(&mut controls, next, paths[wing], root_x, tag, 0.0);
             wing += 1;
         }
         next = append_straight(&mut controls, next, start, end, root_x, tag + 1.0);
@@ -128,7 +137,7 @@ const fn control_points() -> [[f32; 3]; VERTEX_COUNT] {
     controls
 }
 
-const fn fill_control_points() -> [[f32; 3]; FILL_VERTEX_COUNT] {
+const fn fill_control_points(curve_tag_step: f32) -> [[f32; 3]; FILL_VERTEX_COUNT] {
     let mut controls = [[0.0; 3]; FILL_VERTEX_COUNT];
     let mut artwork = 0;
     let mut next = 0;
@@ -136,7 +145,7 @@ const fn fill_control_points() -> [[f32; 3]; FILL_VERTEX_COUNT] {
         let path = FILL_OUTLINES[artwork];
         let first = path[0];
         let tag = (artwork * 4) as f32;
-        next = append_cubic_path(&mut controls, next, path, first[0], tag);
+        next = append_cubic_path(&mut controls, next, path, first[0], tag, curve_tag_step);
         next = append_straight(
             &mut controls,
             next,
@@ -157,12 +166,14 @@ const fn append_cubic_path(
     path: &[Point],
     root_x: f64,
     tag: f32,
+    curve_tag_step: f32,
 ) -> usize {
     let mut curve = 0;
     while curve < path.len() - 1 {
+        let curve_tag = tag + (curve / 3) as f32 * curve_tag_step;
         let mut point = 0;
         while point < 4 {
-            controls[next] = control(path[curve + point], root_x, tag);
+            controls[next] = control(path[curve + point], root_x, curve_tag);
             next += 1;
             point += 1;
         }
@@ -230,6 +241,23 @@ const fn join_bytes<const N: usize>(first: &[u8], second: &[u8]) -> [u8; N] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sunrise_keeps_the_fill_contours_with_a_tag_for_each_cubic() {
+        let tags = [0.0, 8.0, 16.0, 1.0, 4.0, 12.0, 20.0, 28.0, 36.0, 5.0];
+        for (index, (sunrise, fill)) in SUNRISE_CONTROL_POINTS
+            .iter()
+            .zip(&FILL_CONTROL_POINTS)
+            .enumerate()
+        {
+            assert_eq!(sunrise[..2], fill[..2]);
+            assert_eq!(sunrise[2], tags[index / 4]);
+        }
+        assert_eq!(
+            &SCENE_VERTEX_BYTES[LAYERED_VERTEX_BYTES.len()..],
+            &SUNRISE_VERTEX_BYTES,
+        );
+    }
 
     #[test]
     fn mesh_preserves_both_authored_outlines_and_connectors() {
@@ -309,5 +337,15 @@ mod tests {
         let (fill, outline) = LAYERED_INDEX_BYTES.split_at(FILL_INDEX_BYTES.len());
         assert_eq!(fill, FILL_INDEX_BYTES);
         assert_eq!(outline, INDEX_BYTES);
+    }
+
+    #[test]
+    fn layered_wake_mesh_adds_the_locally_indexed_ribbon_view() {
+        let (layered, wake) = SCENE_VERTEX_BYTES.split_at(LAYERED_VERTEX_BYTES.len());
+        assert_eq!(layered, LAYERED_VERTEX_BYTES);
+        assert_eq!(wake, SUNRISE_VERTEX_BYTES);
+        let (layered, wake) = SCENE_INDEX_BYTES.split_at(LAYERED_INDEX_BYTES.len());
+        assert_eq!(layered, LAYERED_INDEX_BYTES);
+        assert_eq!(wake, FILL_INDEX_BYTES);
     }
 }

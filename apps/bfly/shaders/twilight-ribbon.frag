@@ -10,8 +10,10 @@ layout(location = 0) out vec4 color;
 
 void main() {
     float density = texture(twilight_density, fract(ribbon.xy)).r;
-    float nebula = smoothstep(0.08, 0.65, density);
-    float sparks = smoothstep(0.70, 0.98, density);
+    // Most texels in the starfield are dark. Reserve the intense amber for
+    // the bright nebula cores and stars while keeping its ink-like gaps.
+    float nebula = smoothstep(0.035, 0.30, density);
+    float sparks = smoothstep(0.30, 0.68, density);
     vec3 ink = vec3(0.029, 0.018, 0.071);
     vec3 red = vec3(0.85, 0.055, 0.08);
     vec3 amber = vec3(1.0, 0.61, 0.25);

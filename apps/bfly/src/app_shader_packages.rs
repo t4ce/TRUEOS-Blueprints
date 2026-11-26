@@ -1,69 +1,35 @@
 #[cfg(target_os = "trueos")]
 mod native {
     const WINGS_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-tier-width-wings.apshader").len();
-    const TWILIGHT_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-twilight-ribbon.apshader").len();
-    const HISTORY_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-history.apshader").len();
+        include_bytes!("../shaders/trueos/bfly-neutral-mixed-outline.apshader").len();
+    const SUNRISE_RIBBON_BYTES: usize =
+        include_bytes!("../shaders/trueos/bfly-sunrise-ribbon.apshader").len();
+    const SUNRISE_OUTLINE_BYTES: usize =
+        include_bytes!("../shaders/trueos/bfly-neutral-wake-outline.apshader").len();
+    const HISTORY_BYTES: usize = include_bytes!("../shaders/trueos/bfly-history.apshader").len();
     const FILLED_WINGS_BYTES: usize =
         include_bytes!("../shaders/trueos/bfly-translucent-wings.apshader").len();
     const INSET_OUTLINE_BYTES: usize =
-        include_bytes!("../shaders/trueos/bfly-inset-outline.apshader").len();
-    const MASK_BYTES: usize = 512 * 512;
-
-    #[repr(C)]
-    struct MaskStage {
-        kind: [u8; 4],
-        size: [u8; 4],
-        pixels: [u8; MASK_BYTES],
-    }
-
-    #[repr(C)]
-    struct CelestialMasks {
-        magic: [u8; 8],
-        id: [u8; 4],
-        payload_bytes: [u8; 4],
-        stage_count: [u8; 4],
-        stages: [MaskStage; 2],
-    }
-
+        include_bytes!("../shaders/trueos/bfly-neutral-inset-outline.apshader").len();
     #[repr(C)]
     struct ShaderPackages {
         wings: [u8; WINGS_BYTES],
-        twilight: [u8; TWILIGHT_BYTES],
+        sunrise_ribbon: [u8; SUNRISE_RIBBON_BYTES],
+        sunrise_outline: [u8; SUNRISE_OUTLINE_BYTES],
         history: [u8; HISTORY_BYTES],
         filled_wings: [u8; FILLED_WINGS_BYTES],
         inset_outline: [u8; INSET_OUTLINE_BYTES],
-        celestial_masks: CelestialMasks,
     }
 
     // The Blueprint packer preserves this section as non-ALLOC loader metadata.
     #[used]
     #[unsafe(link_section = ".trueos.shaders")]
     static APP_SHADER_PACKAGES: ShaderPackages = ShaderPackages {
-        wings: *include_bytes!("../shaders/trueos/bfly-tier-width-wings.apshader"),
-        twilight: *include_bytes!("../shaders/trueos/bfly-twilight-ribbon.apshader"),
+        wings: *include_bytes!("../shaders/trueos/bfly-neutral-mixed-outline.apshader"),
+        sunrise_ribbon: *include_bytes!("../shaders/trueos/bfly-sunrise-ribbon.apshader"),
+        sunrise_outline: *include_bytes!("../shaders/trueos/bfly-neutral-wake-outline.apshader"),
         history: *include_bytes!("../shaders/trueos/bfly-history.apshader"),
         filled_wings: *include_bytes!("../shaders/trueos/bfly-translucent-wings.apshader"),
-        inset_outline: *include_bytes!("../shaders/trueos/bfly-inset-outline.apshader"),
-        celestial_masks: CelestialMasks {
-            magic: *b"APSHDR1\0",
-            id: 35u32.to_le_bytes(),
-            payload_bytes: (4 + 2 * (8 + MASK_BYTES as u32)).to_le_bytes(),
-            stage_count: 2u32.to_le_bytes(),
-            stages: [
-                MaskStage {
-                    kind: 0u32.to_le_bytes(),
-                    size: (MASK_BYTES as u32).to_le_bytes(),
-                    pixels: *include_bytes!("../shaders/trueos/bfly-moon.r8"),
-                },
-                MaskStage {
-                    kind: 0u32.to_le_bytes(),
-                    size: (MASK_BYTES as u32).to_le_bytes(),
-                    pixels: *include_bytes!("../shaders/trueos/bfly-earth.r8"),
-                },
-            ],
-        },
+        inset_outline: *include_bytes!("../shaders/trueos/bfly-neutral-inset-outline.apshader"),
     };
 }

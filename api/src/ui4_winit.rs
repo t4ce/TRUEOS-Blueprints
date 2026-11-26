@@ -34,6 +34,10 @@ pub enum SpriteBackend {
     /// premultiplied; alpha-zero holes preserve existing foreground pixels.
     /// Partial alpha is preserved for the display engine's layer blend.
     Bcs0,
+    /// Copy unscaled premultiplied RGBA8 on BCS0, including alpha-zero pixels.
+    /// Submit a full-frame replacement first, then any in-frame patches in
+    /// the same batch. All commands in the frame must select this backend.
+    Bcs0Overwrite,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpriteCommand {

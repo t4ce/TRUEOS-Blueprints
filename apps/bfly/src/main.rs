@@ -3,10 +3,12 @@
 mod app_shader_packages;
 mod celestial_scene;
 
+use bfly::celestial::{Wake, WakeFade};
 use bfly::flock::{FRAME_PERIOD_NS, Flock, Snapshot};
 use bfly::geometry::{
-    FILL_INDEX_BYTES, FILL_PATCH_COUNT, FILL_VERTEX_BYTES, FILL_VERTEX_COUNT, LAYERED_INDEX_BYTES,
-    LAYERED_VERTEX_BYTES, LAYERED_VERTEX_COUNT, PATCH_COUNT, VERTEX_COUNT,
+    FILL_INDEX_BYTES, FILL_PATCH_COUNT, FILL_VERTEX_BYTES, FILL_VERTEX_COUNT, LAYERED_VERTEX_BYTES,
+    LAYERED_VERTEX_COUNT, PATCH_COUNT, SCENE_INDEX_BYTES, SCENE_VERTEX_BYTES, SCENE_VERTEX_COUNT,
+    VERTEX_COUNT,
 };
 use celestial_scene::{BACKGROUND_HZ, CelestialScene};
 use core::fmt;
@@ -62,18 +64,26 @@ impl Drop for OwnedDevice {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RenderMode {
     Monochrome,
+    StageWake,
     Twilight,
-    TwilightWide,
     Fill,
     Layered,
 }
 
 impl RenderMode {
-    fn describe(self, frame: &mut Frame) -> Result<(), Error> {
+    fn uses_wake(self) -> bool {
+        matches!(self, Self::StageWake | Self::Twilight)
+    }
+
+    fn describe(self, frame: &mut Frame, wake: Wake) -> Result<(), Error> {
         let (title, mode) = match self {
             Self::Monochrome => ("bfly - monochrome", "monochrome"),
-            Self::Twilight => ("bfly - twilight", "twilight"),
-            Self::TwilightWide => ("bfly - twilight wide", "twilight-wide"),
+            Self::StageWake => match wake {
+                Wake::Sunrise => ("bfly - sunrise", "sunrise"),
+                Wake::Twilight => ("bfly - twilight", "twilight"),
+                Wake::Universe => ("bfly - universe", "universe"),
+            },
+            Self::Twilight => ("bfly - twilight layered", "twilight-layered"),
             Self::Fill => ("bfly - fill", "fill"),
             Self::Layered => ("bfly - layered", "layered"),
         };
@@ -88,7 +98,7 @@ impl RenderMode {
 struct Renderer {
     device: OwnedDevice,
     queue: Queue,
-    meshes: [Option<RetainedMesh>; 4],
+    meshes: [Option<RetainedMesh>; 5],
     vertices: Buffer,
     indices: Buffer,
 }
@@ -105,28 +115,28 @@ impl Renderer {
             .map_err(|code| Error::Vgpu("create queue", code))?;
         let vertices = gpu
             .create_buffer(
-                LAYERED_VERTEX_BYTES.len(),
+                SCENE_VERTEX_BYTES.len(),
                 vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_MAP_WRITE,
             )
             .map_err(|code| Error::Vgpu("create vertex buffer", code))?;
         let indices = gpu
             .create_buffer(
-                LAYERED_INDEX_BYTES.len(),
+                SCENE_INDEX_BYTES.len(),
                 vgpu::BUFFER_USAGE_INDEX | vgpu::BUFFER_USAGE_MAP_WRITE,
             )
             .map_err(|code| Error::Vgpu("create index buffer", code))?;
-        write_exact(gpu, vertices, &LAYERED_VERTEX_BYTES)
+        write_exact(gpu, vertices, &SCENE_VERTEX_BYTES)
             .map_err(|code| Error::Vgpu("upload vertices", code))?;
-        write_exact(gpu, indices, &LAYERED_INDEX_BYTES)
+        write_exact(gpu, indices, &SCENE_INDEX_BYTES)
             .map_err(|code| Error::Vgpu("upload indices", code))?;
         let mut renderer = Self {
             device,
             queue,
-            meshes: [None; 4],
+            meshes: [None; 5],
             vertices,
             indices,
         };
-        renderer.mesh_for(RenderMode::Twilight)?;
+        renderer.mesh_for(RenderMode::StageWake)?;
         logl::log(
             level::IMPORTANT,
             format_args!(
@@ -139,11 +149,10 @@ impl Renderer {
     fn mesh_for(&mut self, mode: RenderMode) -> Result<RetainedMesh, Error> {
         let (cache_index, vertex_layout) = match mode {
             RenderMode::Monochrome => (0, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_MIXED_TRAIL_FLOCK),
-            RenderMode::Twilight | RenderMode::TwilightWide => {
-                (1, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_TWILIGHT_FLOCK)
-            }
+            RenderMode::StageWake => (1, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_SUNRISE_FLOCK),
             RenderMode::Fill => (2, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_OUTLINED_INSET_FLOCK),
             RenderMode::Layered => (3, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_LAYERED_FLOCK),
+            RenderMode::Twilight => (4, vgpu::RETAINED_VERTEX_LAYOUT_BFLY_LAYERED_WAKE_FLOCK),
         };
         if let Some(mesh) = self.meshes[cache_index] {
             return Ok(mesh);
@@ -151,6 +160,8 @@ impl Renderer {
         let (vertex_offset, index_offset, vertex_count) = match mode {
             RenderMode::Fill => (0, 0, FILL_VERTEX_COUNT),
             RenderMode::Layered => (0, 0, LAYERED_VERTEX_COUNT),
+            RenderMode::StageWake => (LAYERED_VERTEX_BYTES.len(), 0, FILL_VERTEX_COUNT),
+            RenderMode::Twilight => (0, 0, SCENE_VERTEX_COUNT),
             _ => (
                 FILL_VERTEX_BYTES.len(),
                 FILL_INDEX_BYTES.len(),
@@ -182,6 +193,7 @@ impl Renderer {
         &self,
         mesh: RetainedMesh,
         mode: RenderMode,
+        wake: WakeFade,
         reset_history: bool,
         frame: &mut Frame,
         started: u64,
@@ -227,6 +239,7 @@ impl Renderer {
                     now.saturating_sub(started),
                     flock.snapshot(),
                     mode,
+                    wake.weights_at(now),
                     reset_history,
                 )
             });
@@ -259,6 +272,7 @@ fn frame_params(
     elapsed_ns: u64,
     snapshot: Snapshot,
     mode: RenderMode,
+    wake_weights: [f32; 3],
     reset_history: bool,
 ) -> RetainedFrameSubmit {
     // The flock shader reads its instance records from the retained camera lanes.
@@ -283,14 +297,12 @@ fn frame_params(
     camera.previous_view_projection[..8].copy_from_slice(&records[72..]);
     camera.previous_view_projection[8..12].copy_from_slice(&snapshot.motion);
     camera.previous_view_projection[12] = (elapsed_ns % SWAP_PERIOD_NS) as f32 * 1e-9;
-    if reset_history {
+    if mode.uses_wake() {
+        // Ribbon layouts use these lanes for Sunrise, Twilight, and Universe.
+        camera.previous_view_projection[13..16].copy_from_slice(&wake_weights);
+    } else if reset_history {
         camera.previous_view_projection[14] = 1.0;
     }
-    camera.previous_view_projection[15] = match mode {
-        RenderMode::Twilight => 1.0,
-        RenderMode::TwilightWide => 2.0,
-        _ => 0.0,
-    };
     let mut submit = RetainedFrameSubmit {
         clear_rgba8_srgb: 0,
         seed_count: 1,
@@ -351,14 +363,16 @@ fn run() -> Result<(), Error> {
     let mut renderer = Renderer::open()?;
     let mut frame = Frame::open_layered(96, 72, WIDTH, HEIGHT, BACKGROUND_HZ)
         .map_err(|code| Error::Ui4("open window", code))?;
-    let mut mode = RenderMode::Twilight;
+    let mut mode = RenderMode::StageWake;
     let mut previous_mode = mode;
     let mut mesh = renderer.mesh_for(mode)?;
-    mode.describe(&mut frame)?;
     frame
         .set_primary_activation(true)
         .map_err(|code| Error::Ui4("enable primary activation", code))?;
     let background = CelestialScene::start(&frame)?;
+    let (mut previous_wake, _) = background.wake();
+    let mut wake_fade = WakeFade::new(previous_wake);
+    mode.describe(&mut frame, previous_wake)?;
     let started = clock::monotonic_nanos();
     let mut flock = Flock::new(started);
     let mut frame_count = 0u32;
@@ -386,8 +400,8 @@ fn run() -> Result<(), Error> {
             {
                 match event.key_code {
                     KEYBOARD_KEY_F1 => next_mode = RenderMode::Monochrome,
-                    KEYBOARD_KEY_F2 => next_mode = RenderMode::Twilight,
-                    KEYBOARD_KEY_F3 => next_mode = RenderMode::TwilightWide,
+                    KEYBOARD_KEY_F2 => next_mode = RenderMode::StageWake,
+                    KEYBOARD_KEY_F3 => next_mode = RenderMode::Twilight,
                     KEYBOARD_KEY_F4 => next_mode = RenderMode::Fill,
                     KEYBOARD_KEY_F5 => next_mode = RenderMode::Layered,
                     _ => {}
@@ -397,7 +411,6 @@ fn run() -> Result<(), Error> {
         if next_mode != mode {
             mesh = renderer.mesh_for(next_mode)?;
             mode = next_mode;
-            mode.describe(&mut frame)?;
         }
         while let Some(event) = frame
             .take_resize_event()
@@ -411,9 +424,33 @@ fn run() -> Result<(), Error> {
         {
             pending_size = None;
         }
+        let (stage_wake, handoff) = background.wake();
+        let wake = if mode == RenderMode::Twilight {
+            Wake::Twilight
+        } else {
+            stage_wake
+        };
+        let transition_started = if mode == previous_mode {
+            handoff
+        } else {
+            clock::monotonic_nanos()
+        };
+        wake_fade.retarget(wake, transition_started);
+        if mode != previous_mode || (mode.uses_wake() && wake != previous_wake) {
+            mode.describe(&mut frame, wake)?;
+        }
         let reset_history = mode == RenderMode::Monochrome && previous_mode != mode;
-        renderer.draw(mesh, mode, reset_history, &mut frame, started, &mut flock)?;
+        renderer.draw(
+            mesh,
+            mode,
+            wake_fade,
+            reset_history,
+            &mut frame,
+            started,
+            &mut flock,
+        )?;
         previous_mode = mode;
+        previous_wake = wake;
         if !presented
             && frame
                 .take_first_presentation()

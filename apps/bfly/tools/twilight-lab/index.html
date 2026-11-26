@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bfly · Sunrise wake</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header class="toolbar">
+      <h1>Sunrise wake</h1>
+      <div class="actions">
+        <button type="button" id="baseline">F2 baseline</button>
+        <button type="button" id="reset">Reset</button>
+        <button type="button" id="copy">Copy settings</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <section class="preview" aria-label="Butterfly preview">
+        <div class="stage">
+          <canvas aria-label="One butterfly outline with a textured wake"></canvas>
+          <p id="status" role="status">Loading preview…</p>
+        </div>
+        <div class="transport">
+          <button type="button" id="play" disabled>Pause</button>
+          <label for="phase">Flap phase</label>
+          <input id="phase" type="range" min="0" max="1" step="0.001" value="0.676" disabled>
+          <output id="phase-value" for="phase">68%</output>
+        </div>
+      </section>
+
+      <form class="controls" id="controls">
+        <fieldset>
+          <legend>Wake</legend>
+          <div class="slider">
+            <label for="lifetime">Lifetime</label><output for="lifetime"></output>
+            <input id="lifetime" type="range" min="25" max="600" step="5">
+          </div>
+          <div class="slider">
+            <label for="opacity">Opacity</label><output for="opacity"></output>
+            <input id="opacity" type="range" min="0" max="1" step="0.01">
+          </div>
+          <div class="slider">
+            <label for="falloff">Falloff</label><output for="falloff"></output>
+            <input id="falloff" type="range" min="0.3" max="5" step="0.1">
+          </div>
+          <div class="slider">
+            <label for="stretch" title="100% uses the wing’s actual path over the wake lifetime. Higher values exaggerate the sweep.">Motion stretch</label><output for="stretch"></output>
+            <input id="stretch" type="range" min="0" max="2.5" step="0.05">
+          </div>
+          <label class="checkbox"><input type="checkbox" id="downstrokeOnly"> Downstroke only</label>
+        </fieldset>
+        <fieldset>
+          <legend>Texture</legend>
+          <label class="select" for="sky">Sky
+            <select id="sky">
+              <option value="sunrise">Sunrise</option>
+              <option value="twilight">Twilight</option>
+              <option value="universe">Universe</option>
+              <option value="twilight-f2">Twilight (F2 tint)</option>
+            </select>
+          </label>
+          <div class="slider">
+            <label for="repeat">Repeat</label><output for="repeat"></output>
+            <input id="repeat" type="range" min="0.25" max="6" step="0.05">
+          </div>
+          <div class="slider">
+            <label for="skyPan" title="Slides the sky texture with each wing's flap.">Motion pan</label><output for="skyPan"></output>
+            <input id="skyPan" type="range" min="0" max="1" step="0.01">
+          </div>
+          <div class="slider">
+            <label for="coverage" title="Lower coverage keeps only the brightest parts of the texture.">Coverage</label><output for="coverage"></output>
+            <input id="coverage" type="range" min="0" max="1" step="0.01">
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Tear mask</legend>
+          <div class="slider">
+            <label for="tearAmount" title="Opens progressively wider gaps in the older part of the wake.">Tear amount</label><output for="tearAmount"></output>
+            <input id="tearAmount" type="range" min="0" max="1" step="0.01">
+          </div>
+          <div class="slider">
+            <label for="tearRepeat" title="Higher values repeat the mask more often and make the gaps smaller.">Mask repeat</label><output for="tearRepeat"></output>
+            <input id="tearRepeat" type="range" min="0.25" max="6" step="0.05">
+          </div>
+          <div class="slider">
+            <span id="tear-angle-label" title="Follows Tilt from 175° through 180° to −160°.">Mask angle</span>
+            <output id="tear-angle" aria-labelledby="tear-angle-label"></output>
+          </div>
+          <div class="slider">
+            <label for="tearDrift" title="Slides the mask along the direction of the wake as the wing moves.">Drift</label><output for="tearDrift"></output>
+            <input id="tearDrift" type="range" min="0" max="2" step="0.05">
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Preview</legend>
+          <div class="slider">
+            <label for="flapRate">Flap rate</label><output for="flapRate"></output>
+            <input id="flapRate" type="range" min="0.15" max="1.5" step="0.05">
+          </div>
+          <div class="slider">
+            <label for="tilt">Tilt</label><output for="tilt"></output>
+            <input id="tilt" type="range" min="-65" max="65" step="1">
+          </div>
+          <label class="select" for="backdrop">Backdrop
+            <select id="backdrop">
+              <option value="slate">Slate</option>
+              <option value="green">Green</option>
+              <option value="blue">Deep blue</option>
+            </select>
+          </label>
+        </fieldset>
+      </form>
+    </div>
+  </main>
+  <dialog id="settings-dialog">
+    <form method="dialog">
+      <label for="settings-json">Wake settings</label>
+      <textarea id="settings-json" readonly rows="13" spellcheck="false"></textarea>
+      <button>Close</button>
+    </form>
+  </dialog>
+  <script type="module" src="lab.js"></script>
+</body>
+</html>

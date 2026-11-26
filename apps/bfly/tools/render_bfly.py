@@ -12,6 +12,8 @@ import struct
 import subprocess
 from tempfile import TemporaryDirectory
 
+from bake_flight_turn import flight_turn_source
+from bake_stage_wake import stage_wake_source
 from PIL import Image
 
 
@@ -38,7 +40,7 @@ EGL.eglGetProcAddress.restype = P
 ARRAY_BUFFER, UNIFORM_BUFFER = 0x8892, 0x8A11
 SHADER_STORAGE_BUFFER = 0x90D2
 STATIC_DRAW, DYNAMIC_DRAW = 0x88E4, 0x88E8
-TEXTURE_ARRAY = 0x8C1A
+TEXTURE_2D, TEXTURE_ARRAY = 0x0DE1, 0x8C1A
 FRAMEBUFFER, COLOR_ATTACHMENT0 = 0x8D40, 0x8CE0
 COLOR_BUFFER_BIT = 0x4000
 PATCHES, TRIANGLE_STRIP = 0x000E, 0x0005
@@ -108,13 +110,19 @@ def create_buffer(create):
     return name
 
 
-def compile_program(name, stages, varyings=(), *, defines=(), stage_names=None):
+def compile_program(name, stages, varyings=(), *, defines=(), stage_names=None, turn_limited=False):
     program = proc("glCreateProgram", U)()
     shaders = []
     for stage, suffix in stages:
         shader = proc("glCreateShader", U, U)(stage)
         stage_name = stage_names.get(suffix, name) if stage_names else name
-        source = (ROOT / "shaders" / f"{stage_name}.{suffix}").read_bytes()
+        if turn_limited and stage_name == "direct-wings" and suffix == "tesc":
+            flight_source = flight_turn_source(ROOT / "shaders")
+            if stage_names and stage_names.get("tese") == "sunrise-ribbon":
+                flight_source = stage_wake_source(flight_source)
+            source = flight_source.encode()
+        else:
+            source = (ROOT / "shaders" / f"{stage_name}.{suffix}").read_bytes()
         if defines:
             version, newline, rest = source.partition(b"\n")
             prelude = b"".join(b"#define " + define + b"\n" for define in defines)
@@ -164,7 +172,7 @@ def cubic_bounds(values):
     return min(extrema), max(extrema)
 
 
-def wing_control_points(*, direct=False, fill=False):
+def wing_control_points(*, direct=False, fill=False, tuned_wake=False):
     source = (ROOT / "src/geometry.rs").read_text()
 
     def read_points(name, count):
@@ -177,7 +185,8 @@ def wing_control_points(*, direct=False, fill=False):
             raise ValueError(f"Unexpected point count in {name}")
         return points
 
-    if fill:
+    closed = fill or tuned_wake
+    if closed:
         outlines = [((read_points("FILL_WING", 10),), None),
                     ((read_points("ALTERNATE_FILL_WING", 16),), None)]
     else:
@@ -198,14 +207,15 @@ def wing_control_points(*, direct=False, fill=False):
 
     controls, cubics = [], []
     for artwork, (paths, connector) in enumerate(outlines):
-        tag = (4 if fill else 2) * artwork
+        tag = (4 if closed else 2) * artwork
         for points in paths:
             root_x = connector[0][0] if connector is not None else points[0][0]
             points = [(x - root_x, 0.45 - y) for x, y in points]
             for start in range(0, len(points) - 1, 3):
                 cubic = points[start:start + 4]
                 cubics.append(cubic)
-                controls.extend((x, y, tag) for x, y in cubic)
+                curve_tag = tag + (8 * (start // 3) if tuned_wake else 0)
+                controls.extend((x, y, curve_tag) for x, y in cubic)
             if connector is None:
                 first, last = points[0], points[-1]
                 controls.extend((x, y, tag + 1) for x, y in (last, last, first, first))
@@ -387,7 +397,31 @@ def straight_alpha(image):
     return Image.frombytes("RGBa", image.size, image.tobytes()).convert("RGBA")
 
 
-def render_direct(args, size, controls, *, fill=False, layered=False):
+def upload_ribbon_texture(tuned_wake):
+    width = 256
+    if tuned_wake:
+        name, height, channels = "bfly-sunrise.rgba8", 768, 4
+        internal_format, pixel_format = 0x8058, 0x1908  # GL_RGBA8, GL_RGBA
+    else:
+        name, height, channels = "bfly-twilight.r8", 256, 1
+        internal_format, pixel_format = 0x8229, 0x1903  # GL_R8, GL_RED
+    pixels = (ROOT / "shaders/trueos" / name).read_bytes()
+    if len(pixels) != width * height * channels:
+        raise RuntimeError(f"{name} needs a {width}×{height} texture with {channels} bytes per pixel")
+    texture = create_buffer("GenTextures")
+    gl("ActiveTexture", U)(0x84C0)  # GL_TEXTURE0
+    gl("BindTexture", U, U)(TEXTURE_2D, texture)
+    gl("TexStorage2D", U, I, U, I, I)(TEXTURE_2D, 1, internal_format, width, height)
+    gl("TexSubImage2D", U, I, I, I, I, I, U, U, P)(
+        TEXTURE_2D, 0, 0, 0, width, height, pixel_format, 0x1401, pixels)  # GL_UNSIGNED_BYTE
+    for parameter, value in ((0x2801, 0x2601), (0x2800, 0x2601), (0x2802, 0x812F), (0x2803, 0x812F)):
+        gl("TexParameteri", U, U, I)(TEXTURE_2D, parameter, value)
+    check_gl(f"upload {name}")
+
+
+def render_direct(args, size, controls, *, fill=False, layered=False, twilight=None, sunrise=False):
+    tuned_wake = sunrise or twilight == "tuned"
+    turn_limited = twilight not in ("short", "wide")
     original_controls = wing_control_points(direct=True)[0] if layered else []
     upload_controls(controls + original_controls, packed=True)
     camera = create_buffer("GenBuffers")
@@ -404,7 +438,25 @@ def render_direct(args, size, controls, *, fill=False, layered=False):
     update_camera(SHADER_STORAGE_BUFFER, 0, len(records), records)
     stages = ((0x8B31, "vert"), (0x8E88, "tesc"), (0x8E87, "tese"), (0x8B30, "frag"))
     line_defines = (b"BFLY_MIXED_WINGS", b"BFLY_TIER_WIDTH")
-    overlay_program = compile_program("direct-wings", stages, defines=line_defines) if layered else None
+    if twilight not in ("short", "wide"):
+        line_defines += (b"BFLY_NEUTRAL_OUTLINE",)
+    if tuned_wake:
+        line_defines += (b"BFLY_INSET_OUTLINE", b"BFLY_SUNRISE")
+    overlay_program = compile_program("direct-wings", stages, defines=line_defines,
+                                      turn_limited=turn_limited) if layered else None
+    ribbon_program = None
+    ribbon_mode = 0.0
+    if sunrise or twilight:
+        upload_ribbon_texture(tuned_wake)
+        ribbon_shader = "sunrise-ribbon" if tuned_wake else "twilight-ribbon"
+        ribbon_defines = (b"BFLY_MIXED_WINGS",)
+        if tuned_wake:
+            ribbon_defines += (b"BFLY_INSET_OUTLINE", b"BFLY_SUNRISE")
+        ribbon_mode = 1.0 if sunrise or twilight == "short" else 2.0
+        ribbon_program = compile_program(
+            "direct-wings", stages, defines=ribbon_defines + (b"BFLY_TWILIGHT_RIBBON",),
+            stage_names={"tese": ribbon_shader, "frag": ribbon_shader}, turn_limited=turn_limited)
+        gl("BlendFunc", U, U)(ONE, ONE_MINUS_SRC_ALPHA)
     fill_program = None
     if fill:
         line_defines += (b"BFLY_INSET_OUTLINE",)
@@ -412,8 +464,9 @@ def render_direct(args, size, controls, *, fill=False, layered=False):
                                        defines=(b"BFLY_MIXED_WINGS", b"BFLY_FILL_WINGS",
                                                 b"BFLY_INSET_FILL", b"BFLY_BREED_FILL",
                                                 b"BFLY_TRANSLUCENT_FILL"),
-                                       stage_names={"tese": "filled-wings", "frag": "filled-wings"})
-    line_program = compile_program("direct-wings", stages, defines=line_defines)
+                                       stage_names={"tese": "filled-wings", "frag": "filled-wings"},
+                                       turn_limited=turn_limited)
+    line_program = compile_program("direct-wings", stages, defines=line_defines, turn_limited=turn_limited)
     use_program = gl("UseProgram", U)
     use_program(line_program)
     gl("Viewport", I, I, I, I)(0, 0, *size)
@@ -424,13 +477,23 @@ def render_direct(args, size, controls, *, fill=False, layered=False):
         framebuffer = (*size, time % FLAP_PHASE_PERIOD_SECONDS, FLIGHT_PERIOD_SECONDS)
         flock_motion = (time % FLOCK_PERIOD_SECONDS, 4.4, 4.4, BUTTERFLIES)
         swap_time = time % SWAP_PERIOD_SECONDS
+        if tuned_wake:
+            wake = (float(sunrise), float(not sunrise), 0.0)
+        else:
+            wake = (float(not fill and ribbon_program is None), 0.0, ribbon_mode)
         # Zero the eight unused records between framebuffer and flock_motion.
-        data = struct.pack("=4f32x6f", *framebuffer, *flock_motion, swap_time, float(not fill))
+        data = struct.pack("=4f32x8f", *framebuffer, *flock_motion, swap_time, *wake)
         update_camera(SHADER_STORAGE_BUFFER, 288, len(data), data)
         gl("Clear", U)(COLOR_BUFFER_BIT)
         if fill_program is not None:
             use_program(fill_program)
             draw(PATCHES, count, 2 * BUTTERFLIES, first=first)
+            use_program(line_program)
+        if ribbon_program is not None:
+            gl("Enable", U)(BLEND)
+            use_program(ribbon_program)
+            draw(PATCHES, count, 2 * BUTTERFLIES, first=first)
+            gl("Disable", U)(BLEND)
             use_program(line_program)
         draw(PATCHES, count, 2 * BUTTERFLIES, expected, query, first=first, tier_widths=True)
         if overlay_program is not None:
@@ -441,7 +504,8 @@ def render_direct(args, size, controls, *, fill=False, layered=False):
     if not fill:
         # Both halves of the startup flock contribute four hinges, one per butterfly.
         query = create_buffer("GenQueries")
-        alternate = next(i for i, (_, _, tag) in enumerate(controls) if tag >= 2)
+        artwork_bit = 4 if tuned_wake else 2
+        alternate = next(i for i, (_, _, tag) in enumerate(controls) if tag & artwork_bit)
         frame((1, 1), 0.0, BUTTERFLIES // 2, query, count=alternate)
         frame((1, 1), 0.0, BUTTERFLIES // 2, query, first=alternate, count=len(controls) - alternate)
         frame((1, 1), 0.0, BUTTERFLIES, query)
@@ -449,26 +513,22 @@ def render_direct(args, size, controls, *, fill=False, layered=False):
     later = frame(size, args.start + 1 / FRAME_RATE)
     if size in ((1920, 1080), (1080, 1920), DEFAULT_SIZE, DEFAULT_SIZE[::-1]):
         transparent = (0, 0, 0, 0)
-        primaries = ((255, 0, 0), (0, 255, 0), (0, 0, 255))
-        non_fill = {transparent, *(rgb + (255,) for rgb in primaries)}
+        white = (255, 255, 255, 255)
+        non_fill = {transparent, white}
         palette_size = len(non_fill) + BUTTERFLIES
         if fill:
             rgba = {pixel for _, pixel in first.getcolors(palette_size) or ()}
             families = {fill_family(pixel) for pixel in rgba - non_fill}
             if not non_fill <= rgba or families != {0, 1}:
-                raise RuntimeError("Expected translucent fill palettes and opaque RGB outlines over transparent pixels")
+                raise RuntimeError("Expected translucent fill palettes and opaque white outlines over transparent pixels")
+        elif ribbon_program is not None:
+            alpha = first.getchannel("A").histogram()
+            if not (alpha[0] and alpha[255] and sum(alpha[1:255])):
+                raise RuntimeError("Expected translucent wake ribbons and opaque outlines over transparency")
         else:
-            expected_rgba = {transparent} | {
-                (r ^ (tag & 3), g ^ ((tag >> 2) & 1), b ^ (tag >> 3), 255)
-                for r, g, b in primaries for tag in range(16)
-            }
-            rgba = {pixel for _, pixel in first.getcolors(len(expected_rgba)) or ()}
-            visible_primaries = {
-                tuple(255 if channel >= 128 else 0 for channel in pixel[:3])
-                for pixel in rgba if pixel != transparent
-            }
-            if transparent not in rgba or not rgba <= expected_rgba or visible_primaries != set(primaries):
-                raise RuntimeError("Expected transparent pixels and opaque tagged RGB lines in the direct framebuffer")
+            rgba = {pixel for _, pixel in first.getcolors(len(non_fill)) or ()}
+            if rgba != non_fill:
+                raise RuntimeError("Expected transparent pixels and opaque white lines in the direct framebuffer")
         if first.tobytes() == later.tobytes():
             raise RuntimeError("The direct flight shaders did not animate")
         initial = frame(size, 0.0)
@@ -482,11 +542,16 @@ def render_direct(args, size, controls, *, fill=False, layered=False):
                      for image in (first, later, initial, after_flap)}
             if len(areas) < 2:
                 raise RuntimeError("The projected fill area did not change during flight")
-            print("Direct flight shaders rendered both 85% fill palettes beneath opaque RGB outlines")
+            print("Direct flight shaders rendered both 85% fill palettes beneath opaque white outlines")
+        elif tuned_wake:
+            sky = "Sunrise" if sunrise else "Twilight"
+            print(f"Direct flight shaders rendered torn {sky} ribbons beneath closed white outlines")
+        elif twilight:
+            print(f"Direct flight shaders rendered the {twilight} Twilight ribbons beneath RGB outlines")
         else:
-            print("Direct flight shaders rendered opaque RGB lines over transparent pixels")
+            print("Direct flight shaders rendered opaque white lines over transparent pixels")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    export = straight_alpha if fill else lambda image: image
+    export = straight_alpha if fill or ribbon_program is not None else lambda image: image
     export(first).save(args.output.with_suffix(".png"))
     if args.frames > 1:
         animation = args.output.with_name(args.output.stem + "-animated.png")
@@ -501,10 +566,13 @@ def render(args):
         renderer = proc("glGetString", C.c_char_p, U)(0x1F01).decode()
         print(f"renderer={renderer}")
         layered = getattr(args, "layered", False)
+        twilight = getattr(args, "twilight", None)
+        sunrise = getattr(args, "sunrise", False)
         fill = getattr(args, "fill", False) or layered
-        controls, bounds = wing_control_points(direct=args.direct, fill=fill)
-        if args.direct or fill:
-            render_direct(args, size, controls, fill=fill, layered=layered)
+        direct = args.direct or sunrise or bool(twilight)
+        controls, bounds = wing_control_points(direct=direct, fill=fill, tuned_wake=sunrise or twilight == "tuned")
+        if direct or fill:
+            render_direct(args, size, controls, fill=fill, layered=layered, twilight=twilight, sunrise=sunrise)
             return
         upload_controls(controls)
         view = create_buffer("GenBuffers")
@@ -568,6 +636,9 @@ def main():
     parser.add_argument("--direct", action="store_true", help="draw the GPU-tessellated outlines")
     parser.add_argument("--fill", action="store_true", help="draw the translucent insets with RGB outlines")
     parser.add_argument("--layered", action="store_true", help="add the original RGB outlines over the filled wings")
+    parser.add_argument("--twilight", choices=("tuned", "short", "wide"),
+                        help="draw the torn RGB Twilight wake or a legacy reference")
+    parser.add_argument("--sunrise", action="store_true", help="draw the torn Sunrise motion ribbons")
     parser.add_argument("--start", type=float, default=0.0,
                         help="start time in seconds for a direct render")
     parser.add_argument("--render-node", default="/dev/dri/renderD128")
@@ -580,11 +651,21 @@ def main():
         parser.error("--size dimensions must be positive")
     if args.frames < 1:
         parser.error("--frames must be at least 1")
-    if not isfinite(args.start) or args.start < 0 or (args.start != 0 and not (args.direct or args.fill or args.layered)):
-        parser.error("--start needs a finite nonnegative time and --direct, --fill, or --layered")
+    if args.twilight and (args.direct or args.fill or args.layered):
+        parser.error("--twilight is a separate mode from --direct, --fill and --layered")
+    if args.sunrise and (args.direct or args.fill or args.layered or args.twilight):
+        parser.error("--sunrise is a separate mode from --direct, --fill, --layered and --twilight")
+    if not isfinite(args.start) or args.start < 0 or (
+        args.start != 0 and not (args.direct or args.fill or args.layered or args.twilight or args.sunrise)
+    ):
+        parser.error("--start needs a finite nonnegative time and a direct render mode")
     args.start %= MOTION_PERIOD_SECONDS
     if args.output is None:
-        if args.layered:
+        if args.sunrise:
+            filename = "bfly-sunrise-wake.png"
+        elif args.twilight:
+            filename = f"bfly-twilight-{args.twilight}.png"
+        elif args.layered:
             filename = "bfly-layered-wings.png"
         elif args.fill:
             filename = "bfly-filled-wings.png"

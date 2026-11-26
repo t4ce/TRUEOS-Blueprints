@@ -9,7 +9,7 @@
   "topology": "patch-list-4",
   "sources": {
     "direct-wings.vert": "4ece6d883cdf18dcedd57608580c1f5ae88b654d9b64402870a84a6de01bab04",
-    "direct-wings.tesc": "7f34f1b4954d2c35bca15337362705b7339f3e8054d9b6ec7c6b0a4c38c84a78",
+    "direct-wings.tesc": "21b6c5d7fc5a54a7f258d293544722ebede9e41c5caf56626b834ecd69421508",
     "filled-wings.tese": "e442056d137c613e3a4e3b60312221621b599b57333b95d97544ba45a4a3a811",
     "filled-wings.frag": "71ec89abb29a3c603a68d15c029d2bbd788bc52336971ce04ab0fba41973ef2e"
   },

@@ -1,0 +1,105 @@
+{
+  "id": 43,
+  "name": "bfly-neutral-wake-outline",
+  "bytes": 28412,
+  "sha256": "232e23c529169c2a7408c7b56c2e901f19e0a15ff89cd3271f7104b857fa4bfd",
+  "vertex_layouts": [
+    29
+  ],
+  "topology": "patch-list-4",
+  "sources": {
+    "direct-wings.vert": "4ece6d883cdf18dcedd57608580c1f5ae88b654d9b64402870a84a6de01bab04",
+    "direct-wings.tesc": "21b6c5d7fc5a54a7f258d293544722ebede9e41c5caf56626b834ecd69421508",
+    "direct-wings.tese": "a2e18506521518d31791df233ad231a2c97a0912cb46f1febdfd95f726cf4ea6",
+    "direct-wings.frag": "5f2a923765accab001f5e279d9c82fdb5c12a87332844170f23e8188e3d14bde"
+  },
+  "compiler_defines": {
+    "direct-wings.vert": {
+      "BFLY_TIER_WIDTH": 1
+    },
+    "direct-wings.tesc": {
+      "BFLY_MIXED_WINGS": 1,
+      "BFLY_TIER_WIDTH": 1,
+      "BFLY_NEUTRAL_OUTLINE": 1,
+      "BFLY_INSET_OUTLINE": 1,
+      "BFLY_SUNRISE": 1
+    },
+    "direct-wings.tese": {
+      "BFLY_NEUTRAL_OUTLINE": 1
+    },
+    "direct-wings.frag": {
+      "BFLY_NEUTRAL_OUTLINE": 1
+    }
+  },
+  "capture_directory": "4680",
+  "stage_directory": ".",
+  "stages": [
+    {
+      "name": "vs-simd8",
+      "kind": 1,
+      "bytes": 168,
+      "sha256": "e3594517b3ece398b8d98dc6d59c14db2ced5a59ee0cae5a17d2318893f6db62",
+      "capture_file": "vertex-simd8.bin"
+    },
+    {
+      "name": "hs-simd8",
+      "kind": 1,
+      "bytes": 27512,
+      "sha256": "9125c612c826cf1fcbf330c9261f245dd036644a9fcca981cd3e06ab9b6ac0df",
+      "capture_file": "hull-simd8.bin"
+    },
+    {
+      "name": "ds-simd8",
+      "kind": 1,
+      "bytes": 632,
+      "sha256": "7dacf623f2aec9ed75159f4407ba28ec5f70cb6c757176639f84919eda33bd63",
+      "capture_file": "domain-simd8.bin"
+    },
+    {
+      "name": "ps-simd16",
+      "kind": 1,
+      "bytes": 48,
+      "sha256": "a7798f9eed0c359821b0f1956875d708f842d3398a33aed59a56ad488adf8016",
+      "capture_file": "fragment-simd16.bin"
+    }
+  ],
+  "offline_compiles": {
+    "compiler": "Mesa ANV 26.0.8",
+    "validation": "Compile-only with Mesa Intel no-op DRM shim",
+    "targets": [
+      {
+        "pci_vendor": "8086",
+        "pci_device": "4680",
+        "pci_revision": "0c",
+        "platform": "ADL-S GT1",
+        "directory": "4680",
+        "pipeline_cache_sha256": "061e8bed412aac8946358a1dd5cc3c926ae3da85cfa0d95551009858faabeba5",
+        "stage_offsets": {
+          "vs-simd8": 37296,
+          "hs-simd8": 38184,
+          "ds-simd8": 69296,
+          "ps-simd16": 88
+        }
+      },
+      {
+        "pci_vendor": "8086",
+        "pci_device": "a780",
+        "pci_revision": "04",
+        "platform": "RPL-S",
+        "directory": "a780",
+        "pipeline_cache_sha256": "e72abaa51007af27e6221c35007275d35694fd05f84a7bcea5358182ca4e56e4",
+        "stage_offsets": {
+          "vs-simd8": 37296,
+          "hs-simd8": 38184,
+          "ds-simd8": 69296,
+          "ps-simd16": 88
+        }
+      }
+    ]
+  },
+  "flight_turn_source": {
+    "generated_tesc_sha256": "947d8996832ea07d0a64c7cfae94c6abcd8ee38a1dbed57a0c2d34e403e80b41",
+    "generator_sha256": "06ea420dc6ba51ed536a3f0bcbe192115acea4f19cfe7569e7c253de68b004e8",
+    "snippet_sha256": "93a4c1ef77fb9e038c66013fcc1842816dffc411d9b980f9089ff1ba87f2772b"
+  }
+}
