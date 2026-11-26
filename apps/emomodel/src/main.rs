@@ -8,6 +8,36 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(any(target_os = "trueos", test))]
+mod animation;
+#[cfg(any(target_os = "trueos", test))]
+mod autobs;
+#[cfg(target_os = "trueos")]
+mod greeting;
+#[cfg(any(target_os = "trueos", test))]
+mod greeting_motion;
+#[cfg(any(target_os = "trueos", test))]
+mod hair;
+#[cfg(any(target_os = "trueos", test))]
+mod hair_body;
+#[cfg(any(target_os = "trueos", test))]
+mod hair_guides;
+#[cfg(any(target_os = "trueos", test))]
+mod hair_ribbon;
+#[cfg(any(target_os = "trueos", test))]
+mod idle_wind;
+#[cfg(any(target_os = "trueos", test))]
+mod light;
+#[cfg(any(target_os = "trueos", test))]
+mod mesh;
+#[cfg(target_os = "trueos")]
+mod preview;
+
+const HUMANOID_FILE: &str = "AvatarSample_B.glb";
+const HUMANOID_GLB: &[u8] = include_bytes!("../assets/AvatarSample_B.glb");
+#[cfg(target_os = "trueos")]
+const GREETING_FILE: &str = "AvatarSample_B_Greeting.glb";
+
 #[derive(Deserialize)]
 struct Artifact {
     name: String,
@@ -70,6 +100,39 @@ async fn write(path: &Path, bytes: &[u8]) -> Result<()> {
         Ok(())
     }
 }
+
+fn lock_setup(root: &Path) -> Result<fs::File> {
+    fs::create_dir_all(root)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("setup.lock"))?;
+    lock.try_lock()
+        .context("another emomodel setup owns the lock")?;
+    Ok(lock)
+}
+
+async fn install_humanoid(root: &Path) -> Result<PathBuf> {
+    let path = root.join(HUMANOID_FILE);
+    if fs::metadata(&path).is_ok_and(|meta| meta.len() == HUMANOID_GLB.len() as u64)
+        && fs::read(&path).is_ok_and(|bytes| bytes == HUMANOID_GLB)
+    {
+        return Ok(path);
+    }
+
+    #[cfg(target_os = "trueos")]
+    write(&path, HUMANOID_GLB).await?;
+    #[cfg(not(target_os = "trueos"))]
+    {
+        let staging = root.join(".AvatarSample_B.glb.tmp");
+        write(&staging, HUMANOID_GLB).await?;
+        fs::rename(staging, &path)?;
+    }
+    Ok(path)
+}
+
 fn status(root: &Path, models: &[Model]) {
     let active = fs::read_to_string(root.join("active.json"))
         .ok()
@@ -148,12 +211,7 @@ async fn fetch(url: &str, limit: usize, _client: &reqwest::Client) -> Result<Vec
 #[cfg(not(target_os = "trueos"))]
 async fn fetch(url: &str, limit: usize, client: &reqwest::Client) -> Result<Vec<u8>> {
     let mut response = client.get(url).send().await?.error_for_status()?;
-    eprintln!(
-        "emomodel: response {} / {}: {}",
-        "host",
-        url,
-        response.status()
-    );
+    eprintln!("emomodel: response host / {url}: {}", response.status());
     let mut bytes = Vec::with_capacity(limit);
     let mut reported = 0;
     while let Some(chunk) = response.chunk().await? {
@@ -203,7 +261,7 @@ async fn run() -> Result<()> {
             "--root" => root = args.next().context("--root requires a directory")?.into(),
             "--help" | "-h" => {
                 println!(
-                    "emomodel [--root PATH] [status | setup [auto|8m|32m|4m]]\n\nDefault: status, no network. setup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
+                    "emomodel [--root PATH] [show | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens the body lighting study, then plays Nod and includes Greeting when installed locally.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
                 );
                 return Ok(());
             }
@@ -211,11 +269,8 @@ async fn run() -> Result<()> {
             _ => positional.push(arg),
         }
     }
-    let models = catalog()?;
-    // Shell3's bare-name launch does not carry argv. The setup Blueprint's
-    // native entry therefore prepares/reuses a bundle without shell arguments.
     let default_command = if cfg!(target_os = "trueos") {
-        "setup"
+        "show"
     } else {
         "status"
     };
@@ -224,26 +279,47 @@ async fn run() -> Result<()> {
         .map(String::as_str)
         .unwrap_or(default_command)
     {
+        command @ ("show" | "greeting" | "base-color") if positional.len() <= 1 => {
+            #[cfg(target_os = "trueos")]
+            {
+                if command == "show" && !positional.is_empty() {
+                    return preview::show(HUMANOID_GLB);
+                }
+                let clip = root.join(GREETING_FILE);
+                let data = if command == "greeting" || clip.is_file() {
+                    Some(
+                        fs::read(&clip)
+                            .with_context(|| format!("read Greeting from {}", clip.display()))?,
+                    )
+                } else {
+                    None
+                };
+                return greeting::show(HUMANOID_GLB, data.as_deref(), command == "base-color")
+                    .await;
+            }
+            #[cfg(not(target_os = "trueos"))]
+            bail!("{command} requires TRUEOS UI4");
+        }
         "status" if positional.len() <= 1 => {
-            status(&root, &models);
+            status(&root, &catalog()?);
+            return Ok(());
+        }
+        "mesh" if positional.len() == 1 => {
+            let _lock = lock_setup(&root)?;
+            let path = install_humanoid(&root).await?;
+            println!("emomodel: mesh ready at {}", path.display());
             return Ok(());
         }
         "setup" if positional.len() <= 2 => (),
-        _ => bail!("use status or setup [auto|8m|32m|4m]"),
+        _ => bail!("use show, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"),
     }
+    let models = catalog()?;
     let choice = positional.get(1).map(String::as_str).unwrap_or("auto");
     if choice != "auto" && !models.iter().any(|m| m.id == choice) {
         bail!("unknown model {choice}");
     }
-    fs::create_dir_all(&root)?;
-    let lock = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(root.join("setup.lock"))?;
-    lock.try_lock()
-        .context("another emomodel setup owns the lock")?;
+    let _lock = lock_setup(&root)?;
+    install_humanoid(&root).await?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(300))

@@ -1,0 +1,1162 @@
+use anyhow::{Context, Result, ensure};
+use glam::Vec3;
+use std::collections::VecDeque;
+use std::ops::Range;
+use trueos::{
+    clock, logl,
+    ui4_scene::{Damage, Error, Frame},
+    vgpu::{
+        self, Buffer, Capabilities, Device, Queue, QueueClass, RetainedCamera, RetainedDrawRange,
+        RetainedFrameSubmit, RetainedMesh, RetainedMeshDescriptor, RetainedTexturedFrameV1,
+        RetainedTransformSeed, Ui4Surface,
+    },
+    vmedia::{self, ImageFormat, RetainedTexture},
+    vsys,
+};
+
+use crate::{
+    animation::{ARM_RECOVERY_SECONDS, Animation, SAMPLE_HZ as HZ},
+    autobs::{ARC_LIMIT, Autobs, BASE_YAW, CAMERA_PITCH, ObserverPose, camera_back, view_back},
+    greeting_motion::{MotionPhase, MotionSample, Timeline},
+    hair::{Hair, PARTICLES, breeze},
+    hair_body::BodyBack,
+    hair_ribbon,
+    idle_wind::{IDLE_FRAMES, WIND_FRAMES},
+    light::{DiffuseLookup, LightPlane, SWEEP_NS, sweep_angle},
+    mesh::{self, Mesh},
+    preview::{UI4_IMPORT_BUSY, gpu_error, ui_error, window_placement, write_geometry},
+};
+
+mod base_color;
+mod idle;
+mod normal_detail;
+
+const SECOND_NS: u64 = 1_000_000_000;
+const FRAME_BUDGET_NS: u64 = SECOND_NS / HZ as u64;
+const REPORT_NS: u64 = 5 * SECOND_NS;
+const POSES_PER_MESH: usize = 24;
+const VERTEX_BYTES: usize = 32;
+const WAIT_NS: u64 = 2 * SECOND_NS;
+const CLEAR_RGBA: u32 = u32::from_le_bytes([249, 249, 248, 255]);
+const DRAW_GROUPS: usize = 3;
+const LIT_MATERIALS: usize = 2;
+const MATERIALS: [&str; 5] = [
+    mesh::FACE_MATERIAL,
+    mesh::BODY_MATERIAL,
+    mesh::HAIR_MATERIAL,
+    "N00_000_00_FaceMouth_00_FACE (Instance)",
+    "N00_000_00_EyeIris_00_EYE (Instance)",
+];
+const NORMAL_MAP_SIZE: u32 = 1024;
+const SKIN_NORMAL_MAPS: [&[u8]; LIT_MATERIALS] = [
+    include_bytes!("../assets/AvatarSample_B-face-normal-1024.png"),
+    include_bytes!("../assets/AvatarSample_B-body-normal-1024.png"),
+];
+const PALETTE_WIDTH: usize = 4;
+const HAIR_UV: [f32; 2] = [0.5 / PALETTE_WIDTH as f32, 0.5];
+const GRID_UV: [f32; 2] = [3.5 / PALETTE_WIDTH as f32, 0.5];
+// Surface import and render completion can forward UI4's missing-window status.
+const UI4_SURFACE_GONE: i32 = -3;
+
+// BGR swatches for purple hair, neutral eye and mouth geometry, irises, and grid lines.
+const MATERIAL_PALETTE_BMP: &[u8; 66] = b"BM\x42\0\0\0\0\0\0\0\x36\0\0\0\x28\0\0\0\x04\0\0\0\x01\0\0\0\x01\0\x18\0\0\0\0\0\x0c\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\
+    \xbd\x53\x87\xbe\xc8\xd0\x35\x23\x2d\xb5\xaf\xa5";
+
+const SHADER_BYTES: &[u8] = include_bytes!("../shaders/retained-unlit.bundle");
+#[used]
+#[unsafe(link_section = ".trueos.shaders")]
+static RETAINED_SHADERS: [u8; SHADER_BYTES.len()] =
+    *include_bytes!("../shaders/retained-unlit.bundle");
+
+pub(super) async fn show(glb: &[u8], greeting_glb: Option<&[u8]>, color: bool) -> Result<()> {
+    let (x, y, width, height) = window_placement()?;
+    let mesh = mesh::prepare_materials(glb, width, height, &MATERIALS, true)?;
+    let mut greeting = greeting_glb
+        .map(|clip| Animation::prepare(clip, &MATERIALS))
+        .transpose()?;
+    if let Some(clip) = &greeting {
+        ensure!(clip.duration() <= 8.0, "unexpected Greeting duration");
+    }
+    let nod = Animation::nod(glb, &MATERIALS, greeting.as_mut())?;
+    let mut sequence = AnimationSequence { greeting, nod };
+    if !color {
+        apply_normal_maps(glb, &mut sequence).await?;
+    }
+    let device =
+        Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT)).map_err(gpu_error)?;
+    let shown = async {
+        let renderer = AvatarRenderer::prepare(device, &mesh, &mut sequence, glb, color).await?;
+        let mut skin = if color {
+            Skin::BaseColor(base_color::retain(device).await?)
+        } else {
+            Skin::Lighting(BodyLight::new(device).await?)
+        };
+        let mut observer = Autobs::new(
+            (width, height),
+            mesh.observer_target,
+            mesh.pixels_per_unit,
+            renderer.animated_half_span,
+        );
+        let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
+        let title = if color {
+            "EmoModel · 4K Base Color"
+        } else {
+            "EmoModel"
+        };
+        frame.set_title(title).map_err(ui_error)?;
+        play(&mut frame, &renderer, &mut observer, &mut skin).await
+    }
+    .await;
+    let released = device.close().map_err(gpu_error);
+    shown?;
+    released
+}
+
+async fn apply_normal_maps(glb: &[u8], sequence: &mut AnimationSequence) -> Result<()> {
+    for (section, (material, png)) in MATERIALS.iter().zip(SKIN_NORMAL_MAPS).enumerate() {
+        let image = vmedia::decode(ImageFormat::Png, png)
+            .await
+            .map_err(gpu_error)
+            .with_context(|| format!("decode the normal map for {material}"))?;
+        ensure!(
+            image.info.width == NORMAL_MAP_SIZE
+                && image.info.height == NORMAL_MAP_SIZE
+                && image.info.stride_bytes == NORMAL_MAP_SIZE * 4,
+            "unexpected normal map extent for {material}"
+        );
+        let normals = normal_detail::bake(glb, material, &image.rgba, NORMAL_MAP_SIZE as usize)?;
+        sequence.nod.apply_bind_normals(section, &normals)?;
+        if let Some(greeting) = &mut sequence.greeting {
+            greeting.apply_bind_normals(section, &normals)?;
+        }
+    }
+    report(format_args!(
+        "skin normal detail atlases={} extent={NORMAL_MAP_SIZE}x{NORMAL_MAP_SIZE} sampling=bind-vertex",
+        SKIN_NORMAL_MAPS.len()
+    ));
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    LightSweep,
+    Motion(MotionPhase),
+    IdleWind,
+    IdleSettle,
+}
+
+impl Phase {
+    fn name(self) -> &'static str {
+        match self {
+            Self::LightSweep => "Body-light-sweep",
+            Self::Motion(MotionPhase::Greeting) => "Greeting",
+            Self::Motion(MotionPhase::ToNod) => "Greeting-to-Nod",
+            Self::Motion(MotionPhase::Nod) => "Nod",
+            Self::Motion(MotionPhase::FromNod) => "Nod-to-reverse-Greeting",
+            Self::Motion(MotionPhase::ReverseGreeting) => "Reverse-Greeting",
+            Self::IdleWind => "Idle-wind",
+            Self::IdleSettle => "Idle-settle",
+        }
+    }
+}
+
+struct AnimationSequence {
+    greeting: Option<Animation>,
+    nod: Animation,
+}
+
+impl AnimationSequence {
+    fn apply(&mut self, sample: MotionSample) -> &mut Animation {
+        let clip = match sample.phase {
+            MotionPhase::Greeting | MotionPhase::ReverseGreeting => self
+                .greeting
+                .as_mut()
+                .expect("timeline has a Greeting clip"),
+            _ => &mut self.nod,
+        };
+        clip.apply(sample.seconds);
+        clip
+    }
+}
+
+struct AvatarRenderer {
+    device: Device,
+    queue: Queue,
+    atlas: Vec<RetainedMesh>,
+    material_palette: RetainedTexture,
+    draw_group_count: usize,
+    light_sweep_ns: u64,
+    poses: Vec<PoseDraw>,
+    timeline: Timeline,
+    idle: Option<idle::Idle>,
+    landing: Option<Vec3>,
+    animated_half_span: [f32; 2],
+}
+
+#[derive(Clone, Copy)]
+struct PoseDraw {
+    phase: Phase,
+    mesh: usize,
+    ranges: [RetainedDrawRange; DRAW_GROUPS],
+}
+
+#[derive(Clone, Copy)]
+struct Staging {
+    vertices: Buffer,
+    indices: Buffer,
+    vertex_capacity: usize,
+    index_capacity: usize,
+}
+
+fn floor_grid(y: f32) -> Vec<[[f32; 3]; 4]> {
+    const COLUMNS: usize = 6;
+    const ROWS: usize = 4;
+    // A cell is approximately the width and length of an authored foot.
+    const CELL_X: f32 = 0.08;
+    const CELL_Z: f32 = 0.20;
+    const HALF_LINE: f32 = 0.005;
+    let x_min = -0.5 * COLUMNS as f32 * CELL_X;
+    let x_max = -x_min;
+    let z_min = -0.20 - 0.5 * ROWS as f32 * CELL_Z;
+    let z_max = z_min + ROWS as f32 * CELL_Z;
+    let strip = |x0, x1, z0, z1| [[x0, y, z0], [x0, y, z1], [x1, y, z0], [x1, y, z1]];
+    let mut lines = Vec::with_capacity(COLUMNS + ROWS + 2);
+    for column in 0..=COLUMNS {
+        let x = x_min + column as f32 * CELL_X;
+        lines.push(strip(x - HALF_LINE, x + HALF_LINE, z_min, z_max));
+    }
+    for row in 0..=ROWS {
+        let z = z_min + row as f32 * CELL_Z;
+        lines.push(strip(
+            x_min - HALF_LINE,
+            x_max + HALF_LINE,
+            z - HALF_LINE,
+            z + HALF_LINE,
+        ));
+    }
+    lines
+}
+
+fn grid_indices(base: u32, vertex_count: u32) -> impl Iterator<Item = u32> {
+    (0..vertex_count / 4)
+        .flat_map(move |line| [0, 1, 2, 2, 1, 3].map(|corner| base + line * 4 + corner))
+}
+
+fn append_range(
+    indices: &mut Vec<u8>,
+    draw: impl Iterator<Item = u32>,
+) -> Result<RetainedDrawRange> {
+    let first_index = u32::try_from(indices.len() / size_of::<u32>())?;
+    indices.extend(draw.flat_map(u32::to_le_bytes));
+    Ok(RetainedDrawRange {
+        first_index,
+        index_count: u32::try_from(indices.len() / size_of::<u32>())? - first_index,
+    })
+}
+
+fn section_indices<'a>(
+    mesh: &'a Mesh,
+    indices: &'a [u32],
+    positions: &'a [[f32; 3]],
+    sections: &'a [Range<usize>],
+) -> impl Iterator<Item = u32> + 'a {
+    sections
+        .iter()
+        .flat_map(|section| mesh.retained_triangles(indices, positions, section.clone()))
+        .flatten()
+}
+
+fn advance_hair(
+    animation: &mut Animation,
+    hair: &mut Hair,
+    body: &mut BodyBack,
+    body_indices: &[u32],
+    wind: Vec3,
+) -> Result<()> {
+    let head = animation
+        .head_from_bind()
+        .context("missing hair root joint")?;
+    body.update(animation.skin().positions, body_indices);
+    hair.step(head, wind, body);
+    Ok(())
+}
+
+impl AvatarRenderer {
+    async fn prepare(
+        device: Device,
+        mesh: &Mesh,
+        sequence: &mut AnimationSequence,
+        glb: &[u8],
+        color: bool,
+    ) -> Result<Self> {
+        let started = clock::monotonic_nanos();
+        let queue = device.create_queue(QueueClass::Render).map_err(gpu_error)?;
+        let greeting_duration = sequence.greeting.as_ref().map(Animation::duration);
+        let timeline = Timeline::new(greeting_duration, sequence.nod.duration());
+        let pose_count = timeline.forward_frame_count();
+        let frame_count = timeline.frame_count();
+        let (source_vertices, compact_indices) = compact_mesh(mesh);
+        let target = Vec3::from_array(mesh.observer_target);
+        let back = camera_back(BASE_YAW);
+        let right = Vec3::Y.cross(back);
+        sequence.nod.apply(sequence.nod.duration());
+        let settled = sequence.nod.skin();
+        let skin_indices = &mesh.indices[..mesh.skin_triangle_count * 3];
+        let body_start = u32::try_from(mesh.material_vertices[1].start)?;
+        let body_indices =
+            &skin_indices[skin_indices.partition_point(|&index| index < body_start)..];
+        let mut low = Vec3::splat(f32::INFINITY);
+        let mut high = Vec3::splat(f32::NEG_INFINITY);
+        for &index in skin_indices {
+            let point = Vec3::from_array(settled.positions[index as usize]);
+            let coordinates = Vec3::new(point.dot(right), point.y, point.dot(back));
+            low = low.min(coordinates);
+            high = high.max(coordinates);
+        }
+        let center = (low + high) * 0.5;
+        let light_sweep_ns = if color { 0 } else { SWEEP_NS };
+        let landing =
+            greeting_duration.map(|_| right * center.x + back * center.z + Vec3::Y * target.y);
+        let strand_count = mesh.strand_guides.len();
+        ensure!(strand_count > 0, "missing long back hair guides");
+        let recovery = if greeting_duration.is_some() {
+            ARM_RECOVERY_SECONDS
+        } else {
+            0.0
+        };
+        let nod_seconds = sequence.nod.duration() - recovery;
+        let wind_at = |sample: MotionSample| match sample.phase {
+            MotionPhase::Greeting | MotionPhase::ReverseGreeting => {
+                breeze(sample.seconds / greeting_duration.unwrap_or_default())
+            }
+            MotionPhase::Nod => breeze((sample.seconds - recovery) / nod_seconds),
+            MotionPhase::ToNod | MotionPhase::FromNod => Vec3::ZERO,
+        };
+        let initial = sequence.apply(timeline.sample(0));
+        let head = initial
+            .head_from_bind()
+            .context("missing hair root joint")?;
+        let mut hair = Hair::new(mesh.strand_guides.clone(), head);
+        let mut body = BodyBack::default();
+        body.update(initial.skin().positions, body_indices);
+        // Settle before the held opening pose, then warm the complete motion loop.
+        for _ in 0..2 * HZ {
+            hair.step(head, Vec3::ZERO, &body);
+        }
+        let preroll = if greeting_duration.is_some() { 1 } else { 2 };
+        let mut hair_frames = Vec::with_capacity(frame_count * strand_count);
+        let mut loop_pose = Vec::with_capacity(strand_count);
+        for cycle in 0..=preroll {
+            for frame in 0..frame_count {
+                let sample = timeline.sample(frame);
+                advance_hair(
+                    sequence.apply(sample),
+                    &mut hair,
+                    &mut body,
+                    body_indices,
+                    wind_at(sample),
+                )?;
+                if cycle == preroll {
+                    if let Some((reference, weight)) = sample.hair_reference() {
+                        let start = reference * strand_count;
+                        loop_pose.clear();
+                        hair.append_loop_pose(
+                            &hair_frames[start..start + strand_count],
+                            weight,
+                            &mut loop_pose,
+                        );
+                        hair_frames.extend_from_slice(&loop_pose);
+                    } else {
+                        hair_frames.extend(hair.strands().copied());
+                    }
+                }
+            }
+        }
+        let strand_vertices = u32::try_from(PARTICLES * 2)?;
+        let first_strand_vertex = u32::try_from(source_vertices.len())?;
+        let strand_indices: Vec<_> = (0..u32::try_from(strand_count)?)
+            .flat_map(|strand| {
+                let first = first_strand_vertex + strand * strand_vertices;
+                hair_ribbon::TRIANGLES
+                    .into_iter()
+                    .flatten()
+                    .map(move |index| first + index)
+            })
+            .collect();
+        let hair_vertex_count = u32::try_from(strand_count)? * strand_vertices;
+        let vertex_count = first_strand_vertex + hair_vertex_count;
+        let variants = if greeting_duration.is_some() { 2 } else { 1 };
+        let vertex_bytes =
+            (first_strand_vertex + hair_vertex_count * variants) as usize * VERTEX_BYTES;
+        let batch_poses = pose_count.min(POSES_PER_MESH);
+        let grid = floor_grid(low.y - 0.004);
+        let grid_vertex_count = u32::try_from(grid.len() * 4)?;
+        let mut grid_vertices = Vec::with_capacity(grid_vertex_count as usize * VERTEX_BYTES);
+        for &position in grid.iter().flatten() {
+            for value in position
+                .into_iter()
+                .chain(Vec3::Y.to_array())
+                .chain(GRID_UV)
+            {
+                grid_vertices.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let vertex_capacity = vertex_bytes * batch_poses + grid_vertices.len();
+        let index_capacity = (compact_indices.len() * 2
+            + (compact_indices.len() - skin_indices.len()) * 2 * (variants as usize - 1)
+            + (strand_indices.len() + grid.len() * 6) * variants as usize)
+            * size_of::<u32>()
+            * batch_poses;
+        let vertex_buffer = device
+            .create_buffer(
+                vertex_capacity,
+                vgpu::BUFFER_USAGE_VERTEX | vgpu::BUFFER_USAGE_MAP_WRITE,
+            )
+            .map_err(gpu_error)
+            .context("allocate avatar vertex staging buffer")?;
+        let index_buffer = device
+            .create_buffer(
+                index_capacity,
+                vgpu::BUFFER_USAGE_INDEX | vgpu::BUFFER_USAGE_MAP_WRITE,
+            )
+            .map_err(gpu_error)
+            .context("allocate avatar index staging buffer")?;
+        let staging = Staging {
+            vertices: vertex_buffer,
+            indices: index_buffer,
+            vertex_capacity,
+            index_capacity,
+        };
+        let mut vertices = Vec::with_capacity(vertex_capacity);
+        let mut indices = Vec::with_capacity(index_capacity);
+        let mut compact_positions = Vec::with_capacity(source_vertices.len());
+        let mut atlas = Vec::with_capacity(pose_count.div_ceil(POSES_PER_MESH));
+        let mut poses = vec![None; frame_count];
+        let mut idle_base = None;
+        let mut geometry_bytes = 0;
+        let mut animated_half_span = [0.0_f32; 2];
+        let view_back = view_back(BASE_YAW);
+        let up = view_back.cross(right);
+        let arc_sine = ARC_LIMIT.sin();
+        let arc_depth = 1.0 - ARC_LIMIT.cos();
+        let pitch_sine = CAMERA_PITCH.sin();
+        let include_in_frame = |span: &mut [f32; 2], position: Vec3, center: Vec3| {
+            let offset = position - center;
+            let x = offset.dot(right).abs();
+            let depth = offset.dot(back).abs();
+            let half_width = x + depth * arc_sine;
+            let half_height =
+                offset.dot(up).abs() + pitch_sine * (x * arc_sine + depth * arc_depth);
+            span[0] = span[0].max(half_width);
+            span[1] = span[1].max(half_height);
+        };
+        let light_plane = LightPlane::new();
+        for &point in grid.iter().flatten() {
+            for center in [target, landing.unwrap_or(target)] {
+                include_in_frame(&mut animated_half_span, Vec3::from_array(point), center);
+            }
+        }
+        let sections: [Vec<Range<usize>>; DRAW_GROUPS] = if color {
+            let [face, body, hair, mouth, iris] = mesh.material_triangles.as_slice() else {
+                anyhow::bail!("unexpected avatar material sections");
+            };
+            [
+                vec![face.clone(), mouth.clone()],
+                vec![body.clone()],
+                vec![hair.clone(), iris.clone()],
+            ]
+        } else {
+            [
+                vec![0..mesh.skin_triangle_count],
+                vec![mesh.skin_triangle_count..mesh.triangle_count],
+                Vec::new(),
+            ]
+        };
+        let draw_group_count = if color { 3 } else { 2 };
+        let flat_group = draw_group_count - 1;
+        let mut material_coordinates = vec![None; mesh.vertex_count()];
+        for (slot, vertices) in mesh.material_vertices[LIT_MATERIALS..].iter().enumerate() {
+            let u = (slot as f32 + 0.5) / PALETTE_WIDTH as f32;
+            material_coordinates[vertices.clone()].fill(Some([u, 0.5]));
+        }
+        if color {
+            base_color::apply_coordinates(glb, mesh, &mut material_coordinates)?;
+        }
+        for start in (0..pose_count).step_by(POSES_PER_MESH) {
+            let end = (start + POSES_PER_MESH).min(pose_count);
+            let count = u32::try_from(end - start)?;
+            let mirrored = u32::try_from(
+                (start..end)
+                    .filter(|&pose| timeline.reverse_frame(pose).is_some())
+                    .count(),
+            )?;
+            let grid_base = count * vertex_count + mirrored * hair_vertex_count;
+            let mesh_index = atlas.len();
+            vertices.clear();
+            indices.clear();
+            for pose in start..end {
+                let motion = timeline.sample(pose);
+                let reverse = timeline.reverse_frame(pose);
+                let sample = sequence.apply(motion).skin();
+                ensure!(
+                    sample.positions.len() == mesh.vertex_count(),
+                    "avatar mesh vertex count changed"
+                );
+                compact_positions.clear();
+                let targets = [Some(target), landing];
+                let body_vertex_offset = vertices.len();
+                let mut append_vertex = |position: [f32; 3], normal, material_uv| {
+                    for &center in targets.iter().flatten() {
+                        // Fit both pan endpoints and any yaw along the resize arc.
+                        include_in_frame(
+                            &mut animated_half_span,
+                            Vec3::from_array(position),
+                            center,
+                        );
+                    }
+                    for value in position.into_iter().chain(normal).chain(material_uv) {
+                        vertices.extend_from_slice(&value.to_le_bytes());
+                    }
+                };
+                for &source in &source_vertices {
+                    let position = sample.positions[source];
+                    let normal = sample.normals[source];
+                    ensure!(
+                        position.iter().all(|p| p.is_finite()),
+                        "nonfinite avatar pose"
+                    );
+                    let material_uv = material_coordinates[source]
+                        .unwrap_or_else(|| light_plane.coordinates(Vec3::from_array(normal)));
+                    append_vertex(position, normal, material_uv);
+                    compact_positions.push(position);
+                }
+                // Reverse playback shares the body pose. The hair was simulated in
+                // playback order, so the same head pose can have different strands.
+                for frame in [Some(pose), reverse].into_iter().flatten() {
+                    let start = frame * strand_count;
+                    for points in &hair_frames[start..start + strand_count] {
+                        for vertex in hair_ribbon::vertices(points, back).into_iter().flatten() {
+                            append_vertex(vertex.to_array(), back.to_array(), HAIR_UV);
+                        }
+                    }
+                }
+                let base_vertex = u32::try_from(body_vertex_offset / VERTEX_BYTES)?;
+                let mut ranges = [RetainedDrawRange::default(); DRAW_GROUPS];
+                for (group, (range, sections)) in ranges
+                    .iter_mut()
+                    .zip(&sections)
+                    .take(draw_group_count)
+                    .enumerate()
+                {
+                    let body_indices =
+                        section_indices(mesh, &compact_indices, &compact_positions, sections);
+                    let extra_indices = if group == flat_group {
+                        &strand_indices[..]
+                    } else {
+                        &[]
+                    };
+                    let floor_vertex_count = if group == flat_group {
+                        grid_vertex_count
+                    } else {
+                        0
+                    };
+                    let draw = body_indices
+                        .chain(extra_indices.iter().copied())
+                        .map(|index| base_vertex + index)
+                        .chain(grid_indices(grid_base, floor_vertex_count));
+                    *range = append_range(&mut indices, draw)?;
+                }
+                poses[pose] = Some(PoseDraw {
+                    phase: Phase::Motion(motion.phase),
+                    mesh: mesh_index,
+                    ranges,
+                });
+                if let Some(frame) = reverse {
+                    let mut reverse_ranges = ranges;
+                    let body_indices = section_indices(
+                        mesh,
+                        &compact_indices,
+                        &compact_positions,
+                        &sections[flat_group],
+                    );
+                    let draw = body_indices
+                        .chain(
+                            strand_indices
+                                .iter()
+                                .map(|&index| index + hair_vertex_count),
+                        )
+                        .map(|index| base_vertex + index)
+                        .chain(grid_indices(grid_base, grid_vertex_count));
+                    reverse_ranges[flat_group] = append_range(&mut indices, draw)?;
+                    poses[frame] = Some(PoseDraw {
+                        phase: Phase::Motion(timeline.sample(frame).phase),
+                        mesh: mesh_index,
+                        ranges: reverse_ranges,
+                    });
+                }
+                if greeting_duration.is_none() && pose + 1 == pose_count {
+                    // All idle frames use this terminal body pose and the same floor grid.
+                    let body_end = body_vertex_offset + source_vertices.len() * VERTEX_BYTES;
+                    let mut shared_vertices = vertices[body_vertex_offset..body_end].to_vec();
+                    shared_vertices.extend_from_slice(&grid_vertices);
+                    let mut shared_indices = Vec::new();
+                    let mut shared_ranges = [RetainedDrawRange::default(); DRAW_GROUPS];
+                    for (group, (range, sections)) in shared_ranges
+                        .iter_mut()
+                        .zip(&sections)
+                        .take(draw_group_count)
+                        .enumerate()
+                    {
+                        let body_indices =
+                            section_indices(mesh, &compact_indices, &compact_positions, sections);
+                        let floor_vertex_count = if group == flat_group {
+                            grid_vertex_count
+                        } else {
+                            0
+                        };
+                        let draw = body_indices
+                            .chain(grid_indices(first_strand_vertex, floor_vertex_count));
+                        *range = append_range(&mut shared_indices, draw)?;
+                    }
+                    idle_base = Some(idle::IdleBase {
+                        vertices: shared_vertices,
+                        indices: shared_indices,
+                        ranges: shared_ranges,
+                    });
+                }
+            }
+            debug_assert_eq!(vertices.len() / VERTEX_BYTES, grid_base as usize);
+            vertices.extend_from_slice(&grid_vertices);
+            write_geometry(device, vertex_buffer, &vertices)
+                .context("upload avatar vertex staging buffer")?;
+            write_geometry(device, index_buffer, &indices)
+                .context("upload avatar index staging buffer")?;
+            geometry_bytes += vertices.len() + indices.len();
+            atlas.push(
+                device
+                    .create_retained_mesh(
+                        vertex_buffer,
+                        index_buffer,
+                        RetainedMeshDescriptor {
+                            vertex_count: grid_base + grid_vertex_count,
+                            index_count: u32::try_from(indices.len() / size_of::<u32>())?,
+                            vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_POS_NORMAL_UV,
+                            topology: vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(gpu_error)
+                    .with_context(|| format!("retain avatar poses {start} through {}", end - 1))?,
+            );
+        }
+        let poses = poses
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .context("incomplete motion loop geometry")?;
+        drop((vertices, indices));
+        let idle = if let Some(base) = idle_base {
+            let idle = idle::Idle::bake(
+                device,
+                staging,
+                base,
+                idle::IdleHair {
+                    hair: &mut hair,
+                    head: sequence
+                        .nod
+                        .head_from_bind()
+                        .context("missing idle hair root joint")?,
+                    body: &body,
+                    view_back: back,
+                },
+                |position| include_in_frame(&mut animated_half_span, position, target),
+            )?;
+            geometry_bytes += idle.geometry_bytes();
+            Some(idle)
+        } else {
+            None
+        };
+        let material_palette =
+            vmedia::decode_retained(device, ImageFormat::Bmp, MATERIAL_PALETTE_BMP)
+                .await
+                .map_err(gpu_error)
+                .context("retain the flat material palette")?;
+        let elapsed_ms = (clock::monotonic_nanos() - started) / 1_000_000;
+        let max_indices = poses
+            .iter()
+            .map(|pose| {
+                pose.ranges
+                    .iter()
+                    .map(|range| range.index_count)
+                    .sum::<u32>()
+            })
+            .max()
+            .unwrap_or(0);
+        report(format_args!(
+            "avatar ready target_hz={HZ} clips={} baked_s={:.3} poses={frame_count} body_poses={pose_count} idle_wind_frames={} idle_settle_frames={} resident_meshes={} geometry_bytes={geometry_bytes} triangles={} hair_triangles={} hair_strands={strand_count} segments_per_strand={} max_indices={max_indices} cull=back bake_upload_ms={elapsed_ms}",
+            if landing.is_some() {
+                "Greeting,Nod,Reverse-Greeting"
+            } else {
+                "Nod"
+            },
+            frame_count as f32 / HZ as f32,
+            if idle.is_some() { WIND_FRAMES } else { 0 },
+            if idle.is_some() {
+                IDLE_FRAMES - WIND_FRAMES
+            } else {
+                0
+            },
+            atlas.len() + idle.as_ref().map_or(0, idle::Idle::mesh_count),
+            mesh.triangle_count + strand_indices.len() / 3,
+            mesh.hair_triangle_count + strand_indices.len() / 3,
+            PARTICLES - 1,
+        ));
+        Ok(Self {
+            device,
+            queue,
+            atlas,
+            material_palette,
+            draw_group_count,
+            light_sweep_ns,
+            poses,
+            timeline,
+            idle,
+            landing,
+            animated_half_span,
+        })
+    }
+
+    fn import_surface(&self, window: u32, deadline: u64) -> Result<Ui4Surface, i32> {
+        loop {
+            match self.device.acquire_ui4_surface(window) {
+                Ok(surface) => return Ok(surface),
+                Err(vgpu::ERR_BUSY | UI4_IMPORT_BUSY) if clock::monotonic_nanos() < deadline => {
+                    vsys::sleep_ms(1);
+                }
+                Err(code) => return Err(code),
+            }
+        }
+    }
+
+    fn pose(&self, elapsed_ns: u64) -> (usize, Phase) {
+        if elapsed_ns < self.light_sweep_ns {
+            return (0, Phase::LightSweep);
+        }
+        let tick = (elapsed_ns - self.light_sweep_ns) * u64::from(HZ) / SECOND_NS;
+        let period = self.poses.len() + if self.idle.is_some() { IDLE_FRAMES } else { 0 };
+        let pose = (tick % period as u64) as usize;
+        let phase = if let Some(motion) = self.poses.get(pose) {
+            motion.phase
+        } else if pose - self.poses.len() < WIND_FRAMES {
+            Phase::IdleWind
+        } else {
+            Phase::IdleSettle
+        };
+        (pose, phase)
+    }
+
+    fn submit(
+        &self,
+        surface: Ui4Surface,
+        camera: RetainedCamera,
+        pose: usize,
+        skin: &Skin,
+    ) -> Result<(), i32> {
+        let mut submit = RetainedTexturedFrameV1 {
+            frame: RetainedFrameSubmit {
+                clear_rgba8_srgb: CLEAR_RGBA,
+                camera,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let base_groups = self.draw_group_count;
+        let (mesh, groups) = if let Some(motion) = self.poses.get(pose) {
+            submit.ranges[..base_groups].copy_from_slice(&motion.ranges[..base_groups]);
+            (self.atlas[motion.mesh], base_groups)
+        } else {
+            let (mesh, shared, hair) = self
+                .idle
+                .as_ref()
+                .expect("idle playback has a mesh")
+                .draw(pose - self.poses.len());
+            submit.ranges[..base_groups].copy_from_slice(&shared[..base_groups]);
+            submit.ranges[base_groups] = hair;
+            (mesh, base_groups + 1)
+        };
+        submit.frame.seed_count = groups as u32;
+        submit.frame.seeds[..groups].fill(RetainedTransformSeed {
+            scale: [1.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            ..Default::default()
+        });
+        submit.textures[..groups].fill(self.material_palette.id().raw());
+        match skin {
+            Skin::Lighting(light) => submit.textures[0] = light.texture.id().raw(),
+            Skin::BaseColor([face, body]) => {
+                submit.textures[0] = face.id().raw();
+                submit.textures[1] = body.id().raw();
+            }
+        }
+        self.device
+            .submit_retained_textured_frame_v1(self.queue, surface, mesh, submit)
+            .map(|_| ())
+    }
+}
+
+enum Skin {
+    Lighting(BodyLight),
+    BaseColor([RetainedTexture; 2]),
+}
+
+struct BodyLight {
+    lookup: DiffuseLookup,
+    angle: i16,
+    texture: RetainedTexture,
+}
+
+impl BodyLight {
+    async fn new(device: Device) -> Result<Self> {
+        let mut lookup = DiffuseLookup::new();
+        let angle = sweep_angle(0);
+        let texture = vmedia::decode_retained(device, ImageFormat::Bmp, lookup.update(angle))
+            .await
+            .map_err(gpu_error)
+            .context("retain the body lighting lookup")?;
+        Ok(Self {
+            lookup,
+            angle,
+            texture,
+        })
+    }
+
+    async fn update(&mut self, device: Device, elapsed_ns: u64) -> Result<()> {
+        let angle = sweep_angle(elapsed_ns);
+        if angle != self.angle {
+            self.texture =
+                vmedia::decode_retained(device, ImageFormat::Bmp, self.lookup.update(angle))
+                    .await
+                    .map_err(gpu_error)
+                    .context("update the body lighting lookup")?;
+            self.angle = angle;
+        }
+        Ok(())
+    }
+}
+
+fn compact_mesh(mesh: &Mesh) -> (Vec<usize>, Vec<u32>) {
+    let mut mapping = vec![u32::MAX; mesh.vertex_count()];
+    let mut source_vertices = Vec::new();
+    let indices = mesh
+        .indices
+        .iter()
+        .map(|&index| {
+            let source = index as usize;
+            if mapping[source] == u32::MAX {
+                mapping[source] = source_vertices.len() as u32;
+                source_vertices.push(source);
+            }
+            mapping[source]
+        })
+        .collect();
+    (source_vertices, indices)
+}
+
+struct ResizeTrace {
+    start: u64,
+    duration: u64,
+    next_sample: u8,
+}
+
+struct ObserverSample {
+    resize: u64,
+    elapsed: u64,
+    extent: (u32, u32),
+    pose: ObserverPose,
+}
+
+impl ResizeTrace {
+    fn sample(
+        &mut self,
+        time: u64,
+        extent: (u32, u32),
+        pose: ObserverPose,
+    ) -> Option<ObserverSample> {
+        let elapsed = time.saturating_sub(self.start);
+        let step = (elapsed.saturating_mul(3) / self.duration.max(1)).min(3) as u8;
+        if step < self.next_sample {
+            return None;
+        }
+        self.next_sample = step + 1;
+        Some(ObserverSample {
+            resize: self.start,
+            elapsed,
+            extent,
+            pose,
+        })
+    }
+}
+
+impl ObserverSample {
+    fn report(&self, serial: u64) {
+        report(format_args!(
+            "autobs presented resize={} extent={}x{} serial={serial} elapsed_ms={} zoom={:.3} distance={:.3} yaw_deg={:.2}",
+            self.resize,
+            self.extent.0,
+            self.extent.1,
+            self.elapsed / 1_000_000,
+            self.pose.zoom,
+            self.pose.distance,
+            self.pose.yaw_offset.to_degrees(),
+        ));
+    }
+}
+
+async fn play(
+    frame: &mut Frame,
+    renderer: &AvatarRenderer,
+    observer: &mut Autobs,
+    skin: &mut Skin,
+) -> Result<()> {
+    let mut pending_resize = None;
+    let mut resizing = false;
+    let mut epoch = None;
+    let mut next_frame = 0;
+    let mut stats = Timing::default();
+    let mut receipts = VecDeque::new();
+    let mut last_camera_pose = observer.pose(clock::monotonic_nanos());
+    let mut resize_trace = None;
+    let mut previous_phase = None;
+    let mut light_markers = [0, SWEEP_NS / 2, SWEEP_NS - SECOND_NS / 2]
+        .into_iter()
+        .peekable();
+    loop {
+        loop {
+            match frame.take_resize_event() {
+                Ok(Some(event)) => pending_resize = Some((event.width, event.height)),
+                Ok(None) => break,
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)),
+            }
+        }
+        if let Some(extent) = pending_resize {
+            match frame.resize(extent.0, extent.1) {
+                Ok(()) => {
+                    pending_resize = None;
+                    stats = Timing::default();
+                    receipts.clear();
+                    resize_trace = None;
+                    resizing = true;
+                }
+                Err(Error::Busy) => (),
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)),
+            }
+        }
+        let wait_start = clock::monotonic_nanos();
+        if !resizing && wait_start < next_frame {
+            vsys::sleep_ms((next_frame - wait_start).div_ceil(1_000_000));
+            continue;
+        }
+        if let (Some(start), Skin::Lighting(light)) = (epoch, &mut *skin) {
+            light.update(renderer.device, wait_start - start).await?;
+        }
+        let deadline = wait_start + WAIT_NS;
+        loop {
+            match frame.begin_gpu_frame() {
+                Ok(()) => break,
+                Err(Error::Busy) if clock::monotonic_nanos() < deadline => vsys::sleep_ms(1),
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)),
+            }
+        }
+        let admitted = clock::monotonic_nanos();
+        let epoch = *epoch.get_or_insert(admitted);
+        let elapsed = admitted - epoch;
+        // Anchor deadlines to elapsed time so millisecond wake-ups cannot accumulate drift.
+        let tick = elapsed * u64::from(HZ) / SECOND_NS;
+        next_frame = epoch + ((tick + 1) * SECOND_NS).div_ceil(u64::from(HZ));
+        let (pose, phase) = renderer.pose(elapsed);
+        if let Some(landing) = renderer.landing {
+            observer.aim_at_landing(landing, renderer.timeline.landing_weight(pose));
+        }
+        let extent = (frame.width(), frame.height());
+        // Keep the last published camera through the atomic backing swap.
+        let camera_pose = if resizing {
+            last_camera_pose
+        } else {
+            observer.pose(admitted)
+        };
+        let camera = observer.camera(camera_pose, extent);
+        let surface = match renderer.import_surface(frame.window_id(), admitted + WAIT_NS) {
+            Ok(surface) => surface,
+            Err(UI4_SURFACE_GONE) => return Ok(()),
+            Err(code) => return Err(gpu_error(code)),
+        };
+        let submit_started = clock::monotonic_nanos();
+        match renderer.submit(surface, camera, pose, skin) {
+            Ok(()) => (),
+            Err(vgpu::ERR_BUSY) => {
+                // The consumed import cancels the write lease on a busy submit.
+                stats.busy += 1;
+                continue;
+            }
+            Err(UI4_SURFACE_GONE) => return Ok(()),
+            Err(code) => return Err(gpu_error(code)).context("draw a retained avatar pose"),
+        }
+        let submitted = clock::monotonic_nanos();
+        let damage = Damage::full(extent.0, extent.1);
+        let receipt = loop {
+            match frame.publish_tracked(damage) {
+                Ok(serial) => break Some(serial),
+                Err(Error::Busy) if clock::monotonic_nanos() < submitted + WAIT_NS => {
+                    vsys::sleep_ms(1)
+                }
+                Err(Error::NotFound) => return Ok(()),
+                Err(Error::InvalidState) if resizing => break None,
+                Err(error) => return Err(ui_error(error)),
+            }
+        };
+        let finished = clock::monotonic_nanos();
+        if let Some(serial) = receipt {
+            if resizing {
+                observer.retarget(extent, camera_pose, finished);
+                resize_trace = Some(ResizeTrace {
+                    start: finished,
+                    duration: observer.duration_ns(),
+                    next_sample: 0,
+                });
+            }
+            last_camera_pose = camera_pose;
+            let camera_sample = resize_trace
+                .as_mut()
+                .and_then(|trace| trace.sample(admitted, extent, camera_pose));
+            let angle = match skin {
+                Skin::Lighting(light) => Some(light.angle),
+                Skin::BaseColor(_) => None,
+            };
+            receipts.push_back((serial, camera_sample, phase, pose, elapsed, angle));
+            stats.add(wait_start, admitted, finished, submitted - submit_started);
+        }
+        resizing = false;
+        // UI4 retains eight recent display receipts. Leave delayed ones in the queue
+        // without stalling the producer when the compositor is busy or obscured.
+        let mut remaining = receipts.len();
+        while remaining > 0 {
+            let receipt = receipts.pop_front().expect("pending presentation receipt");
+            let (serial, camera_sample, phase, pose, elapsed, angle) = receipt;
+            match frame.was_presented(serial) {
+                Ok(true) => {
+                    stats.displayed += 1;
+                    if previous_phase != Some(phase) {
+                        previous_phase = Some(phase);
+                        report(format_args!(
+                            "avatar playback phase={} pose={pose} present_serial={serial}",
+                            phase.name()
+                        ));
+                    }
+                    if phase == Phase::LightSweep
+                        && let Some(angle) = angle
+                        && light_markers
+                            .peek()
+                            .is_some_and(|&marker| elapsed >= marker)
+                    {
+                        light_markers.next();
+                        report(format_args!(
+                            "body light presented start_ms={} elapsed_ms={} angle_deg={angle} pose={pose} serial={serial}",
+                            epoch / 1_000_000,
+                            elapsed / 1_000_000,
+                        ));
+                    }
+                    if let Some(sample) = camera_sample {
+                        sample.report(serial);
+                    }
+                }
+                Ok(false) => {
+                    receipts.push_back((serial, camera_sample, phase, pose, elapsed, angle))
+                }
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)),
+            }
+            remaining -= 1;
+        }
+        while receipts.len() > 8 {
+            receipts.pop_front();
+        }
+        stats.report_if_ready(finished, extent);
+    }
+}
+
+#[derive(Default)]
+struct Timing {
+    started: Option<u64>,
+    last_finish: Option<u64>,
+    active_ns: Vec<u64>,
+    submit_ns: Vec<u64>,
+    acquire_ns: Vec<u64>,
+    gap_ns: Vec<u64>,
+    displayed: u32,
+    busy: u32,
+}
+
+impl Timing {
+    fn add(&mut self, acquire_start: u64, admitted: u64, finished: u64, submitted_ns: u64) {
+        self.started.get_or_insert(admitted);
+        if let Some(previous) = self.last_finish.replace(finished) {
+            self.gap_ns.push(finished - previous);
+        }
+        self.active_ns.push(finished - admitted);
+        self.submit_ns.push(submitted_ns);
+        self.acquire_ns.push(admitted - acquire_start);
+    }
+
+    fn report_if_ready(&mut self, now: u64, (width, height): (u32, u32)) {
+        let Some(started) = self.started else { return };
+        let elapsed = now - started;
+        if elapsed < REPORT_NS {
+            return;
+        }
+        let count = self.active_ns.len();
+        let over = self
+            .active_ns
+            .iter()
+            .filter(|&&ns| ns > FRAME_BUDGET_NS)
+            .count();
+        let seconds = elapsed as f64 / SECOND_NS as f64;
+        let (active_avg, active_p95, active_max) = distribution_ms(&mut self.active_ns);
+        let (submit_avg, submit_p95, submit_max) = distribution_ms(&mut self.submit_ns);
+        let (_, acquire_p95, acquire_max) = distribution_ms(&mut self.acquire_ns);
+        let (_, gap_p95, gap_max) = distribution_ms(&mut self.gap_ns);
+        report(format_args!(
+            "avatar timing extent={width}x{height} target_hz={HZ} published={count} presented={} window_s={seconds:.3} publish_hz={:.2} present_hz={:.2} active_ms_avg={active_avg:.3} active_ms_p95={active_p95:.3} active_ms_max={active_max:.3} submit_ms_avg={submit_avg:.3} submit_ms_p95={submit_p95:.3} submit_ms_max={submit_max:.3} back_buffer_ms_p95={acquire_p95:.3} back_buffer_ms_max={acquire_max:.3} frame_gap_ms_p95={gap_p95:.3} frame_gap_ms_max={gap_max:.3} over_budget={over} submit_busy={}",
+            self.displayed,
+            count as f64 / seconds,
+            f64::from(self.displayed) / seconds,
+            self.busy,
+        ));
+        self.started = Some(now);
+        self.active_ns.clear();
+        self.submit_ns.clear();
+        self.acquire_ns.clear();
+        self.gap_ns.clear();
+        self.displayed = 0;
+        self.busy = 0;
+    }
+}
+
+fn distribution_ms(samples: &mut [u64]) -> (f64, f64, f64) {
+    if samples.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    samples.sort_unstable();
+    let sum: u64 = samples.iter().sum();
+    let percentile = (samples.len() * 95).div_ceil(100) - 1;
+    (
+        sum as f64 / samples.len() as f64 / 1_000_000.0,
+        samples[percentile] as f64 / 1_000_000.0,
+        samples[samples.len() - 1] as f64 / 1_000_000.0,
+    )
+}
+
+fn report(message: std::fmt::Arguments<'_>) {
+    let _ = logl::log_record(logl::level::IMPORTANT, "emomodel", message);
+}

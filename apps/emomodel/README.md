@@ -1,9 +1,8 @@
 # emomodel
 
-On-demand Blueprint that prepares Model2Vec data for Lily's expression selector.
-It reports installed bundles and explicitly downloads one when asked. It exits
-after setup; no resident service, inference runtime, SQLite dependency, or xerj
-dependency is added. Registered in `apps.json`; this is not a buildin.
+On-demand Blueprint that displays a humanoid mesh and can prepare Model2Vec
+data for Lily's expression selector. Registered in `apps.json`; this is not a
+buildin.
 
 ## TRUEOS
 
@@ -19,20 +18,106 @@ The Blueprint uses argv-v1 and TRUEOSFS scope. Commands:
 
 ```sh
 emomodel
+emomodel show
+emomodel greeting
+emomodel base-color
 emomodel status
+emomodel mesh
 emomodel setup
 emomodel setup 8m
 emomodel setup 32m
 emomodel setup 4m
 ```
 
-On TRUEOS, bare launch (including `§§emomodel`) runs setup automatically because
-Shell3 bare-name launches do not carry argv. On the host, bare launch defaults
-to status. Explicit status performs no network requests and creates no files. Setup
-defaults to `auto`: reuse a valid installed bundle, otherwise try 8m, 32m, 4m
-in that order. Explicit IDs attempt only that choice. Every operation reports
-which bundles are absent, incomplete/invalid, or ready, and marks the selected
-bundle. `setup` downloads on demand, not during boot or Blueprint compilation.
+On TRUEOS, explicit `show` displays the original GLB's body, face, and hair in
+their rest pose through the built-in flat-color vGPU pipeline. The app redraws
+when UI4 delivers a final window extent. The avatar stays centered at its
+original pixel size, with any overflow clipped by the frame.
+
+`greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
+`/apps/emomodel`, or under `--root` when supplied. This command and bare
+launch through `§§emomodel` open the body lighting study. The camera and
+body pose hold for an eight-second light sweep. With the local clip, the avatar
+plays the Greeting jump, lowers its arms, nods once, raises its arms back to
+the landing pose, and plays Greeting in reverse. The full sequence repeats.
+A clean install alternates Nod with 15 seconds of varied wind and five seconds
+of calm. Animation credits to pixiv Inc.'s VRoid Project. Install Greeting
+privately from VRMA_02 in the official VRMA Motion Pack.
+
+Playback samples positions and authored skin normals once during startup at
+45 Hz. Retained Picasso geometry includes body skin, face skin, eyes, mouth,
+and hair. The face holds its neutral expression and follows the head joint
+during playback. Each frame draws lit skin and flat-color parts from the same
+retained pose with shared depth and back-face culling. The skin samples a
+generated 64 × 64 diffuse lookup that refreshes as the light moves. Two
+1024 × 1024 RGB normal atlases from AvatarSample_B add face and body detail.
+Startup decodes them to RGBA8 and samples them at the original skin UVs in
+bind space. Playback skins the adjusted vertex normals through the existing
+diffuse pass. The hair, eye and mouth geometry, and irises sample solid
+palette colors.
+
+`base-color` previews the original 4096 × 4096 RGBA face and body atlases
+on the animated avatar. It samples the painted skin and mouth per fragment
+through the unlit retained shader. The iris uses the flat palette because its
+authored material requires alpha blending. Both atlases are decoded once and
+occupy 128 MiB of texture residency together. Bare launch continues to use
+the light sweep with the 1024 × 1024 normal maps.
+
+In the animated preview, 28 procedural guides take the place of the long
+back hair. The source surface provides the roots, segment lengths, the direction
+each guide leaves the scalp, and its side-to-side spread. The scalp, bangs, and
+shorter locks still use the GLB mesh. Each guide has eight fixed-length segments.
+The roots follow the head, and the free lengths settle into a straighter hang
+under gravity. The idle wind pushes mostly sideways and toward the avatar's
+front, with softer breezes from other directions. The guides slide over the
+posed body and keep moving as the wind falls calm. The motion is baked into
+45 Hz frames at startup. The reverse Greeting shares forward body poses and
+simulates hair in playback order. The crouched ends of the loop blend into the
+same drape. Idle frames share their settled body pose. The primary guides draw
+as tapered ribbons in the same flat hair color, about 3 to 4 pixels wide at the
+default preview size.
+
+`autobs` is the automatic observer for the animated preview. It pans toward the
+landing stance for Nod and returns to the opening view during the reverse jump.
+A stationary 6 × 4 grid
+beneath the avatar gives a floor reference. Its rectangular cells are about
+the size of one bare foot. The pitched camera sees the grid as thin lines
+drawn in the shared flat-color range. After UI4 commits a resize, the observer
+eases along a shallow arc while looking at the avatar.
+It moves in for a larger area and pulls back more slowly for a smaller area.
+Its orthographic framing keeps the avatar proportional and fits the animated
+silhouette to the new aspect ratio. A new resize starts from the last drawn
+camera pose. The trace records several confirmed camera frames per resize,
+alongside the existing timing reports.
+
+`shaders/retained-unlit.bundle` combines the stock `churn-forward`,
+`helio-retained-transform`, and `picasso-textured` packages from
+`TRUEOS-Picasso/shaders/trueos`, in package ID order.
+
+On the host, bare launch defaults to `status`, which reports installed bundles
+without network or filesystem writes. Run `setup` to prepare an expression
+model. It defaults to `auto`, which reuses a valid bundle or tries 8m, 32m, and
+4m in order. An explicit ID tries only that model.
+
+## Embedded humanoid
+
+The Blueprint embeds [AvatarSample_B.glb](assets/AvatarSample_B.glb). `emomodel
+mesh` installs it from the executable without network access. `setup` also
+installs it before preparing the expression model. Both use `--root` when
+provided. The default path is `/apps/emomodel/AvatarSample_B.glb`.
+
+The 1,666,020-byte GLB preserves all 32,847 triangles in three meshes and
+seven material sections. It retains the skinning data and the 54 humanoid
+node mappings in `extras.humanoidBones`. It uses plain materials and contains
+zero textures, facial morph targets, or animation clips. The source VRM
+contains a joint hierarchy and bind data for posing but no glTF animation
+tracks. The body and face skin sections total 14,254 triangles and can be
+selected for a body-only preview.
+
+The source is [AvatarSample_B by VRoid Project](https://hub.vroid.com/en/characters/7939147878897061040/models/2292219474373673889).
+The extracted asset is distributed under the [VRoid sample terms](https://vroid.pixiv.help/hc/en-us/articles/4402394424089-VRoidPreset-A-Z).
+
+## Expression model bundles
 
 | ID | Pinned model | Complete bundle bytes | Role |
 | --- | --- | ---: | --- |
@@ -51,6 +136,7 @@ Data lives under the app's own TRUEOSFS root:
 ```text
 /apps/emomodel/
   active.json
+  AvatarSample_B.glb
   setup.lock
   8m/<pinned-revision>/
     config.json

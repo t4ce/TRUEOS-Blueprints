@@ -13,6 +13,7 @@ rewrite-std-imports = false
 
 [dependencies]
 anyhow = "1"
+gltf = { version = "1.4.1", default-features = false, features = ["names", "utils"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,4 +24,8 @@ tokio = { version = "1", features = ["rt", "net", "time"] }
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
 
 [target.'cfg(target_os = "trueos")'.dependencies]
-trueos = { path = "../../api" }
+glam = "0.33.6"
+trueos = { path = "../../api", features = ["ui4-scene"] }
+
+[dev-dependencies]
+glam = "0.33.6"
