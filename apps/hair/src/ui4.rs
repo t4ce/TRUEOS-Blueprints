@@ -63,7 +63,10 @@ fn present(
                     Some('1') => controls.layers.avatar = !controls.layers.avatar,
                     Some('2') => controls.layers.hair = !controls.layers.hair,
                     Some('3') => controls.layers.sphere = !controls.layers.sphere,
-                    Some('4') => controls.layers.flow = !controls.layers.flow,
+                    Some('4') => {
+                        controls.layers.guides = !controls.layers.guides;
+                        controls.layers.field = controls.layers.guides;
+                    }
                     Some('5') => controls.speed_color = !controls.speed_color,
                     Some('6') => controls.layers.reach = !controls.layers.reach,
                     Some('7') => controls.layers.body_obstacles = !controls.layers.body_obstacles,

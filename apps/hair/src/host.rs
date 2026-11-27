@@ -11,7 +11,8 @@ use crate::Controls;
 
 const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
-const HELP: &str = "1 Avatar  2 Hair  3 Head sphere  4 Flow  5 Flow color  6 Hair reach  7 Body obstacles  8 Tip spread  |  Space Pause  |  Arrows Orbit  |  A/D Roll  |  Esc Close";
+const HELP: &str = "Move the mouse left or right to spin";
+const RADIANS_PER_PIXEL: f32 = 0.008;
 
 pub(crate) fn run(
     width: u32,
@@ -37,17 +38,11 @@ pub(crate) fn run(
     let mut shown = 0;
     let mut report_count = 0;
     let mut report_start = Instant::now();
-    let mut previous_frame = report_start;
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
-        if !video.poll(&mut controls) {
+        if !video.poll(&mut controls.yaw) {
             break;
         }
-        let elapsed = now.duration_since(previous_frame).as_secs_f32().min(0.1);
-        let (orbit, roll) = video.held_directions();
-        controls.yaw += orbit * elapsed * 1.25;
-        controls.roll_by(roll, elapsed);
-        previous_frame = now;
 
         draw(controls, &mut pixels)?;
         video.present(&pixels, pitch)?;
@@ -56,16 +51,7 @@ pub(crate) fn run(
         let report_interval = report_start.elapsed();
         if report_interval >= Duration::from_secs(1) {
             let fps = report_count as f32 / report_interval.as_secs_f32();
-            let status = if controls.paused { " · Paused" } else { "" };
-            let color = if controls.speed_color {
-                "speed"
-            } else {
-                "velocity change"
-            };
-            let spread = if controls.tip_spread { "on" } else { "off" };
-            video.set_title(&format!(
-                "Hair · {fps:.1} FPS{status} · {color} · Tip spread {spread}"
-            ));
+            video.set_title(&format!("Hair · {fps:.1} FPS · {HELP}"));
             report_start = Instant::now();
             report_count = 0;
         }
@@ -91,23 +77,7 @@ const RGBA32: u32 = if cfg!(target_endian = "little") {
 const QUIT: u32 = 0x100;
 const WINDOW_EVENT: u32 = 0x200;
 const WINDOW_CLOSE: u8 = 14;
-const KEY_DOWN: u32 = 0x300;
-const KEY_A: usize = 4;
-const KEY_D: usize = 7;
-const KEY_1: i32 = 30;
-const KEY_2: i32 = 31;
-const KEY_3: i32 = 32;
-const KEY_4: i32 = 33;
-const KEY_5: i32 = 34;
-const KEY_6: i32 = 35;
-const KEY_7: i32 = 36;
-const KEY_8: i32 = 37;
-const KEY_ESCAPE: i32 = 41;
-const KEY_SPACE: i32 = 44;
-const KEY_RIGHT: usize = 79;
-const KEY_LEFT: usize = 80;
-const KEY_DOWN_ARROW: usize = 81;
-const KEY_UP: usize = 82;
+const MOUSE_MOTION: u32 = 0x400;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -122,24 +92,23 @@ struct WindowEvent {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-struct KeyboardEvent {
+struct MouseMotionEvent {
     kind: u32,
     timestamp: u32,
     window_id: u32,
-    state: u8,
-    repeat: u8,
-    padding: [u8; 2],
-    scancode: i32,
-    keycode: i32,
-    modifiers: u16,
-    unused: u32,
+    which: u32,
+    state: u32,
+    x: i32,
+    y: i32,
+    xrel: i32,
+    yrel: i32,
 }
 
 #[repr(C)]
 union Event {
     kind: u32,
     window: WindowEvent,
-    key: KeyboardEvent,
+    mouse: MouseMotionEvent,
     // SDL2's public event union occupies 56 bytes on 32/64-bit targets.
     storage: [u64; 7],
 }
@@ -165,7 +134,6 @@ struct Sdl {
     render_copy: unsafe extern "C" fn(Handle, Handle, *const c_void, *const c_void) -> c_int,
     render_present: unsafe extern "C" fn(Handle),
     poll_event: unsafe extern "C" fn(*mut Event) -> c_int,
-    keyboard_state: unsafe extern "C" fn(*mut c_int) -> *const u8,
 }
 
 impl Sdl {
@@ -198,7 +166,6 @@ impl Sdl {
             render_copy: symbol!("SDL_RenderCopy"),
             render_present: symbol!("SDL_RenderPresent"),
             poll_event: symbol!("SDL_PollEvent"),
-            keyboard_state: symbol!("SDL_GetKeyboardState"),
             _library: library,
         })
     }
@@ -268,49 +235,21 @@ impl Video {
         (!driver.is_null()).then(|| unsafe { CStr::from_ptr(driver) }.to_bytes())
     }
 
-    fn poll(&self, controls: &mut Controls) -> bool {
+    fn poll(&self, yaw: &mut f32) -> bool {
         let mut event = Event { storage: [0; 7] };
         while unsafe { (self.sdl.poll_event)(&mut event) } == 1 {
             match unsafe { event.kind } {
                 QUIT => return false,
                 WINDOW_EVENT if unsafe { event.window.event } == WINDOW_CLOSE => return false,
-                KEY_DOWN => {
-                    let event = unsafe { event.key };
-                    if event.repeat > 0 {
-                        continue;
-                    }
-                    match event.scancode {
-                        KEY_1 => controls.layers.avatar ^= true,
-                        KEY_2 => controls.layers.hair ^= true,
-                        KEY_3 => controls.layers.sphere ^= true,
-                        KEY_4 => controls.layers.flow ^= true,
-                        KEY_5 => controls.speed_color ^= true,
-                        KEY_6 => controls.layers.reach ^= true,
-                        KEY_7 => controls.layers.body_obstacles ^= true,
-                        KEY_8 => controls.tip_spread ^= true,
-                        KEY_SPACE => controls.paused ^= true,
-                        KEY_ESCAPE => return false,
-                        _ => (),
-                    }
+                MOUSE_MOTION => {
+                    let horizontal = unsafe { event.mouse.xrel };
+                    *yaw = (*yaw + horizontal as f32 * RADIANS_PER_PIXEL)
+                        .rem_euclid(std::f32::consts::TAU);
                 }
                 _ => (),
             }
         }
         true
-    }
-
-    fn held_directions(&self) -> (f32, f32) {
-        let mut count = 0;
-        let state = unsafe { (self.sdl.keyboard_state)(&mut count) };
-        if state.is_null() || count <= KEY_UP as c_int {
-            return (0.0, 0.0);
-        }
-        let keys = unsafe { std::slice::from_raw_parts(state, count as usize) };
-        let right = keys[KEY_RIGHT] != 0 || keys[KEY_UP] != 0;
-        let left = keys[KEY_LEFT] != 0 || keys[KEY_DOWN_ARROW] != 0;
-        let orbit = i8::from(right) - i8::from(left);
-        let roll = i8::from(keys[KEY_D] != 0) - i8::from(keys[KEY_A] != 0);
-        (f32::from(orbit), f32::from(roll))
     }
 
     fn present(&self, pixels: &[u8], pitch: c_int) -> Result<()> {

@@ -164,6 +164,8 @@ pub(super) struct PlacedPose<'a> {
     pub(super) positions: &'a [[f32; 3]],
     pub(super) normals: &'a [[f32; 3]],
     pub(super) head_from_bind: Mat4,
+    pub(super) joint_world: &'a [Mat4],
+    pub(super) world_offset: Vec3,
 }
 
 pub(super) struct Reel {
@@ -396,6 +398,8 @@ impl Reel {
             positions: &self.world_positions,
             normals: pose.normals,
             head_from_bind: Mat4::from_translation(offset) * head,
+            joint_world: pose.joint_world,
+            world_offset: offset,
         })
     }
 

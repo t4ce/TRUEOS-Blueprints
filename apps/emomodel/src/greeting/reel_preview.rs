@@ -6,7 +6,8 @@ use trueos::{
 };
 
 use super::{
-    compact_mesh,
+    SECOND_NS, compact_mesh,
+    dance::Dance,
     eye_detail::{self, EyeDetail},
     floor, floor_material,
     foot_contact::FootProbe,
@@ -17,7 +18,8 @@ use super::{
     skin_study::{self, Lighting, Material},
 };
 use crate::{
-    animation::Animation,
+    DanceTempo,
+    animation::{Animation, RigPose},
     autobs::{ARC_LIMIT, BASE_YAW, camera_back, view_back},
     hair::{Hair, PARTICLES},
     hair_body::BodyBack,
@@ -33,6 +35,7 @@ const CONTACT_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
 const ATLAS_HEIGHT: usize = 512;
 const MAX_ATLAS_WIDTH: usize = 1024;
 const ATLAS_WIDTHS: [usize; 2] = [512, MAX_ATLAS_WIDTH];
+const MODE_BLEND_NS: u64 = 400_000_000;
 
 pub(super) enum Motion {
     Reel(Reel),
@@ -65,8 +68,47 @@ impl Motion {
                     positions: pose.positions,
                     normals: pose.normals,
                     head_from_bind,
+                    joint_world: pose.joint_world,
+                    world_offset: Vec3::ZERO,
                 })
             }
+        }
+    }
+
+    fn apply_bind_normals(&mut self, section: usize, normals: &[[f32; 3]]) -> Result<()> {
+        match self {
+            Self::Reel(reel) => reel.apply_bind_normals(section, normals),
+            Self::Nod(nod) => nod.apply_bind_normals(section, normals),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PlaybackClock {
+    changed_ns: u64,
+    reel_elapsed_ns: u64,
+    dancing: bool,
+}
+
+impl PlaybackClock {
+    fn select(&mut self, dancing: bool, elapsed_ns: u64) -> bool {
+        if self.dancing == dancing {
+            return false;
+        }
+        if dancing {
+            self.reel_elapsed_ns = self.motion_time(elapsed_ns);
+        }
+        self.changed_ns = elapsed_ns;
+        self.dancing = dancing;
+        true
+    }
+
+    fn motion_time(&self, elapsed_ns: u64) -> u64 {
+        let since_change = elapsed_ns.saturating_sub(self.changed_ns);
+        if self.dancing {
+            since_change
+        } else {
+            self.reel_elapsed_ns + since_change
         }
     }
 }
@@ -90,6 +132,13 @@ fn skin_materials(motion: &Motion, mesh: &Mesh) -> Result<Vec<Material>> {
 pub(super) struct Preview<'a> {
     mesh: &'a Mesh,
     motion: Motion,
+    dance: Dance,
+    tempo: DanceTempo,
+    clock: PlaybackClock,
+    blend_rig: Animation,
+    displayed_pose: RigPose,
+    transition: Option<(u64, RigPose)>,
+    lifted_positions: Vec<[f32; 3]>,
     draw: ReelDraw,
     source_vertices: Vec<usize>,
     material_slots: Vec<Option<usize>>,
@@ -120,7 +169,18 @@ impl<'a> Preview<'a> {
         mut motion: Motion,
         glb: &[u8],
         studying_skin: bool,
+        tempo: DanceTempo,
     ) -> Result<(Self, Vec3, [f32; 2])> {
+        let mut dance = Dance::new(glb, &super::MATERIALS, tempo.bpm, tempo.beats_per_bar)?;
+        let mut blend_rig = Animation::procedural(glb, &super::MATERIALS)?;
+        if !studying_skin {
+            super::apply_normal_maps(glb, |section, normals| {
+                motion.apply_bind_normals(section, normals)?;
+                dance.apply_bind_normals(section, normals)?;
+                blend_rig.apply_bind_normals(section, normals)
+            })
+            .await?;
+        }
         let body_start = mesh.material_vertices[1].start;
         let feet = FootProbe::new(glb, body_start)?;
         let hands = HandProbe::new(glb, body_start)?;
@@ -191,7 +251,7 @@ impl<'a> Preview<'a> {
             "wrong reel lighting extent"
         );
 
-        let (center, half_span) = frame_bounds(&mut motion, &source_vertices)?;
+        let (center, half_span) = frame_bounds(&mut motion, &mut dance, &source_vertices)?;
         let initial = motion.sample(0)?;
         let mut body = BodyBack::default();
         body.update(initial.positions, body_indices(mesh, body_start));
@@ -217,6 +277,13 @@ impl<'a> Preview<'a> {
             Self {
                 mesh,
                 motion,
+                dance,
+                tempo,
+                clock: PlaybackClock::default(),
+                blend_rig,
+                displayed_pose: RigPose::default(),
+                transition: None,
+                lifted_positions: Vec::new(),
                 draw,
                 source_vertices,
                 material_slots,
@@ -244,9 +311,31 @@ impl<'a> Preview<'a> {
         ))
     }
 
-    pub(super) fn pose(&self, tick: usize) -> (usize, &'static str) {
-        let index = tick % self.motion.frame_count();
-        (index, self.motion.phase(index))
+    pub(super) fn select_dance(&mut self, dancing: bool, elapsed_ns: u64) {
+        if self.clock.select(dancing, elapsed_ns) {
+            self.transition = (!self.displayed_pose.joints.is_empty())
+                .then(|| (elapsed_ns, self.displayed_pose.clone()));
+            self.previous_pose = None;
+            if dancing {
+                report(format_args!(
+                    "avatar mode=robot-tango bpm={} meter={}/4",
+                    self.tempo.bpm, self.tempo.beats_per_bar
+                ));
+            } else {
+                report(format_args!("avatar mode=reel"));
+            }
+        }
+    }
+
+    pub(super) fn pose(&self, elapsed_ns: u64) -> (usize, &'static str) {
+        let time = self.clock.motion_time(elapsed_ns);
+        let tick = (time * u64::from(super::HZ) / SECOND_NS) as usize;
+        if self.clock.dancing {
+            (tick, self.dance.phrase(time as f64 / SECOND_NS as f64))
+        } else {
+            let index = tick % self.motion.frame_count();
+            (index, self.motion.phase(index))
+        }
     }
 
     pub(super) fn submit(
@@ -255,6 +344,7 @@ impl<'a> Preview<'a> {
         camera: RetainedCamera,
         frame: usize,
         elapsed_ns: u64,
+        msaa4: bool,
     ) -> Result<(), i32> {
         let extent = match self.stage(camera, frame, elapsed_ns) {
             Ok(extent) => extent,
@@ -269,13 +359,24 @@ impl<'a> Preview<'a> {
             &self.indices,
             &self.texture,
             extent,
-            floor_material::CLEAR_RGBA,
+            msaa4,
         )
     }
 
     fn stage(&mut self, camera: RetainedCamera, frame: usize, elapsed_ns: u64) -> Result<[u32; 2]> {
         let frame_count = self.motion.frame_count();
-        if let Some(previous) = self.previous_pose {
+        let dancing = self.clock.dancing;
+        if self
+            .transition
+            .as_ref()
+            .is_some_and(|(start, _)| elapsed_ns - *start >= MODE_BLEND_NS)
+        {
+            self.transition = None;
+        }
+        if !dancing
+            && self.transition.is_none()
+            && let Some(previous) = self.previous_pose
+        {
             if frame < previous {
                 self.hair = self.settled.clone();
             } else {
@@ -288,8 +389,54 @@ impl<'a> Preview<'a> {
                 }
             }
         }
-        let pose = self.motion.sample(frame)?;
-        if frame != 0 && self.previous_pose != Some(frame) {
+        let pose = if dancing {
+            self.dance
+                .sample(self.clock.motion_time(elapsed_ns) as f64 / SECOND_NS as f64)?
+        } else {
+            self.motion.sample(frame)?
+        };
+        let pose = if let Some((start, from)) = &self.transition {
+            let t = (elapsed_ns - *start) as f32 / MODE_BLEND_NS as f32;
+            self.blend_rig.blend_pose(
+                from,
+                pose.joint_world,
+                pose.world_offset,
+                t * t * (3.0 - 2.0 * t),
+            );
+            let head = self
+                .blend_rig
+                .head_from_bind()
+                .context("missing transition head joint")?;
+            let skin = self.blend_rig.skin();
+            let lowest = self
+                .source_vertices
+                .iter()
+                .map(|&index| skin.positions[index][1])
+                .fold(f32::INFINITY, f32::min);
+            let lift = (GROUND_Y - lowest).max(0.0);
+            let world_offset = Vec3::Y * lift;
+            let positions = if lift > 0.0 {
+                self.lifted_positions.clear();
+                self.lifted_positions
+                    .extend(skin.positions.iter().map(|&[x, y, z]| [x, y + lift, z]));
+                &self.lifted_positions
+            } else {
+                skin.positions
+            };
+            PlacedPose {
+                positions,
+                normals: skin.normals,
+                head_from_bind: Mat4::from_translation(world_offset) * head,
+                joint_world: skin.joint_world,
+                world_offset,
+            }
+        } else {
+            pose
+        };
+        self.displayed_pose
+            .save(pose.joint_world, pose.world_offset);
+        if (frame != 0 || dancing || self.transition.is_some()) && self.previous_pose != Some(frame)
+        {
             self.body
                 .update(pose.positions, body_indices(self.mesh, self.body_start));
             self.hair.step(pose.head_from_bind, Vec3::ZERO, &self.body);
@@ -365,7 +512,11 @@ impl<'a> Preview<'a> {
         }
         self.drape.clear();
         let drape_blend_start = frame_count.saturating_sub(super::HZ as usize);
-        let t = (frame.saturating_sub(drape_blend_start) as f32 / super::HZ as f32).clamp(0.0, 1.0);
+        let t = if dancing || self.transition.is_some() {
+            0.0
+        } else {
+            (frame.saturating_sub(drape_blend_start) as f32 / super::HZ as f32).clamp(0.0, 1.0)
+        };
         self.hair.append_loop_pose(
             &self.opening_drape,
             t * t * (3.0 - 2.0 * t),
@@ -399,20 +550,29 @@ fn body_indices(mesh: &Mesh, body_start: usize) -> &[u32] {
     &skin[skin.partition_point(|&index| (index as usize) < body_start)..]
 }
 
-fn frame_bounds(motion: &mut Motion, source: &[usize]) -> Result<(Vec3, [f32; 2])> {
+fn frame_bounds(
+    motion: &mut Motion,
+    dance: &mut Dance,
+    source: &[usize],
+) -> Result<(Vec3, [f32; 2])> {
     let right = Vec3::Y.cross(camera_back(BASE_YAW));
     let back = view_back(BASE_YAW);
     let up = back.cross(right);
     let mut low = Vec3::splat(f32::INFINITY);
     let mut high = Vec3::splat(f32::NEG_INFINITY);
-    for frame in (0..motion.frame_count()).step_by(5) {
-        let pose = motion.sample(frame)?;
+    let mut include = |pose: PlacedPose<'_>| {
         for &index in source {
             let position = Vec3::from_array(pose.positions[index]);
             let point = Vec3::new(right.dot(position), up.dot(position), back.dot(position));
             low = low.min(point);
             high = high.max(point);
         }
+    };
+    for frame in (0..motion.frame_count()).step_by(5) {
+        include(motion.sample(frame)?);
+    }
+    for sample in 0..128 {
+        include(dance.sample(dance.cycle_seconds() * f64::from(sample) / 128.0)?);
     }
     let center = (high + low) * 0.5;
     let half = (high - low) * 0.5;

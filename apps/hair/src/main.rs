@@ -19,9 +19,30 @@ pub(crate) struct Layers {
     pub(crate) avatar: bool,
     pub(crate) hair: bool,
     pub(crate) sphere: bool,
-    pub(crate) flow: bool,
+    pub(crate) guides: bool,
+    pub(crate) field: bool,
     pub(crate) reach: bool,
     pub(crate) body_obstacles: bool,
+}
+
+impl Layers {
+    fn set_visible(&mut self, name: &str, visible: bool) -> Result<()> {
+        match name {
+            "avatar" => self.avatar = visible,
+            "hair" => self.hair = visible,
+            "sphere" => self.sphere = visible,
+            "guides" => self.guides = visible,
+            "field" => self.field = visible,
+            "flow" => {
+                self.guides = visible;
+                self.field = visible;
+            }
+            "reach" => self.reach = visible,
+            "body-obstacles" => self.body_obstacles = visible,
+            _ => bail!("unknown layer {name}; use --help"),
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +50,7 @@ pub(crate) struct Controls {
     pub(crate) layers: Layers,
     pub(crate) yaw: f32,
     pub(crate) roll: f32,
+    #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
     pub(crate) tip_spread: bool,
@@ -36,17 +58,24 @@ pub(crate) struct Controls {
 
 impl Default for Controls {
     fn default() -> Self {
+        let field_debug = cfg!(target_os = "trueos");
         Self {
             layers: Layers {
                 avatar: true,
                 hair: true,
-                sphere: true,
-                flow: true,
-                reach: true,
+                sphere: field_debug,
+                guides: true,
+                field: field_debug,
+                reach: field_debug,
                 body_obstacles: true,
             },
-            yaw: 132.0_f32.to_radians(),
+            yaw: if field_debug {
+                132.0_f32.to_radians()
+            } else {
+                0.0
+            },
             roll: 0.0,
+            #[cfg(target_os = "trueos")]
             paused: false,
             speed_color: false,
             tip_spread: true,
@@ -54,6 +83,7 @@ impl Default for Controls {
     }
 }
 
+#[cfg(target_os = "trueos")]
 impl Controls {
     fn roll_by(&mut self, direction: f32, elapsed: f32) {
         const ROLL_SPEED: f32 = 0.6;
@@ -94,20 +124,13 @@ fn main() -> Result<()> {
             }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
-            "--hide" => match args.next().as_deref() {
-                Some("avatar") => controls.layers.avatar = false,
-                Some("hair") => controls.layers.hair = false,
-                Some("sphere") => controls.layers.sphere = false,
-                Some("flow") => controls.layers.flow = false,
-                Some("reach") => controls.layers.reach = false,
-                Some("body-obstacles") => controls.layers.body_obstacles = false,
-                _ => bail!(
-                    "expected a layer name after --hide: avatar, hair, sphere, flow, reach, or body-obstacles"
-                ),
-            },
+            "--hide" | "--show" => {
+                let name = args.next().context("missing layer name")?;
+                controls.layers.set_visible(&name, arg == "--show")?;
+            }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--speed] [--no-tip-spread] [--hide LAYER]\n\nLayers for --hide: avatar, hair, sphere, flow, reach, body-obstacles\n\n1 Avatar  2 Back hair  3 Head sphere  4 Flow lines  5 Speed/change  6 Hair reach  7 Body obstacles  8 Tip spread\nLeft/Right Orbit  A/D Roll  Space Pause  Esc Close"
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu: Move the mouse left or right to spin. Close the window to exit."
                 );
                 return Ok(());
             }
@@ -133,11 +156,19 @@ fn main() -> Result<()> {
             path.display(),
             started.elapsed().as_secs_f64()
         );
-        if controls.layers.flow {
+        if controls.layers.field || controls.layers.guides {
             println!(
                 "hair: {} field seeds, {} hair-root seeds, {segments} traced segments",
-                solver::FIELD_STREAMLINE_SEEDS,
-                solver::ROOT_STREAMLINE_SEEDS,
+                if controls.layers.field {
+                    solver::FIELD_STREAMLINE_SEEDS
+                } else {
+                    0
+                },
+                if controls.layers.guides {
+                    solver::ROOT_STREAMLINE_SEEDS
+                } else {
+                    0
+                },
             );
         }
         return Ok(());
@@ -147,9 +178,7 @@ fn main() -> Result<()> {
     {
         let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls.roll)?;
         host::run(WIDTH, HEIGHT, controls, frames, |controls, pixels| {
-            if !controls.paused {
-                scene.advance(controls.roll, controls.tip_spread);
-            }
+            scene.advance(controls.roll, controls.tip_spread);
             scene.draw(controls, pixels);
             Ok(())
         })

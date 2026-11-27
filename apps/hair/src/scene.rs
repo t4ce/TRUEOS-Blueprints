@@ -6,7 +6,7 @@ use crate::{
     Controls,
     obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER},
     raster::{Alpha, Camera, Material, Surface, Texture, Vertex},
-    solver::{HAIR_REACH_RADIUS, ROOT_STREAMLINE_SEEDS, Solver},
+    solver::{HAIR_REACH_RADIUS, ROOT_STREAMLINE_SEEDS, RootSample, Solver},
 };
 
 const AVATAR: &[u8] = include_bytes!("../assets/avatar.glb");
@@ -28,6 +28,7 @@ pub(crate) struct Scene {
     body_bounds: (Vec3, Vec3),
     textures: Vec<Texture>,
     solver: Solver,
+    camera_scale: Option<f32>,
     base_key: Option<(f32, f32, bool, bool)>,
     base_pixels: Vec<u8>,
     base_depth: Vec<f32>,
@@ -58,13 +59,26 @@ impl Scene {
             .collect::<Result<Vec<_>>>()?;
         // Masked/opaque surfaces establish the depth used by eye overlays.
         parts.sort_by_key(|part| matches!(part.material.alpha, Alpha::Blend));
-        let root_positions = back_hair_root_positions()?;
+        let roots = back_hair_roots()?;
         let body_bounds = parts.iter().flat_map(|part| &part.vertices).fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(minimum, maximum), vertex| {
                 (minimum.min(vertex.position), maximum.max(vertex.position))
             },
         );
+        // Keep the previous rear view's magnification for the Ubuntu turntable.
+        let camera_scale = cfg!(target_os = "linux").then(|| {
+            Camera::new(
+                Vec2::new(width as f32, height as f32),
+                165.0_f32.to_radians(),
+                world_to_avatar(roll),
+                body_bounds,
+                HEAD_CENTER,
+                HAIR_REACH_RADIUS,
+                None,
+            )
+            .scale
+        });
         let count = width as usize * height as usize;
         Ok(Self {
             width,
@@ -72,7 +86,8 @@ impl Scene {
             parts,
             body_bounds,
             textures,
-            solver: Solver::new(BACK_HAIR_REST_DOWN, world_to_avatar(roll), root_positions),
+            solver: Solver::new(BACK_HAIR_REST_DOWN, world_to_avatar(roll), roots),
+            camera_scale,
             base_key: None,
             base_pixels: vec![0; count * 4],
             base_depth: vec![0.0; count],
@@ -92,6 +107,7 @@ impl Scene {
         self.base_pixels.resize(count * 4, 0);
         self.base_depth.resize(count, 0.0);
         self.depth.resize(count, 0.0);
+        self.camera_scale = None;
         self.base_key = None;
     }
 
@@ -99,14 +115,15 @@ impl Scene {
         let layers = controls.layers;
         let key = (controls.yaw, controls.roll, layers.avatar, layers.hair);
         let camera = Camera::new(
-            self.width,
-            self.height,
+            Vec2::new(self.width as f32, self.height as f32),
             controls.yaw,
             world_to_avatar(controls.roll),
             self.body_bounds,
             HEAD_CENTER,
             HAIR_REACH_RADIUS,
+            self.camera_scale,
         );
+        self.camera_scale.get_or_insert(camera.scale);
         if self.base_key != Some(key) {
             let mut base = Surface::new(
                 self.width,
@@ -135,14 +152,28 @@ impl Scene {
         if layers.reach {
             target.reach_sphere(camera, HEAD_CENTER, HAIR_REACH_RADIUS);
         }
-        let segments = if layers.flow {
-            self.solver.for_each_line(|start, end, speed, change| {
-                let value = if controls.speed_color { speed } else { change };
-                target.flow_line(camera, start, end, value);
-            })
-        } else {
-            0
-        };
+        let mut segments = 0;
+        if layers.field {
+            segments += self
+                .solver
+                .for_each_field_line(|start, end, speed, change| {
+                    let value = if controls.speed_color { speed } else { change };
+                    target.flow_line(camera, start, end, None, value, 0.24);
+                });
+        }
+        if layers.guides {
+            let opacity = if cfg!(target_os = "trueos") {
+                0.24
+            } else {
+                0.50
+            };
+            segments += self
+                .solver
+                .for_each_guide_line(|attachment, start, end, speed, change| {
+                    let value = if controls.speed_color { speed } else { change };
+                    target.flow_line(camera, start, end, attachment, value, opacity);
+                });
+        }
         if layers.body_obstacles {
             let color = Vec3::new(0.45, 0.77, 0.94);
             for shape in BODY_OBSTACLES {
@@ -160,7 +191,7 @@ fn world_to_avatar(roll: f32) -> Quat {
     Quat::from_rotation_z(-roll)
 }
 
-fn back_hair_root_positions() -> Result<[Vec3; ROOT_STREAMLINE_SEEDS]> {
+fn back_hair_roots() -> Result<[RootSample; ROOT_STREAMLINE_SEEDS]> {
     let asset =
         gltf::Gltf::from_slice(BACK_HAIR_ANCHOR).context("parse back-hair anchor surface")?;
     let blob = asset
@@ -191,28 +222,65 @@ fn back_hair_root_positions() -> Result<[Vec3; ROOT_STREAMLINE_SEEDS]> {
 
     let mut total_area = 0.0;
     let mut surface = Vec::new();
+    let mut normals = vec![Vec3::ZERO; positions.len()];
     for triangle in triangles {
-        let [a, b, c] = triangle.map(|index| positions[index as usize]);
-        let area = 0.5 * (b - a).cross(c - a).length();
+        let vertices = triangle.map(|index| index as usize);
+        let [a, b, c] = vertices.map(|index| positions[index]);
+        let normal = (b - a).cross(c - a);
+        let area = 0.5 * normal.length();
         if area > 0.0 {
             total_area += area;
-            surface.push(([a, b, c], area, total_area));
+            surface.push((vertices, area, total_area));
+            for vertex in vertices {
+                normals[vertex] += normal;
+            }
         }
     }
     ensure!(
         total_area.is_finite() && total_area > 0.0,
         "invalid back-hair anchor surface area"
     );
+    for normal in &mut normals {
+        *normal = normal.normalize_or_zero();
+    }
 
-    Ok(core::array::from_fn(|index| {
-        let target = total_area * ((index as f32 + 0.5) / ROOT_STREAMLINE_SEEDS as f32);
+    const CANDIDATES: usize = ROOT_STREAMLINE_SEEDS * 8;
+    let candidates: [RootSample; CANDIDATES] = core::array::from_fn(|index| {
+        let target = total_area * ((index as f32 + 0.5) / CANDIDATES as f32);
         let triangle_index = surface.partition_point(|&(_, _, end)| end <= target);
-        let ([a, b, c], area, end) = surface[triangle_index];
-        // Use one area stratum per seed and a base-two radical inverse for
+        let (vertices, area, end) = surface[triangle_index];
+        // Use one area stratum per candidate and a base-two radical inverse for
         // the second barycentric parameter.
         let radius = ((target - (end - area)) / area).clamp(0.0, 1.0).sqrt();
         let across = ((index as u32).reverse_bits() as f64 / 4_294_967_296.0) as f32;
-        a.lerp(b.lerp(c, across), radius)
+        let [a, b, c] = vertices.map(|index| positions[index]);
+        let [na, nb, nc] = vertices.map(|index| normals[index]);
+        RootSample {
+            position: a.lerp(b.lerp(c, across), radius),
+            outward: na.lerp(nb.lerp(nc, across), radius).normalize(),
+        }
+    });
+    let center = candidates.iter().map(|root| root.position).sum::<Vec3>() / CANDIDATES as f32;
+    let mut next = (0..CANDIDATES)
+        .min_by(|&a, &b| {
+            candidates[a]
+                .position
+                .distance_squared(center)
+                .total_cmp(&candidates[b].position.distance_squared(center))
+        })
+        .unwrap();
+    let mut nearest = [f32::INFINITY; CANDIDATES];
+    // Fill the gaps on the curved patch by repeatedly choosing the candidate
+    // farthest from the roots already selected.
+    Ok(core::array::from_fn(|_| {
+        let root = candidates[next];
+        for (distance, candidate) in nearest.iter_mut().zip(&candidates) {
+            *distance = distance.min(candidate.position.distance_squared(root.position));
+        }
+        next = (0..CANDIDATES)
+            .max_by(|&a, &b| nearest[a].total_cmp(&nearest[b]))
+            .unwrap();
+        root
     }))
 }
 
@@ -321,8 +389,8 @@ fn reference_back_hair() -> Part {
 }
 
 #[cfg(test)]
-pub(crate) fn reference_root_positions() -> [Vec3; ROOT_STREAMLINE_SEEDS] {
-    back_hair_root_positions().unwrap()
+pub(crate) fn reference_roots() -> [RootSample; ROOT_STREAMLINE_SEEDS] {
+    back_hair_roots().unwrap()
 }
 
 #[cfg(test)]
@@ -342,10 +410,19 @@ mod tests {
 
     #[test]
     fn root_samples_cover_the_authored_scalp_patch() {
-        let positions = reference_root_positions();
-        let (min, max) = positions.iter().fold(
+        let roots = reference_roots();
+        for (index, root) in roots.iter().enumerate() {
+            assert!(root.outward.is_normalized());
+            assert!(root.outward.dot(root.position - HEAD_CENTER) > 0.0);
+            assert!(
+                roots[..index]
+                    .iter()
+                    .all(|other| root.position.distance(other.position) > 0.01)
+            );
+        }
+        let (min, max) = roots.iter().fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-            |(min, max), &point| (min.min(point), max.max(point)),
+            |(min, max), root| (min.min(root.position), max.max(root.position)),
         );
         let span = max - min;
         assert!((0.12..0.17).contains(&span.x));

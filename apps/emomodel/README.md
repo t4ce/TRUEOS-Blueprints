@@ -42,6 +42,15 @@ the motion reel when the seven locally retargeted files `motions/01.glb` through
 Roughness is fixed at 100% while the key light sweeps across the posed skin.
 The bind-space roughness uses a 64-entry lighting ramp in the reel atlas.
 
+The native motion reel starts at 1× sampling. On a supported Alder Lake-S GPU,
+press `M` to toggle experimental 4× MSAA for render targets up to 1280×720.
+After the first toggle, the window title reports the active sample count.
+
+In `skin` and `reel`, press **2** for the procedural robot tango
+and **1** to resume the previous motion. Both the top row and numpad work.
+The eight phrases use 96 BPM and 4/4 by default. For example, launch with
+`emomodel skin --bpm 72 --meter 3/4` for a slower three-beat version.
+
 `reel` plays the motion reel with the original diffuse lighting. The reel
 plays Greeting, Nod, Squat, Spin, Model Pose, Show Full Body,
 Shoot, and Peace Sign, then takes two short steps into the opening Greeting

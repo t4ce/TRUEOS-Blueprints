@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::path::Path;
 use trueos::{
-    clock, logl,
+    clock, input, logl,
     ui4_scene::{Damage, Error, Frame},
     vgpu::{
         self, Buffer, Capabilities, Device, Queue, QueueClass, RetainedCamera, RetainedDrawRange,
@@ -32,6 +32,7 @@ use foot_contact::FootProbe;
 use hand_contact::HandProbe;
 
 mod base_color;
+mod dance;
 mod eye_detail;
 mod floor;
 mod floor_material;
@@ -50,6 +51,11 @@ const REPORT_NS: u64 = 5 * SECOND_NS;
 const POSES_PER_MESH: usize = 24;
 const VERTEX_BYTES: usize = 32;
 const WAIT_NS: u64 = 2 * SECOND_NS;
+// Physical USB HID usages, independent of Num Lock and text layout.
+const DIGIT_1: u16 = 0x1e;
+const DIGIT_2: u16 = 0x1f;
+const NUMPAD_1: u16 = 0x59;
+const NUMPAD_2: u16 = 0x5a;
 const DRAW_GROUPS: usize = 3;
 const LIT_MATERIALS: usize = 2;
 const MATERIALS: [&str; 5] = [
@@ -86,6 +92,7 @@ pub(super) async fn show(
     greeting_glb: Option<&[u8]>,
     motions: Option<&Path>,
     appearance: Appearance,
+    dance_tempo: crate::DanceTempo,
 ) -> Result<()> {
     let (x, y, width, height) = window_placement()?;
     let mesh = mesh::prepare_materials(glb, width, height, &MATERIALS, true)?;
@@ -98,13 +105,7 @@ pub(super) async fn show(
             None => None,
         };
         let studying_skin = appearance == Appearance::SkinStudy;
-        let motion = if let Some(mut reel) = reel {
-            if !studying_skin {
-                apply_normal_maps(glb, |section, normals| {
-                    reel.apply_bind_normals(section, normals)
-                })
-                .await?;
-            }
+        let motion = if let Some(reel) = reel {
             Some(reel_preview::Motion::Reel(reel))
         } else if studying_skin {
             Some(reel_preview::Motion::Nod(Animation::nod(
@@ -116,7 +117,8 @@ pub(super) async fn show(
         let color = appearance == Appearance::BaseColor;
         let (mut playback, target, half_span) = if let Some(motion) = motion {
             let (preview, center, span) =
-                reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin).await?;
+                reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin, dance_tempo)
+                    .await?;
             (Playback::Reel(preview), center.to_array(), span)
         } else {
             let mut greeting = greeting_glb
@@ -1024,7 +1026,55 @@ async fn play(
     let mut resize_trace = None;
     let mut previous_phase = None;
     let mut light_markers = light::presentation_markers().peekable();
+    let msaa4_available = matches!(playback, Playback::Reel(_))
+        && device
+            .info()
+            .is_ok_and(|info| info.supports_indexed_msaa4());
+    let mut msaa4_requested = false;
+    let mut previous_samples = 1;
+    let mut requested_dance = None;
+    if msaa4_available {
+        report(format_args!(
+            "avatar MSAA available, press M to switch between 1x and 4x"
+        ));
+    }
     loop {
+        if matches!(playback, Playback::Reel(_)) {
+            loop {
+                match frame.take_physical_keyboard_event() {
+                    Ok(Some(event))
+                        if event.kind == input::KEYBOARD_OUTPUT_KIND_PHYSICAL
+                            && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0 =>
+                    {
+                        match event.key_code {
+                            DIGIT_1 | NUMPAD_1 => requested_dance = Some(false),
+                            DIGIT_2 | NUMPAD_2 => requested_dance = Some(true),
+                            _ => (),
+                        }
+                    }
+                    Ok(Some(_)) => (),
+                    Ok(None) | Err(Error::Busy) => break,
+                    Err(Error::NotFound) => return Ok(()),
+                    Err(error) => return Err(ui_error(error)),
+                }
+            }
+        }
+        if msaa4_available {
+            loop {
+                match frame.take_keyboard_event() {
+                    Ok(Some(event))
+                        if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT
+                            && matches!(char::from_u32(event.codepoint), Some('m' | 'M')) =>
+                    {
+                        msaa4_requested = !msaa4_requested;
+                    }
+                    Ok(Some(_)) => (),
+                    Ok(None) => break,
+                    Err(Error::NotFound) => return Ok(()),
+                    Err(error) => return Err(ui_error(error)),
+                }
+            }
+        }
         loop {
             match frame.take_resize_event() {
                 Ok(Some(event)) => pending_resize = Some((event.width, event.height)),
@@ -1056,6 +1106,30 @@ async fn play(
         {
             light.update(device, wait_start - start).await?;
         }
+        let extent = (frame.width(), frame.height());
+        let msaa4 = msaa4_requested && vgpu::indexed_msaa4_extent_supported(extent.0, extent.1);
+        let samples = if msaa4 { 4 } else { 1 };
+        if samples != previous_samples {
+            stats = Timing::default();
+            receipts.clear();
+            let title = if msaa4 {
+                "EmoModel · 4× MSAA"
+            } else {
+                "EmoModel · 1×"
+            };
+            match frame.set_title(title) {
+                Ok(()) => (),
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)),
+            }
+            report(format_args!(
+                "avatar sampling requested={} effective={samples} extent={}x{}",
+                if msaa4_requested { 4 } else { 1 },
+                extent.0,
+                extent.1,
+            ));
+            previous_samples = samples;
+        }
         let deadline = wait_start + WAIT_NS;
         loop {
             match frame.begin_gpu_frame() {
@@ -1080,11 +1154,13 @@ async fn play(
                 (pose, phase)
             }
             Playback::Reel(preview) => {
-                let (pose, phase) = preview.pose(tick as usize);
+                if let Some(dancing) = requested_dance.take() {
+                    preview.select_dance(dancing, elapsed);
+                }
+                let (pose, phase) = preview.pose(elapsed);
                 (pose, Phase::Reel(phase))
             }
         };
-        let extent = (frame.width(), frame.height());
         // Keep the last published camera through the atomic backing swap.
         let camera_pose = if resizing {
             last_camera_pose
@@ -1100,13 +1176,20 @@ async fn play(
         let submit_started = clock::monotonic_nanos();
         let rendered = match playback {
             Playback::Retained(renderer, skin) => renderer.submit(surface, camera, pose, skin),
-            Playback::Reel(preview) => preview.submit(surface, camera, pose, elapsed),
+            Playback::Reel(preview) => preview.submit(surface, camera, pose, elapsed, msaa4),
         };
         match rendered {
             Ok(()) => (),
             Err(vgpu::ERR_BUSY) => {
                 // The consumed import cancels the write lease on a busy submit.
                 stats.busy += 1;
+                continue;
+            }
+            Err(vgpu::ERR_UNSUPPORTED) if msaa4 => {
+                msaa4_requested = false;
+                report(format_args!(
+                    "avatar MSAA admission declined, resuming at 1x"
+                ));
                 continue;
             }
             Err(UI4_SURFACE_GONE) => return Ok(()),
@@ -1190,7 +1273,7 @@ async fn play(
         while receipts.len() > 8 {
             receipts.pop_front();
         }
-        stats.report_if_ready(finished, extent);
+        stats.report_if_ready(finished, extent, samples);
     }
 }
 
@@ -1217,7 +1300,7 @@ impl Timing {
         self.acquire_ns.push(admitted - acquire_start);
     }
 
-    fn report_if_ready(&mut self, now: u64, (width, height): (u32, u32)) {
+    fn report_if_ready(&mut self, now: u64, (width, height): (u32, u32), samples: u8) {
         let Some(started) = self.started else { return };
         let elapsed = now - started;
         if elapsed < REPORT_NS {
@@ -1235,7 +1318,7 @@ impl Timing {
         let (_, acquire_p95, acquire_max) = distribution_ms(&mut self.acquire_ns);
         let (_, gap_p95, gap_max) = distribution_ms(&mut self.gap_ns);
         report(format_args!(
-            "avatar timing extent={width}x{height} target_hz={HZ} published={count} presented={} window_s={seconds:.3} publish_hz={:.2} present_hz={:.2} active_ms_avg={active_avg:.3} active_ms_p95={active_p95:.3} active_ms_max={active_max:.3} submit_ms_avg={submit_avg:.3} submit_ms_p95={submit_p95:.3} submit_ms_max={submit_max:.3} back_buffer_ms_p95={acquire_p95:.3} back_buffer_ms_max={acquire_max:.3} frame_gap_ms_p95={gap_p95:.3} frame_gap_ms_max={gap_max:.3} over_budget={over} submit_busy={}",
+            "avatar timing extent={width}x{height} target_hz={HZ} published={count} presented={} window_s={seconds:.3} publish_hz={:.2} present_hz={:.2} active_ms_avg={active_avg:.3} active_ms_p95={active_p95:.3} active_ms_max={active_max:.3} submit_ms_avg={submit_avg:.3} submit_ms_p95={submit_p95:.3} submit_ms_max={submit_max:.3} back_buffer_ms_p95={acquire_p95:.3} back_buffer_ms_max={acquire_max:.3} frame_gap_ms_p95={gap_p95:.3} frame_gap_ms_max={gap_max:.3} over_budget={over} submit_busy={} samples={samples}",
             self.displayed,
             count as f64 / seconds,
             f64::from(self.displayed) / seconds,

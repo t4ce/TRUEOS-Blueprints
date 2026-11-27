@@ -146,6 +146,8 @@ impl DeviceInfo {
     /// The resident renderer can execute the GS-backed `_ADJ` primitive
     /// topologies on the current physical adapter.
     pub const FLAG_ADJACENCY_TOPOLOGY_RENDERING: u32 = 1 << 1;
+    /// The physical adapter supports the opt-in indexed 4× MSAA path.
+    pub const FLAG_INDEXED_MSAA4: u32 = 1 << 2;
 
     pub const fn is_lost(self) -> bool {
         self.flags & Self::FLAG_LOST != 0
@@ -153,6 +155,10 @@ impl DeviceInfo {
 
     pub const fn supports_adjacency_topology_rendering(self) -> bool {
         self.flags & Self::FLAG_ADJACENCY_TOPOLOGY_RENDERING != 0
+    }
+
+    pub const fn supports_indexed_msaa4(self) -> bool {
+        self.flags & Self::FLAG_INDEXED_MSAA4 != 0
     }
 }
 
@@ -233,6 +239,17 @@ pub const INDEXED_DRAW_CLEAR_DEPTH: u32 = 1 << 4;
 /// LOAD_COLOR preserves color; CLEAR_DEPTH writes depth with ALWAYS comparison.
 /// Without CLEAR_DEPTH, depth is untouched. Ordinary draw depth flags are invalid.
 pub const INDEXED_DRAW_GEOMETRY_CLEAR: u32 = 1 << 5;
+/// Opt into 4× multisampling for a standalone, textured triangle-list draw
+/// that clears color and uses the transient depth buffer. Requires an adapter
+/// reporting support and a drawable within the declared extent.
+pub const INDEXED_DRAW_MSAA4: u32 = 1 << 6;
+pub const INDEXED_MSAA4_MAX_WIDTH: u32 = 1280;
+pub const INDEXED_MSAA4_MAX_HEIGHT: u32 = 720;
+
+pub const fn indexed_msaa4_extent_supported(width: u32, height: u32) -> bool {
+    width != 0 && height != 0 && width <= INDEXED_MSAA4_MAX_WIDTH && height <= INDEXED_MSAA4_MAX_HEIGHT
+}
+
 /// GL comparison ordinal (NEVER through ALWAYS), not an Intel packet encoding.
 pub const INDEXED_DRAW_DEPTH_COMPARE_SHIFT: u32 = 8;
 pub const INDEXED_DRAW_DEPTH_COMPARE_MASK: u32 = 7 << INDEXED_DRAW_DEPTH_COMPARE_SHIFT;
@@ -242,9 +259,13 @@ pub const INDEXED_DRAW_FLAGS_ALL: u32 = INDEXED_DRAW_LOAD_COLOR
     | INDEXED_DRAW_DEPTH_WRITE
     | INDEXED_DRAW_CLEAR_DEPTH
     | INDEXED_DRAW_DEPTH_COMPARE_MASK
-    | INDEXED_DRAW_GEOMETRY_CLEAR;
+    | INDEXED_DRAW_GEOMETRY_CLEAR
+    | INDEXED_DRAW_MSAA4;
 
 pub const fn indexed_draw_flags_valid(flags: u32) -> bool {
+    if flags & INDEXED_DRAW_MSAA4 != 0 {
+        return flags == INDEXED_DRAW_MSAA4;
+    }
     flags & !INDEXED_DRAW_FLAGS_ALL == 0
         && (flags
             & !(INDEXED_DRAW_LOAD_COLOR

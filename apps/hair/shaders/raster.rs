@@ -12,18 +12,18 @@ pub(crate) struct Camera {
     light: Vec3,
     center: Vec3,
     offset: Vec2,
-    scale: f32,
+    pub(crate) scale: f32,
 }
 
 impl Camera {
     pub(crate) fn new(
-        width: u32,
-        height: u32,
+        viewport: Vec2,
         yaw: f32,
         world_to_avatar: Quat,
         body_bounds: (Vec3, Vec3),
         reach_center: Vec3,
         reach_radius: f32,
+        fixed_scale: Option<f32>,
     ) -> Self {
         let (sin, cos) = yaw.sin_cos();
         let toward = Vec3::new(sin, 0.12, -cos).normalize();
@@ -41,7 +41,6 @@ impl Camera {
         let low = (body_center - body_span).min(reach - Vec2::splat(reach_radius));
         let high = (body_center + body_span).max(reach + Vec2::splat(reach_radius));
         let fit_center = (low + high) * 0.5;
-        let viewport = Vec2::new(width as f32, height as f32);
         Self {
             right,
             up,
@@ -49,7 +48,7 @@ impl Camera {
             light,
             center: right * fit_center.x + up * fit_center.y + toward * reach_center.dot(toward),
             offset: viewport * 0.5,
-            scale: 0.90 * (viewport / (high - low)).min_element(),
+            scale: fixed_scale.unwrap_or_else(|| 0.90 * (viewport / (high - low)).min_element()),
         }
     }
 
@@ -211,10 +210,35 @@ impl<'a> Surface<'a> {
         }
     }
 
-    pub(crate) fn flow_line(&mut self, camera: Camera, start: Vec3, end: Vec3, value: f32) {
+    pub(crate) fn flow_line(
+        &mut self,
+        camera: Camera,
+        start: Vec3,
+        end: Vec3,
+        attachment: Option<Vec3>,
+        value: f32,
+        minimum_opacity: f32,
+    ) {
         let color = rainbow(value);
-        let opacity = 0.24 + 0.56 * value.clamp(0.0, 1.0).sqrt();
-        self.line::<true>(camera.project(start), camera.project(end), color, opacity);
+        let opacity = minimum_opacity + (0.8 - minimum_opacity) * value.clamp(0.0, 1.0).sqrt();
+        let mut start = camera.project(start);
+        let end = camera.project(end);
+        if let Some(root) = attachment {
+            let root = camera.project(root);
+            let join = start.lerp(end, 0.35);
+            // The first fluid sample is the quadratic control point. The bend
+            // leaves along the scalp normal and arrives along the solved flow.
+            const STEPS: u32 = 6;
+            let mut previous = root;
+            for step in 1..=STEPS {
+                let t = step as f32 / STEPS as f32;
+                let next = root.lerp(start, t).lerp(start.lerp(join, t), t);
+                self.line::<true>(previous, next, color, opacity);
+                previous = next;
+            }
+            start = join;
+        }
+        self.line::<true>(start, end, color, opacity);
     }
 
     fn line<const WRITE_DEPTH: bool>(&mut self, start: Vec3, end: Vec3, color: Vec3, opacity: f32) {
@@ -352,13 +376,13 @@ mod tests {
                 ] {
                     let world_to_avatar = Quat::from_rotation_z(-roll);
                     let camera = Camera::new(
-                        width,
-                        height,
+                        viewport,
                         yaw,
                         world_to_avatar,
                         (body_min, body_max),
                         center,
                         radius,
+                        None,
                     );
                     let local_down = world_to_avatar * Vec3::NEG_Y;
                     assert!(camera.project(center + local_down).y > camera.project(center).y);
@@ -379,6 +403,24 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn orbit_keeps_the_initial_projection_scale() {
+        let viewport = Vec2::new(960.0, 720.0);
+        let bounds = (Vec3::new(-0.8, 0.0, -0.34), Vec3::new(0.8, 1.6, 0.34));
+        let center = Vec3::new(0.0, 1.42, -0.015);
+        let camera =
+            |yaw, scale| Camera::new(viewport, yaw, Quat::IDENTITY, bounds, center, 0.75, scale);
+        let scale = camera(165.0_f32.to_radians(), None).scale;
+        for yaw in [0.0, 1.6, 4.7, 5.5] {
+            let camera = camera(yaw, Some(scale));
+            let projected_center = camera.project(center);
+            let projected_right = camera.project(center + camera.right);
+            let projected_up = camera.project(center + camera.up);
+            assert!((projected_right.x - projected_center.x - scale).abs() < 1e-4);
+            assert!((projected_center.y - projected_up.y - scale).abs() < 1e-4);
         }
     }
 }

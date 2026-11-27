@@ -5,6 +5,8 @@ use trueos::vgpu::{
 
 use crate::preview::gpu_error;
 
+use super::floor_material::CLEAR_RGBA;
+
 pub(super) const VERTEX_BYTES: usize = 5 * size_of::<f32>();
 
 pub(super) struct ReelDraw {
@@ -129,18 +131,18 @@ impl ReelDraw {
         indices: &[u8],
         rgba: &[u8],
         extent: [u32; 2],
-        clear_rgba: u32,
+        msaa4: bool,
     ) -> std::result::Result<(), i32> {
         self.set_indices(indices)?;
         self.set_texture(rgba, extent)?;
-        self.submit_prepared(surface, vertices, clear_rgba)
+        self.submit_prepared(surface, vertices, msaa4)
     }
 
-    pub(super) fn submit_prepared(
+    fn submit_prepared(
         &self,
         surface: Ui4Surface,
         vertices: &[u8],
-        clear_rgba: u32,
+        msaa4: bool,
     ) -> std::result::Result<(), i32> {
         if vertices.len() < self.required_vertex_bytes
             || !vertices.len().is_multiple_of(VERTEX_BYTES)
@@ -158,7 +160,8 @@ impl ReelDraw {
                 self.vertices,
                 self.indices,
                 IndexedDraw {
-                    clear_rgba8_srgb: clear_rgba,
+                    clear_rgba8_srgb: CLEAR_RGBA,
+                    texture_reserved: if msaa4 { vgpu::INDEXED_DRAW_MSAA4 } else { 0 },
                     ..self.draw
                 },
             )

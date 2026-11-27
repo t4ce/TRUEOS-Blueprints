@@ -10,7 +10,7 @@ use crate::obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER, HEAD_RADIUS};
 // The longest resting back-hair vertices sit about 0.733 m from the head center.
 pub(crate) const HAIR_REACH_RADIUS: f32 = 0.75;
 pub(crate) const FIELD_STREAMLINE_SEEDS: usize = 44;
-pub(crate) const ROOT_STREAMLINE_SEEDS: usize = 32;
+pub(crate) const ROOT_STREAMLINE_SEEDS: usize = if cfg!(target_os = "trueos") { 32 } else { 64 };
 
 const SIZE: [usize; 3] = [64; 3];
 const CELL_COUNT: usize = SIZE[0] * SIZE[1] * SIZE[2];
@@ -34,6 +34,13 @@ const REACH_RADIUS_SQUARED: f32 = HAIR_REACH_RADIUS * HAIR_REACH_RADIUS;
 // The reference's GRAPHICS_U_MAX (0.18) is in units of lattice sound speed.
 const COLOR_SPEED: f32 = 0.18 * 0.577_350_26;
 const COLOR_VELOCITY_DELTA: f32 = 0.035;
+const FIELD_MIN_SPEED: f32 = 0.1 * COLOR_SPEED;
+// The guide direction is still useful beneath the diagnostic field's cutoff.
+const GUIDE_MIN_SPEED: f32 = if cfg!(target_os = "trueos") {
+    FIELD_MIN_SPEED
+} else {
+    0.02 * COLOR_SPEED
+};
 
 const VELOCITIES: [Vec3; 19] = [
     Vec3::ZERO,
@@ -82,6 +89,12 @@ const WEIGHTS: [f32; 19] = [
 ];
 type Populations = [f32; VELOCITIES.len()];
 
+#[derive(Clone, Copy)]
+pub(crate) struct RootSample {
+    pub(crate) position: Vec3,
+    pub(crate) outward: Vec3,
+}
+
 pub(crate) struct Solver {
     populations: Vec<Populations>,
     next: Vec<Populations>,
@@ -93,6 +106,7 @@ pub(crate) struct Solver {
     upright_flow_direction: Vec3,
     world_to_avatar: Quat,
     field_seeds: [Vec3; FIELD_STREAMLINE_SEEDS],
+    root_positions: [Vec3; ROOT_STREAMLINE_SEEDS],
     root_seeds: [Vec3; ROOT_STREAMLINE_SEEDS],
     tick: u64,
 }
@@ -101,7 +115,7 @@ impl Solver {
     pub(crate) fn new(
         hair_down: Vec3,
         world_to_avatar: Quat,
-        root_positions: [Vec3; ROOT_STREAMLINE_SEEDS],
+        roots: [RootSample; ROOT_STREAMLINE_SEEDS],
     ) -> Self {
         let upright_flow_direction = hair_down.normalize();
         let inflow = inlet_velocity(world_to_avatar * upright_flow_direction, 0);
@@ -148,7 +162,8 @@ impl Solver {
             upright_flow_direction,
             world_to_avatar,
             field_seeds: field_seeds(upright_flow_direction),
-            root_seeds: root_positions.map(root_seed),
+            root_positions: roots.map(|root| root.position),
+            root_seeds: roots.map(root_seed),
             tick: 0,
         }
     }
@@ -193,8 +208,8 @@ impl Solver {
         core::mem::swap(&mut self.populations, &mut self.next);
     }
 
-    /// Emit line segments inside the hair reach, with local speed and velocity change.
-    pub(crate) fn for_each_line(&self, mut emit: impl FnMut(Vec3, Vec3, f32, f32)) -> usize {
+    /// Emit diagnostic field segments inside the hair reach.
+    pub(crate) fn for_each_field_line(&self, mut emit: impl FnMut(Vec3, Vec3, f32, f32)) -> usize {
         let mut segments = 0;
         let center = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
         for &seed in &self.field_seeds {
@@ -202,19 +217,40 @@ impl Solver {
             // stay fixed to the avatar because the grid is in avatar space.
             let seed = center + self.world_to_avatar * (seed - center);
             for direction in [-1.0, 1.0] {
-                segments += self.trace(seed, direction, &mut emit);
+                segments += self.trace(seed, direction, FIELD_MIN_SPEED, &mut emit);
             }
         }
-        for &seed in &self.root_seeds {
-            segments += self.trace(seed, 1.0, &mut emit);
-        }
         segments
+    }
+
+    /// Emit downstream guide segments from the authored root patch.
+    /// The first fluid segment of each guide also carries its surface attachment.
+    pub(crate) fn for_each_guide_line(
+        &self,
+        mut emit: impl FnMut(Option<Vec3>, Vec3, Vec3, f32, f32),
+    ) -> usize {
+        self.root_positions
+            .iter()
+            .zip(&self.root_seeds)
+            .map(|(&position, &seed)| {
+                let mut attachment = Some(position);
+                self.trace(
+                    seed,
+                    1.0,
+                    GUIDE_MIN_SPEED,
+                    &mut |from, to, speed, change| {
+                        emit(attachment.take(), from, to, speed, change);
+                    },
+                )
+            })
+            .sum()
     }
 
     fn trace(
         &self,
         seed: Vec3,
         direction: f32,
+        minimum_speed: f32,
         emit: &mut impl FnMut(Vec3, Vec3, f32, f32),
     ) -> usize {
         let Some(mut velocity) = self.velocity_at(seed) else {
@@ -225,7 +261,7 @@ impl Solver {
         let mut segments = 0;
         for _ in 0..STREAMLINE_HALF_LENGTH {
             let speed = velocity.length();
-            if speed < 0.1 * COLOR_SPEED {
+            if speed < minimum_speed {
                 break;
             }
             let mut next = point + (STREAMLINE_STEP * direction / speed) * velocity;
@@ -296,15 +332,15 @@ fn field_seeds(flow_direction: Vec3) -> [Vec3; FIELD_STREAMLINE_SEEDS] {
     })
 }
 
-fn root_seed(position: Vec3) -> Vec3 {
-    // Keep the mesh sample's X/Y and move it rearward into fluid. A full-cell
-    // margin clears the head even if the sampled voxel center is closer in.
+fn root_seed(root: RootSample) -> Vec3 {
+    // Follow the local surface normal to a sampling position with one cell of
+    // clearance from the head proxy, including room for voxel discretization.
     let radius = HEAD_RADIUS + CELL_WIDTH;
-    let offset = position - HEAD_CENTER;
-    let clearance_z = (radius * radius - offset.truncate().length_squared())
-        .max(0.0)
-        .sqrt();
-    let position = position.with_z(position.z.max(HEAD_CENTER.z + clearance_z));
+    let offset = root.position - HEAD_CENTER;
+    let along = offset.dot(root.outward);
+    let inside = (radius * radius - offset.length_squared()).max(0.0);
+    let distance = (along * along + inside).sqrt() - along;
+    let position = root.position + distance * root.outward;
     (position - DOMAIN_MIN) / CELL_WIDTH
 }
 
@@ -368,11 +404,7 @@ mod tests {
     use super::*;
 
     fn standing_solver() -> Solver {
-        Solver::new(
-            Vec3::NEG_Y,
-            Quat::IDENTITY,
-            crate::scene::reference_root_positions(),
-        )
+        Solver::new(Vec3::NEG_Y, Quat::IDENTITY, crate::scene::reference_roots())
     }
 
     #[test]
@@ -429,15 +461,23 @@ mod tests {
         }
         assert!(quadrants.into_iter().all(|count| (9..=13).contains(&count)));
         assert_eq!(solver.field_seeds.len(), 44);
-        assert_eq!(solver.root_seeds.len(), 32);
-        let attachment = crate::scene::reference_root_positions();
-        for (&seed, root) in solver.root_seeds.iter().zip(attachment) {
+        let roots = crate::scene::reference_roots();
+        for (&seed, root) in solver.root_seeds.iter().zip(roots) {
             let position = world_position(seed);
             assert!(solver.velocity_at(seed).is_some());
-            assert!(position.truncate().distance(root.truncate()) < 1e-6);
-            assert!(position.z > root.z);
+            let direction = (position - root.position).normalize();
+            assert!(direction.distance(root.outward) < 1e-5);
             assert!(position.distance(HEAD_CENTER) >= HEAD_RADIUS + CELL_WIDTH - 1e-6);
         }
+        let mut attached = 0;
+        solver.for_each_guide_line(|attachment, from, _, _, _| {
+            if let Some(position) = attachment {
+                assert_eq!(position, roots[attached].position);
+                assert_eq!(from, world_position(solver.root_seeds[attached]));
+                attached += 1;
+            }
+        });
+        assert_eq!(attached, ROOT_STREAMLINE_SEEDS);
     }
 
     #[test]
@@ -467,17 +507,21 @@ mod tests {
         let mut roots_below_shoulders = 0;
         for &seed in &solver.root_seeds {
             let mut lowest = world_position(seed).y;
-            assert!(solver.trace(seed, 1.0, &mut |_, to, _, _| lowest = lowest.min(to.y)) > 0);
+            assert!(
+                solver.trace(seed, 1.0, GUIDE_MIN_SPEED, &mut |_, to, _, _| {
+                    lowest = lowest.min(to.y);
+                }) > 0
+            );
             roots_below_shoulders += usize::from(lowest < 1.15);
         }
         assert!(
-            roots_below_shoulders >= 24,
+            roots_below_shoulders >= ROOT_STREAMLINE_SEEDS * 3 / 4,
             "{roots_below_shoulders} roots below the shoulders"
         );
         let mut count = 0;
         let mut varied = false;
         let mut reach_exits = [false; 2];
-        let emitted = solver.for_each_line(|from, to, speed, delta| {
+        let mut observe = |from: Vec3, to: Vec3, speed, delta| {
             let from_radius = from.distance(HEAD_CENTER);
             let to_radius = to.distance(HEAD_CENTER);
             assert!(from_radius <= HAIR_REACH_RADIUS + 1e-6);
@@ -494,10 +538,39 @@ mod tests {
             if (to_radius - HAIR_REACH_RADIUS).abs() < 1e-6 {
                 reach_exits[usize::from(to.y > from.y)] = true;
             }
-        });
-        assert_eq!(emitted, count);
-        assert!((1_800..=2_700).contains(&emitted) && varied);
+        };
+        let field_segments = solver.for_each_field_line(&mut observe);
+        let guide_segments =
+            solver.for_each_guide_line(|_, from, to, speed, delta| observe(from, to, speed, delta));
+        assert_eq!(field_segments + guide_segments, count);
+        assert!(
+            (1_200..=1_600).contains(&field_segments) && varied,
+            "{field_segments} field segments, {guide_segments} guide segments"
+        );
+        assert!(guide_segments >= ROOT_STREAMLINE_SEEDS * 10);
         assert_eq!(reach_exits, [true; 2]);
+    }
+
+    #[cfg(not(target_os = "trueos"))]
+    #[test]
+    fn slow_guides_stay_visible_to_the_reach_boundary() {
+        let mut solver = standing_solver();
+        let seed = (HEAD_CENTER + 0.20 * Vec3::Z - DOMAIN_MIN) / CELL_WIDTH;
+        solver.velocity.fill(0.05 * COLOR_SPEED * Vec3::Z);
+        assert_eq!(
+            solver.trace(seed, 1.0, FIELD_MIN_SPEED, &mut |_, _, _, _| {}),
+            0
+        );
+        let mut tip = Vec3::ZERO;
+        let segments = solver.trace(seed, 1.0, GUIDE_MIN_SPEED, &mut |_, to, _, _| tip = to);
+        assert!(segments > 0);
+        assert!(tip.distance(HEAD_CENTER + HAIR_REACH_RADIUS * Vec3::Z) < 1e-6);
+
+        solver.velocity.fill(Vec3::ZERO);
+        assert_eq!(
+            solver.trace(seed, 1.0, GUIDE_MIN_SPEED, &mut |_, _, _, _| {}),
+            0
+        );
     }
 
     #[test]

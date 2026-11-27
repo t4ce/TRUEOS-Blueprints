@@ -23,6 +23,21 @@ pub(super) struct Animation {
 pub(super) struct PoseSample<'a> {
     pub(super) positions: &'a [[f32; 3]],
     pub(super) normals: &'a [[f32; 3]],
+    pub(super) joint_world: &'a [Mat4],
+}
+
+#[derive(Clone, Default)]
+pub(super) struct RigPose {
+    pub(super) joints: Vec<Mat4>,
+    pub(super) offset: Vec3,
+}
+
+impl RigPose {
+    pub(super) fn save(&mut self, joints: &[Mat4], offset: Vec3) {
+        self.joints.clear();
+        self.joints.extend_from_slice(joints);
+        self.offset = offset;
+    }
 }
 
 #[derive(PartialEq)]
@@ -69,6 +84,25 @@ struct Joint {
 }
 
 impl Animation {
+    pub(super) fn procedural(glb: &[u8], materials: &[&str]) -> Result<Self> {
+        let asset = gltf::Gltf::from_slice(glb).context("parse procedural humanoid GLB")?;
+        Self::load_rig(&asset, materials)
+    }
+
+    pub(super) fn apply_procedural(
+        &mut self,
+        root: usize,
+        translation: Vec3,
+        rotations: &[(usize, Quat)],
+    ) {
+        self.local.copy_from_slice(&self.base_pose);
+        self.local[root].translation += translation;
+        for &(joint, rotation) in rotations {
+            self.local[joint].rotation *= rotation;
+        }
+        self.update_world(None);
+    }
+
     pub(super) fn prepare(clip_glb: &[u8], avatar_glb: &[u8], materials: &[&str]) -> Result<Self> {
         let asset = gltf::Gltf::from_slice(clip_glb).context("parse animated humanoid GLB")?;
         let blob = asset
@@ -463,6 +497,35 @@ impl Animation {
         self.update_world(None);
     }
 
+    pub(super) fn blend_pose(
+        &mut self,
+        from: &RigPose,
+        to_joints: &[Mat4],
+        to_offset: Vec3,
+        weight: f32,
+    ) {
+        for (index, node) in self.nodes.iter().enumerate() {
+            let local = |joints: &[Mat4], offset: Vec3| {
+                node.parent.map_or_else(
+                    || Mat4::from_translation(offset) * joints[index],
+                    |parent| joints[parent].inverse() * joints[index],
+                )
+            };
+            let (from_scale, from_rotation, from_translation) =
+                local(&from.joints, from.offset).to_scale_rotation_translation();
+            let (to_scale, to_rotation, to_translation) =
+                local(to_joints, to_offset).to_scale_rotation_translation();
+            self.local[index] = LocalPose {
+                translation: from_translation.lerp(to_translation, weight),
+                rotation: from_rotation
+                    .normalize()
+                    .slerp(to_rotation.normalize(), weight),
+                scale: from_scale.lerp(to_scale, weight),
+            };
+        }
+        self.update_world(None);
+    }
+
     #[cfg(target_os = "trueos")]
     pub(super) fn bind_positions(
         &self,
@@ -667,6 +730,7 @@ impl Animation {
         PoseSample {
             positions: &self.positions,
             normals: &self.normals,
+            joint_world: &self.world,
         }
     }
 }
