@@ -24,7 +24,7 @@ embeds the mesh and texture atlases. The solver and raster shaders are local
 and the demo makes no network requests.
 
 The preview opens facing the avatar. Move the mouse left or right over the
-window to spin her at a fixed scale. Use the window close button to exit.
+window to spin her in the plane of the screen. Use the window close button to exit.
 
 A headless run can write a PNG.
 
@@ -45,9 +45,9 @@ with `CARGO_NET_OFFLINE=true cargo bp hair --check`.
 
 The CPU solver adapts the D3Q19 single-relaxation-time model and streamline
 sampling from the [t4ce FluidX3D fork][fork] by Dr. Moritz Lehmann. It uses two
-buffers for the lattice populations. The incoming flow follows the back-hair
-rest axis, straight down in the standing pose. Its speed changes gently over
-time and the field bends around the head, torso and arms. The solver uses
+buffers for the lattice populations. The lattice and incoming flow stay in
+world space as the avatar spins. The head, torso, and arm obstacles move through
+the lattice, and the incoming speed changes gently over time. The solver uses
 these volumes even when their overlays are hidden. Streamlines sample local
 velocities, with the fork's rainbow mapping in [the local raster shader](shaders/raster.rs).
 The solver box surrounds the full hair-reach sphere. There are 44 optional

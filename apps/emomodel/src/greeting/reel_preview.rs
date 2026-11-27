@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result, ensure};
 use glam::{Mat4, Vec3};
 use trueos::{
@@ -12,13 +14,13 @@ use super::{
     floor, floor_material,
     foot_contact::FootProbe,
     hand_contact::HandProbe,
+    lico_graph::{DanceClueSnapshot, Observer},
     reel::{GROUND_Y, PlacedPose, Reel},
     reel_draw::{ReelDraw, VERTEX_BYTES},
     report,
     skin_study::{self, Lighting, Material},
 };
 use crate::{
-    DanceTempo,
     animation::{Animation, RigPose},
     autobs::{ARC_LIMIT, BASE_YAW, camera_back, view_back},
     hair::{Hair, PARTICLES},
@@ -91,24 +93,22 @@ struct PlaybackClock {
 }
 
 impl PlaybackClock {
-    fn select(&mut self, dancing: bool, elapsed_ns: u64) -> bool {
+    fn select(&mut self, dancing: bool, elapsed_ns: u64) {
         if self.dancing == dancing {
-            return false;
+            return;
         }
         if dancing {
             self.reel_elapsed_ns = self.motion_time(elapsed_ns);
         }
         self.changed_ns = elapsed_ns;
         self.dancing = dancing;
-        true
     }
 
     fn motion_time(&self, elapsed_ns: u64) -> u64 {
-        let since_change = elapsed_ns.saturating_sub(self.changed_ns);
         if self.dancing {
-            since_change
+            self.reel_elapsed_ns
         } else {
-            self.reel_elapsed_ns + since_change
+            self.reel_elapsed_ns + elapsed_ns.saturating_sub(self.changed_ns)
         }
     }
 }
@@ -133,7 +133,8 @@ pub(super) struct Preview<'a> {
     mesh: &'a Mesh,
     motion: Motion,
     dance: Dance,
-    tempo: DanceTempo,
+    lico: Observer,
+    dance_clue: Option<Arc<DanceClueSnapshot>>,
     clock: PlaybackClock,
     blend_rig: Animation,
     displayed_pose: RigPose,
@@ -169,9 +170,8 @@ impl<'a> Preview<'a> {
         mut motion: Motion,
         glb: &[u8],
         studying_skin: bool,
-        tempo: DanceTempo,
     ) -> Result<(Self, Vec3, [f32; 2])> {
-        let mut dance = Dance::new(glb, &super::MATERIALS, tempo.bpm, tempo.beats_per_bar)?;
+        let mut dance = Dance::new(glb, &super::MATERIALS)?;
         let mut blend_rig = Animation::procedural(glb, &super::MATERIALS)?;
         if !studying_skin {
             super::apply_normal_maps(glb, |section, normals| {
@@ -251,7 +251,7 @@ impl<'a> Preview<'a> {
             "wrong reel lighting extent"
         );
 
-        let (center, half_span) = frame_bounds(&mut motion, &mut dance, &source_vertices)?;
+        let (center, half_span) = frame_bounds(&mut motion, &source_vertices)?;
         let initial = motion.sample(0)?;
         let mut body = BodyBack::default();
         body.update(initial.positions, body_indices(mesh, body_start));
@@ -278,7 +278,8 @@ impl<'a> Preview<'a> {
                 mesh,
                 motion,
                 dance,
-                tempo,
+                lico: Observer::new(),
+                dance_clue: None,
                 clock: PlaybackClock::default(),
                 blend_rig,
                 displayed_pose: RigPose::default(),
@@ -311,28 +312,39 @@ impl<'a> Preview<'a> {
         ))
     }
 
-    pub(super) fn select_dance(&mut self, dancing: bool, elapsed_ns: u64) {
-        if self.clock.select(dancing, elapsed_ns) {
-            self.transition = (!self.displayed_pose.joints.is_empty())
-                .then(|| (elapsed_ns, self.displayed_pose.clone()));
-            self.previous_pose = None;
-            if dancing {
-                report(format_args!(
-                    "avatar mode=robot-tango bpm={} meter={}/4",
-                    self.tempo.bpm, self.tempo.beats_per_bar
-                ));
-            } else {
-                report(format_args!("avatar mode=reel"));
-            }
+    pub(super) fn sync_lico(&mut self, elapsed_ns: u64) {
+        let clue = self.lico.current();
+        match (&self.dance_clue, &clue) {
+            (None, None) => return,
+            (Some(current), Some(next)) if Arc::ptr_eq(current, next) => return,
+            _ => {}
         }
+        if let Some(snapshot) = &clue {
+            self.dance.set_graph(&snapshot.graph);
+            report(format_args!(
+                "avatar mode=lico-dance run={} nodes={} patterns={}",
+                snapshot.run,
+                snapshot.graph.nodes.len(),
+                snapshot.graph.patterns.len()
+            ));
+        } else {
+            report(format_args!("avatar mode=reel source=lico-stop"));
+        }
+        self.clock.select(clue.is_some(), elapsed_ns);
+        self.transition = (!self.displayed_pose.joints.is_empty())
+            .then(|| (elapsed_ns, self.displayed_pose.clone()));
+        self.previous_pose = None;
+        self.dance_clue = clue;
     }
 
-    pub(super) fn pose(&self, elapsed_ns: u64) -> (usize, &'static str) {
-        let time = self.clock.motion_time(elapsed_ns);
-        let tick = (time * u64::from(super::HZ) / SECOND_NS) as usize;
-        if self.clock.dancing {
+    pub(super) fn pose(&self, elapsed_ns: u64, now_ns: u64) -> (usize, &'static str) {
+        if let Some(snapshot) = &self.dance_clue {
+            let time = now_ns.saturating_sub(snapshot.started_ns);
+            let tick = (time.saturating_mul(u64::from(super::HZ)) / SECOND_NS) as usize;
             (tick, self.dance.phrase(time as f64 / SECOND_NS as f64))
         } else {
+            let tick =
+                (self.clock.motion_time(elapsed_ns) * u64::from(super::HZ) / SECOND_NS) as usize;
             let index = tick % self.motion.frame_count();
             (index, self.motion.phase(index))
         }
@@ -344,9 +356,10 @@ impl<'a> Preview<'a> {
         camera: RetainedCamera,
         frame: usize,
         elapsed_ns: u64,
-        msaa4: bool,
+        now_ns: u64,
+        samples: u8,
     ) -> Result<(), i32> {
-        let extent = match self.stage(camera, frame, elapsed_ns) {
+        let extent = match self.stage(camera, frame, elapsed_ns, now_ns) {
             Ok(extent) => extent,
             Err(error) => {
                 report(format_args!("prepare reel frame {frame}: {error:#}"));
@@ -359,11 +372,17 @@ impl<'a> Preview<'a> {
             &self.indices,
             &self.texture,
             extent,
-            msaa4,
+            samples,
         )
     }
 
-    fn stage(&mut self, camera: RetainedCamera, frame: usize, elapsed_ns: u64) -> Result<[u32; 2]> {
+    fn stage(
+        &mut self,
+        camera: RetainedCamera,
+        frame: usize,
+        elapsed_ns: u64,
+        now_ns: u64,
+    ) -> Result<[u32; 2]> {
         let frame_count = self.motion.frame_count();
         let dancing = self.clock.dancing;
         if self
@@ -389,9 +408,9 @@ impl<'a> Preview<'a> {
                 }
             }
         }
-        let pose = if dancing {
+        let pose = if let Some(snapshot) = &self.dance_clue {
             self.dance
-                .sample(self.clock.motion_time(elapsed_ns) as f64 / SECOND_NS as f64)?
+                .sample(now_ns.saturating_sub(snapshot.started_ns) as f64 / SECOND_NS as f64)?
         } else {
             self.motion.sample(frame)?
         };
@@ -550,29 +569,30 @@ fn body_indices(mesh: &Mesh, body_start: usize) -> &[u32] {
     &skin[skin.partition_point(|&index| (index as usize) < body_start)..]
 }
 
-fn frame_bounds(
-    motion: &mut Motion,
-    dance: &mut Dance,
-    source: &[usize],
-) -> Result<(Vec3, [f32; 2])> {
+fn frame_bounds(motion: &mut Motion, source: &[usize]) -> Result<(Vec3, [f32; 2])> {
     let right = Vec3::Y.cross(camera_back(BASE_YAW));
     let back = view_back(BASE_YAW);
     let up = back.cross(right);
     let mut low = Vec3::splat(f32::INFINITY);
     let mut high = Vec3::splat(f32::NEG_INFINITY);
-    let mut include = |pose: PlacedPose<'_>| {
-        for &index in source {
-            let position = Vec3::from_array(pose.positions[index]);
-            let point = Vec3::new(right.dot(position), up.dot(position), back.dot(position));
-            low = low.min(point);
-            high = high.max(point);
-        }
+    let mut include = |position: Vec3| {
+        let point = Vec3::new(right.dot(position), up.dot(position), back.dot(position));
+        low = low.min(point);
+        high = high.max(point);
     };
     for frame in (0..motion.frame_count()).step_by(5) {
-        include(motion.sample(frame)?);
+        let pose = motion.sample(frame)?;
+        for &index in source {
+            include(Vec3::from_array(pose.positions[index]));
+        }
     }
-    for sample in 0..128 {
-        include(dance.sample(dance.cycle_seconds() * f64::from(sample) / 128.0)?);
+    let (min, max) = Dance::framing_bounds();
+    for x in [min[0], max[0]] {
+        for y in [min[1], max[1]] {
+            for z in [min[2], max[2]] {
+                include(Vec3::new(x, y, z));
+            }
+        }
     }
     let center = (high + low) * 0.5;
     let half = (high - low) * 0.5;

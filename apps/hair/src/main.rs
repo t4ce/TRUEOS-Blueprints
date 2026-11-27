@@ -8,11 +8,14 @@ mod obstacle;
 mod raster;
 mod scene;
 mod solver;
+mod water;
+mod water_iso;
 #[cfg(target_os = "trueos")]
 mod ui4;
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 720;
+const WATER_PREVIEW: bool = true;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Layers {
@@ -54,6 +57,9 @@ pub(crate) struct Controls {
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
     pub(crate) tip_spread: bool,
+    pub(crate) water: bool,
+    pub(crate) water_volume: f32,
+    pub(crate) flow: solver::FlowSettings,
 }
 
 impl Default for Controls {
@@ -79,6 +85,9 @@ impl Default for Controls {
             paused: false,
             speed_color: false,
             tip_spread: true,
+            water: cfg!(target_os = "linux") && WATER_PREVIEW,
+            water_volume: 1.0,
+            flow: solver::FlowSettings::DEFAULT,
         }
     }
 }
@@ -130,7 +139,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu: Move the mouse left or right to spin. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu: Move the mouse left or right to spin. Water preview keys: I/K volume, J/L flow speed, U/O viscosity. Close the window to exit."
                 );
                 return Ok(());
             }
@@ -139,14 +148,14 @@ fn main() -> Result<()> {
     }
 
     if let Some(path) = snapshot {
-        let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls.roll)?;
+        let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls)?;
         let started = std::time::Instant::now();
         let count = frames.unwrap_or(1);
         for _ in 0..count {
-            scene.advance(controls.roll, controls.tip_spread);
+            scene.advance(controls);
         }
         let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
-        let segments = scene.draw(controls, &mut pixels);
+        let primitives = scene.draw(controls, &mut pixels);
         let mut encoder = png::Encoder::new(File::create(&path)?, WIDTH, HEIGHT);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
@@ -156,9 +165,11 @@ fn main() -> Result<()> {
             path.display(),
             started.elapsed().as_secs_f64()
         );
-        if controls.layers.field || controls.layers.guides {
+        if controls.water {
+            println!("hair: medium water surface, {primitives} triangles");
+        } else if controls.layers.field || controls.layers.guides {
             println!(
-                "hair: {} field seeds, {} hair-root seeds, {segments} traced segments",
+                "hair: {} field seeds, {} hair-root seeds, {primitives} traced segments",
                 if controls.layers.field {
                     solver::FIELD_STREAMLINE_SEEDS
                 } else {
@@ -176,9 +187,9 @@ fn main() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls.roll)?;
+        let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls)?;
         host::run(WIDTH, HEIGHT, controls, frames, |controls, pixels| {
-            scene.advance(controls.roll, controls.tip_spread);
+            scene.advance(controls);
             scene.draw(controls, pixels);
             Ok(())
         })

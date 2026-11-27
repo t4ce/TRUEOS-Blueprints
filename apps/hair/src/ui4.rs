@@ -31,7 +31,7 @@ fn present(
     let y = ((screen_height - height) / 2) as i32;
     let mut frame = Frame::open_streaming(x, y, width, height)?;
     frame.set_title("Hair · Flow study")?;
-    let mut scene = Scene::new(width, height, controls.roll).map_err(|error| {
+    let mut scene = Scene::new(width, height, controls).map_err(|error| {
         eprintln!("hair: {error:#}");
         Error::Invalid
     })?;
@@ -98,7 +98,7 @@ fn present(
             Err(error) => return Err(error),
         }
         if !controls.paused {
-            scene.advance(controls.roll, controls.tip_spread);
+            scene.advance(controls);
         }
         scene.draw(controls, &mut pixels);
         frame.write_opaque_rgba8(&pixels)?;

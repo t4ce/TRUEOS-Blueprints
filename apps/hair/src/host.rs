@@ -40,7 +40,7 @@ pub(crate) fn run(
     let mut report_start = Instant::now();
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
-        if !video.poll(&mut controls.yaw) {
+        if !video.poll(&mut controls.roll) {
             break;
         }
 
@@ -235,7 +235,7 @@ impl Video {
         (!driver.is_null()).then(|| unsafe { CStr::from_ptr(driver) }.to_bytes())
     }
 
-    fn poll(&self, yaw: &mut f32) -> bool {
+    fn poll(&self, roll: &mut f32) -> bool {
         let mut event = Event { storage: [0; 7] };
         while unsafe { (self.sdl.poll_event)(&mut event) } == 1 {
             match unsafe { event.kind } {
@@ -243,7 +243,7 @@ impl Video {
                 WINDOW_EVENT if unsafe { event.window.event } == WINDOW_CLOSE => return false,
                 MOUSE_MOTION => {
                     let horizontal = unsafe { event.mouse.xrel };
-                    *yaw = (*yaw + horizontal as f32 * RADIANS_PER_PIXEL)
+                    *roll = (*roll + horizontal as f32 * RADIANS_PER_PIXEL)
                         .rem_euclid(std::f32::consts::TAU);
                 }
                 _ => (),

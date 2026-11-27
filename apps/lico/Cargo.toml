@@ -17,6 +17,7 @@ glicol_parser = { path = "vendor/parser" }
 crossterm = { version = "0.29", default-features = false, features = ["events", "bracketed-paste"] }
 glicol = { path = "vendor/main", features = ["use-samples", "use-meta"] }
 hound = "3.5"
+lico-graph = { path = "../../crates/lico-graph" }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }
 ratatui-textarea = "0.9"
 rustfft = "6"

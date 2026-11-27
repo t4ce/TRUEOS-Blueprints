@@ -36,7 +36,7 @@ mod node;
 pub use node::{
     compound, delay, effect, envelope, filter, operator, oscillator, sequencer, signal, synth,
 };
-pub use node::{Input, Node};
+pub use node::{CyclePlayhead, Input, Node};
 // pub use node::*; // TODO: Do not expose every struct here
 
 mod buffer;

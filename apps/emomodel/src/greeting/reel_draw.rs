@@ -131,18 +131,18 @@ impl ReelDraw {
         indices: &[u8],
         rgba: &[u8],
         extent: [u32; 2],
-        msaa4: bool,
+        samples: u8,
     ) -> std::result::Result<(), i32> {
         self.set_indices(indices)?;
         self.set_texture(rgba, extent)?;
-        self.submit_prepared(surface, vertices, msaa4)
+        self.submit_prepared(surface, vertices, samples)
     }
 
     fn submit_prepared(
         &self,
         surface: Ui4Surface,
         vertices: &[u8],
-        msaa4: bool,
+        samples: u8,
     ) -> std::result::Result<(), i32> {
         if vertices.len() < self.required_vertex_bytes
             || !vertices.len().is_multiple_of(VERTEX_BYTES)
@@ -151,6 +151,12 @@ impl ReelDraw {
         {
             return Err(vgpu::ERR_UNSUPPORTED);
         }
+        let sample_flag = match samples {
+            1 => 0,
+            2 => vgpu::INDEXED_DRAW_MSAA2,
+            4 => vgpu::INDEXED_DRAW_MSAA4,
+            _ => return Err(vgpu::ERR_UNSUPPORTED),
+        };
         self.write(self.vertices, self.vertex_capacity, vertices)?;
         self.device
             .submit_ui4_indexed(
@@ -161,7 +167,7 @@ impl ReelDraw {
                 self.indices,
                 IndexedDraw {
                     clear_rgba8_srgb: CLEAR_RGBA,
-                    texture_reserved: if msaa4 { vgpu::INDEXED_DRAW_MSAA4 } else { 0 },
+                    texture_reserved: sample_flag,
                     ..self.draw
                 },
             )

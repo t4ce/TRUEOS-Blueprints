@@ -289,6 +289,7 @@ impl Reel {
         self.frames
     }
 
+    #[cfg(target_os = "trueos")]
     pub(super) fn bind_positions(
         &self,
         section: usize,

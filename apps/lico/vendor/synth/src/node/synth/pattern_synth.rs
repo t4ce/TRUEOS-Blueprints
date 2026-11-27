@@ -1,4 +1,4 @@
-use crate::{Buffer, Input, Message, Node};
+use crate::{Buffer, CyclePlayhead, Input, Message, Node};
 use hashbrown::HashMap;
 use std::cmp::Ordering;
 
@@ -159,5 +159,13 @@ impl<const N: usize> Node<N> for PatternSynth {
             }
             _ => {}
         }
+    }
+
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
+        Some(CyclePlayhead {
+            next_frame: self.step,
+            period_frames: (self.cycle_dur * self.period_in_cycle * self.sr as f32) as usize,
+            frames_per_bar: f64::from(self.cycle_dur) * self.sr as f64,
+        })
     }
 }

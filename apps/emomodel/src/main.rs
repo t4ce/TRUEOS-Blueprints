@@ -20,6 +20,14 @@ mod floor;
 mod floor_material;
 #[cfg(target_os = "trueos")]
 mod greeting;
+#[cfg(all(test, not(target_os = "trueos")))]
+#[allow(dead_code)]
+mod greeting {
+    mod dance;
+    mod foot_contact;
+    mod hand_contact;
+    mod reel;
+}
 #[cfg(any(target_os = "trueos", test))]
 mod greeting_motion;
 #[cfg(any(target_os = "trueos", test))]
@@ -46,21 +54,6 @@ const HUMANOID_FILE: &str = "AvatarSample_B.glb";
 const HUMANOID_GLB: &[u8] = include_bytes!("../assets/AvatarSample_B.glb");
 #[cfg(target_os = "trueos")]
 const GREETING_FILE: &str = "AvatarSample_B_Greeting.glb";
-
-#[derive(Clone, Copy)]
-pub(crate) struct DanceTempo {
-    pub(crate) bpm: f32,
-    pub(crate) beats_per_bar: u8,
-}
-
-impl Default for DanceTempo {
-    fn default() -> Self {
-        Self {
-            bpm: 96.0,
-            beats_per_bar: 4,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 struct Artifact {
@@ -278,33 +271,14 @@ async fn install(root: &Path, model: &Model, client: &reqwest::Client) -> Result
 
 async fn run() -> Result<()> {
     let mut root = PathBuf::from("/apps/emomodel");
-    let mut dance_tempo = DanceTempo::default();
     let mut positional = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => root = args.next().context("--root requires a directory")?.into(),
-            "--bpm" => {
-                dance_tempo.bpm = args
-                    .next()
-                    .context("--bpm requires a positive tempo")?
-                    .parse()
-                    .context("invalid dance tempo")?;
-                anyhow::ensure!(
-                    dance_tempo.bpm.is_finite() && dance_tempo.bpm > 0.0,
-                    "dance tempo must be positive and finite"
-                );
-            }
-            "--meter" => {
-                dance_tempo.beats_per_bar = match args.next().as_deref() {
-                    Some("3/4") => 3,
-                    Some("4/4") => 4,
-                    _ => bail!("--meter requires 3/4 or 4/4"),
-                };
-            }
             "--help" | "-h" => {
                 println!(
-                    "emomodel [--root PATH] [--bpm BPM] [--meter 3/4|4/4] [show | skin | reel | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the original diffuse lighting.\nIn skin and reel, 2 starts robot tango and 1 resumes the previous motion. Both the top row and numpad work. The dance defaults to 96 BPM in 4/4.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
+                    "emomodel [--root PATH] [show | skin | reel | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the original diffuse lighting.\nIn skin and reel, Lico's Run starts graph-driven dance and Lico's Stop resumes the previous motion.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
                 );
                 return Ok(());
             }
@@ -312,8 +286,6 @@ async fn run() -> Result<()> {
             _ => positional.push(arg),
         }
     }
-    #[cfg(not(target_os = "trueos"))]
-    let _ = dance_tempo;
     let default_command = if cfg!(target_os = "trueos") {
         "skin"
     } else {
@@ -355,7 +327,6 @@ async fn run() -> Result<()> {
                     data.as_deref(),
                     motions.as_deref(),
                     appearance,
-                    dance_tempo,
                 )
                 .await;
             }

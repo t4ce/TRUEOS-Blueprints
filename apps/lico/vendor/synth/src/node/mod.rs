@@ -46,11 +46,23 @@ pub mod dynamic;
 // #[cfg(feature = "use-meta")]
 // pub use dynamic::*;
 
+/// Frame position and periods for a periodic DSP node that has processed audio.
+#[derive(Debug, Clone, Copy)]
+pub struct CyclePlayhead {
+    pub next_frame: usize,
+    pub period_frames: usize,
+    pub frames_per_bar: f64,
+}
+
 pub trait Node<const N: usize> {
     fn process(&mut self, inputs: &mut HashMap<usize, Input<N>>, output: &mut [Buffer<N>]);
     fn send_msg(&mut self, info: crate::Message);
 
     fn sequence_playhead(&self) -> Option<sequencer::SequencePlayhead> {
+        None
+    }
+
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
         None
     }
 
@@ -114,6 +126,9 @@ where
     fn sequence_playhead(&self) -> Option<sequencer::SequencePlayhead> {
         (**self).sequence_playhead()
     }
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
+        (**self).cycle_playhead()
+    }
 }
 
 impl<T, const N: usize> Node<N> for Box<T>
@@ -126,6 +141,9 @@ where
     fn send_msg(&mut self, _info: crate::Message) {}
     fn sequence_playhead(&self) -> Option<sequencer::SequencePlayhead> {
         (**self).sequence_playhead()
+    }
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
+        (**self).cycle_playhead()
     }
 }
 

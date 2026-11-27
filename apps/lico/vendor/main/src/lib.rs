@@ -15,7 +15,7 @@ use glicol_synth::{
     AudioContext, AudioContextConfig, BoxedNodeSend, Buffer, GlicolGraph, GlicolPara, Message,
     Node as _, NodeData, Pass,
 };
-pub use glicol_synth::{sequencer::SequencePlayhead, MidiEvent};
+pub use glicol_synth::{sequencer::SequencePlayhead, CyclePlayhead, MidiEvent};
 use hashbrown::HashMap;
 use petgraph::graph::NodeIndex;
 use yoke::Yoke;
@@ -658,6 +658,20 @@ impl<const N: usize> Engine<N> {
         self.context.graph.node_weight(node.0)?.node.sequence_playhead()
     }
 
+    /// Return the active graph node's timing from the most recently rendered block.
+    pub fn cycle_playhead(&self, node: NodeIndex) -> Option<CyclePlayhead> {
+        if !self.context.processor.processed_last_block(node) {
+            return None;
+        }
+        let timing = self.context.graph.node_weight(node)?.node.cycle_playhead()?;
+        (timing.period_frames > 0).then_some(timing)
+    }
+
+    /// The accepted patch, with components indexed by the same chains as `index_info`.
+    pub fn active_ast(&self) -> Option<&Ast<'_>> {
+        self.ast.as_ref().map(|y| y.get())
+    }
+
     pub fn set_bpm(&mut self, bpm: f32) {
         self.bpm = bpm;
         self.context.send_msg_to_all(Message::SetBPM(bpm));
@@ -674,7 +688,7 @@ impl<const N: usize> Engine<N> {
 
     #[cfg(test)]
     fn get_ast(&self) -> Option<&Ast<'_>> {
-        self.ast.as_ref().map(|y| y.get())
+        self.active_ast()
     }
 }
 

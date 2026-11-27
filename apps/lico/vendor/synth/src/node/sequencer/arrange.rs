@@ -1,4 +1,4 @@
-use crate::{Buffer, Input, Message, Node};
+use crate::{Buffer, CyclePlayhead, Input, Message, Node};
 use glicol_parser::nodes::NumberOrRef;
 use hashbrown::HashMap;
 
@@ -99,5 +99,21 @@ impl<const N: usize> Node<N> for Arrange {
             }
             _ => {}
         }
+    }
+
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
+        let mut bars = 0.0;
+        for section in self.events.chunks_exact(2) {
+            let NumberOrRef::Number(length) = section[1] else {
+                return None;
+            };
+            bars += length;
+        }
+        let bar_length = 240.0 / self.bpm * self.sr as f32 / self.speed;
+        Some(CyclePlayhead {
+            next_frame: self.step,
+            period_frames: (bars * bar_length).ceil() as usize,
+            frames_per_bar: f64::from(bar_length),
+        })
     }
 }

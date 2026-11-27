@@ -1,4 +1,4 @@
-use crate::{Buffer, Input, Message, Node};
+use crate::{Buffer, CyclePlayhead, Input, Message, Node};
 use hashbrown::HashMap;
 
 #[derive(Debug, Clone)]
@@ -55,5 +55,13 @@ impl<const N: usize> Node<N> for Impulse {
             Message::IndexOrder(pos, index) => self.input_order.insert(pos, index),
             _ => {}
         }
+    }
+
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
+        Some(CyclePlayhead {
+            next_frame: self.clock,
+            period_frames: self.period,
+            frames_per_bar: self.period as f64,
+        })
     }
 }

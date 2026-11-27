@@ -10,12 +10,17 @@ pub(crate) struct Camera {
     up: Vec3,
     toward: Vec3,
     light: Vec3,
-    center: Vec3,
+    pub(crate) center: Vec3,
     offset: Vec2,
     pub(crate) scale: f32,
 }
 
 impl Camera {
+    pub(crate) fn view_direction(yaw: f32) -> Vec3 {
+        let (sin, cos) = yaw.sin_cos();
+        Vec3::new(sin, 0.12, -cos).normalize()
+    }
+
     pub(crate) fn new(
         viewport: Vec2,
         yaw: f32,
@@ -25,8 +30,7 @@ impl Camera {
         reach_radius: f32,
         fixed_scale: Option<f32>,
     ) -> Self {
-        let (sin, cos) = yaw.sin_cos();
-        let toward = Vec3::new(sin, 0.12, -cos).normalize();
+        let toward = Self::view_direction(yaw);
         let right = Vec3::Y.cross(toward).normalize();
         let up = toward.cross(right);
         let light = world_to_avatar * (toward + Vec3::new(-0.22, 0.68, 0.12)).normalize();
@@ -112,6 +116,13 @@ struct Projected {
     position: Vec3,
     shade: f32,
     uv: Vec2,
+}
+
+#[derive(Clone, Copy)]
+struct WaterPixel {
+    front: f32,
+    back: f32,
+    normal: Vec3,
 }
 
 pub(crate) struct Surface<'a> {
@@ -206,6 +217,144 @@ impl<'a> Surface<'a> {
                 if alpha >= 0.98 {
                     self.depth[index] = depth;
                 }
+            }
+        }
+    }
+
+    pub(crate) fn water_mesh(&mut self, camera: Camera, positions: &[Vec3], indices: &[[u32; 3]]) {
+        if indices.is_empty() {
+            return;
+        }
+
+        let mut normals = vec![Vec3::ZERO; positions.len()];
+        for &triangle in indices {
+            let [a, b, c] = triangle.map(|index| positions[index as usize]);
+            let normal = (b - a).cross(c - a);
+            for index in triangle {
+                normals[index as usize] += normal;
+            }
+        }
+        normals
+            .iter_mut()
+            .for_each(|normal| *normal = normal.normalize_or_zero());
+        let projected: Vec<_> = positions
+            .iter()
+            .map(|&point| camera.project(point))
+            .collect();
+        let (low, high) = projected.iter().map(|point| point.truncate()).fold(
+            (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+            |(low, high), point| (low.min(point), high.max(point)),
+        );
+        let (xs, ys) = self.pixel_rect(low, high);
+        if xs.is_empty() || ys.is_empty() {
+            return;
+        }
+        let stride = xs.len();
+        let mut surface = vec![
+            WaterPixel {
+                front: f32::NEG_INFINITY,
+                back: f32::INFINITY,
+                normal: Vec3::ZERO,
+            };
+            stride * ys.len()
+        ];
+
+        // Resolve the frontmost water before compositing any color. Overlapping
+        // triangles can then contribute thickness without blending twice.
+        for &triangle in indices {
+            let [a, b, c] = triangle.map(|index| projected[index as usize]);
+            let [na, nb, nc] = triangle.map(|index| normals[index as usize]);
+            let ab = (b - a).truncate();
+            let ac = (c - a).truncate();
+            let area = ab.perp_dot(ac);
+            if area.abs() < 1e-4 {
+                continue;
+            }
+            let inverse_area = area.recip();
+            let (tx, ty) = self.pixel_rect(a.min(b).min(c).truncate(), a.max(b).max(c).truncate());
+            for y in ty {
+                for x in tx.clone() {
+                    let offset = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - a.truncate();
+                    let wb = offset.perp_dot(ac) * inverse_area;
+                    let wc = ab.perp_dot(offset) * inverse_area;
+                    let wa = 1.0 - wb - wc;
+                    if wa.min(wb).min(wc) < 0.0 {
+                        continue;
+                    }
+                    let depth = wa * a.z + wb * b.z + wc * c.z;
+                    let pixel = &mut surface[(y - ys.start) * stride + x - xs.start];
+                    pixel.back = pixel.back.min(depth);
+                    if depth > pixel.front {
+                        pixel.front = depth;
+                        pixel.normal = wa * na + wb * nb + wc * nc;
+                    }
+                }
+            }
+        }
+
+        // Copy just the portion of the scene the refraction can sample.
+        const REFRACTION_BORDER: usize = 5;
+        let source_x = xs.start.saturating_sub(REFRACTION_BORDER)
+            ..(xs.end + REFRACTION_BORDER).min(self.width);
+        let source_y = ys.start.saturating_sub(REFRACTION_BORDER)
+            ..(ys.end + REFRACTION_BORDER).min(self.height);
+        let source_stride = source_x.len();
+        let mut backdrop = Vec::with_capacity(source_stride * source_y.len());
+        let colors = self.pixels.as_chunks::<4>().0;
+        for y in source_y.clone() {
+            backdrop.extend_from_slice(
+                &colors[y * self.width + source_x.start..y * self.width + source_x.end],
+            );
+        }
+
+        let light_halfway = (camera.light + camera.toward).normalize();
+        for y in ys.clone() {
+            for x in xs.clone() {
+                let index = y * self.width + x;
+                let water = surface[(y - ys.start) * stride + x - xs.start];
+                if water.front <= self.depth[index] {
+                    continue;
+                }
+                let normal = water.normal.try_normalize().unwrap_or(camera.toward);
+                let facing = normal.dot(camera.toward);
+                let normal = if facing < 0.0 { -normal } else { normal };
+                let facing = facing.abs().min(1.0);
+                let thickness =
+                    (water.front - water.back.max(self.depth[index])).clamp(0.018, 0.14);
+                let shift = (thickness * camera.scale * 0.35).min(REFRACTION_BORDER as f32);
+                let rx = ((x as f32 - normal.dot(camera.right) * shift).round() as usize)
+                    .clamp(source_x.start, source_x.end - 1);
+                let ry = ((y as f32 + normal.dot(camera.up) * shift).round() as usize)
+                    .clamp(source_y.start, source_y.end - 1);
+                let (rx, ry) = if self.depth[ry * self.width + rx] > water.front {
+                    (x, y)
+                } else {
+                    (rx, ry)
+                };
+                let [r, g, b, _] =
+                    backdrop[(ry - source_y.start) * source_stride + rx - source_x.start];
+                let behind = Vec3::new(r as f32, g as f32, b as f32) / 255.0;
+                let transmittance = Vec3::new(
+                    (-29.0 * thickness).exp(),
+                    (-9.0 * thickness).exp(),
+                    (-3.5 * thickness).exp(),
+                );
+                let tint = Vec3::new(0.04, 0.32, 0.48);
+                let transmitted = behind * transmittance + tint * (Vec3::ONE - transmittance);
+                let reflection = 2.0 * facing * normal - camera.toward;
+                let sky = 0.5 + 0.5 * reflection.dot(camera.up);
+                let reflected = Vec3::new(0.11, 0.29, 0.4).lerp(Vec3::new(0.81, 0.95, 1.0), sky);
+                let fresnel = 0.02 + 0.98 * (1.0 - facing).powi(5);
+                let highlight = normal.dot(light_halfway).max(0.0).powi(40);
+                let color = transmitted.lerp(reflected, fresnel) + Vec3::splat(0.48 * highlight);
+                self.blend(index, color.min(Vec3::ONE), 1.0);
+            }
+        }
+        for y in ys.clone() {
+            for x in xs.clone() {
+                let index = y * self.width + x;
+                self.depth[index] =
+                    self.depth[index].max(surface[(y - ys.start) * stride + x - xs.start].front);
             }
         }
     }

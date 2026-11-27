@@ -1,5 +1,9 @@
 mod audio;
 mod audit;
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+mod dance_graph;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod dance_publisher;
 mod drum;
 mod examples;
 mod highlight;

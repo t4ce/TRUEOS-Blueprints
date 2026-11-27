@@ -1,4 +1,4 @@
-use crate::{Buffer, Input, Message, Node};
+use crate::{Buffer, CyclePlayhead, Input, Message, Node};
 use glicol_parser::nodes::UsizeOrRef;
 use hashbrown::HashMap;
 
@@ -149,6 +149,14 @@ impl<const N: usize> Node<N> for Sequencer {
             bar_frame: rendered % frames_per_bar,
             bar_length: self.bar_length,
             frames_since_trigger: self.last_trigger.map(|trigger| rendered - trigger),
+        })
+    }
+
+    fn cycle_playhead(&self) -> Option<CyclePlayhead> {
+        Some(CyclePlayhead {
+            next_frame: self.step,
+            period_frames: self.bar_length as usize,
+            frames_per_bar: self.bar_length,
         })
     }
 }

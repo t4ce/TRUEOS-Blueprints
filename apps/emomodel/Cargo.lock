@@ -178,6 +178,7 @@ dependencies = [
  "anyhow",
  "glam",
  "gltf",
+ "lico-graph",
  "reqwest",
  "serde",
  "serde_json",
@@ -600,6 +601,13 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
+name = "lico-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "litemap"

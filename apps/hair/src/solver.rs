@@ -3,7 +3,7 @@
 //! 3d46aef9d4e67c1e84f41f7ae10e9573af4bf81b. This adaptation uses two population
 //! buffers in place of its in-place OpenCL streaming.
 
-use glam::{Quat, Vec3};
+use glam::{IVec3, Quat, Vec3};
 
 use crate::obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER, HEAD_RADIUS};
 
@@ -21,7 +21,6 @@ const DOMAIN_MIN: Vec3 = Vec3::new(
     HEAD_CENTER.y - DOMAIN_HALF,
     HEAD_CENTER.z - DOMAIN_HALF,
 );
-const RELAXATION_RATE: f32 = 1.0 / 0.60;
 // The authored roots average Y=1.418 m and the longest tip reaches Y=0.741 m.
 const TIP_SPREAD_START_Y: f32 = 1.08;
 const TIP_SPREAD_FULL_Y: f32 = 0.94;
@@ -90,6 +89,16 @@ const WEIGHTS: [f32; 19] = [
 type Populations = [f32; VELOCITIES.len()];
 
 #[derive(Clone, Copy)]
+pub(crate) struct FlowSettings {
+    pub(crate) speed: f32,
+    pub(crate) viscosity: f32,
+}
+
+impl FlowSettings {
+    pub(crate) const DEFAULT: Self = Self { speed: 1.0, viscosity: 0.10 / 3.0 };
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct RootSample {
     pub(crate) position: Vec3,
     pub(crate) outward: Vec3,
@@ -100,10 +109,11 @@ pub(crate) struct Solver {
     next: Vec<Populations>,
     velocity: Vec<Vec3>,
     solid: Vec<bool>,
+    previous_solid: Vec<bool>,
     fluid_cells: Vec<(usize, f32)>,
     boundary_cells: Vec<usize>,
     pull_offsets: [isize; VELOCITIES.len()],
-    upright_flow_direction: Vec3,
+    flow_direction: Vec3,
     world_to_avatar: Quat,
     field_seeds: [Vec3; FIELD_STREAMLINE_SEEDS],
     root_positions: [Vec3; ROOT_STREAMLINE_SEEDS],
@@ -113,35 +123,23 @@ pub(crate) struct Solver {
 
 impl Solver {
     pub(crate) fn new(
-        hair_down: Vec3,
+        flow_direction: Vec3,
         world_to_avatar: Quat,
         roots: [RootSample; ROOT_STREAMLINE_SEEDS],
     ) -> Self {
-        let upright_flow_direction = hair_down.normalize();
-        let inflow = inlet_velocity(world_to_avatar * upright_flow_direction, 0);
+        let flow_direction = flow_direction.normalize();
+        let inflow = inlet_velocity(flow_direction, 0);
         let equilibrium = equilibrium(1.0, inflow);
-        let mut solid = vec![false; CELL_COUNT];
-        let mut velocity = vec![inflow; CELL_COUNT];
-        let mut fluid_cells = Vec::with_capacity(CELL_COUNT);
         let mut boundary_cells = Vec::new();
         for z in 0..SIZE[2] {
             for y in 0..SIZE[1] {
                 for x in 0..SIZE[0] {
-                    let index = index(x, y, z);
-                    let position = world_position(Vec3::new(x as f32, y as f32, z as f32) + 0.5);
-                    if HEAD.contains(position)
-                        || BODY_OBSTACLES.iter().any(|shape| shape.contains(position))
-                    {
-                        solid[index] = true;
-                        velocity[index] = Vec3::ZERO;
-                    } else if [x, y, z]
+                    if [x, y, z]
                         .into_iter()
                         .zip(SIZE)
                         .any(|(coordinate, size)| coordinate == 0 || coordinate + 1 == size)
                     {
-                        boundary_cells.push(index);
-                    } else {
-                        fluid_cells.push((index, tip_spread_acceleration(position)));
+                        boundary_cells.push(index(x, y, z));
                     }
                 }
             }
@@ -151,34 +149,124 @@ impl Solver {
                 + direction.y as isize * SIZE[0] as isize
                 + direction.z as isize * (SIZE[0] * SIZE[1]) as isize)
         });
-        Self {
+        let mut solver = Self {
             populations: vec![equilibrium; CELL_COUNT],
             next: vec![equilibrium; CELL_COUNT],
-            velocity,
-            solid,
-            fluid_cells,
+            velocity: vec![inflow; CELL_COUNT],
+            solid: vec![false; CELL_COUNT],
+            previous_solid: vec![false; CELL_COUNT],
+            fluid_cells: Vec::with_capacity(CELL_COUNT),
             boundary_cells,
             pull_offsets,
-            upright_flow_direction,
+            flow_direction,
             world_to_avatar,
-            field_seeds: field_seeds(upright_flow_direction),
+            field_seeds: field_seeds(flow_direction),
             root_positions: roots.map(|root| root.position),
             root_seeds: roots.map(root_seed),
             tick: 0,
+        };
+        solver.update_obstacles(world_to_avatar, inflow);
+        solver
+    }
+
+    fn update_obstacles(&mut self, world_to_avatar: Quat, inflow: Vec3) {
+        self.world_to_avatar = world_to_avatar;
+        let avatar_to_world = world_to_avatar.conjugate();
+        core::mem::swap(&mut self.solid, &mut self.previous_solid);
+        self.solid.fill(false);
+        // Only visit the world-aligned bounds of each rotated proxy. The
+        // perimeter of the lattice remains an open-flow boundary.
+        let upper = IVec3::from_array(SIZE.map(|dimension| dimension as i32 - 2));
+        let axes = [Vec3::X, Vec3::Y, Vec3::Z].map(|axis| (avatar_to_world * axis).abs());
+        for shape in core::iter::once(HEAD).chain(BODY_OBSTACLES) {
+            let center = rotate_about_head(shape.center, avatar_to_world);
+            let [x, y, z] = shape.radii.to_array();
+            let extent = x * axes[0] + y * axes[1] + z * axes[2];
+            let bounds = |point: Vec3| ((point - DOMAIN_MIN) / CELL_WIDTH).as_ivec3();
+            let low = bounds(center - extent).max(IVec3::ONE);
+            let high = bounds(center + extent).min(upper);
+            for z in low.z..=high.z {
+                for y in low.y..=high.y {
+                    for x in low.x..=high.x {
+                        let world = cell_center(x as usize, y as usize, z as usize);
+                        if shape.contains(rotate_about_head(world, world_to_avatar)) {
+                            self.solid[index(x as usize, y as usize, z as usize)] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.fluid_cells.clear();
+        for z in 1..SIZE[2] - 1 {
+            for y in 1..SIZE[1] - 1 {
+                for x in 1..SIZE[0] - 1 {
+                    let cell = index(x, y, z);
+                    if self.solid[cell] {
+                        self.velocity[cell] = Vec3::ZERO;
+                        continue;
+                    }
+                    if self.previous_solid[cell] {
+                        self.refill_cell(cell, inflow);
+                    }
+                    let local = rotate_about_head(cell_center(x, y, z), world_to_avatar);
+                    self.fluid_cells
+                        .push((cell, tip_spread_acceleration(local)));
+                }
+            }
         }
     }
 
-    pub(crate) fn step(&mut self, world_to_avatar: Quat, tip_spread: bool) {
+    fn refill_cell(&mut self, cell: usize, inflow: Vec3) {
+        // Reuse neighboring flow where the proxy just moved away. Surviving
+        // fluid cells retain their original populations in world coordinates.
+        let mut populations = [0.0; VELOCITIES.len()];
+        let mut velocity = Vec3::ZERO;
+        let mut count = 0;
+        for stride in [1, SIZE[0], SIZE[0] * SIZE[1]] {
+            for neighbor in [cell - stride, cell + stride] {
+                if self.previous_solid[neighbor] || self.solid[neighbor] {
+                    continue;
+                }
+                for (sum, value) in populations.iter_mut().zip(self.populations[neighbor]) {
+                    *sum += value;
+                }
+                velocity += self.velocity[neighbor];
+                count += 1;
+            }
+        }
+        if count == 0 {
+            populations = equilibrium(1.0, inflow);
+            velocity = inflow;
+        } else {
+            let weight = 1.0 / count as f32;
+            populations = populations.map(|value| value * weight);
+            velocity *= weight;
+        }
+        self.populations[cell] = populations;
+        self.next[cell] = populations;
+        self.velocity[cell] = velocity;
+    }
+
+    pub(crate) fn step(&mut self, world_to_avatar: Quat, tip_spread: bool, flow: FlowSettings) {
         self.tick += 1;
-        self.world_to_avatar = world_to_avatar;
-        let inflow = inlet_velocity(world_to_avatar * self.upright_flow_direction, self.tick);
+        let inflow = inlet_velocity(self.flow_direction, self.tick) * flow.speed;
+        let relaxation_time = 0.5 + 3.0 * flow.viscosity;
+        let relaxation_rate = relaxation_time.recip();
+        if self.world_to_avatar != world_to_avatar {
+            self.update_obstacles(world_to_avatar, inflow);
+        }
         let boundary_equilibrium = equilibrium(1.0, inflow);
         for &cell in &self.boundary_cells {
             self.next[cell] = boundary_equilibrium;
             self.velocity[cell] = inflow;
         }
 
-        let spread_scale = if tip_spread { 1.0 } else { 0.0 };
+        let spread_direction = if tip_spread {
+            world_to_avatar.conjugate() * Vec3::X
+        } else {
+            Vec3::ZERO
+        };
         for &(cell, spread_acceleration) in &self.fluid_cells {
             let mut incoming = [0.0; VELOCITIES.len()];
             let mut density = 1.0;
@@ -195,14 +283,14 @@ impl Solver {
                 momentum += VELOCITIES[direction] * *population;
             }
             let velocity = momentum / density;
-            let acceleration = Vec3::X * (spread_scale * spread_acceleration);
+            let acceleration = spread_direction * spread_acceleration;
             self.velocity[cell] = velocity + 0.5 * acceleration;
             // Shifting equilibrium by a / omega gives the collision a momentum
             // increment of density * a while its zeroth moment stays density.
-            let equilibrium = equilibrium(density, velocity + acceleration / RELAXATION_RATE);
+            let equilibrium = equilibrium(density, velocity + acceleration / relaxation_rate);
             for (direction, population) in incoming.into_iter().enumerate() {
                 self.next[cell][direction] =
-                    population + RELAXATION_RATE * (equilibrium[direction] - population);
+                    population + relaxation_rate * (equilibrium[direction] - population);
             }
         }
         core::mem::swap(&mut self.populations, &mut self.next);
@@ -211,11 +299,7 @@ impl Solver {
     /// Emit diagnostic field segments inside the hair reach.
     pub(crate) fn for_each_field_line(&self, mut emit: impl FnMut(Vec3, Vec3, f32, f32)) -> usize {
         let mut segments = 0;
-        let center = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
         for &seed in &self.field_seeds {
-            // Keep the field disk upstream in world coordinates. Root seeds
-            // stay fixed to the avatar because the grid is in avatar space.
-            let seed = center + self.world_to_avatar * (seed - center);
             for direction in [-1.0, 1.0] {
                 segments += self.trace(seed, direction, FIELD_MIN_SPEED, &mut emit);
             }
@@ -229,11 +313,18 @@ impl Solver {
         &self,
         mut emit: impl FnMut(Option<Vec3>, Vec3, Vec3, f32, f32),
     ) -> usize {
+        let head = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
+        let avatar_to_world = self.world_to_avatar.conjugate();
         self.root_positions
             .iter()
             .zip(&self.root_seeds)
             .map(|(&position, &seed)| {
                 let mut attachment = Some(position);
+                let seed = if avatar_to_world == Quat::IDENTITY {
+                    seed
+                } else {
+                    head + avatar_to_world * (seed - head)
+                };
                 self.trace(
                     seed,
                     1.0,
@@ -258,6 +349,7 @@ impl Solver {
         };
         let mut point = seed;
         let mut from = world_position(seed);
+        let mut local_from = rotate_about_head(from, self.world_to_avatar);
         let mut segments = 0;
         for _ in 0..STREAMLINE_HALF_LENGTH {
             let speed = velocity.length();
@@ -279,22 +371,24 @@ impl Solver {
                 break;
             };
             // A step can cross a proxy between two fluid samples.
-            if HEAD.intersects(from, to)
+            let local_to = rotate_about_head(to, self.world_to_avatar);
+            if HEAD.intersects(local_from, local_to)
                 || BODY_OBSTACLES
                     .iter()
-                    .any(|shape| shape.intersects(from, to))
+                    .any(|shape| shape.intersects(local_from, local_to))
             {
                 break;
             }
             let normalized_speed = (speed / COLOR_SPEED).clamp(0.0, 1.0);
             let delta = (next_velocity.distance(velocity) / COLOR_VELOCITY_DELTA).clamp(0.0, 1.0);
-            emit(from, to, normalized_speed, delta);
+            emit(local_from, local_to, normalized_speed, delta);
             segments += 1;
             if exits_reach {
                 break;
             }
             point = next;
             from = to;
+            local_from = local_to;
             velocity = next_velocity;
         }
         segments
@@ -385,8 +479,20 @@ fn index(x: usize, y: usize, z: usize) -> usize {
     x + (y + z * SIZE[1]) * SIZE[0]
 }
 
+fn cell_center(x: usize, y: usize, z: usize) -> Vec3 {
+    world_position(Vec3::new(x as f32, y as f32, z as f32) + 0.5)
+}
+
 fn world_position(lattice: Vec3) -> Vec3 {
     DOMAIN_MIN + lattice * CELL_WIDTH
+}
+
+fn rotate_about_head(position: Vec3, rotation: Quat) -> Vec3 {
+    if rotation == Quat::IDENTITY {
+        position
+    } else {
+        HEAD_CENTER + rotation * (position - HEAD_CENTER)
+    }
 }
 
 // The start is inside and the end is outside, so the larger root marks the exit.
@@ -574,14 +680,30 @@ mod tests {
     }
 
     #[test]
-    fn inverted_inlet_stays_world_down_and_preserves_interior_flow() {
+    fn turning_avatar_moves_obstacles_through_the_world_field() {
         let mut solver = standing_solver();
-        let interior = Vec3::new(52.0, 32.0, 50.0);
-        let before = solver.velocity_at(interior).unwrap();
-        let inverted = Quat::from_rotation_z(-core::f32::consts::PI);
-        solver.step(inverted, true);
-        let world_inlet = inverted.conjugate() * solver.velocity[index(0, 32, 0)];
-        assert!(world_inlet.distance(inlet_velocity(Vec3::NEG_Y, 1)) < 1e-6);
-        assert!(solver.velocity_at(interior).unwrap().distance(before) < 1e-6);
+        let distant_cell = index(52, 32, 50);
+        let populations = solver.populations[distant_cell];
+        let velocity = solver.velocity[distant_cell];
+        let field_seeds = solver.field_seeds;
+        let cuff = BODY_OBSTACLES[7].center;
+        let roll = Quat::from_rotation_z(-core::f32::consts::FRAC_PI_2);
+        let rotated_cuff = rotate_about_head(cuff, roll.conjugate());
+        let lattice = |position| (position - DOMAIN_MIN) / CELL_WIDTH;
+        assert!(solver.velocity_at(lattice(cuff)).is_none());
+        assert!(solver.velocity_at(lattice(rotated_cuff)).is_some());
+
+        solver.update_obstacles(roll, inlet_velocity(Vec3::NEG_Y, 0));
+        assert!(solver.velocity_at(lattice(cuff)).unwrap().is_finite());
+        assert!(solver.velocity_at(lattice(rotated_cuff)).is_none());
+        assert_eq!(solver.field_seeds, field_seeds);
+        assert_eq!(solver.populations[distant_cell], populations);
+        assert_eq!(solver.velocity[distant_cell], velocity);
+        solver.step(roll, false);
+        assert_eq!(
+            solver.velocity[index(0, 32, 0)],
+            inlet_velocity(Vec3::NEG_Y, 1)
+        );
+        assert!(solver.velocity[distant_cell].distance(velocity) < 1e-6);
     }
 }

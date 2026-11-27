@@ -11,8 +11,7 @@ use crate::{
 
 const AVATAR: &[u8] = include_bytes!("../assets/avatar.glb");
 const BACK_HAIR_ANCHOR: &[u8] = include_bytes!("../assets/back-hair-anchor-surface.glb");
-// The standing back-hair rest axis points from the roots toward the hips.
-const BACK_HAIR_REST_DOWN: Vec3 = Vec3::NEG_Y;
+const WORLD_FLOW_DOWN: Vec3 = Vec3::NEG_Y;
 
 struct Part {
     vertices: Vec<Vertex>,
@@ -29,6 +28,7 @@ pub(crate) struct Scene {
     textures: Vec<Texture>,
     solver: Solver,
     camera_scale: Option<f32>,
+    camera_center: Option<Vec3>,
     base_key: Option<(f32, f32, bool, bool)>,
     base_pixels: Vec<u8>,
     base_depth: Vec<f32>,
@@ -36,7 +36,7 @@ pub(crate) struct Scene {
 }
 
 impl Scene {
-    pub(crate) fn new(width: u32, height: u32, roll: f32) -> Result<Self> {
+    pub(crate) fn new(width: u32, height: u32, controls: Controls) -> Result<Self> {
         let asset = gltf::Gltf::from_slice(AVATAR).context("parse embedded reference avatar")?;
         let blob = asset
             .blob
@@ -66,19 +66,23 @@ impl Scene {
                 (minimum.min(vertex.position), maximum.max(vertex.position))
             },
         );
-        // Keep the previous rear view's magnification for the Ubuntu turntable.
-        let camera_scale = cfg!(target_os = "linux").then(|| {
+        let viewport = Vec2::new(width as f32, height as f32);
+        let unrolled_camera = |yaw| {
             Camera::new(
-                Vec2::new(width as f32, height as f32),
-                165.0_f32.to_radians(),
-                world_to_avatar(roll),
+                viewport,
+                yaw,
+                Quat::IDENTITY,
                 body_bounds,
                 HEAD_CENTER,
                 HAIR_REACH_RADIUS,
                 None,
             )
-            .scale
-        });
+        };
+        // Keep the established Ubuntu magnification and spin around the center
+        // of the unrolled view.
+        let camera_scale =
+            cfg!(target_os = "linux").then(|| unrolled_camera(165.0_f32.to_radians()).scale);
+        let camera_center = cfg!(target_os = "linux").then(|| unrolled_camera(controls.yaw).center);
         let count = width as usize * height as usize;
         Ok(Self {
             width,
@@ -86,8 +90,9 @@ impl Scene {
             parts,
             body_bounds,
             textures,
-            solver: Solver::new(BACK_HAIR_REST_DOWN, world_to_avatar(roll), roots),
+            solver: Solver::new(WORLD_FLOW_DOWN, world_to_avatar(controls), roots),
             camera_scale,
+            camera_center,
             base_key: None,
             base_pixels: vec![0; count * 4],
             base_depth: vec![0.0; count],
@@ -95,8 +100,9 @@ impl Scene {
         })
     }
 
-    pub(crate) fn advance(&mut self, roll: f32, tip_spread: bool) {
-        self.solver.step(world_to_avatar(roll), tip_spread);
+    pub(crate) fn advance(&mut self, controls: Controls) {
+        self.solver
+            .step(world_to_avatar(controls), controls.tip_spread);
     }
 
     #[cfg(target_os = "trueos")]
@@ -114,16 +120,19 @@ impl Scene {
     pub(crate) fn draw(&mut self, controls: Controls, pixels: &mut [u8]) -> usize {
         let layers = controls.layers;
         let key = (controls.yaw, controls.roll, layers.avatar, layers.hair);
-        let camera = Camera::new(
+        let mut camera = Camera::new(
             Vec2::new(self.width as f32, self.height as f32),
             controls.yaw,
-            world_to_avatar(controls.roll),
+            world_to_avatar(controls),
             self.body_bounds,
             HEAD_CENTER,
             HAIR_REACH_RADIUS,
             self.camera_scale,
         );
         self.camera_scale.get_or_insert(camera.scale);
+        if let Some(center) = self.camera_center {
+            camera.center = center;
+        }
         if self.base_key != Some(key) {
             let mut base = Surface::new(
                 self.width,
@@ -187,8 +196,12 @@ impl Scene {
     }
 }
 
-fn world_to_avatar(roll: f32) -> Quat {
-    Quat::from_rotation_z(-roll)
+fn world_to_avatar(controls: Controls) -> Quat {
+    if cfg!(target_os = "linux") {
+        Quat::from_axis_angle(Camera::view_direction(controls.yaw), controls.roll)
+    } else {
+        Quat::from_rotation_z(-controls.roll)
+    }
 }
 
 fn back_hair_roots() -> Result<[RootSample; ROOT_STREAMLINE_SEEDS]> {
@@ -396,6 +409,22 @@ pub(crate) fn reference_roots() -> [RootSample; ROOT_STREAMLINE_SEEDS] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mouse_roll_turns_clockwise_in_the_screen_plane() {
+        let controls = Controls {
+            roll: core::f32::consts::FRAC_PI_2,
+            ..Controls::default()
+        };
+        let toward = Camera::view_direction(controls.yaw);
+        let right = Vec3::Y.cross(toward).normalize();
+        let up = toward.cross(right);
+        let spin = world_to_avatar(controls);
+        assert!((spin * toward).distance(toward) < 1e-6);
+        assert!((spin * right).distance(up) < 1e-6);
+        assert!((spin * up).distance(-right) < 1e-6);
+    }
 
     #[test]
     fn evaluation_sphere_fits_close_to_the_resting_back_hair() {

@@ -4,6 +4,8 @@ use glicol::{Engine, MidiEvent, SequencePlayhead};
 use glicol_parser::SourceMap;
 use std::error::Error;
 use std::io::{self, Cursor};
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::sync::{
@@ -272,10 +274,31 @@ pub fn self_check() -> Result<(), Box<dyn Error>> {
 }
 
 pub async fn serve(
+    commands: Receiver<Command>,
+    status: Sender<Status>,
+    monitor: watch::Sender<MonitorFrame>,
+    midi_input: MidiInput,
+) -> Result<(), Box<dyn Error>> {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        let (dance_tx, dance_rx) = watch::channel(None);
+        let (audio, ()) = tokio::join!(
+            serve_audio(commands, status, monitor, midi_input, dance_tx),
+            crate::dance_publisher::serve(dance_rx),
+        );
+        audio
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    serve_audio(commands, status, monitor, midi_input).await
+}
+
+async fn serve_audio(
     mut commands: Receiver<Command>,
     status: Sender<Status>,
     monitor: watch::Sender<MonitorFrame>,
     mut midi_input: MidiInput,
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))] dance:
+        watch::Sender<Option<Arc<lico_graph::DanceClueSnapshot>>>,
 ) -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
     let mut playing = None;
@@ -286,6 +309,8 @@ pub async fn serve(
     let mut stream = None;
     let mut midi_demo = None;
     let mut midi_playing = false;
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    let mut pending_dance = false;
     // The kernel validates append buffers against the VM heap.
     let mut pcm = vec![0; BATCH_BYTES];
     let mut waveform = [0.; MONITOR_FRAMES];
@@ -355,6 +380,11 @@ pub async fn serve(
                             Err(error) => {
                                 playing = None;
                                 midi_playing = false;
+                                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                                {
+                                    pending_dance = false;
+                                    dance.send_replace(None);
+                                }
                                 monitor.send_modify(MonitorFrame::stop);
                                 let message = error.to_string();
                                 let _ = status.try_send(Status::AudioError(message.clone()));
@@ -374,6 +404,10 @@ pub async fn serve(
                         let _ = status.try_send(Status::Midi(format!("MIDI input · {label}")));
                     }
                     let previous = playing.replace(code.clone());
+                    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                    {
+                        pending_dance = true;
+                    }
                     let _ = status.try_send(Status::Playing(code));
                     complete(Ok(previous));
                 }
@@ -409,6 +443,11 @@ pub async fn serve(
                 }
                 Some(Command::Stop) => {
                     playing = None;
+                    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                    {
+                        pending_dance = false;
+                        dance.send_replace(None);
+                    }
                     stream = None;
                     midi_demo = None;
                     midi_playing = false;
@@ -448,9 +487,23 @@ pub async fn serve(
                 }
                 let mut elapsed_frames = render_frames(midi_playing);
                 if playing.is_some() {
+                    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                    let started_ns = pending_dance.then(trueos::clock::monotonic_nanos);
                     match tick(&mut stream, &mut engine, &mut pcm, &mut waveform, &mut midi_demo, midi_playing) {
                         Ok(frames) if frames != 0 => {
                             elapsed_frames = frames;
+                            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                            if let Some(started_ns) = started_ns {
+                                pending_dance = false;
+                                let snapshot = crate::dance_graph::capture(&engine, frames, bpm)
+                                    .map(|graph| Arc::new(lico_graph::DanceClueSnapshot {
+                                        version: lico_graph::VERSION,
+                                        run: started_ns.max(1),
+                                        started_ns,
+                                        graph,
+                                    }));
+                                dance.send_replace(snapshot);
+                            }
                             beat_phase = (beat_phase
                                 + frames as f64 * f64::from(bpm) / (60.0 * f64::from(SAMPLE_RATE)))
                                 .fract();
@@ -469,6 +522,11 @@ pub async fn serve(
                         Err(error) => {
                             stream = None;
                             playing = None;
+                            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                            {
+                                pending_dance = false;
+                                dance.send_replace(None);
+                            }
                             midi_demo = None;
                             midi_playing = false;
                             midi_input.reset();

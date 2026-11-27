@@ -2005,6 +2005,7 @@ dependencies = [
  "glicol_parser",
  "hound",
  "hyper",
+ "lico-graph",
  "mio",
  "ratatui 0.30.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "ratatui-textarea",
@@ -2013,6 +2014,13 @@ dependencies = [
  "tokio",
  "trueos",
  "v",
+]
+
+[[package]]
+name = "lico-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

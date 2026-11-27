@@ -1,11 +1,18 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use glam::{EulerRot, Mat3, Quat, Vec2, Vec3};
+use lico_graph::Graph;
+
+#[path = "dance_graph.rs"]
+mod dance_graph;
+
+use dance_graph::Choreography;
 
 use super::reel::PlacedPose;
 use crate::{animation::Animation, mesh::BODY_MATERIAL};
 
 const SOLE_CLEARANCE: f32 = 0.004;
-const STEPS_PER_BAR: usize = 3;
+const STEPS_PER_PHRASE: usize = 3;
+const COUNTS_PER_PHRASE: usize = 4;
 const FINGER_COUNT: usize = 4;
 
 pub(super) struct Dance {
@@ -13,8 +20,7 @@ pub(super) struct Dance {
     joints: Joints,
     rest_floor: f32,
     ankle_y: [f32; 2],
-    beat_seconds: f64,
-    beats: usize,
+    choreography: Choreography,
 }
 
 struct Joints {
@@ -231,8 +237,8 @@ const fn step(side: usize, x: f32, z: f32, yaw: f32, style: StepStyle) -> Step {
 struct Phrase {
     title: &'static str,
     keys: [Key; 4],
-    steps: [Step; STEPS_PER_BAR],
-    // How long an arm has to travel on a beat. Contrast rapid isolations with sweeping lines.
+    steps: [Step; STEPS_PER_PHRASE],
+    // How much of an interval an arm travels before it settles.
     reach: f32,
 }
 
@@ -242,7 +248,7 @@ use StepStyle::*;
 const L: usize = 0;
 const R: usize = 1;
 
-// Eight bars of original movement. The fourth count is an upper-body accent
+// Eight movement phrases. The fourth count is an upper-body accent
 // and a suspended weight transfer. In 3/4 the step and line on beat three own
 // the cadence, so no step is omitted or doubled when a meter changes.
 const PHRASES: [Phrase; 8] = [
@@ -368,42 +374,33 @@ const PHRASES: [Phrase; 8] = [
     },
 ];
 
-const MOVE_COUNT: usize = PHRASES.len() * STEPS_PER_BAR;
+const MOVE_COUNT: usize = PHRASES.len() * STEPS_PER_PHRASE;
 
 #[derive(Clone, Copy)]
 struct Count {
-    bar: usize,
-    beat: usize,
+    phrase: usize,
+    key: usize,
     t: f32,
 }
 
 impl Count {
-    fn wrap(elapsed_seconds: f64, beat_seconds: f64, beats: usize) -> Self {
-        let cycle_beats = PHRASES.len() * beats;
-        let cycle_seconds = beat_seconds * cycle_beats as f64;
-        let elapsed = if elapsed_seconds.is_finite() {
-            elapsed_seconds.max(0.0).rem_euclid(cycle_seconds)
-        } else {
-            0.0
-        };
-        let count = (elapsed / beat_seconds).min(cycle_beats as f64);
-        let whole = count.floor() as usize;
-        Self {
-            bar: (whole / beats) % PHRASES.len(),
-            beat: whole % beats,
-            t: (count - whole as f64) as f32,
-        }
+    fn at(choreography: &Choreography, elapsed_seconds: f64) -> Option<Self> {
+        let (count, t) = choreography.step(elapsed_seconds, PHRASES.len() * COUNTS_PER_PHRASE)?;
+        Some(Self {
+            phrase: count / COUNTS_PER_PHRASE,
+            key: count % COUNTS_PER_PHRASE,
+            t,
+        })
     }
 
-    fn upper_keys(self, beats: usize) -> (Key, Key) {
-        let keys = &PHRASES[self.bar].keys;
-        let prior = previous(self.bar, PHRASES.len());
-        let past = if self.beat == 0 {
-            PHRASES[prior].keys[3 - usize::from(beats == 3)]
+    fn upper_keys(self) -> (Key, Key) {
+        let keys = &PHRASES[self.phrase].keys;
+        let past = if self.key == 0 {
+            PHRASES[previous(self.phrase, PHRASES.len())].keys[COUNTS_PER_PHRASE - 1]
         } else {
-            keys[self.beat - 1]
+            keys[self.key - 1]
         };
-        (past, keys[self.beat])
+        (past, keys[self.key])
     }
 }
 
@@ -415,17 +412,29 @@ struct StepPose {
     root: Vec2,
 }
 
+impl StepPose {
+    fn planted() -> Self {
+        Self {
+            feet: [Vec2::new(-0.11, 0.0), Vec2::new(0.11, 0.0)],
+            yaw: [7.0, -7.0],
+            lift: [0.0; 2],
+            pitch: [0.0; 2],
+            root: Vec2::ZERO,
+        }
+    }
+}
+
 fn previous(index: usize, len: usize) -> usize {
     (index + len - 1) % len
 }
 
 fn land_at(index: usize) -> Step {
-    PHRASES[index / STEPS_PER_BAR].steps[index % STEPS_PER_BAR]
+    PHRASES[index / STEPS_PER_PHRASE].steps[index % STEPS_PER_PHRASE]
 }
 
 fn footsteps(count: Count) -> StepPose {
-    let step_index = count.bar * STEPS_PER_BAR + count.beat;
-    let swing = (count.beat < STEPS_PER_BAR).then(|| land_at(step_index));
+    let step_index = count.phrase * STEPS_PER_PHRASE + count.key;
+    let swing = (count.key < STEPS_PER_PHRASE).then(|| land_at(step_index));
     let past = [L, R].map(|side| {
         (1..=MOVE_COUNT)
             .map(|behind| land_at((step_index + MOVE_COUNT - behind) % MOVE_COUNT))
@@ -467,12 +476,7 @@ fn footsteps(count: Count) -> StepPose {
 }
 
 impl Dance {
-    pub(super) fn new(glb: &[u8], materials: &[&str], bpm: f32, beats_per_bar: u8) -> Result<Self> {
-        ensure!(bpm.is_finite() && bpm > 0.0, "invalid dance tempo");
-        ensure!(
-            matches!(beats_per_bar, 3 | 4),
-            "dance meter must be three or four beats"
-        );
+    pub(super) fn new(glb: &[u8], materials: &[&str]) -> Result<Self> {
         let asset = gltf::Gltf::from_slice(glb).context("parse dance avatar")?;
         let joints = Joints::read(&asset)?;
         let rest_floor = rest_floor(&asset)?;
@@ -486,8 +490,7 @@ impl Dance {
             joints,
             rest_floor,
             ankle_y,
-            beat_seconds: 60.0 / f64::from(bpm),
-            beats: usize::from(beats_per_bar),
+            choreography: Choreography::default(),
         })
     }
 
@@ -499,29 +502,61 @@ impl Dance {
         self.animation.apply_bind_normals(section, normals)
     }
 
-    pub(super) fn cycle_seconds(&self) -> f64 {
-        self.beat_seconds * (PHRASES.len() * self.beats) as f64
+    pub(super) fn set_graph(&mut self, graph: &Graph) {
+        self.choreography = Choreography::new(graph);
+    }
+
+    pub(super) fn framing_bounds() -> ([f32; 3], [f32; 3]) {
+        ([-0.83, 0.0, -0.70], [0.79, 1.72, 0.36])
     }
 
     pub(super) fn phrase(&self, elapsed_seconds: f64) -> &'static str {
-        PHRASES[Count::wrap(elapsed_seconds, self.beat_seconds, self.beats).bar].title
+        if let Some(count) = Count::at(&self.choreography, elapsed_seconds) {
+            PHRASES[count.phrase].title
+        } else if self.choreography.suspended {
+            "Suspended line"
+        } else {
+            "Planted isolations"
+        }
     }
 
     pub(super) fn sample(&mut self, elapsed_seconds: f64) -> Result<PlacedPose<'_>> {
-        let count = Count::wrap(elapsed_seconds, self.beat_seconds, self.beats);
-        let (from, to) = count.upper_keys(self.beats);
-        let reach = PHRASES[count.bar].reach;
-        let pose = footsteps(count);
-        let body = ease(count.t, 0.0, 0.51 + 0.27 * reach);
-        let downbeat = if count.beat == 0 { 1.0 } else { 0.42 };
-        let accent = downbeat * ease(count.t, 0.0, 0.14) * (1.0 - ease(count.t, 0.14, 0.40));
-        let yaw = radians(mix(from.turn, to.turn, body));
-        let roll = radians(mix(from.inclination, to.inclination, body));
+        let elapsed_seconds = elapsed_seconds.max(0.0);
+        let count = Count::at(&self.choreography, elapsed_seconds);
+        let (from, to, reach, progress, pose) = if let Some(count) = count {
+            let (from, to) = count.upper_keys();
+            (
+                from,
+                to,
+                PHRASES[count.phrase].reach,
+                count.t,
+                footsteps(count),
+            )
+        } else {
+            let from = key(Carry, Carry, 0.0, 0.0, 0.0, 0.0);
+            let to = if self.choreography.suspended {
+                key(Line, Reach, 13.0, -3.0, 0.014, -11.0)
+            } else {
+                key(Frame, Check, -9.0, 2.0, 0.018, 10.0)
+            };
+            (
+                from,
+                to,
+                0.77,
+                (elapsed_seconds as f32 / 1.8).clamp(0.0, 1.0),
+                StepPose::planted(),
+            )
+        };
+        let reach = (reach + self.choreography.sweep).clamp(0.52, 0.87);
+        let expression = self.choreography.expression(elapsed_seconds);
+        let body = ease(progress, 0.0, 0.51 + 0.27 * reach);
+        let yaw = radians(mix(from.turn, to.turn, body) + 8.0 * expression.lead);
+        let roll = radians(mix(from.inclination, to.inclination, body) + 5.0 * expression.chest);
         let knee_depth = mix(from.knee_depth, to.knee_depth, body);
-        let gaze = radians(mix(from.gaze, to.gaze, ease(count.t, 0.0, 0.26)));
+        let gaze = radians(mix(from.gaze, to.gaze, ease(progress, 0.0, 0.26)));
         let root = Vec3::new(
             pose.root.x,
-            -self.rest_floor - 0.036 - knee_depth - 0.008 * accent,
+            -self.rest_floor - 0.036 - knee_depth - 0.015 * expression.grounded,
             pose.root.y - 0.028,
         );
         let joints = &self.joints;
@@ -540,7 +575,7 @@ impl Dance {
                 Quat::from_euler(
                     EulerRot::YXZ,
                     -yaw * 0.21,
-                    radians(-3.0 + 2.6 * accent),
+                    radians(-3.0 + 7.0 * expression.chest + 2.6 * expression.grounded),
                     roll * 0.31,
                 ),
             ),
@@ -549,7 +584,7 @@ impl Dance {
                 Quat::from_euler(
                     EulerRot::YXZ,
                     gaze - yaw * 0.45,
-                    radians(-2.0 - 3.4 * accent),
+                    radians(-2.0 - 5.2 * expression.grounded + 3.5 * expression.lead),
                     -roll * 0.68,
                 ),
             ),
@@ -569,11 +604,20 @@ impl Dance {
             // Shoulders lead the frame. Elbows, wrists and fingers lock on in succession.
             for (i, node) in joints.arms[side].into_iter().enumerate() {
                 let delay = i as f32 * 0.047;
-                let t = ease(count.t, delay, delay + reach);
-                rotations[cursor] = (node, a.rotations[i].slerp(b.rotations[i], t));
+                let t = ease(progress, delay, delay + reach);
+                let accent = match i {
+                    0 => Quat::from_rotation_y(radians(sign * 12.0 * expression.lead)),
+                    1 => Quat::from_rotation_z(radians(sign * 14.0 * expression.chest)),
+                    _ => Quat::from_rotation_z(radians(sign * 18.0 * expression.wrist)),
+                };
+                rotations[cursor] = (node, a.rotations[i].slerp(b.rotations[i], t) * accent);
                 cursor += 1;
             }
-            let curl = mix(a.curl, b.curl, ease(count.t, 0.13, reach + 0.18));
+            let curl = mix(
+                a.curl,
+                b.curl,
+                ease(progress, 0.13, (reach + 0.18).min(1.0)),
+            ) + 8.0 * expression.wrist;
             for (finger, [first, middle]) in joints.fingers[side].into_iter().enumerate() {
                 let angle = radians(-sign * curl * (0.76 + 0.11 * finger as f32));
                 rotations[cursor] = (first, Quat::from_rotation_z(angle));
@@ -628,50 +672,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn meter_wraps_eight_bars_even_at_fractional_tempo() {
-        for bpm in [33.0, 71.25, 137.0] {
-            for beats in [3, 4] {
-                let beat = 60.0 / bpm;
-                let cycle = beat * (beats * PHRASES.len()) as f64;
-                let end = Count::wrap(cycle - 0.001, beat, beats);
-                assert_eq!((end.bar, end.beat), (PHRASES.len() - 1, beats - 1));
-                let next = Count::wrap(cycle, beat, beats);
-                assert_eq!((next.bar, next.beat, next.t), (0, 0, 0.0));
+    fn one_foot_stays_planted_and_phrase_boundaries_match() {
+        for phrase in 0..PHRASES.len() {
+            for key in 0..COUNTS_PER_PHRASE {
+                let count = |t| Count { phrase, key, t };
+                let prior = if key == 0 {
+                    Count {
+                        phrase: previous(phrase, PHRASES.len()),
+                        key: COUNTS_PER_PHRASE - 1,
+                        t: 1.0,
+                    }
+                } else {
+                    Count {
+                        phrase,
+                        key: key - 1,
+                        t: 1.0,
+                    }
+                };
+                let start = footsteps(count(0.0));
+                let end = footsteps(prior);
+                assert_eq!(start.feet, end.feet);
+                assert_eq!(start.yaw, end.yaw);
+                let moving = footsteps(count(0.45));
+                assert!(moving.lift.iter().filter(|&&y| y > 0.0).count() <= 1);
+                if key < STEPS_PER_PHRASE {
+                    let support = 1 - PHRASES[phrase].steps[key].side;
+                    assert_eq!(start.feet[support], moving.feet[support]);
+                }
             }
         }
     }
 
     #[test]
-    fn one_foot_stays_planted_and_boundaries_match_in_both_meters() {
-        for beats in [3, 4] {
-            for bar in 0..PHRASES.len() {
-                for beat in 0..beats {
-                    let count = |t| Count { bar, beat, t };
-                    let prior = if beat == 0 {
-                        Count {
-                            bar: previous(bar, PHRASES.len()),
-                            beat: beats - 1,
-                            t: 1.0,
-                        }
-                    } else {
-                        Count {
-                            bar,
-                            beat: beat - 1,
-                            t: 1.0,
-                        }
-                    };
-                    let start = footsteps(count(0.0));
-                    let end = footsteps(prior);
-                    assert_eq!(start.feet, end.feet);
-                    assert_eq!(start.yaw, end.yaw);
-                    let moving = footsteps(count(0.45));
-                    assert!(moving.lift.iter().filter(|&&y| y > 0.0).count() <= 1);
-                    if beat < STEPS_PER_BAR {
-                        let support = 1 - PHRASES[bar].steps[beat].side;
-                        assert_eq!(start.feet[support], moving.feet[support]);
-                    }
-                }
-            }
-        }
+    fn rig_support_does_not_slide_when_dsp_accents_shift_weight() {
+        use lico_graph::{Node, NodeKind, Pattern};
+
+        let graph = Graph {
+            nodes: vec![
+                Node {
+                    kind: NodeKind::Kick,
+                    inputs: vec![],
+                    parameters: vec![],
+                },
+                Node {
+                    kind: NodeKind::Output,
+                    inputs: vec![0],
+                    parameters: vec![],
+                },
+            ],
+            patterns: vec![Pattern {
+                node: 0,
+                period_ns: 1_300_000_000,
+                phase_ns: 0,
+                hits: vec![0, 330_000_000, 870_000_000],
+            }],
+            ..Graph::default()
+        };
+        let mut dance = Dance::new(crate::HUMANOID_GLB, &crate::mesh::PREVIEW_MATERIALS).unwrap();
+        dance.set_graph(&graph);
+        let ankles = dance.joints.legs.map(|leg| leg[2]);
+        let step = PHRASES[0].steps[0].side;
+        let at_start = dance.sample(0.0).unwrap();
+        let start = ankles.map(|node| at_start.joint_world[node].w_axis.truncate());
+        let moving = dance.sample(0.17).unwrap();
+        let after = ankles.map(|node| moving.joint_world[node].w_axis.truncate());
+
+        assert!(start[1 - step].distance(after[1 - step]) < 0.0001);
+        assert!(after[step].y - start[step].y > 0.010);
     }
 }
