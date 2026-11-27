@@ -300,8 +300,14 @@ async fn run() -> Result<()> {
                 } else {
                     None
                 };
-                return greeting::show(HUMANOID_GLB, data.as_deref(), command == "base-color")
-                    .await;
+                let motions = positional.is_empty().then(|| root.join("motions"));
+                return greeting::show(
+                    HUMANOID_GLB,
+                    data.as_deref(),
+                    motions.as_deref(),
+                    command == "base-color",
+                )
+                .await;
             }
             #[cfg(not(target_os = "trueos"))]
             bail!("{command} requires TRUEOS UI4");

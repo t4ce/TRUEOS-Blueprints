@@ -3,13 +3,14 @@
 //! 3d46aef9d4e67c1e84f41f7ae10e9573af4bf81b. This adaptation uses two population
 //! buffers in place of its in-place OpenCL streaming.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER, HEAD_RADIUS};
 
 // The longest resting back-hair vertices sit about 0.733 m from the head center.
 pub(crate) const HAIR_REACH_RADIUS: f32 = 0.75;
-pub(crate) const STREAMLINE_SEEDS: usize = 120;
+pub(crate) const FIELD_STREAMLINE_SEEDS: usize = 44;
+pub(crate) const ROOT_STREAMLINE_SEEDS: usize = 32;
 
 const SIZE: [usize; 3] = [64; 3];
 const CELL_COUNT: usize = SIZE[0] * SIZE[1] * SIZE[2];
@@ -21,6 +22,11 @@ const DOMAIN_MIN: Vec3 = Vec3::new(
     HEAD_CENTER.z - DOMAIN_HALF,
 );
 const RELAXATION_RATE: f32 = 1.0 / 0.60;
+// The authored roots average Y=1.418 m and the longest tip reaches Y=0.741 m.
+const TIP_SPREAD_START_Y: f32 = 1.08;
+const TIP_SPREAD_FULL_Y: f32 = 0.94;
+const TIP_SPREAD_END_Y: f32 = 0.741;
+const TIP_SPREAD_ACCELERATION: f32 = 0.00054;
 // Keep the world-space sampling interval near 3.4 cm.
 const STREAMLINE_STEP: f32 = 1.3;
 const STREAMLINE_HALF_LENGTH: usize = 64;
@@ -81,18 +87,24 @@ pub(crate) struct Solver {
     next: Vec<Populations>,
     velocity: Vec<Vec3>,
     solid: Vec<bool>,
-    fluid_cells: Vec<usize>,
+    fluid_cells: Vec<(usize, f32)>,
     boundary_cells: Vec<usize>,
     pull_offsets: [isize; VELOCITIES.len()],
-    flow_direction: Vec3,
-    seeds: [Vec3; STREAMLINE_SEEDS],
+    upright_flow_direction: Vec3,
+    world_to_avatar: Quat,
+    field_seeds: [Vec3; FIELD_STREAMLINE_SEEDS],
+    root_seeds: [Vec3; ROOT_STREAMLINE_SEEDS],
     tick: u64,
 }
 
 impl Solver {
-    pub(crate) fn new(hair_down: Vec3) -> Self {
-        let flow_direction = hair_down.normalize();
-        let inflow = inlet_velocity(flow_direction, 0);
+    pub(crate) fn new(
+        hair_down: Vec3,
+        world_to_avatar: Quat,
+        root_positions: [Vec3; ROOT_STREAMLINE_SEEDS],
+    ) -> Self {
+        let upright_flow_direction = hair_down.normalize();
+        let inflow = inlet_velocity(world_to_avatar * upright_flow_direction, 0);
         let equilibrium = equilibrium(1.0, inflow);
         let mut solid = vec![false; CELL_COUNT];
         let mut velocity = vec![inflow; CELL_COUNT];
@@ -115,7 +127,7 @@ impl Solver {
                     {
                         boundary_cells.push(index);
                     } else {
-                        fluid_cells.push(index);
+                        fluid_cells.push((index, tip_spread_acceleration(position)));
                     }
                 }
             }
@@ -133,22 +145,26 @@ impl Solver {
             fluid_cells,
             boundary_cells,
             pull_offsets,
-            flow_direction,
-            seeds: streamline_seeds(flow_direction),
+            upright_flow_direction,
+            world_to_avatar,
+            field_seeds: field_seeds(upright_flow_direction),
+            root_seeds: root_positions.map(root_seed),
             tick: 0,
         }
     }
 
-    pub(crate) fn step(&mut self) {
+    pub(crate) fn step(&mut self, world_to_avatar: Quat, tip_spread: bool) {
         self.tick += 1;
-        let inflow = inlet_velocity(self.flow_direction, self.tick);
+        self.world_to_avatar = world_to_avatar;
+        let inflow = inlet_velocity(world_to_avatar * self.upright_flow_direction, self.tick);
         let boundary_equilibrium = equilibrium(1.0, inflow);
         for &cell in &self.boundary_cells {
             self.next[cell] = boundary_equilibrium;
             self.velocity[cell] = inflow;
         }
 
-        for &cell in &self.fluid_cells {
+        let spread_scale = if tip_spread { 1.0 } else { 0.0 };
+        for &(cell, spread_acceleration) in &self.fluid_cells {
             let mut incoming = [0.0; VELOCITIES.len()];
             let mut density = 1.0;
             let mut momentum = Vec3::ZERO;
@@ -164,8 +180,11 @@ impl Solver {
                 momentum += VELOCITIES[direction] * *population;
             }
             let velocity = momentum / density;
-            self.velocity[cell] = velocity;
-            let equilibrium = equilibrium(density, velocity);
+            let acceleration = Vec3::X * (spread_scale * spread_acceleration);
+            self.velocity[cell] = velocity + 0.5 * acceleration;
+            // Shifting equilibrium by a / omega gives the collision a momentum
+            // increment of density * a while its zeroth moment stays density.
+            let equilibrium = equilibrium(density, velocity + acceleration / RELAXATION_RATE);
             for (direction, population) in incoming.into_iter().enumerate() {
                 self.next[cell][direction] =
                     population + RELAXATION_RATE * (equilibrium[direction] - population);
@@ -177,10 +196,17 @@ impl Solver {
     /// Emit line segments inside the hair reach, with local speed and velocity change.
     pub(crate) fn for_each_line(&self, mut emit: impl FnMut(Vec3, Vec3, f32, f32)) -> usize {
         let mut segments = 0;
-        for &seed in &self.seeds {
+        let center = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
+        for &seed in &self.field_seeds {
+            // Keep the field disk upstream in world coordinates. Root seeds
+            // stay fixed to the avatar because the grid is in avatar space.
+            let seed = center + self.world_to_avatar * (seed - center);
             for direction in [-1.0, 1.0] {
                 segments += self.trace(seed, direction, &mut emit);
             }
+        }
+        for &seed in &self.root_seeds {
+            segments += self.trace(seed, 1.0, &mut emit);
         }
         segments
     }
@@ -254,14 +280,14 @@ impl Solver {
     }
 }
 
-fn streamline_seeds(flow_direction: Vec3) -> [Vec3; STREAMLINE_SEEDS] {
+fn field_seeds(flow_direction: Vec3) -> [Vec3; FIELD_STREAMLINE_SEEDS] {
     // Map Hammersley points to equal-area rings in the upstream slice of the sphere.
     let upstream = HEAD_RADIUS + CELL_WIDTH;
     let center = HEAD_CENTER - upstream * flow_direction;
     let disk_radius = (REACH_RADIUS_SQUARED - upstream * upstream).sqrt();
     let (u, v) = flow_direction.any_orthonormal_pair();
     core::array::from_fn(|index| {
-        let area_fraction = (index as f32 + 0.5) / STREAMLINE_SEEDS as f32;
+        let area_fraction = (index as f32 + 0.5) / FIELD_STREAMLINE_SEEDS as f32;
         let turns = ((index as u32).reverse_bits() as f64 / 4_294_967_296.0) as f32;
         let (sin, cos) = (core::f32::consts::TAU * turns).sin_cos();
         let radius = disk_radius * area_fraction.sqrt();
@@ -270,9 +296,43 @@ fn streamline_seeds(flow_direction: Vec3) -> [Vec3; STREAMLINE_SEEDS] {
     })
 }
 
+fn root_seed(position: Vec3) -> Vec3 {
+    // Keep the mesh sample's X/Y and move it rearward into fluid. A full-cell
+    // margin clears the head even if the sampled voxel center is closer in.
+    let radius = HEAD_RADIUS + CELL_WIDTH;
+    let offset = position - HEAD_CENTER;
+    let clearance_z = (radius * radius - offset.truncate().length_squared())
+        .max(0.0)
+        .sqrt();
+    let position = position.with_z(position.z.max(HEAD_CENTER.z + clearance_z));
+    (position - DOMAIN_MIN) / CELL_WIDTH
+}
+
 fn inlet_velocity(flow_direction: Vec3, tick: u64) -> Vec3 {
     let phase = (tick % 360) as f32 * (core::f32::consts::TAU / 360.0);
     flow_direction * (0.074 * (1.0 + 0.16 * phase.sin()))
+}
+
+fn tip_spread_acceleration(position: Vec3) -> f32 {
+    let along = 1.0 - smoothstep(TIP_SPREAD_FULL_Y, TIP_SPREAD_START_Y, position.y);
+    let below_tip = smoothstep(0.68, TIP_SPREAD_END_Y, position.y);
+    // Build the outward force farther down and behind the torso so that
+    // the wider tip paths can still clear the hips.
+    let depth = smoothstep(0.13, 0.16, position.z) * (1.0 - smoothstep(0.19, 0.24, position.z));
+    let edge = 1.0 - smoothstep(0.07, 0.16, position.x.abs());
+    let reach = 1.0
+        - smoothstep(
+            0.71 * 0.71,
+            REACH_RADIUS_SQUARED,
+            position.distance_squared(HEAD_CENTER),
+        );
+    let outward = (position.x / 0.06).clamp(-1.0, 1.0);
+    TIP_SPREAD_ACCELERATION * along * below_tip * depth * edge * reach * outward
+}
+
+fn smoothstep(low: f32, high: f32, value: f32) -> f32 {
+    let t = ((value - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn equilibrium(density: f32, velocity: Vec3) -> Populations {
@@ -307,6 +367,14 @@ fn reach_exit_fraction(from: Vec3, to: Vec3) -> f32 {
 mod tests {
     use super::*;
 
+    fn standing_solver() -> Solver {
+        Solver::new(
+            Vec3::NEG_Y,
+            Quat::IDENTITY,
+            crate::scene::reference_root_positions(),
+        )
+    }
+
     #[test]
     fn equilibrium_preserves_density_and_momentum() {
         let density = 1.012;
@@ -323,8 +391,24 @@ mod tests {
     }
 
     #[test]
+    fn tip_spread_adds_outward_velocity_in_the_lower_rear_field() {
+        let mut baseline = standing_solver();
+        let mut spread = standing_solver();
+        baseline.step(Quat::IDENTITY, false);
+        spread.step(Quat::IDENTITY, true);
+        let delta = |position| {
+            let lattice = (position - DOMAIN_MIN) / CELL_WIDTH;
+            spread.velocity_at(lattice).unwrap() - baseline.velocity_at(lattice).unwrap()
+        };
+        assert!(delta(Vec3::new(0.09, 0.87, 0.16)).x > 0.000_08);
+        assert!(delta(Vec3::new(-0.09, 0.87, 0.16)).x < -0.000_08);
+        assert_eq!(delta(Vec3::new(0.09, 1.16, 0.16)), Vec3::ZERO);
+        assert_eq!(delta(Vec3::new(0.09, 0.87, -0.22)), Vec3::ZERO);
+    }
+
+    #[test]
     fn reach_extrema_and_streamline_seeds_remain_in_the_solved_interior() {
-        let solver = Solver::new(Vec3::NEG_Y);
+        let solver = standing_solver();
         let axes = [Vec3::X, Vec3::Y, Vec3::Z];
         for axis in axes {
             for sign in [-1.0, 1.0] {
@@ -335,7 +419,7 @@ mod tests {
             }
         }
         let mut quadrants = [0; 4];
-        for &seed in &solver.seeds {
+        for &seed in &solver.field_seeds {
             assert!(solver.velocity_at(seed).is_some());
             let offset = world_position(seed) - HEAD_CENTER;
             assert!(offset.length_squared() < REACH_RADIUS_SQUARED);
@@ -343,18 +427,24 @@ mod tests {
             let quadrant = 2 * usize::from(offset.x < 0.0) + usize::from(offset.z < 0.0);
             quadrants[quadrant] += 1;
         }
-        assert!(
-            quadrants
-                .into_iter()
-                .all(|count| (28..=32).contains(&count))
-        );
+        assert!(quadrants.into_iter().all(|count| (9..=13).contains(&count)));
+        assert_eq!(solver.field_seeds.len(), 44);
+        assert_eq!(solver.root_seeds.len(), 32);
+        let attachment = crate::scene::reference_root_positions();
+        for (&seed, root) in solver.root_seeds.iter().zip(attachment) {
+            let position = world_position(seed);
+            assert!(solver.velocity_at(seed).is_some());
+            assert!(position.truncate().distance(root.truncate()) < 1e-6);
+            assert!(position.z > root.z);
+            assert!(position.distance(HEAD_CENTER) >= HEAD_RADIUS + CELL_WIDTH - 1e-6);
+        }
     }
 
     #[test]
     fn obstacles_change_the_field_and_streamlines_remain_outside() {
-        let mut solver = Solver::new(Vec3::NEG_Y);
+        let mut solver = standing_solver();
         for _ in 0..18 {
-            solver.step();
+            solver.step(Quat::IDENTITY, true);
         }
         let head = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
         assert!(solver.velocity_at(head).is_none());
@@ -374,6 +464,16 @@ mod tests {
         assert!(free_flow.dot(Vec3::NEG_Y) > 0.06);
         let arm_wake = sample(Vec3::new(0.430, 1.10, 0.016));
         assert!(arm_wake.dot(Vec3::NEG_Y) < free_flow.dot(Vec3::NEG_Y) * 0.96);
+        let mut roots_below_shoulders = 0;
+        for &seed in &solver.root_seeds {
+            let mut lowest = world_position(seed).y;
+            assert!(solver.trace(seed, 1.0, &mut |_, to, _, _| lowest = lowest.min(to.y)) > 0);
+            roots_below_shoulders += usize::from(lowest < 1.15);
+        }
+        assert!(
+            roots_below_shoulders >= 24,
+            "{roots_below_shoulders} roots below the shoulders"
+        );
         let mut count = 0;
         let mut varied = false;
         let mut reach_exits = [false; 2];
@@ -396,7 +496,19 @@ mod tests {
             }
         });
         assert_eq!(emitted, count);
-        assert!((2_800..=4_000).contains(&emitted) && varied);
+        assert!((1_800..=2_700).contains(&emitted) && varied);
         assert_eq!(reach_exits, [true; 2]);
+    }
+
+    #[test]
+    fn inverted_inlet_stays_world_down_and_preserves_interior_flow() {
+        let mut solver = standing_solver();
+        let interior = Vec3::new(52.0, 32.0, 50.0);
+        let before = solver.velocity_at(interior).unwrap();
+        let inverted = Quat::from_rotation_z(-core::f32::consts::PI);
+        solver.step(inverted, true);
+        let world_inlet = inverted.conjugate() * solver.velocity[index(0, 32, 0)];
+        assert!(world_inlet.distance(inlet_velocity(Vec3::NEG_Y, 1)) < 1e-6);
+        assert!(solver.velocity_at(interior).unwrap().distance(before) < 1e-6);
     }
 }

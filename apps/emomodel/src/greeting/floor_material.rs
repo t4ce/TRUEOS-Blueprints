@@ -76,6 +76,23 @@ impl Palette {
     pub(super) fn bmp(&self) -> &[u8] {
         &self.bmp
     }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn extent(&self) -> [u32; 2] {
+        self.size.map(|axis| axis as u32)
+    }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn write_rgba(&self, output: &mut Vec<u8>) {
+        output.clear();
+        output.reserve(self.size[0] * self.size[1] * 4);
+        for row in self.bmp[HEADER..].chunks_exact(3 * self.size[0]).rev() {
+            output.extend(
+                row.chunks_exact(3)
+                    .flat_map(|bgr| [bgr[2], bgr[1], bgr[0], 255]),
+            );
+        }
+    }
 }
 
 pub(super) fn shadow_colors() -> [[u8; 3]; 256] {

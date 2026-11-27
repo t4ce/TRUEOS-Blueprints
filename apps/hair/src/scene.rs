@@ -1,15 +1,16 @@
 use anyhow::{Context, Result, bail, ensure};
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Quat, Vec2, Vec3, Vec4};
 use std::io::Cursor;
 
 use crate::{
     Controls,
     obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER},
     raster::{Alpha, Camera, Material, Surface, Texture, Vertex},
-    solver::{HAIR_REACH_RADIUS, Solver},
+    solver::{HAIR_REACH_RADIUS, ROOT_STREAMLINE_SEEDS, Solver},
 };
 
 const AVATAR: &[u8] = include_bytes!("../assets/avatar.glb");
+const BACK_HAIR_ANCHOR: &[u8] = include_bytes!("../assets/back-hair-anchor-surface.glb");
 // The standing back-hair rest axis points from the roots toward the hips.
 const BACK_HAIR_REST_DOWN: Vec3 = Vec3::NEG_Y;
 
@@ -27,14 +28,14 @@ pub(crate) struct Scene {
     body_bounds: (Vec3, Vec3),
     textures: Vec<Texture>,
     solver: Solver,
-    base_key: Option<(f32, bool, bool)>,
+    base_key: Option<(f32, f32, bool, bool)>,
     base_pixels: Vec<u8>,
     base_depth: Vec<f32>,
     depth: Vec<f32>,
 }
 
 impl Scene {
-    pub(crate) fn new(width: u32, height: u32) -> Result<Self> {
+    pub(crate) fn new(width: u32, height: u32, roll: f32) -> Result<Self> {
         let asset = gltf::Gltf::from_slice(AVATAR).context("parse embedded reference avatar")?;
         let blob = asset
             .blob
@@ -57,6 +58,7 @@ impl Scene {
             .collect::<Result<Vec<_>>>()?;
         // Masked/opaque surfaces establish the depth used by eye overlays.
         parts.sort_by_key(|part| matches!(part.material.alpha, Alpha::Blend));
+        let root_positions = back_hair_root_positions()?;
         let body_bounds = parts.iter().flat_map(|part| &part.vertices).fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(minimum, maximum), vertex| {
@@ -70,7 +72,7 @@ impl Scene {
             parts,
             body_bounds,
             textures,
-            solver: Solver::new(BACK_HAIR_REST_DOWN),
+            solver: Solver::new(BACK_HAIR_REST_DOWN, world_to_avatar(roll), root_positions),
             base_key: None,
             base_pixels: vec![0; count * 4],
             base_depth: vec![0.0; count],
@@ -78,8 +80,8 @@ impl Scene {
         })
     }
 
-    pub(crate) fn advance(&mut self) {
-        self.solver.step();
+    pub(crate) fn advance(&mut self, roll: f32, tip_spread: bool) {
+        self.solver.step(world_to_avatar(roll), tip_spread);
     }
 
     #[cfg(target_os = "trueos")]
@@ -95,11 +97,12 @@ impl Scene {
 
     pub(crate) fn draw(&mut self, controls: Controls, pixels: &mut [u8]) -> usize {
         let layers = controls.layers;
-        let key = (controls.yaw, layers.avatar, layers.hair);
+        let key = (controls.yaw, controls.roll, layers.avatar, layers.hair);
         let camera = Camera::new(
             self.width,
             self.height,
             controls.yaw,
+            world_to_avatar(controls.roll),
             self.body_bounds,
             HEAD_CENTER,
             HAIR_REACH_RADIUS,
@@ -153,6 +156,66 @@ impl Scene {
     }
 }
 
+fn world_to_avatar(roll: f32) -> Quat {
+    Quat::from_rotation_z(-roll)
+}
+
+fn back_hair_root_positions() -> Result<[Vec3; ROOT_STREAMLINE_SEEDS]> {
+    let asset =
+        gltf::Gltf::from_slice(BACK_HAIR_ANCHOR).context("parse back-hair anchor surface")?;
+    let blob = asset
+        .blob
+        .as_deref()
+        .context("back-hair anchor has no embedded buffer")?;
+    let primitive = asset
+        .meshes()
+        .find(|mesh| mesh.name() == Some("Back Hair AnkorSurf"))
+        .and_then(|mesh| mesh.primitives().next())
+        .context("missing Back Hair AnkorSurf mesh")?;
+    ensure!(
+        primitive.mode() == gltf::mesh::Mode::Triangles,
+        "expected triangles in the back-hair anchor"
+    );
+    let reader = primitive.reader(|_| Some(blob));
+    let positions: Vec<_> = reader
+        .read_positions()
+        .context("back-hair anchor is missing positions")?
+        .map(Vec3::from_array)
+        .collect();
+    let indices: Vec<_> = reader
+        .read_indices()
+        .context("back-hair anchor is missing triangle indices")?
+        .into_u32()
+        .collect();
+    let triangles = checked_triangles(&indices, positions.len()).context("back-hair anchor")?;
+
+    let mut total_area = 0.0;
+    let mut surface = Vec::new();
+    for triangle in triangles {
+        let [a, b, c] = triangle.map(|index| positions[index as usize]);
+        let area = 0.5 * (b - a).cross(c - a).length();
+        if area > 0.0 {
+            total_area += area;
+            surface.push(([a, b, c], area, total_area));
+        }
+    }
+    ensure!(
+        total_area.is_finite() && total_area > 0.0,
+        "invalid back-hair anchor surface area"
+    );
+
+    Ok(core::array::from_fn(|index| {
+        let target = total_area * ((index as f32 + 0.5) / ROOT_STREAMLINE_SEEDS as f32);
+        let triangle_index = surface.partition_point(|&(_, _, end)| end <= target);
+        let ([a, b, c], area, end) = surface[triangle_index];
+        // Use one area stratum per seed and a base-two radical inverse for
+        // the second barycentric parameter.
+        let radius = ((target - (end - area)) / area).clamp(0.0, 1.0).sqrt();
+        let across = ((index as u32).reverse_bits() as f64 / 4_294_967_296.0) as f32;
+        a.lerp(b.lerp(c, across), radius)
+    }))
+}
+
 fn load_part(primitive: gltf::Primitive<'_>, blob: &[u8]) -> Result<Part> {
     ensure!(
         primitive.mode() == gltf::mesh::Mode::Triangles,
@@ -185,14 +248,7 @@ fn load_part(primitive: gltf::Primitive<'_>, blob: &[u8]) -> Result<Part> {
         .context("avatar is missing triangle indices")?
         .into_u32()
         .collect();
-    let (triangles, extra) = indices.as_chunks::<3>();
-    ensure!(
-        extra.is_empty()
-            && indices
-                .iter()
-                .all(|&index| (index as usize) < vertices.len()),
-        "invalid avatar triangle indices"
-    );
+    let triangles = checked_triangles(&indices, vertices.len()).context("avatar mesh")?;
     let source = primitive.material();
     let pbr = source.pbr_metallic_roughness();
     let material = Material {
@@ -213,6 +269,15 @@ fn load_part(primitive: gltf::Primitive<'_>, blob: &[u8]) -> Result<Part> {
         material,
         back_hair: source.name() == Some("Back Hair"),
     })
+}
+
+fn checked_triangles(indices: &[u32], vertices: usize) -> Result<&[[u32; 3]]> {
+    let (triangles, extra) = indices.as_chunks::<3>();
+    ensure!(
+        extra.is_empty() && indices.iter().all(|&index| (index as usize) < vertices),
+        "invalid triangle indices"
+    );
+    Ok(triangles)
 }
 
 fn decode_texture(bytes: &[u8]) -> Result<Texture> {
@@ -245,23 +310,47 @@ fn decode_texture(bytes: &[u8]) -> Result<Texture> {
 }
 
 #[cfg(test)]
+fn reference_back_hair() -> Part {
+    let asset = gltf::Gltf::from_slice(AVATAR).unwrap();
+    let primitive = asset
+        .meshes()
+        .flat_map(|mesh| mesh.primitives())
+        .find(|primitive| primitive.material().name() == Some("Back Hair"))
+        .unwrap();
+    load_part(primitive, asset.blob.as_deref().unwrap()).unwrap()
+}
+
+#[cfg(test)]
+pub(crate) fn reference_root_positions() -> [Vec3; ROOT_STREAMLINE_SEEDS] {
+    back_hair_root_positions().unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn evaluation_sphere_fits_close_to_the_resting_back_hair() {
-        let asset = gltf::Gltf::from_slice(AVATAR).unwrap();
-        let hair = asset
-            .meshes()
-            .flat_map(|mesh| mesh.primitives())
-            .find(|primitive| primitive.material().name() == Some("Back Hair"))
-            .unwrap();
+        let hair = reference_back_hair();
         let radius = hair
-            .reader(|_| asset.blob.as_deref())
-            .read_positions()
-            .unwrap()
-            .map(|point| Vec3::from_array(point).distance(HEAD_CENTER))
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position.distance(HEAD_CENTER))
             .fold(0.0, f32::max);
         assert!((radius..radius + 0.03).contains(&HAIR_REACH_RADIUS));
+    }
+
+    #[test]
+    fn root_samples_cover_the_authored_scalp_patch() {
+        let positions = reference_root_positions();
+        let (min, max) = positions.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(min, max), &point| (min.min(point), max.max(point)),
+        );
+        let span = max - min;
+        assert!((0.12..0.17).contains(&span.x));
+        assert!((0.08..0.11).contains(&span.y));
+        assert!((0.05..0.08).contains(&span.z));
+        assert!(min.y < HEAD_CENTER.y && max.y > HEAD_CENTER.y && min.z > HEAD_CENTER.z);
     }
 }

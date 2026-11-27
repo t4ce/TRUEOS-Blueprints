@@ -18,11 +18,13 @@ const UPPER_BACK_SPREAD: [f32; 3] = [1.0, 0.85, 0.45];
 const SPREAD_WEIGHT: f32 = 2.2;
 const BODY_CLEARANCE: f32 = 0.009;
 
+#[derive(Clone)]
 pub(super) struct Hair {
     strands: Vec<Strand>,
     head: Mat4,
 }
 
+#[derive(Clone)]
 struct Strand {
     root: Vec3,
     exit_direction: Vec3,

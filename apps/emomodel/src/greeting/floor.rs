@@ -28,13 +28,18 @@ impl Brush {
         if !point.is_finite() || proximity <= 0.0 {
             return None;
         }
-        let radius =
-            max_radius * (CONTACT_EXPONENT * proximity).exp_m1() / CONTACT_EXPONENT.exp_m1();
+        let response =
+            ((CONTACT_EXPONENT * proximity).exp_m1() / CONTACT_EXPONENT.exp_m1()).clamp(0.0, 1.0);
+        let radius = max_radius * response;
+        if !radius.is_finite() || radius <= 0.0 {
+            return None;
+        }
+        let raster_radius = radius.max(2.0 * TEXEL_METERS);
         Some(Self {
             center: Vec2::new(point.x, point.z),
-            radius,
-            // A shrinking mark also fades once its width becomes subpixel.
-            opacity: (radius / (2.0 * TEXEL_METERS)).min(1.0),
+            radius: raster_radius,
+            // Keep a few samples across a subpixel mark and conserve its coverage.
+            opacity: (radius / raster_radius).powi(2),
         })
     }
 
@@ -69,9 +74,11 @@ struct Patch {
 impl Patch {
     fn new(brush: Brush) -> Self {
         let radius = Vec2::splat(brush.radius);
+        // Use a fixed world-space lattice. When two bounds merge, other brush
+        // samples stay at the same coordinates.
         Self {
-            low: brush.center - radius,
-            high: brush.center + radius,
+            low: ((brush.center - radius) / TEXEL_METERS).floor() - Vec2::ONE,
+            high: ((brush.center + radius) / TEXEL_METERS).ceil() + Vec2::ONE,
             brushes: vec![brush],
             size: [0; 2],
             origin: [0; 2],
@@ -98,11 +105,10 @@ impl Patch {
     fn write(&self, palette: &mut Palette, colors: &[[u8; 3]; 256]) {
         let [width, height] = self.size;
         let [x, y] = self.origin;
-        let step = (self.high - self.low) / Vec2::new((width - 1) as f32, (height - 1) as f32);
         // The outer texels and the gutter match the UI4 background exactly.
         for row in 1..height - 1 {
             for col in 1..width - 1 {
-                let position = self.low + step * Vec2::new(col as f32, row as f32);
+                let position = (self.low + Vec2::new(col as f32, row as f32)) * TEXEL_METERS;
                 let alpha = (255.0 * self.alpha(position)).round() as usize;
                 palette.set(x + col, y + row, colors[alpha]);
             }
@@ -121,6 +127,11 @@ impl Atlas {
             frames: Vec::with_capacity(poses),
             patches: Vec::new(),
         }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.frames.clear();
+        self.patches.clear();
     }
 
     pub(super) fn push(
@@ -151,21 +162,37 @@ impl Atlas {
         for patch in &mut self.patches[start..] {
             patch.size = (patch.high - patch.low)
                 .to_array()
-                .map(|meters| ((meters / TEXEL_METERS).ceil() as usize + 1).max(12));
+                .map(|texels| texels as usize + 1);
         }
         self.frames.push(start..self.patches.len());
     }
 
+    #[cfg(test)]
     pub(super) fn bake(&mut self) -> Result<Palette> {
+        self.bake_rows(&[512, 1024, 2048], 4096, floor_material::SWATCH_ROWS)
+    }
+
+    pub(super) fn bake_rows(
+        &mut self,
+        widths: &[usize],
+        max_height: usize,
+        reserved_rows: usize,
+    ) -> Result<Palette> {
         let mut sorted: Vec<_> = (0..self.patches.len()).collect();
         sorted.sort_unstable_by_key(|&i| Reverse(self.patches[i].size[1]));
-        let (width, height) = [512, 1024, 2048, 4096]
-            .into_iter()
-            .find_map(|width| {
-                let height = self.pack(&sorted, width)?;
-                (height <= 4096).then_some((width, height))
+        let (width, height) = widths
+            .iter()
+            .find_map(|&width| {
+                let height = self.pack(&sorted, width, reserved_rows)?;
+                (height <= max_height).then_some((width, height))
             })
-            .context("ground contact masks exceed the retained atlas extent")?;
+            .with_context(|| {
+                let largest = sorted.first().map(|&index| self.patches[index].size);
+                format!(
+                    "ground contact masks exceed the atlas extent: patches={} tallest={largest:?}",
+                    sorted.len()
+                )
+            })?;
         let mut image = Palette::new(width, height);
         let colors = floor_material::shadow_colors();
         for patch in &self.patches {
@@ -174,8 +201,8 @@ impl Atlas {
         Ok(image)
     }
 
-    fn pack(&mut self, sorted: &[usize], width: usize) -> Option<usize> {
-        let (mut x, mut y, mut row_height) = (0, floor_material::SWATCH_ROWS, 0);
+    fn pack(&mut self, sorted: &[usize], width: usize, reserved_rows: usize) -> Option<usize> {
+        let (mut x, mut y, mut row_height) = (0, reserved_rows, 0);
         for &index in sorted {
             let patch = &mut self.patches[index];
             // Reserve one clear texel on every side, even between poses.
@@ -204,8 +231,8 @@ impl Atlas {
         self.patches[self.frames[frame].clone()]
             .iter()
             .map(move |patch| {
-                let Vec2 { x: x0, y: z0 } = patch.low;
-                let Vec2 { x: x1, y: z1 } = patch.high;
+                let Vec2 { x: x0, y: z0 } = patch.low * TEXEL_METERS;
+                let Vec2 { x: x1, y: z1 } = patch.high * TEXEL_METERS;
                 let [u0, v0] = patch.origin;
                 let [u1, v1] = [u0 + patch.size[0] - 1, v0 + patch.size[1] - 1];
                 (
@@ -251,12 +278,7 @@ mod tests {
         let [w, h] = patch.size;
         assert_eq!(image.pixel(x, y + h / 2), floor_material::CLEAR_RGB);
         let center_pixel = image.pixel(x + w / 2, y + h / 2);
-        let center = patch.low
-            + (patch.high - patch.low)
-                * Vec2::new(
-                    (w / 2) as f32 / (w - 1) as f32,
-                    (h / 2) as f32 / (h - 1) as f32,
-                );
+        let center = (patch.low + Vec2::new((w / 2) as f32, (h / 2) as f32)) * TEXEL_METERS;
         let alpha = (255.0 * patch.alpha(center)).round() as usize;
         assert_eq!(center_pixel, floor_material::shadow_colors()[alpha]);
         assert_eq!(&image.bmp()[..2], b"BM");
@@ -266,5 +288,6 @@ mod tests {
             floor_material::CLEAR_RGB
         );
         assert!(atlas.patches.len() <= CONTACTS);
+        atlas.clear();
     }
 }

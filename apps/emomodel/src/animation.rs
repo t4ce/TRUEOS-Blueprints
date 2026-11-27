@@ -69,8 +69,8 @@ struct Joint {
 }
 
 impl Animation {
-    pub(super) fn prepare(glb: &[u8], materials: &[&str]) -> Result<Self> {
-        let asset = gltf::Gltf::from_slice(glb).context("parse animated humanoid GLB")?;
+    pub(super) fn prepare(clip_glb: &[u8], avatar_glb: &[u8], materials: &[&str]) -> Result<Self> {
+        let asset = gltf::Gltf::from_slice(clip_glb).context("parse animated humanoid GLB")?;
         let blob = asset
             .blob
             .as_deref()
@@ -84,7 +84,15 @@ impl Animation {
             clip.name() == Some("Greeting") && clips.next().is_none(),
             "expected exactly one Greeting clip"
         );
-        let mut animation = Self::load_rig(&asset, materials)?;
+        let avatar = gltf::Gltf::from_slice(avatar_glb).context("parse embedded humanoid GLB")?;
+        let mut animation = Self::load_rig(&avatar, materials)?;
+        let clip_rig = Self::load_rig(&asset, materials)?;
+        // Retargeted files can carry older positions and normals for the same skin.
+        ensure!(
+            animation.matches_rig(&clip_rig, |a, b| a.joints == b.joints
+                && a.weights == b.weights),
+            "Greeting differs from the embedded rig"
+        );
         let mut properties = vec![[false; 2]; animation.nodes.len()];
         let mut duration = 0.0_f32;
         let mut channels = Vec::new();
@@ -424,6 +432,10 @@ impl Animation {
     }
 
     pub(super) fn compatible_rig(&self, other: &Self) -> bool {
+        self.matches_rig(other, Vertex::eq)
+    }
+
+    fn matches_rig(&self, other: &Self, vertices_match: impl Fn(&Vertex, &Vertex) -> bool) -> bool {
         self.nodes == other.nodes
             && self.sections.len() == other.sections.len()
             && self
@@ -431,7 +443,12 @@ impl Animation {
                 .iter()
                 .zip(&other.sections)
                 .all(|(left, right)| {
-                    left.vertices == right.vertices
+                    left.vertices.len() == right.vertices.len()
+                        && left
+                            .vertices
+                            .iter()
+                            .zip(&right.vertices)
+                            .all(|(a, b)| vertices_match(a, b))
                         && left.joints.len() == right.joints.len()
                         && left
                             .joints
@@ -471,6 +488,62 @@ impl Animation {
 
     pub(super) fn joint_position(&self, node: usize) -> Vec3 {
         self.world[node].w_axis.truncate()
+    }
+
+    pub(super) fn joint_transform(&self, node: usize) -> Mat4 {
+        self.world[node]
+    }
+
+    /// Set one foot's world-space placement with a two-bone leg solve. The
+    /// authored pose provides the leg lengths and the side of the knee bend.
+    pub(super) fn place_foot(&mut self, joints: [usize; 3], target: Vec3, rotation: Quat) {
+        let [thigh, shin, foot] = joints;
+        let [hip, knee, ankle] = joints.map(|joint| self.joint_position(joint));
+        let upper = knee - hip;
+        let lower = ankle - knee;
+        let upper_len = upper.length();
+        let lower_len = lower.length();
+        let Some(axis) = (target - hip).try_normalize() else {
+            return;
+        };
+        let distance = target.distance(hip).clamp(
+            (upper_len - lower_len).abs() + 1e-5,
+            upper_len + lower_len - 1e-5,
+        );
+        let forward = (ankle - hip).normalize();
+        let bend = upper - forward * upper.dot(forward);
+        let pole = (bend - axis * bend.dot(axis))
+            .try_normalize()
+            .unwrap_or_else(|| axis.any_orthonormal_vector());
+        let along = (upper_len * upper_len - lower_len * lower_len + distance * distance)
+            / (2.0 * distance);
+        let height = (upper_len * upper_len - along * along).max(0.0).sqrt();
+        let new_knee = hip + axis * along + pole * height;
+        let new_ankle = hip + axis * distance;
+
+        let rotate_upper = Quat::from_rotation_arc(upper.normalize(), (new_knee - hip).normalize());
+        self.transform_joint_tree(thigh, around(hip, rotate_upper));
+        let rotate_lower = Quat::from_rotation_arc(
+            (rotate_upper * lower).normalize(),
+            (new_ankle - new_knee).normalize(),
+        );
+        self.transform_joint_tree(shin, around(new_knee, rotate_lower));
+        let foot_world = self.world[foot];
+        let (scale, _, _) = foot_world.to_scale_rotation_translation();
+        let foot_target = Mat4::from_scale_rotation_translation(scale, rotation, new_ankle);
+        self.transform_joint_tree(foot, foot_target * foot_world.inverse());
+    }
+
+    fn transform_joint_tree(&mut self, root: usize, transform: Mat4) {
+        for index in root..self.nodes.len() {
+            let mut node = Some(index);
+            while let Some(child) = node.filter(|&child| child > root) {
+                node = self.nodes[child].parent;
+            }
+            if node == Some(root) {
+                self.world[index] = transform * self.world[index];
+            }
+        }
     }
 
     #[cfg(test)]
@@ -587,6 +660,10 @@ impl Animation {
     }
 }
 
+fn around(point: Vec3, rotation: Quat) -> Mat4 {
+    Mat4::from_rotation_translation(rotation, point - rotation * point)
+}
+
 fn joint_named(asset: &gltf::Gltf, name: &str) -> Result<usize> {
     asset
         .nodes()
@@ -622,7 +699,81 @@ mod tests {
 
     #[test]
     fn static_avatar_does_not_supply_a_greeting_clip() {
-        assert!(Animation::prepare(crate::HUMANOID_GLB, &PREVIEW_MATERIALS).is_err());
+        let avatar = crate::HUMANOID_GLB;
+        assert!(Animation::prepare(avatar, avatar, &PREVIEW_MATERIALS).is_err());
+    }
+
+    #[test]
+    fn greeting_uses_canonical_geometry_and_rejects_a_changed_bind() {
+        use gltf::{Semantic, binary::Glb};
+        use serde_json::{Value, json};
+
+        let avatar_bytes = crate::HUMANOID_GLB;
+        let avatar = gltf::Gltf::from_slice(avatar_bytes).unwrap();
+        let materials = [crate::mesh::BODY_MATERIAL];
+        let (body, primitive) = avatar
+            .nodes()
+            .find_map(|node| {
+                let primitive = node
+                    .mesh()?
+                    .primitives()
+                    .find(|part| part.material().name() == Some(crate::mesh::BODY_MATERIAL))?;
+                Some((node, primitive))
+            })
+            .unwrap();
+        let offset =
+            |accessor: gltf::Accessor<'_>| accessor.view().unwrap().offset() + accessor.offset();
+        let hips = joint_named(&avatar, "J_Bip_C_Hips").unwrap();
+        let canonical = Animation::load_rig(&avatar, &materials).unwrap();
+        let hip_start = canonical.nodes[hips].rest.translation;
+        let hip_end = hip_start + Vec3::X * 0.1;
+
+        let mut clip = Glb::from_slice(avatar_bytes).unwrap();
+        let mut document: Value = serde_json::from_slice(&clip.json).unwrap();
+        let bin = clip.bin.as_mut().unwrap().to_mut();
+        let old_x = offset(primitive.get(&Semantic::Positions).unwrap());
+        let x = f32::from_le_bytes(bin[old_x..old_x + 4].try_into().unwrap());
+        bin[old_x..old_x + 4].copy_from_slice(&(x + 0.005).to_le_bytes());
+
+        let view = document["bufferViews"].as_array().unwrap().len();
+        let times = document["accessors"].as_array().unwrap().len();
+        let motion_start = bin.len();
+        bin.extend(
+            [0.0_f32, 1.0]
+                .into_iter()
+                .chain(hip_start.to_array())
+                .chain(hip_end.to_array())
+                .flat_map(f32::to_le_bytes),
+        );
+        document["buffers"][0]["byteLength"] = json!(bin.len());
+        document["bufferViews"].as_array_mut().unwrap().push(json!({
+            "buffer": 0, "byteOffset": motion_start, "byteLength": bin.len() - motion_start
+        }));
+        document["accessors"].as_array_mut().unwrap().extend([
+            json!({"bufferView": view, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0]}),
+            json!({"bufferView": view, "byteOffset": 8, "componentType": 5126, "count": 2, "type": "VEC3"}),
+        ]);
+        document["animations"] = json!([{
+            "name": "Greeting",
+            "samplers": [{"input": times, "output": times + 1}],
+            "channels": [{"sampler": 0, "target": {"node": hips, "path": "translation"}}]
+        }]);
+        clip.json = serde_json::to_vec(&document).unwrap().into();
+
+        let clip_bytes = clip.to_vec().unwrap();
+        let mut greeting = Animation::prepare(&clip_bytes, avatar_bytes, &materials).unwrap();
+        assert!(greeting.compatible_rig(&canonical));
+        greeting.apply(1.0);
+        assert_eq!(greeting.local[hips].translation, hip_end);
+
+        let wrong_bind = offset(body.skin().unwrap().inverse_bind_matrices().unwrap()) + 12 * 4;
+        clip.bin.as_mut().unwrap().to_mut()[wrong_bind..wrong_bind + 4]
+            .copy_from_slice(&10.0_f32.to_le_bytes());
+        let clip_bytes = clip.to_vec().unwrap();
+        assert!(matches!(
+            Animation::prepare(&clip_bytes, avatar_bytes, &materials),
+            Err(error) if error.to_string() == "Greeting differs from the embedded rig"
+        ));
     }
 
     #[test]

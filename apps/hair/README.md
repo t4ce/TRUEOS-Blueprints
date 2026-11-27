@@ -32,7 +32,9 @@ and the demo makes no network requests.
 | `5` | Switch between velocity change and speed coloring |
 | `6` | Toggle the back-hair reach outline |
 | `7` | Toggle the torso and arm obstacle overlay |
+| `8` | Toggle the outward test force near the hair tips |
 | Left / Right | Orbit around the avatar |
+| Hold `A` / `D` | Slowly roll the avatar in either direction |
 | Space | Pause airflow |
 | Esc | Close |
 
@@ -41,6 +43,9 @@ A headless run can write a PNG.
 ```sh
 target/x86_64-unknown-linux-gnu/release/hair --frames 180 --snapshot /tmp/hair.png
 ```
+
+Use `--roll 180` to start upside down. During a roll the airflow stays
+world-down while the root seeds and obstacle proxies follow the avatar.
 
 The UI4 frame entry shares the same renderer. Check the native target locally
 with `CARGO_NET_OFFLINE=true cargo bp hair --check`.
@@ -54,10 +59,17 @@ rest axis, straight down in the standing pose. Its speed changes gently over
 time and the field bends around the head, torso and arms. The solver uses
 these volumes even when their overlays are hidden. Streamlines sample local
 velocities, with the fork's rainbow mapping in [the local raster shader](shaders/raster.rs).
-The solver box surrounds the full hair-reach sphere. The 120 streamline seeds
-are distributed across a cross-section above the roots, perpendicular to the
-rest axis. Each trace ends at the sphere boundary, even with the reach outline
-hidden.
+The solver box surrounds the full hair-reach sphere. There are 44 field seeds
+across an upstream cross-section and 32 hair-root seeds. The root seeds sample
+the authored `Back Hair AnkorSurf` mesh by area. Its rest-pose positions were
+extracted from Blender in metres, with world `(x, y, z)` mapped to Hair
+`(x, z, -y)`. The solver moves the samples rearward for head clearance, then
+traces downstream. Both sets use the same coloring and stop at the reach
+boundary or if a trace would cross a solid obstacle.
+The tip-spread test adds a gentle sideways force to fluid cells behind the
+avatar, starting halfway down the resting back hair and building toward the
+tips. It follows the avatar during a roll. Use `--no-tip-spread` for baseline
+snapshots with the force disabled.
 The default color uses velocity differences between consecutive samples.
 Speed mode uses velocity magnitude. Headless snapshots report the seed and
 traced-segment counts. See [FluidX3D-LICENSE.md](FluidX3D-LICENSE.md).

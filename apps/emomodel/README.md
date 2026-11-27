@@ -34,18 +34,27 @@ their rest pose through the built-in flat-color vGPU pipeline. The app redraws
 when UI4 delivers a final window extent. The avatar stays centered at its
 original pixel size, with any overflow clipped by the frame.
 
+Bare launch through `§§emomodel` plays the motion reel when the seven locally
+retargeted files `motions/01.glb` through `motions/07.glb` are installed in the app
+directory. The reel plays Greeting, Nod, Squat, Spin, Model Pose, Show Full Body,
+Shoot, and Peace Sign, then takes two short steps into the opening Greeting
+crouch with both feet and fingertips close to the floor. The correction eases
+out during takeoff, and a smaller height adjustment settles the landing. The
+motion files are installed privately on the rig.
+
 `greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
-`/apps/emomodel`, or under `--root` when supplied. This command and bare
-launch through `§§emomodel` open the body lighting study. The camera and
-body pose hold for an eight-second light sweep. With the local clip, the avatar
+`/apps/emomodel`, or under `--root` when supplied. It opens the body lighting
+study. The camera and body pose hold for an eight-second light sweep. With the
+local clip, the avatar
 plays the Greeting jump, lowers its arms, nods once, raises its arms back to
 the landing pose, and plays Greeting in reverse. The full sequence repeats.
 A clean install alternates Nod with 15 seconds of varied wind and five seconds
 of calm. Animation credits to pixiv Inc.'s VRoid Project. Install Greeting
 privately from VRMA_02 in the official VRMA Motion Pack.
 
-Playback samples positions and authored skin normals once during startup at
-45 Hz. Retained Picasso geometry includes body skin, face skin, eyes, mouth,
+The lighting study bakes positions and authored skin normals at 45 Hz during
+startup. The reel samples its current pose and reuses one set of draw buffers.
+The Picasso draws include body skin, face skin, eyes, mouth,
 and hair. The face holds its neutral expression and follows the head joint
 during playback. Each frame draws lit skin and flat-color parts from the same
 retained pose with shared depth and back-face culling. The skin samples a
@@ -77,13 +86,14 @@ same drape. Idle frames share their settled body pose. The primary guides draw
 as tapered ribbons in the same flat hair color, about 3 to 4 pixels wide at the
 default preview size.
 
-`autobs` is the automatic observer for the animated preview. It pans toward the
-landing stance for Nod and returns to the opening view during the reverse jump.
-The ground is visible through soft black contact marks at each heel, toe, and
-fingertip. Each baked pose projects nearby contacts onto the ground plane and
-composites overlaps from one R8 brush into the retained material atlas. Reverse
-playback reuses the same masks. The current Greeting and Nod stay above fingertip
-contact range.
+`autobs` is the automatic observer for the animated preview. In the lighting
+study, it pans toward the landing stance for Nod and returns to the opening view
+during the reverse jump. The reel fits all eight motions in one camera framing.
+Soft black contact marks show nearby heels, toes, and fingertips. Each pose
+projects contacts onto the ground plane and composites overlaps from one R8
+brush into the material atlas. In the lighting study, reverse playback reuses
+the baked contact masks. The reel's opening crouch registers one fingertip on
+each hand.
 After UI4 commits a resize, the observer eases along a shallow arc while looking
 at the avatar.
 It moves in for a larger area and pulls back more slowly for a smaller area.

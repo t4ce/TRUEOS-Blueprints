@@ -11,7 +11,7 @@ use crate::Controls;
 
 const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
-const HELP: &str = "1 Avatar  2 Hair  3 Head sphere  4 Flow  5 Flow color  6 Hair reach  7 Body obstacles  |  Space Pause  |  Arrows Orbit  |  Esc Close";
+const HELP: &str = "1 Avatar  2 Hair  3 Head sphere  4 Flow  5 Flow color  6 Hair reach  7 Body obstacles  8 Tip spread  |  Space Pause  |  Arrows Orbit  |  A/D Roll  |  Esc Close";
 
 pub(crate) fn run(
     width: u32,
@@ -44,7 +44,9 @@ pub(crate) fn run(
             break;
         }
         let elapsed = now.duration_since(previous_frame).as_secs_f32().min(0.1);
-        controls.yaw += video.orbit_direction() * elapsed * 1.25;
+        let (orbit, roll) = video.held_directions();
+        controls.yaw += orbit * elapsed * 1.25;
+        controls.roll_by(roll, elapsed);
         previous_frame = now;
 
         draw(controls, &mut pixels)?;
@@ -60,7 +62,10 @@ pub(crate) fn run(
             } else {
                 "velocity change"
             };
-            video.set_title(&format!("Hair · {fps:.1} FPS{status} · {color}"));
+            let spread = if controls.tip_spread { "on" } else { "off" };
+            video.set_title(&format!(
+                "Hair · {fps:.1} FPS{status} · {color} · Tip spread {spread}"
+            ));
             report_start = Instant::now();
             report_count = 0;
         }
@@ -87,6 +92,8 @@ const QUIT: u32 = 0x100;
 const WINDOW_EVENT: u32 = 0x200;
 const WINDOW_CLOSE: u8 = 14;
 const KEY_DOWN: u32 = 0x300;
+const KEY_A: usize = 4;
+const KEY_D: usize = 7;
 const KEY_1: i32 = 30;
 const KEY_2: i32 = 31;
 const KEY_3: i32 = 32;
@@ -94,6 +101,7 @@ const KEY_4: i32 = 33;
 const KEY_5: i32 = 34;
 const KEY_6: i32 = 35;
 const KEY_7: i32 = 36;
+const KEY_8: i32 = 37;
 const KEY_ESCAPE: i32 = 41;
 const KEY_SPACE: i32 = 44;
 const KEY_RIGHT: usize = 79;
@@ -279,6 +287,7 @@ impl Video {
                         KEY_5 => controls.speed_color ^= true,
                         KEY_6 => controls.layers.reach ^= true,
                         KEY_7 => controls.layers.body_obstacles ^= true,
+                        KEY_8 => controls.tip_spread ^= true,
                         KEY_SPACE => controls.paused ^= true,
                         KEY_ESCAPE => return false,
                         _ => (),
@@ -290,16 +299,18 @@ impl Video {
         true
     }
 
-    fn orbit_direction(&self) -> f32 {
+    fn held_directions(&self) -> (f32, f32) {
         let mut count = 0;
         let state = unsafe { (self.sdl.keyboard_state)(&mut count) };
         if state.is_null() || count <= KEY_UP as c_int {
-            return 0.0;
+            return (0.0, 0.0);
         }
         let keys = unsafe { std::slice::from_raw_parts(state, count as usize) };
         let right = keys[KEY_RIGHT] != 0 || keys[KEY_UP] != 0;
         let left = keys[KEY_LEFT] != 0 || keys[KEY_DOWN_ARROW] != 0;
-        (i8::from(right) - i8::from(left)) as f32
+        let orbit = i8::from(right) - i8::from(left);
+        let roll = i8::from(keys[KEY_D] != 0) - i8::from(keys[KEY_A] != 0);
+        (f32::from(orbit), f32::from(roll))
     }
 
     fn present(&self, pixels: &[u8], pitch: c_int) -> Result<()> {

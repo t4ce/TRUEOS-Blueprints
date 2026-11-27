@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Quat, Vec2, Vec3, Vec4};
 
 use crate::obstacle::Ellipsoid;
 
@@ -9,6 +9,7 @@ pub(crate) struct Camera {
     right: Vec3,
     up: Vec3,
     toward: Vec3,
+    light: Vec3,
     center: Vec3,
     offset: Vec2,
     scale: f32,
@@ -19,6 +20,7 @@ impl Camera {
         width: u32,
         height: u32,
         yaw: f32,
+        world_to_avatar: Quat,
         body_bounds: (Vec3, Vec3),
         reach_center: Vec3,
         reach_radius: f32,
@@ -27,6 +29,9 @@ impl Camera {
         let toward = Vec3::new(sin, 0.12, -cos).normalize();
         let right = Vec3::Y.cross(toward).normalize();
         let up = toward.cross(right);
+        let light = world_to_avatar * (toward + Vec3::new(-0.22, 0.68, 0.12)).normalize();
+        // Project onto the fixed world camera from the avatar-local scene.
+        let [right, up, toward] = [right, up, toward].map(|axis| world_to_avatar * axis);
         let view = |point: Vec3| Vec2::new(point.dot(right), point.dot(up));
         let (body_min, body_max) = body_bounds;
         let body_center = view((body_min + body_max) * 0.5);
@@ -41,6 +46,7 @@ impl Camera {
             right,
             up,
             toward,
+            light,
             center: right * fit_center.x + up * fit_center.y + toward * reach_center.dot(toward),
             offset: viewport * 0.5,
             scale: 0.90 * (viewport / (high - low)).min_element(),
@@ -139,12 +145,11 @@ impl<'a> Surface<'a> {
         material: &Material,
         texture: Option<&Texture>,
     ) {
-        let light = (camera.toward + Vec3::new(-0.22, 0.68, 0.12)).normalize();
         let projected: Vec<_> = vertices
             .iter()
             .map(|vertex| Projected {
                 position: camera.project(vertex.position),
-                shade: 0.71 + 0.29 * vertex.normal.dot(light).max(0.0),
+                shade: 0.71 + 0.29 * vertex.normal.dot(camera.light).max(0.0),
                 uv: vertex.uv,
             })
             .collect();
@@ -339,21 +344,39 @@ mod tests {
         for (width, height) in [(960, 720), (640, 960), (1280, 480)] {
             let viewport = Vec2::new(width as f32, height as f32);
             for yaw in [0.0, 0.6, 1.4, 2.3, 4.9] {
-                let camera = Camera::new(width, height, yaw, (body_min, body_max), center, radius);
-                let inside_margin = |point| {
-                    let pixels = camera.project(point).truncate();
-                    assert!(pixels.cmpge(viewport * 0.049).all());
-                    assert!(pixels.cmple(viewport * 0.951).all());
-                };
-                for x in [body_min.x, body_max.x] {
-                    for y in [body_min.y, body_max.y] {
-                        for z in [body_min.z, body_max.z] {
-                            inside_margin(Vec3::new(x, y, z));
+                for roll in [
+                    0.0,
+                    0.7,
+                    core::f32::consts::FRAC_PI_2,
+                    core::f32::consts::PI,
+                ] {
+                    let world_to_avatar = Quat::from_rotation_z(-roll);
+                    let camera = Camera::new(
+                        width,
+                        height,
+                        yaw,
+                        world_to_avatar,
+                        (body_min, body_max),
+                        center,
+                        radius,
+                    );
+                    let local_down = world_to_avatar * Vec3::NEG_Y;
+                    assert!(camera.project(center + local_down).y > camera.project(center).y);
+                    let inside_margin = |point| {
+                        let pixels = camera.project(point).truncate();
+                        assert!(pixels.cmpge(viewport * 0.049).all());
+                        assert!(pixels.cmple(viewport * 0.951).all());
+                    };
+                    for x in [body_min.x, body_max.x] {
+                        for y in [body_min.y, body_max.y] {
+                            for z in [body_min.z, body_max.z] {
+                                inside_margin(Vec3::new(x, y, z));
+                            }
                         }
                     }
-                }
-                for edge in [camera.right, -camera.right, camera.up, -camera.up] {
-                    inside_margin(center + radius * edge);
+                    for edge in [camera.right, -camera.right, camera.up, -camera.up] {
+                        inside_margin(center + radius * edge);
+                    }
                 }
             }
         }

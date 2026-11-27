@@ -8,6 +8,8 @@ use trueos::{
 use crate::{Controls, scene::Scene};
 
 const FRAME_NS: u64 = 1_000_000_000 / 45;
+const KEY_A: u8 = 0x04;
+const KEY_D: u8 = 0x07;
 
 pub(crate) fn run(width: u32, height: u32, controls: Controls, limit: Option<usize>) -> Result<()> {
     match present(width, height, controls, limit) {
@@ -29,15 +31,18 @@ fn present(
     let y = ((screen_height - height) / 2) as i32;
     let mut frame = Frame::open_streaming(x, y, width, height)?;
     frame.set_title("Hair · Flow study")?;
-    let mut scene = Scene::new(width, height).map_err(|error| {
+    let mut scene = Scene::new(width, height, controls.roll).map_err(|error| {
         eprintln!("hair: {error:#}");
         Error::Invalid
     })?;
     let mut pixels = vec![0; width as usize * height as usize * 4];
     let mut pending_resize = None;
     let mut shown = 0;
+    let mut previous_frame = clock::monotonic_nanos();
     while limit.is_none_or(|count| shown < count) {
         let started = clock::monotonic_nanos();
+        let elapsed = started.saturating_sub(previous_frame).min(100_000_000) as f32 * 1e-9;
+        previous_frame = started;
         while let Some(event) = frame.take_resize_event()? {
             pending_resize = Some((event.width, event.height));
         }
@@ -62,6 +67,7 @@ fn present(
                     Some('5') => controls.speed_color = !controls.speed_color,
                     Some('6') => controls.layers.reach = !controls.layers.reach,
                     Some('7') => controls.layers.body_obstacles = !controls.layers.body_obstacles,
+                    Some('8') => controls.tip_spread = !controls.tip_spread,
                     _ => (),
                 }
             } else if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
@@ -76,6 +82,10 @@ fn present(
                 }
             }
         }
+        if let Some(keyboard) = frame.keyboard_state()? {
+            let direction = i8::from(keyboard.is_down(KEY_D)) - i8::from(keyboard.is_down(KEY_A));
+            controls.roll_by(f32::from(direction), elapsed);
+        }
         match frame.begin(ui4_scene::rgba(229, 235, 239, 255)) {
             Ok(()) => (),
             Err(Error::Busy) => {
@@ -85,7 +95,7 @@ fn present(
             Err(error) => return Err(error),
         }
         if !controls.paused {
-            scene.advance();
+            scene.advance(controls.roll, controls.tip_spread);
         }
         scene.draw(controls, &mut pixels);
         frame.write_opaque_rgba8(&pixels)?;

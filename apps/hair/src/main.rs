@@ -28,8 +28,10 @@ pub(crate) struct Layers {
 pub(crate) struct Controls {
     pub(crate) layers: Layers,
     pub(crate) yaw: f32,
+    pub(crate) roll: f32,
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
+    pub(crate) tip_spread: bool,
 }
 
 impl Default for Controls {
@@ -44,8 +46,20 @@ impl Default for Controls {
                 body_obstacles: true,
             },
             yaw: 132.0_f32.to_radians(),
+            roll: 0.0,
             paused: false,
             speed_color: false,
+            tip_spread: true,
+        }
+    }
+}
+
+impl Controls {
+    fn roll_by(&mut self, direction: f32, elapsed: f32) {
+        const ROLL_SPEED: f32 = 0.6;
+        if !self.paused {
+            self.roll =
+                (self.roll + direction * ROLL_SPEED * elapsed).rem_euclid(std::f32::consts::TAU);
         }
     }
 }
@@ -73,7 +87,13 @@ fn main() -> Result<()> {
                 ensure!(degrees.is_finite(), "yaw angle must be finite");
                 controls.yaw = degrees.rem_euclid(360.0).to_radians();
             }
+            "--roll" => {
+                let degrees = args.next().context("missing roll angle")?.parse::<f32>()?;
+                ensure!(degrees.is_finite(), "roll angle must be finite");
+                controls.roll = degrees.rem_euclid(360.0).to_radians();
+            }
             "--speed" => controls.speed_color = true,
+            "--no-tip-spread" => controls.tip_spread = false,
             "--hide" => match args.next().as_deref() {
                 Some("avatar") => controls.layers.avatar = false,
                 Some("hair") => controls.layers.hair = false,
@@ -87,7 +107,7 @@ fn main() -> Result<()> {
             },
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--speed] [--hide LAYER]\n\nLayers for --hide: avatar, hair, sphere, flow, reach, body-obstacles\n\n1 Avatar  2 Back hair  3 Head sphere  4 Flow lines  5 Speed/change  6 Hair reach  7 Body obstacles\nLeft/Right Orbit  Space Pause  Esc Close"
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--speed] [--no-tip-spread] [--hide LAYER]\n\nLayers for --hide: avatar, hair, sphere, flow, reach, body-obstacles\n\n1 Avatar  2 Back hair  3 Head sphere  4 Flow lines  5 Speed/change  6 Hair reach  7 Body obstacles  8 Tip spread\nLeft/Right Orbit  A/D Roll  Space Pause  Esc Close"
                 );
                 return Ok(());
             }
@@ -96,11 +116,11 @@ fn main() -> Result<()> {
     }
 
     if let Some(path) = snapshot {
-        let mut scene = scene::Scene::new(WIDTH, HEIGHT)?;
+        let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls.roll)?;
         let started = std::time::Instant::now();
         let count = frames.unwrap_or(1);
         for _ in 0..count {
-            scene.advance();
+            scene.advance(controls.roll, controls.tip_spread);
         }
         let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
         let segments = scene.draw(controls, &mut pixels);
@@ -115,8 +135,9 @@ fn main() -> Result<()> {
         );
         if controls.layers.flow {
             println!(
-                "hair: {} streamline seeds, {segments} traced segments",
-                solver::STREAMLINE_SEEDS
+                "hair: {} field seeds, {} hair-root seeds, {segments} traced segments",
+                solver::FIELD_STREAMLINE_SEEDS,
+                solver::ROOT_STREAMLINE_SEEDS,
             );
         }
         return Ok(());
@@ -124,10 +145,10 @@ fn main() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let mut scene = scene::Scene::new(WIDTH, HEIGHT)?;
+        let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls.roll)?;
         host::run(WIDTH, HEIGHT, controls, frames, |controls, pixels| {
             if !controls.paused {
-                scene.advance();
+                scene.advance(controls.roll, controls.tip_spread);
             }
             scene.draw(controls, pixels);
             Ok(())
