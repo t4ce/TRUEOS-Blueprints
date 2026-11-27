@@ -38,6 +38,9 @@ mod light;
 mod mesh;
 #[cfg(target_os = "trueos")]
 mod preview;
+#[cfg(all(test, not(target_os = "trueos")))]
+#[path = "greeting/skin_study.rs"]
+mod skin_study;
 
 const HUMANOID_FILE: &str = "AvatarSample_B.glb";
 const HUMANOID_GLB: &[u8] = include_bytes!("../assets/AvatarSample_B.glb");
@@ -267,7 +270,7 @@ async fn run() -> Result<()> {
             "--root" => root = args.next().context("--root requires a directory")?.into(),
             "--help" | "-h" => {
                 println!(
-                    "emomodel [--root PATH] [show | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens the body lighting study, then plays Nod and includes Greeting when installed locally.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
+                    "emomodel [--root PATH] [show | skin | reel | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the original diffuse lighting.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
                 );
                 return Ok(());
             }
@@ -276,7 +279,7 @@ async fn run() -> Result<()> {
         }
     }
     let default_command = if cfg!(target_os = "trueos") {
-        "show"
+        "skin"
     } else {
         "status"
     };
@@ -285,14 +288,24 @@ async fn run() -> Result<()> {
         .map(String::as_str)
         .unwrap_or(default_command)
     {
-        command @ ("show" | "greeting" | "base-color") if positional.len() <= 1 => {
+        command @ ("show" | "skin" | "reel" | "greeting" | "base-color")
+            if positional.len() <= 1 =>
+        {
             #[cfg(target_os = "trueos")]
             {
-                if command == "show" && !positional.is_empty() {
+                if command == "show" {
                     return preview::show(HUMANOID_GLB);
                 }
+                use greeting::Appearance;
+                let appearance = match command {
+                    "skin" => Appearance::SkinStudy,
+                    "base-color" => Appearance::BaseColor,
+                    _ => Appearance::Lighting,
+                };
                 let clip = root.join(GREETING_FILE);
-                let data = if command == "greeting" || clip.is_file() {
+                let data = if appearance != Appearance::SkinStudy
+                    && (command == "greeting" || clip.is_file())
+                {
                     Some(
                         fs::read(&clip)
                             .with_context(|| format!("read Greeting from {}", clip.display()))?,
@@ -300,12 +313,12 @@ async fn run() -> Result<()> {
                 } else {
                     None
                 };
-                let motions = positional.is_empty().then(|| root.join("motions"));
+                let motions = matches!(command, "skin" | "reel").then(|| root.join("motions"));
                 return greeting::show(
                     HUMANOID_GLB,
                     data.as_deref(),
                     motions.as_deref(),
-                    command == "base-color",
+                    appearance,
                 )
                 .await;
             }
@@ -323,7 +336,9 @@ async fn run() -> Result<()> {
             return Ok(());
         }
         "setup" if positional.len() <= 2 => (),
-        _ => bail!("use show, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"),
+        _ => bail!(
+            "use show, skin, reel, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"
+        ),
     }
     let models = catalog()?;
     let choice = positional.get(1).map(String::as_str).unwrap_or("auto");

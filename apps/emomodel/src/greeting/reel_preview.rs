@@ -11,20 +11,22 @@ use super::{
     floor, floor_material,
     foot_contact::FootProbe,
     hand_contact::HandProbe,
-    reel::{GROUND_Y, Reel},
+    reel::{GROUND_Y, PlacedPose, Reel},
     reel_draw::{ReelDraw, VERTEX_BYTES},
     report,
+    skin_study::{self, Lighting, Material},
 };
 use crate::{
+    animation::Animation,
     autobs::{ARC_LIMIT, BASE_YAW, camera_back, view_back},
     hair::{Hair, PARTICLES},
     hair_body::BodyBack,
     hair_ribbon,
-    light::{DiffuseLookup, LightPlane},
+    light::{self, DiffuseLookup, LightPlane},
     mesh::Mesh,
 };
 
-const LIGHT_SIZE: usize = 64;
+const LIGHT_SIZE: usize = skin_study::SIZE;
 const LIGHT_ROW: usize = floor_material::SWATCH_ROWS;
 const EYE_ROW: usize = LIGHT_ROW + LIGHT_SIZE;
 const CONTACT_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
@@ -32,9 +34,62 @@ const ATLAS_HEIGHT: usize = 512;
 const MAX_ATLAS_WIDTH: usize = 1024;
 const ATLAS_WIDTHS: [usize; 2] = [512, MAX_ATLAS_WIDTH];
 
+pub(super) enum Motion {
+    Reel(Reel),
+    Nod(Animation),
+}
+
+impl Motion {
+    fn frame_count(&self) -> usize {
+        match self {
+            Self::Reel(reel) => reel.frame_count(),
+            Self::Nod(nod) => (nod.duration() * super::HZ as f32).round() as usize + 1,
+        }
+    }
+
+    fn phase(&self, frame: usize) -> &'static str {
+        match self {
+            Self::Reel(reel) => reel.phase(frame),
+            Self::Nod(_) => "Nod",
+        }
+    }
+
+    fn sample(&mut self, frame: usize) -> Result<PlacedPose<'_>> {
+        match self {
+            Self::Reel(reel) => reel.sample(frame),
+            Self::Nod(nod) => {
+                nod.apply(frame as f32 / super::HZ as f32);
+                let head_from_bind = nod.head_from_bind().context("missing Nod head joint")?;
+                let pose = nod.skin();
+                Ok(PlacedPose {
+                    positions: pose.positions,
+                    normals: pose.normals,
+                    head_from_bind,
+                })
+            }
+        }
+    }
+}
+
+fn skin_materials(motion: &Motion, mesh: &Mesh) -> Result<Vec<Material>> {
+    let mut materials = Vec::with_capacity(mesh.material_vertices[1].end);
+    for (section, range) in mesh.material_vertices[..2].iter().enumerate() {
+        let start = materials.len();
+        match motion {
+            Motion::Reel(reel) => materials.extend(reel.bind_positions(section).map(Material::at)),
+            Motion::Nod(nod) => materials.extend(nod.bind_positions(section).map(Material::at)),
+        }
+        ensure!(
+            start == range.start && materials.len() == range.end,
+            "skin study rig changed"
+        );
+    }
+    Ok(materials)
+}
+
 pub(super) struct Preview<'a> {
     mesh: &'a Mesh,
-    reel: Reel,
+    motion: Motion,
     draw: ReelDraw,
     source_vertices: Vec<usize>,
     material_slots: Vec<Option<usize>>,
@@ -49,6 +104,7 @@ pub(super) struct Preview<'a> {
     feet: FootProbe,
     hands: HandProbe,
     contacts: floor::Atlas,
+    skin_materials: Option<Vec<Material>>,
     light_pixels: Vec<u8>,
     light_plane: LightPlane,
     vertices: Vec<u8>,
@@ -61,8 +117,9 @@ impl<'a> Preview<'a> {
     pub(super) async fn new(
         device: Device,
         mesh: &'a Mesh,
-        mut reel: Reel,
+        mut motion: Motion,
         glb: &[u8],
+        studying_skin: bool,
     ) -> Result<(Self, Vec3, [f32; 2])> {
         let body_start = mesh.material_vertices[1].start;
         let feet = FootProbe::new(glb, body_start)?;
@@ -77,6 +134,9 @@ impl<'a> Preview<'a> {
         let hair_base = eye_base + eye_detail.len();
         let strand_count = mesh.strand_guides.len();
         let hair_vertices = strand_count * PARTICLES * 2;
+        let skin_materials = studying_skin
+            .then(|| skin_materials(&motion, mesh))
+            .transpose()?;
         let vertex_count = hair_base + hair_vertices + 4 * floor::CONTACTS;
         let mut indices = Vec::with_capacity(
             (compact_indices.len()
@@ -113,18 +173,26 @@ impl<'a> Preview<'a> {
             geometry_index_bytes + floor::CONTACTS * 6 * size_of::<u32>(),
             4 * MAX_ATLAS_WIDTH * ATLAS_HEIGHT,
         )?;
-        let light_pixels = vmedia::decode(ImageFormat::Bmp, DiffuseLookup::new().update(55))
-            .await
-            .map_err(super::gpu_error)
-            .context("decode reel lighting")?
-            .rgba;
+        let light_pixels = if studying_skin {
+            report(format_args!(
+                "skin study ready sample=vertex lookup=64x1 roughness=100%"
+            ));
+            skin_study::lookup_rgba()
+        } else {
+            vmedia::decode(ImageFormat::Bmp, DiffuseLookup::new().update(55))
+                .await
+                .map_err(super::gpu_error)
+                .context("decode reel lighting")?
+                .rgba
+        };
+        let light_rows = if studying_skin { 1 } else { LIGHT_SIZE };
         ensure!(
-            light_pixels.len() == LIGHT_SIZE * LIGHT_SIZE * 4,
+            light_pixels.len() == LIGHT_SIZE * light_rows * 4,
             "wrong reel lighting extent"
         );
 
-        let (center, half_span) = frame_bounds(&mut reel, &source_vertices)?;
-        let initial = reel.sample(0)?;
+        let (center, half_span) = frame_bounds(&mut motion, &source_vertices)?;
+        let initial = motion.sample(0)?;
         let mut body = BodyBack::default();
         body.update(initial.positions, body_indices(mesh, body_start));
         let mut hair = Hair::new(mesh.strand_guides.clone(), initial.head_from_bind);
@@ -133,15 +201,22 @@ impl<'a> Preview<'a> {
         }
         let opening_drape = hair.strands().copied().collect();
         let settled = hair.clone();
+        let (clips, playback) = match motion {
+            Motion::Reel(_) => (
+                "Greeting,Nod,Squat,Spin,Model-Pose,Show-Full-Body,Shoot,Peace-Sign",
+                "reel",
+            ),
+            Motion::Nod(_) => ("Nod", "nod"),
+        };
         report(format_args!(
-            "avatar ready target_hz={} clips=Greeting,Nod,Squat,Spin,Model-Pose,Show-Full-Body,Shoot,Peace-Sign poses={} playback=reel",
+            "avatar ready target_hz={} clips={clips} poses={} playback={playback}",
             super::HZ,
-            reel.frame_count()
+            motion.frame_count()
         ));
         Ok((
             Self {
                 mesh,
-                reel,
+                motion,
                 draw,
                 source_vertices,
                 material_slots,
@@ -156,6 +231,7 @@ impl<'a> Preview<'a> {
                 feet,
                 hands,
                 contacts: floor::Atlas::new(1),
+                skin_materials,
                 light_pixels,
                 light_plane: LightPlane::new(),
                 vertices: Vec::with_capacity(vertex_count * VERTEX_BYTES),
@@ -169,8 +245,8 @@ impl<'a> Preview<'a> {
     }
 
     pub(super) fn pose(&self, tick: usize) -> (usize, &'static str) {
-        let index = tick % self.reel.frame_count();
-        (index, self.reel.phase(index))
+        let index = tick % self.motion.frame_count();
+        (index, self.motion.phase(index))
     }
 
     pub(super) fn submit(
@@ -178,8 +254,9 @@ impl<'a> Preview<'a> {
         surface: Ui4Surface,
         camera: RetainedCamera,
         frame: usize,
+        elapsed_ns: u64,
     ) -> Result<(), i32> {
-        let extent = match self.stage(camera, frame) {
+        let extent = match self.stage(camera, frame, elapsed_ns) {
             Ok(extent) => extent,
             Err(error) => {
                 report(format_args!("prepare reel frame {frame}: {error:#}"));
@@ -196,22 +273,22 @@ impl<'a> Preview<'a> {
         )
     }
 
-    fn stage(&mut self, camera: RetainedCamera, frame: usize) -> Result<[u32; 2]> {
-        let frame_count = self.reel.frame_count();
+    fn stage(&mut self, camera: RetainedCamera, frame: usize, elapsed_ns: u64) -> Result<[u32; 2]> {
+        let frame_count = self.motion.frame_count();
         if let Some(previous) = self.previous_pose {
             if frame < previous {
                 self.hair = self.settled.clone();
             } else {
                 // Advance the solver for skipped ticks too, while bounding catch-up work.
                 for skipped in (previous + 1).max(frame.saturating_sub(3))..frame {
-                    let pose = self.reel.sample(skipped)?;
+                    let pose = self.motion.sample(skipped)?;
                     self.body
                         .update(pose.positions, body_indices(self.mesh, self.body_start));
                     self.hair.step(pose.head_from_bind, Vec3::ZERO, &self.body);
                 }
             }
         }
-        let pose = self.reel.sample(frame)?;
+        let pose = self.motion.sample(frame)?;
         if frame != 0 && self.previous_pose != Some(frame) {
             self.body
                 .update(pose.positions, body_indices(self.mesh, self.body_start));
@@ -249,6 +326,10 @@ impl<'a> Preview<'a> {
                 .try_into()
                 .expect("camera direction"),
         );
+        let skin = self
+            .skin_materials
+            .as_deref()
+            .map(|materials| (materials, Lighting::new(light::angle(elapsed_ns), back)));
         self.vertices.clear();
         let output = &mut self.vertices;
         let mut append = |position: Vec3, uv: [f32; 2]| {
@@ -258,18 +339,21 @@ impl<'a> Preview<'a> {
             }
         };
         for &index in &self.source_vertices {
-            let uv = self.material_slots[index].map_or_else(
-                || {
-                    let [u, v] = self
-                        .light_plane
-                        .coordinates(Vec3::from_array(pose.normals[index]));
-                    [
-                        u * LIGHT_SIZE as f32 / width as f32,
-                        (v * LIGHT_SIZE as f32 + LIGHT_ROW as f32) / height as f32,
-                    ]
-                },
-                |slot| swatches[slot],
-            );
+            let uv = if let Some(slot) = self.material_slots[index] {
+                swatches[slot]
+            } else {
+                let normal = Vec3::from_array(pose.normals[index]);
+                let (u, row) = if let Some((materials, lighting)) = &skin {
+                    (lighting.coordinate(normal, materials[index]), 0.5)
+                } else {
+                    let [u, v] = self.light_plane.coordinates(normal);
+                    (u, v * LIGHT_SIZE as f32)
+                };
+                [
+                    u * LIGHT_SIZE as f32 / width as f32,
+                    (row + LIGHT_ROW as f32) / height as f32,
+                ]
+            };
             append(Vec3::from_array(pose.positions[index]), uv);
         }
         for (position, [u, v]) in self.eye_detail.vertices(pose.positions) {
@@ -280,7 +364,7 @@ impl<'a> Preview<'a> {
             append(Vec3::from_array(position), uv);
         }
         self.drape.clear();
-        let drape_blend_start = frame_count - super::HZ as usize;
+        let drape_blend_start = frame_count.saturating_sub(super::HZ as usize);
         let t = (frame.saturating_sub(drape_blend_start) as f32 / super::HZ as f32).clamp(0.0, 1.0);
         self.hair.append_loop_pose(
             &self.opening_drape,
@@ -315,14 +399,14 @@ fn body_indices(mesh: &Mesh, body_start: usize) -> &[u32] {
     &skin[skin.partition_point(|&index| (index as usize) < body_start)..]
 }
 
-fn frame_bounds(reel: &mut Reel, source: &[usize]) -> Result<(Vec3, [f32; 2])> {
+fn frame_bounds(motion: &mut Motion, source: &[usize]) -> Result<(Vec3, [f32; 2])> {
     let right = Vec3::Y.cross(camera_back(BASE_YAW));
     let back = view_back(BASE_YAW);
     let up = back.cross(right);
     let mut low = Vec3::splat(f32::INFINITY);
     let mut high = Vec3::splat(f32::NEG_INFINITY);
-    for frame in (0..reel.frame_count()).step_by(5) {
-        let pose = reel.sample(frame)?;
+    for frame in (0..motion.frame_count()).step_by(5) {
+        let pose = motion.sample(frame)?;
         for &index in source {
             let position = Vec3::from_array(pose.positions[index]);
             let point = Vec3::new(right.dot(position), up.dot(position), back.dot(position));

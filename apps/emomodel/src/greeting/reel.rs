@@ -287,6 +287,13 @@ impl Reel {
         self.frames
     }
 
+    pub(super) fn bind_positions(
+        &self,
+        section: usize,
+    ) -> impl ExactSizeIterator<Item = Vec3> + '_ {
+        self.clips[0].bind_positions(section)
+    }
+
     pub(super) fn phase(&self, frame: usize) -> &'static str {
         match self.section(frame % self.frames).part {
             Part::Clip(index) => ACTIONS[index].title,

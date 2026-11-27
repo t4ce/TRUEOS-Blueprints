@@ -19,6 +19,8 @@ The Blueprint uses argv-v1 and TRUEOSFS scope. Commands:
 ```sh
 emomodel
 emomodel show
+emomodel skin
+emomodel reel
 emomodel greeting
 emomodel base-color
 emomodel status
@@ -34,9 +36,14 @@ their rest pose through the built-in flat-color vGPU pipeline. The app redraws
 when UI4 delivers a final window extent. The avatar stays centered at its
 original pixel size, with any overflow clipped by the frame.
 
-Bare launch through `§§emomodel` plays the motion reel when the seven locally
-retargeted files `motions/01.glb` through `motions/07.glb` are installed in the app
-directory. The reel plays Greeting, Nod, Squat, Spin, Model Pose, Show Full Body,
+Bare launch through `§§emomodel` opens the skin study. It uses
+the motion reel when the seven locally retargeted files `motions/01.glb` through
+`motions/07.glb` are installed, or the built-in Nod on a clean install.
+Roughness is fixed at 100% while the key light sweeps across the posed skin.
+The bind-space roughness uses a 64-entry lighting ramp in the reel atlas.
+
+`reel` plays the motion reel with the original diffuse lighting. The reel
+plays Greeting, Nod, Squat, Spin, Model Pose, Show Full Body,
 Shoot, and Peace Sign, then takes two short steps into the opening Greeting
 crouch with both feet and fingertips close to the floor. The correction eases
 out during takeoff, and a smaller height adjustment settles the landing. The
@@ -69,8 +76,7 @@ palette colors.
 on the animated avatar. It samples the painted skin and mouth per fragment
 through the unlit retained shader. The iris uses the flat palette because its
 authored material requires alpha blending. Both atlases are decoded once and
-occupy 128 MiB of texture residency together. Bare launch continues to use
-the light sweep with the 1024 × 1024 normal maps.
+occupy 128 MiB of texture residency together.
 
 In the animated preview, 28 procedural guides take the place of the long
 back hair. The source surface provides the roots, segment lengths, the direction

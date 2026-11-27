@@ -261,13 +261,13 @@ mod tests {
         let reference = prepare(glb, 640, 560).unwrap();
         let procedural = prepare_materials(glb, 640, 560, &PREVIEW_MATERIALS, true).unwrap();
         assert_eq!(procedural.vertices, reference.vertices);
-        assert_eq!(procedural.hair_triangle_count, 3_589);
+        assert_eq!(procedural.hair_triangle_count, 3_510);
         assert_eq!(procedural.strand_guides.len(), 28);
         let hair_start = reference.triangle_count - reference.hair_triangle_count;
         let triangles = reference.indices.as_chunks::<3>().0;
-        let expected = triangles[..hair_start + 1_770]
+        let expected = triangles[..hair_start + 1_749]
             .iter()
-            .chain(&triangles[hair_start + 4_194..hair_start + 6_013]);
+            .chain(&triangles[hair_start + 4_173..hair_start + 5_934]);
         assert!(procedural.indices.as_chunks::<3>().0.iter().eq(expected));
     }
 
@@ -296,7 +296,7 @@ mod tests {
         let source_triangles = source_indices.as_chunks::<3>().0;
         let (face, body_and_hair) = source_triangles.split_at(4_232);
         let (body, hair) = body_and_hair.split_at(10_022);
-        assert_eq!(hair.len(), 11_669);
+        assert_eq!(hair.len(), 11_590);
         let mesh = prepare(glb, 640, 560).unwrap();
         assert_eq!(mesh.vertex_count(), 4_171 + 8_535 + 9_263);
         assert_eq!(mesh.triangle_count, face.len() + body.len() + hair.len());

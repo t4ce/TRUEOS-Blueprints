@@ -42,6 +42,7 @@ mod normal_detail;
 mod reel;
 mod reel_draw;
 mod reel_preview;
+mod skin_study;
 
 const SECOND_NS: u64 = 1_000_000_000;
 const FRAME_BUDGET_NS: u64 = SECOND_NS / HZ as u64;
@@ -73,11 +74,18 @@ const SHADER_BYTES: &[u8] = include_bytes!("../shaders/retained-unlit.bundle");
 static RETAINED_SHADERS: [u8; SHADER_BYTES.len()] =
     *include_bytes!("../shaders/retained-unlit.bundle");
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Appearance {
+    Lighting,
+    BaseColor,
+    SkinStudy,
+}
+
 pub(super) async fn show(
     glb: &[u8],
     greeting_glb: Option<&[u8]>,
     motions: Option<&Path>,
-    color: bool,
+    appearance: Appearance,
 ) -> Result<()> {
     let (x, y, width, height) = window_placement()?;
     let mesh = mesh::prepare_materials(glb, width, height, &MATERIALS, true)?;
@@ -89,13 +97,26 @@ pub(super) async fn show(
             Some(path) => reel::Reel::load(path, glb, &MATERIALS, mesh.material_vertices[1].start)?,
             None => None,
         };
-        let (mut playback, target, half_span) = if let Some(mut reel) = reel {
-            apply_normal_maps(glb, |section, normals| {
-                reel.apply_bind_normals(section, normals)
-            })
-            .await?;
+        let studying_skin = appearance == Appearance::SkinStudy;
+        let motion = if let Some(mut reel) = reel {
+            if !studying_skin {
+                apply_normal_maps(glb, |section, normals| {
+                    reel.apply_bind_normals(section, normals)
+                })
+                .await?;
+            }
+            Some(reel_preview::Motion::Reel(reel))
+        } else if studying_skin {
+            Some(reel_preview::Motion::Nod(Animation::nod(
+                glb, &MATERIALS, None,
+            )?))
+        } else {
+            None
+        };
+        let color = appearance == Appearance::BaseColor;
+        let (mut playback, target, half_span) = if let Some(motion) = motion {
             let (preview, center, span) =
-                reel_preview::Preview::new(device, &mesh, reel, glb).await?;
+                reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin).await?;
             (Playback::Reel(preview), center.to_array(), span)
         } else {
             let mut greeting = greeting_glb
@@ -132,10 +153,10 @@ pub(super) async fn show(
         };
         let mut observer = Autobs::new((width, height), target, mesh.pixels_per_unit, half_span);
         let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
-        let title = if color {
-            "EmoModel · 4K Base Color"
-        } else {
-            "EmoModel"
+        let title = match appearance {
+            Appearance::SkinStudy => "EmoModel · Skin",
+            Appearance::BaseColor => "EmoModel · 4K Base Color",
+            Appearance::Lighting => "EmoModel",
         };
         frame.set_title(title).map_err(ui_error)?;
         play(&mut frame, device, &mut playback, &mut observer).await
@@ -1079,7 +1100,7 @@ async fn play(
         let submit_started = clock::monotonic_nanos();
         let rendered = match playback {
             Playback::Retained(renderer, skin) => renderer.submit(surface, camera, pose, skin),
-            Playback::Reel(preview) => preview.submit(surface, camera, pose),
+            Playback::Reel(preview) => preview.submit(surface, camera, pose, elapsed),
         };
         match rendered {
             Ok(()) => (),

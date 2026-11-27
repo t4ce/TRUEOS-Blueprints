@@ -463,6 +463,17 @@ impl Animation {
         self.update_world(None);
     }
 
+    #[cfg(target_os = "trueos")]
+    pub(super) fn bind_positions(
+        &self,
+        section: usize,
+    ) -> impl ExactSizeIterator<Item = Vec3> + '_ {
+        self.sections[section]
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position)
+    }
+
     pub(super) fn apply_bind_normals(
         &mut self,
         section: usize,
