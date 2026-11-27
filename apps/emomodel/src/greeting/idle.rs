@@ -2,7 +2,7 @@ use anyhow::{Context, Result, ensure};
 use glam::{Mat4, Vec3};
 use trueos::vgpu::{self, Device, RetainedDrawRange, RetainedMesh, RetainedMeshDescriptor};
 
-use super::{DRAW_GROUPS, HAIR_UV, Staging, VERTEX_BYTES, gpu_error, write_geometry};
+use super::{DRAW_GROUPS, Staging, VERTEX_BYTES, gpu_error, write_geometry};
 use crate::{
     hair::{Hair, PARTICLES},
     hair_body::BodyBack,
@@ -21,6 +21,7 @@ pub(super) struct IdleHair<'a> {
     pub(super) head: Mat4,
     pub(super) body: &'a BodyBack,
     pub(super) view_back: Vec3,
+    pub(super) hair_uv: [f32; 2],
 }
 
 pub(super) struct Idle {
@@ -44,6 +45,7 @@ impl Idle {
             head,
             body,
             view_back,
+            hair_uv,
         } = state;
         let strand_vertices = (PARTICLES * 2) as u32;
         let strand_count = u32::try_from(hair.strands().len())?;
@@ -70,7 +72,7 @@ impl Idle {
             (free_vertex_bytes / frame_vertex_bytes).min(free_index_bytes / frame_index_bytes);
         ensure!(frame_limit > 0, "idle hair frame exceeds staging capacity");
 
-        // Store the static avatar and floor once in each staging-sized batch.
+        // Store the static avatar and its contacts once per batch.
         let mesh_count = IDLE_FRAMES.div_ceil(frame_limit);
         let frames_per_mesh = IDLE_FRAMES.div_ceil(mesh_count);
         let mut vertices =
@@ -103,7 +105,7 @@ impl Idle {
                         .flatten()
                     {
                         visit(point);
-                        for component in point.to_array().into_iter().chain(normal).chain(HAIR_UV) {
+                        for component in point.to_array().into_iter().chain(normal).chain(hair_uv) {
                             vertices.extend_from_slice(&component.to_le_bytes());
                         }
                     }

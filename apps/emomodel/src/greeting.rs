@@ -22,12 +22,19 @@ use crate::{
     hair_body::BodyBack,
     hair_ribbon,
     idle_wind::{IDLE_FRAMES, WIND_FRAMES},
-    light::{DiffuseLookup, LightPlane, SWEEP_NS, sweep_angle},
+    light::{self, ANGLE_COUNT, DiffuseLookup, LightPlane, SWEEP_NS},
     mesh::{self, Mesh},
     preview::{UI4_IMPORT_BUSY, gpu_error, ui_error, window_placement, write_geometry},
 };
+use floor_material::CLEAR_RGBA;
+use foot_contact::FootProbe;
+use hand_contact::HandProbe;
 
 mod base_color;
+mod floor;
+mod floor_material;
+mod foot_contact;
+mod hand_contact;
 mod idle;
 mod normal_detail;
 
@@ -37,7 +44,6 @@ const REPORT_NS: u64 = 5 * SECOND_NS;
 const POSES_PER_MESH: usize = 24;
 const VERTEX_BYTES: usize = 32;
 const WAIT_NS: u64 = 2 * SECOND_NS;
-const CLEAR_RGBA: u32 = u32::from_le_bytes([249, 249, 248, 255]);
 const DRAW_GROUPS: usize = 3;
 const LIT_MATERIALS: usize = 2;
 const MATERIALS: [&str; 5] = [
@@ -52,15 +58,9 @@ const SKIN_NORMAL_MAPS: [&[u8]; LIT_MATERIALS] = [
     include_bytes!("../assets/AvatarSample_B-face-normal-1024.png"),
     include_bytes!("../assets/AvatarSample_B-body-normal-1024.png"),
 ];
-const PALETTE_WIDTH: usize = 4;
-const HAIR_UV: [f32; 2] = [0.5 / PALETTE_WIDTH as f32, 0.5];
-const GRID_UV: [f32; 2] = [3.5 / PALETTE_WIDTH as f32, 0.5];
+const QUAD_VERTEX_COUNT: u32 = 4;
 // Surface import and render completion can forward UI4's missing-window status.
 const UI4_SURFACE_GONE: i32 = -3;
-
-// BGR swatches for purple hair, neutral eye and mouth geometry, irises, and grid lines.
-const MATERIAL_PALETTE_BMP: &[u8; 66] = b"BM\x42\0\0\0\0\0\0\0\x36\0\0\0\x28\0\0\0\x04\0\0\0\x01\0\0\0\x01\0\x18\0\0\0\0\0\x0c\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\
-    \xbd\x53\x87\xbe\xc8\xd0\x35\x23\x2d\xb5\xaf\xa5";
 
 const SHADER_BYTES: &[u8] = include_bytes!("../shaders/retained-unlit.bundle");
 #[used]
@@ -82,8 +82,9 @@ pub(super) async fn show(glb: &[u8], greeting_glb: Option<&[u8]>, color: bool) -
     if !color {
         apply_normal_maps(glb, &mut sequence).await?;
     }
-    let device =
-        Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT)).map_err(gpu_error)?;
+    let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))
+        .map_err(gpu_error)
+        .inspect_err(|error| report(format_args!("open avatar device: {error:#}")))?;
     let shown = async {
         let renderer = AvatarRenderer::prepare(device, &mesh, &mut sequence, glb, color).await?;
         let mut skin = if color {
@@ -108,6 +109,9 @@ pub(super) async fn show(glb: &[u8], greeting_glb: Option<&[u8]>, color: bool) -
     }
     .await;
     let released = device.close().map_err(gpu_error);
+    if let Err(error) = &shown {
+        report(format_args!("avatar preview failed: {error:#}"));
+    }
     shown?;
     released
 }
@@ -208,40 +212,6 @@ struct Staging {
     index_capacity: usize,
 }
 
-fn floor_grid(y: f32) -> Vec<[[f32; 3]; 4]> {
-    const COLUMNS: usize = 6;
-    const ROWS: usize = 4;
-    // A cell is approximately the width and length of an authored foot.
-    const CELL_X: f32 = 0.08;
-    const CELL_Z: f32 = 0.20;
-    const HALF_LINE: f32 = 0.005;
-    let x_min = -0.5 * COLUMNS as f32 * CELL_X;
-    let x_max = -x_min;
-    let z_min = -0.20 - 0.5 * ROWS as f32 * CELL_Z;
-    let z_max = z_min + ROWS as f32 * CELL_Z;
-    let strip = |x0, x1, z0, z1| [[x0, y, z0], [x0, y, z1], [x1, y, z0], [x1, y, z1]];
-    let mut lines = Vec::with_capacity(COLUMNS + ROWS + 2);
-    for column in 0..=COLUMNS {
-        let x = x_min + column as f32 * CELL_X;
-        lines.push(strip(x - HALF_LINE, x + HALF_LINE, z_min, z_max));
-    }
-    for row in 0..=ROWS {
-        let z = z_min + row as f32 * CELL_Z;
-        lines.push(strip(
-            x_min - HALF_LINE,
-            x_max + HALF_LINE,
-            z - HALF_LINE,
-            z + HALF_LINE,
-        ));
-    }
-    lines
-}
-
-fn grid_indices(base: u32, vertex_count: u32) -> impl Iterator<Item = u32> {
-    (0..vertex_count / 4)
-        .flat_map(move |line| [0, 1, 2, 2, 1, 3].map(|corner| base + line * 4 + corner))
-}
-
 fn append_range(
     indices: &mut Vec<u8>,
     draw: impl Iterator<Item = u32>,
@@ -251,6 +221,20 @@ fn append_range(
     Ok(RetainedDrawRange {
         first_index,
         index_count: u32::try_from(indices.len() / size_of::<u32>())? - first_index,
+    })
+}
+
+fn append_floor_quad(vertices: &mut Vec<u8>, positions: [[f32; 3]; 4], uv: [[f32; 2]; 4]) {
+    for (position, uv) in positions.into_iter().zip(uv) {
+        for value in position.into_iter().chain(Vec3::Y.to_array()).chain(uv) {
+            vertices.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+}
+
+fn quad_indices(base: u32, count: u32) -> impl Iterator<Item = u32> {
+    (0..count).flat_map(move |quad| {
+        [0, 1, 2, 2, 1, 3].map(|corner| base + quad * QUAD_VERTEX_COUNT + corner)
     })
 }
 
@@ -266,19 +250,20 @@ fn section_indices<'a>(
         .flatten()
 }
 
-fn advance_hair(
-    animation: &mut Animation,
+fn advance_hair<'a>(
+    animation: &'a mut Animation,
     hair: &mut Hair,
     body: &mut BodyBack,
     body_indices: &[u32],
     wind: Vec3,
-) -> Result<()> {
+) -> Result<&'a [[f32; 3]]> {
     let head = animation
         .head_from_bind()
         .context("missing hair root joint")?;
-    body.update(animation.skin().positions, body_indices);
+    let positions = animation.skin().positions;
+    body.update(positions, body_indices);
     hair.step(head, wind, body);
-    Ok(())
+    Ok(positions)
 }
 
 impl AvatarRenderer {
@@ -305,6 +290,8 @@ impl AvatarRenderer {
         let body_start = u32::try_from(mesh.material_vertices[1].start)?;
         let body_indices =
             &skin_indices[skin_indices.partition_point(|&index| index < body_start)..];
+        let foot_probe = FootProbe::new(glb, mesh.material_vertices[1].start)?;
+        let hand_probe = HandProbe::new(glb, mesh.material_vertices[1].start)?;
         let mut low = Vec3::splat(f32::INFINITY);
         let mut high = Vec3::splat(f32::NEG_INFINITY);
         for &index in skin_indices {
@@ -314,6 +301,7 @@ impl AvatarRenderer {
             high = high.max(coordinates);
         }
         let center = (low + high) * 0.5;
+        let ground_y = low.y - 0.004;
         let light_sweep_ns = if color { 0 } else { SWEEP_NS };
         let landing =
             greeting_duration.map(|_| right * center.x + back * center.z + Vec3::Y * target.y);
@@ -346,10 +334,11 @@ impl AvatarRenderer {
         let preroll = if greeting_duration.is_some() { 1 } else { 2 };
         let mut hair_frames = Vec::with_capacity(frame_count * strand_count);
         let mut loop_pose = Vec::with_capacity(strand_count);
+        let mut contacts = floor::Atlas::new(pose_count);
         for cycle in 0..=preroll {
             for frame in 0..frame_count {
                 let sample = timeline.sample(frame);
-                advance_hair(
+                let positions = advance_hair(
                     sequence.apply(sample),
                     &mut hair,
                     &mut body,
@@ -357,6 +346,15 @@ impl AvatarRenderer {
                     wind_at(sample),
                 )?;
                 if cycle == preroll {
+                    if frame < pose_count {
+                        let [[left_heel, left_toe], [right_heel, right_toe]] =
+                            foot_probe.sample(positions).map(|foot| foot.points());
+                        contacts.push(
+                            ground_y,
+                            [left_heel, left_toe, right_heel, right_toe],
+                            hand_probe.sample(positions),
+                        );
+                    }
                     if let Some((reference, weight)) = sample.hair_reference() {
                         let start = reference * strand_count;
                         loop_pose.clear();
@@ -372,6 +370,8 @@ impl AvatarRenderer {
                 }
             }
         }
+        let palette = contacts.bake()?;
+        let hair_uv = palette.swatch(0);
         let strand_vertices = u32::try_from(PARTICLES * 2)?;
         let first_strand_vertex = u32::try_from(source_vertices.len())?;
         let strand_indices: Vec<_> = (0..u32::try_from(strand_count)?)
@@ -384,27 +384,16 @@ impl AvatarRenderer {
             })
             .collect();
         let hair_vertex_count = u32::try_from(strand_count)? * strand_vertices;
-        let vertex_count = first_strand_vertex + hair_vertex_count;
         let variants = if greeting_duration.is_some() { 2 } else { 1 };
-        let vertex_bytes =
-            (first_strand_vertex + hair_vertex_count * variants) as usize * VERTEX_BYTES;
+        let vertex_bytes = (first_strand_vertex as usize
+            + hair_vertex_count as usize * variants
+            + QUAD_VERTEX_COUNT as usize * floor::CONTACTS)
+            * VERTEX_BYTES;
         let batch_poses = pose_count.min(POSES_PER_MESH);
-        let grid = floor_grid(low.y - 0.004);
-        let grid_vertex_count = u32::try_from(grid.len() * 4)?;
-        let mut grid_vertices = Vec::with_capacity(grid_vertex_count as usize * VERTEX_BYTES);
-        for &position in grid.iter().flatten() {
-            for value in position
-                .into_iter()
-                .chain(Vec3::Y.to_array())
-                .chain(GRID_UV)
-            {
-                grid_vertices.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        let vertex_capacity = vertex_bytes * batch_poses + grid_vertices.len();
+        let vertex_capacity = vertex_bytes * batch_poses;
         let index_capacity = (compact_indices.len() * 2
-            + (compact_indices.len() - skin_indices.len()) * 2 * (variants as usize - 1)
-            + (strand_indices.len() + grid.len() * 6) * variants as usize)
+            + (compact_indices.len() - skin_indices.len()) * 2 * (variants - 1)
+            + (strand_indices.len() + floor::CONTACTS * 6) * variants)
             * size_of::<u32>()
             * batch_poses;
         let vertex_buffer = device
@@ -451,11 +440,6 @@ impl AvatarRenderer {
             span[1] = span[1].max(half_height);
         };
         let light_plane = LightPlane::new();
-        for &point in grid.iter().flatten() {
-            for center in [target, landing.unwrap_or(target)] {
-                include_in_frame(&mut animated_half_span, Vec3::from_array(point), center);
-            }
-        }
         let sections: [Vec<Range<usize>>; DRAW_GROUPS] = if color {
             let [face, body, hair, mouth, iris] = mesh.material_triangles.as_slice() else {
                 anyhow::bail!("unexpected avatar material sections");
@@ -476,21 +460,13 @@ impl AvatarRenderer {
         let flat_group = draw_group_count - 1;
         let mut material_coordinates = vec![None; mesh.vertex_count()];
         for (slot, vertices) in mesh.material_vertices[LIT_MATERIALS..].iter().enumerate() {
-            let u = (slot as f32 + 0.5) / PALETTE_WIDTH as f32;
-            material_coordinates[vertices.clone()].fill(Some([u, 0.5]));
+            material_coordinates[vertices.clone()].fill(Some(palette.swatch(slot)));
         }
         if color {
             base_color::apply_coordinates(glb, mesh, &mut material_coordinates)?;
         }
         for start in (0..pose_count).step_by(POSES_PER_MESH) {
             let end = (start + POSES_PER_MESH).min(pose_count);
-            let count = u32::try_from(end - start)?;
-            let mirrored = u32::try_from(
-                (start..end)
-                    .filter(|&pose| timeline.reverse_frame(pose).is_some())
-                    .count(),
-            )?;
-            let grid_base = count * vertex_count + mirrored * hair_vertex_count;
             let mesh_index = atlas.len();
             vertices.clear();
             indices.clear();
@@ -536,10 +512,27 @@ impl AvatarRenderer {
                     let start = frame * strand_count;
                     for points in &hair_frames[start..start + strand_count] {
                         for vertex in hair_ribbon::vertices(points, back).into_iter().flatten() {
-                            append_vertex(vertex.to_array(), back.to_array(), HAIR_UV);
+                            append_vertex(vertex.to_array(), back.to_array(), hair_uv);
                         }
                     }
                 }
+                let contact_offset = vertices.len();
+                let contact_base = u32::try_from(contact_offset / VERTEX_BYTES)?;
+                for (points, uv) in contacts.quads(pose, ground_y, &palette) {
+                    for &center in targets.iter().flatten() {
+                        for point in points {
+                            include_in_frame(
+                                &mut animated_half_span,
+                                Vec3::from_array(point),
+                                center,
+                            );
+                        }
+                    }
+                    append_floor_quad(&mut vertices, points, uv);
+                }
+                let vertex_end = u32::try_from(vertices.len() / VERTEX_BYTES)?;
+                let contact_count = (vertex_end - contact_base) / QUAD_VERTEX_COUNT;
+                let contact_indices = || quad_indices(contact_base, contact_count);
                 let base_vertex = u32::try_from(body_vertex_offset / VERTEX_BYTES)?;
                 let mut ranges = [RetainedDrawRange::default(); DRAW_GROUPS];
                 for (group, (range, sections)) in ranges
@@ -555,15 +548,15 @@ impl AvatarRenderer {
                     } else {
                         &[]
                     };
-                    let floor_vertex_count = if group == flat_group {
-                        grid_vertex_count
-                    } else {
-                        0
-                    };
                     let draw = body_indices
                         .chain(extra_indices.iter().copied())
                         .map(|index| base_vertex + index)
-                        .chain(grid_indices(grid_base, floor_vertex_count));
+                        .chain(
+                            (group == flat_group)
+                                .then(contact_indices)
+                                .into_iter()
+                                .flatten(),
+                        );
                     *range = append_range(&mut indices, draw)?;
                 }
                 poses[pose] = Some(PoseDraw {
@@ -586,7 +579,7 @@ impl AvatarRenderer {
                                 .map(|&index| index + hair_vertex_count),
                         )
                         .map(|index| base_vertex + index)
-                        .chain(grid_indices(grid_base, grid_vertex_count));
+                        .chain(contact_indices());
                     reverse_ranges[flat_group] = append_range(&mut indices, draw)?;
                     poses[frame] = Some(PoseDraw {
                         phase: Phase::Motion(timeline.sample(frame).phase),
@@ -595,10 +588,10 @@ impl AvatarRenderer {
                     });
                 }
                 if greeting_duration.is_none() && pose + 1 == pose_count {
-                    // All idle frames use this terminal body pose and the same floor grid.
+                    // Idle frames share the terminal body pose and its contacts.
                     let body_end = body_vertex_offset + source_vertices.len() * VERTEX_BYTES;
                     let mut shared_vertices = vertices[body_vertex_offset..body_end].to_vec();
-                    shared_vertices.extend_from_slice(&grid_vertices);
+                    shared_vertices.extend_from_slice(&vertices[contact_offset..]);
                     let mut shared_indices = Vec::new();
                     let mut shared_ranges = [RetainedDrawRange::default(); DRAW_GROUPS];
                     for (group, (range, sections)) in shared_ranges
@@ -609,14 +602,12 @@ impl AvatarRenderer {
                     {
                         let body_indices =
                             section_indices(mesh, &compact_indices, &compact_positions, sections);
-                        let floor_vertex_count = if group == flat_group {
-                            grid_vertex_count
-                        } else {
-                            0
-                        };
-                        let draw = body_indices
-                            .chain(grid_indices(first_strand_vertex, floor_vertex_count));
-                        *range = append_range(&mut shared_indices, draw)?;
+                        let contact_quads = (group == flat_group)
+                            .then(|| quad_indices(first_strand_vertex, contact_count))
+                            .into_iter()
+                            .flatten();
+                        *range =
+                            append_range(&mut shared_indices, body_indices.chain(contact_quads))?;
                     }
                     idle_base = Some(idle::IdleBase {
                         vertices: shared_vertices,
@@ -625,8 +616,6 @@ impl AvatarRenderer {
                     });
                 }
             }
-            debug_assert_eq!(vertices.len() / VERTEX_BYTES, grid_base as usize);
-            vertices.extend_from_slice(&grid_vertices);
             write_geometry(device, vertex_buffer, &vertices)
                 .context("upload avatar vertex staging buffer")?;
             write_geometry(device, index_buffer, &indices)
@@ -638,7 +627,7 @@ impl AvatarRenderer {
                         vertex_buffer,
                         index_buffer,
                         RetainedMeshDescriptor {
-                            vertex_count: grid_base + grid_vertex_count,
+                            vertex_count: u32::try_from(vertices.len() / VERTEX_BYTES)?,
                             index_count: u32::try_from(indices.len() / size_of::<u32>())?,
                             vertex_layout: vgpu::RETAINED_VERTEX_LAYOUT_POS_NORMAL_UV,
                             topology: vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
@@ -667,6 +656,7 @@ impl AvatarRenderer {
                         .context("missing idle hair root joint")?,
                     body: &body,
                     view_back: back,
+                    hair_uv,
                 },
                 |position| include_in_frame(&mut animated_half_span, position, target),
             )?;
@@ -675,11 +665,10 @@ impl AvatarRenderer {
         } else {
             None
         };
-        let material_palette =
-            vmedia::decode_retained(device, ImageFormat::Bmp, MATERIAL_PALETTE_BMP)
-                .await
-                .map_err(gpu_error)
-                .context("retain the flat material palette")?;
+        let material_palette = vmedia::decode_retained(device, ImageFormat::Bmp, palette.bmp())
+            .await
+            .map_err(gpu_error)
+            .context("retain the flat materials and ground contact masks")?;
         let elapsed_ms = (clock::monotonic_nanos() - started) / 1_000_000;
         let max_indices = poses
             .iter()
@@ -791,7 +780,7 @@ impl AvatarRenderer {
         });
         submit.textures[..groups].fill(self.material_palette.id().raw());
         match skin {
-            Skin::Lighting(light) => submit.textures[0] = light.texture.id().raw(),
+            Skin::Lighting(light) => submit.textures[0] = light.texture().id().raw(),
             Skin::BaseColor([face, body]) => {
                 submit.textures[0] = face.id().raw();
                 submit.textures[1] = body.id().raw();
@@ -811,34 +800,45 @@ enum Skin {
 struct BodyLight {
     lookup: DiffuseLookup,
     angle: i16,
-    texture: RetainedTexture,
+    textures: [Option<RetainedTexture>; ANGLE_COUNT],
 }
 
 impl BodyLight {
     async fn new(device: Device) -> Result<Self> {
         let mut lookup = DiffuseLookup::new();
-        let angle = sweep_angle(0);
+        let angle = light::angle(0);
         let texture = vmedia::decode_retained(device, ImageFormat::Bmp, lookup.update(angle))
             .await
             .map_err(gpu_error)
             .context("retain the body lighting lookup")?;
+        let mut textures = [const { None }; ANGLE_COUNT];
+        textures[light::angle_index(angle)] = Some(texture);
         Ok(Self {
             lookup,
             angle,
-            texture,
+            textures,
         })
     }
 
+    fn texture(&self) -> &RetainedTexture {
+        self.textures[light::angle_index(self.angle)]
+            .as_ref()
+            .expect("lookup for current light angle")
+    }
+
     async fn update(&mut self, device: Device, elapsed_ns: u64) -> Result<()> {
-        let angle = sweep_angle(elapsed_ns);
-        if angle != self.angle {
-            self.texture =
+        let angle = light::angle(elapsed_ns);
+        let texture = &mut self.textures[light::angle_index(angle)];
+        // Reuse each angle across sweeps to bound GPU address space usage.
+        if texture.is_none() {
+            *texture = Some(
                 vmedia::decode_retained(device, ImageFormat::Bmp, self.lookup.update(angle))
                     .await
                     .map_err(gpu_error)
-                    .context("update the body lighting lookup")?;
-            self.angle = angle;
+                    .context("retain the body lighting lookup")?,
+            );
         }
+        self.angle = angle;
         Ok(())
     }
 }
@@ -926,9 +926,7 @@ async fn play(
     let mut last_camera_pose = observer.pose(clock::monotonic_nanos());
     let mut resize_trace = None;
     let mut previous_phase = None;
-    let mut light_markers = [0, SWEEP_NS / 2, SWEEP_NS - SECOND_NS / 2]
-        .into_iter()
-        .peekable();
+    let mut light_markers = light::presentation_markers().peekable();
     loop {
         loop {
             match frame.take_resize_event() {
@@ -1054,8 +1052,7 @@ async fn play(
                             phase.name()
                         ));
                     }
-                    if phase == Phase::LightSweep
-                        && let Some(angle) = angle
+                    if let Some(angle) = angle
                         && light_markers
                             .peek()
                             .is_some_and(|&marker| elapsed >= marker)

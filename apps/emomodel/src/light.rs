@@ -4,18 +4,58 @@ use crate::autobs::{BASE_YAW, camera_back};
 
 pub(super) const SWEEP_NS: u64 = 8_000_000_000;
 const END_HOLD_NS: u64 = 1_000_000_000;
-const SWEEP_LIMIT_DEGREES: i16 = 55;
+const SWAP_INTERVAL_NS: u64 = 15_000_000_000;
+const SWAP_DURATION_NS: u64 = 3_000_000_000;
+const LIMIT_DEGREES: i16 = 55;
+pub(super) const ANGLE_COUNT: usize = (2 * LIMIT_DEGREES + 1) as usize;
 const ELEVATION: f32 = 28.0_f32.to_radians();
 const EDGE: usize = 64;
 const BMP_HEADER_BYTES: usize = 54;
 const BASE_SRGB: [f32; 3] = [218.0, 171.0, 147.0];
 const AMBIENT: f32 = 0.14;
 
-pub(super) fn sweep_angle(elapsed_ns: u64) -> i16 {
-    let movement_ns = SWEEP_NS - 2 * END_HOLD_NS;
-    let t = elapsed_ns.saturating_sub(END_HOLD_NS).min(movement_ns) as f32 / movement_ns as f32;
+pub(super) fn angle_index(angle: i16) -> usize {
+    (angle + LIMIT_DEGREES) as usize
+}
+
+pub(super) fn angle(elapsed_ns: u64) -> i16 {
+    if elapsed_ns < SWEEP_NS {
+        return eased_angle(
+            -LIMIT_DEGREES,
+            elapsed_ns.saturating_sub(END_HOLD_NS),
+            SWEEP_NS - 2 * END_HOLD_NS,
+        );
+    }
+    let playback_ns = elapsed_ns - SWEEP_NS;
+    let cycle = playback_ns / SWAP_INTERVAL_NS;
+    if cycle == 0 {
+        return LIMIT_DEGREES;
+    }
+    let from = if cycle.is_multiple_of(2) {
+        -LIMIT_DEGREES
+    } else {
+        LIMIT_DEGREES
+    };
+    eased_angle(from, playback_ns % SWAP_INTERVAL_NS, SWAP_DURATION_NS)
+}
+
+fn eased_angle(from: i16, elapsed_ns: u64, duration_ns: u64) -> i16 {
+    let t = elapsed_ns.min(duration_ns) as f32 / duration_ns as f32;
     let eased = t * t * (3.0 - 2.0 * t);
-    ((2.0 * eased - 1.0) * f32::from(SWEEP_LIMIT_DEGREES)).round() as i16
+    ((1.0 - 2.0 * eased) * f32::from(from)).round() as i16
+}
+
+pub(super) fn presentation_markers() -> impl Iterator<Item = u64> {
+    [0, SWEEP_NS / 2, SWEEP_NS - END_HOLD_NS / 2]
+        .into_iter()
+        .chain((1..).flat_map(|cycle| {
+            let start = SWEEP_NS + cycle * SWAP_INTERVAL_NS;
+            [
+                start,
+                start + SWAP_DURATION_NS / 2,
+                start + SWAP_DURATION_NS,
+            ]
+        }))
 }
 
 pub(super) struct LightPlane {
@@ -101,7 +141,7 @@ mod tests {
         let plane = LightPlane::new();
         let mut lookup = DiffuseLookup::new();
         for elapsed in [0, SWEEP_NS / 2, SWEEP_NS] {
-            let angle = sweep_angle(elapsed);
+            let angle = angle(elapsed);
             let (side, center) = f32::from(angle).to_radians().sin_cos();
             let towards = plane.center * center + plane.side * side;
             let bmp = lookup.update(angle);
@@ -116,6 +156,30 @@ mod tests {
             let facing_right = red(plane.side);
             let facing_left = red(-plane.side);
             assert_eq!(facing_right.cmp(&facing_left), angle.cmp(&0));
+        }
+    }
+
+    #[test]
+    fn light_alternates_every_fifteen_seconds_with_a_three_second_swap() {
+        let first = SWEEP_NS + SWAP_INTERVAL_NS;
+        assert_eq!(angle_index(-LIMIT_DEGREES), 0);
+        assert_eq!(angle_index(LIMIT_DEGREES), ANGLE_COUNT - 1);
+        assert_eq!(angle(first - 1), LIMIT_DEGREES);
+        let mut markers = presentation_markers().skip(3);
+        for cycle in 0..4 {
+            let start = first + cycle * SWAP_INTERVAL_NS;
+            let from = if cycle % 2 == 0 {
+                LIMIT_DEGREES
+            } else {
+                -LIMIT_DEGREES
+            };
+            assert_eq!(angle(start), from);
+            assert_eq!(angle(start + SWAP_DURATION_NS / 2), 0);
+            assert_eq!(angle(start + SWAP_DURATION_NS), -from);
+            assert_eq!(angle(start + SWAP_INTERVAL_NS - 1), -from);
+            assert_eq!(markers.next(), Some(start));
+            assert_eq!(markers.next(), Some(start + SWAP_DURATION_NS / 2));
+            assert_eq!(markers.next(), Some(start + SWAP_DURATION_NS));
         }
     }
 }

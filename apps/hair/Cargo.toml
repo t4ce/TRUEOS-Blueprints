@@ -1,0 +1,27 @@
+[package]
+name = "hair"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[package.metadata.trueos-blueprint]
+entry-abi = "argv-v1"
+fs-scope = "trueosfs"
+replicatable = false
+rewrite-std-imports = false
+
+[dependencies]
+anyhow = "1"
+glam = "0.33.6"
+gltf = { version = "1.4.1", default-features = false, features = ["names", "utils"] }
+png = "0.18.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8.9"
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+trueos = { path = "../../api", features = ["ui4-scene"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }

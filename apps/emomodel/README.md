@@ -79,11 +79,13 @@ default preview size.
 
 `autobs` is the automatic observer for the animated preview. It pans toward the
 landing stance for Nod and returns to the opening view during the reverse jump.
-A stationary 6 × 4 grid
-beneath the avatar gives a floor reference. Its rectangular cells are about
-the size of one bare foot. The pitched camera sees the grid as thin lines
-drawn in the shared flat-color range. After UI4 commits a resize, the observer
-eases along a shallow arc while looking at the avatar.
+The ground is visible through soft black contact marks at each heel, toe, and
+fingertip. Each baked pose projects nearby contacts onto the ground plane and
+composites overlaps from one R8 brush into the retained material atlas. Reverse
+playback reuses the same masks. The current Greeting and Nod stay above fingertip
+contact range.
+After UI4 commits a resize, the observer eases along a shallow arc while looking
+at the avatar.
 It moves in for a larger area and pulls back more slowly for a smaller area.
 Its orthographic framing keeps the avatar proportional and fits the animated
 silhouette to the new aspect ratio. A new resize starts from the last drawn

@@ -469,6 +469,10 @@ impl Animation {
         self.head_bind.map(|(head, bind)| self.world[head] * bind)
     }
 
+    pub(super) fn joint_position(&self, node: usize) -> Vec3 {
+        self.world[node].w_axis.truncate()
+    }
+
     #[cfg(test)]
     pub(super) fn sample_with_normals(&mut self, elapsed_seconds: f32) -> PoseSample<'_> {
         self.apply(elapsed_seconds);

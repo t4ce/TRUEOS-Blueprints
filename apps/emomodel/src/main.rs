@@ -12,6 +12,12 @@ use std::{
 mod animation;
 #[cfg(any(target_os = "trueos", test))]
 mod autobs;
+#[cfg(test)]
+#[path = "greeting/floor.rs"]
+mod floor;
+#[cfg(test)]
+#[path = "greeting/floor_material.rs"]
+mod floor_material;
 #[cfg(target_os = "trueos")]
 mod greeting;
 #[cfg(any(target_os = "trueos", test))]

@@ -1,0 +1,348 @@
+use std::{
+    ffi::{CStr, CString, c_char, c_int, c_void},
+    ptr, thread,
+    time::{Duration, Instant},
+};
+
+use anyhow::{Context, Result, bail, ensure};
+use libloading::Library;
+
+use crate::Controls;
+
+const TARGET_HZ: u64 = 45;
+const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
+const HELP: &str = "1 Avatar  2 Hair  3 Head sphere  4 Flow  5 Flow color  6 Hair reach  7 Body obstacles  |  Space Pause  |  Arrows Orbit  |  Esc Close";
+
+pub(crate) fn run(
+    width: u32,
+    height: u32,
+    mut controls: Controls,
+    frames: Option<usize>,
+    mut draw: impl FnMut(Controls, &mut [u8]) -> Result<()>,
+) -> Result<()> {
+    let pitch = c_int::try_from(width.checked_mul(4).context("window width is too large")?)?;
+    let size = (pitch as usize)
+        .checked_mul(height as usize)
+        .context("window extent is too large")?;
+    ensure!(width > 0 && height > 0, "window extent must be positive");
+    let video = Video::open(c_int::try_from(width)?, c_int::try_from(height)?)?;
+    if frames.is_none() && matches!(video.driver(), Some(b"offscreen" | b"dummy")) {
+        bail!(
+            "SDL selected a headless video driver. Use --frames for a smoke test or --snapshot for a still image."
+        );
+    }
+
+    eprintln!("Hair · {HELP}");
+    let mut pixels = vec![0; size];
+    let mut shown = 0;
+    let mut report_count = 0;
+    let mut report_start = Instant::now();
+    let mut previous_frame = report_start;
+    while frames.is_none_or(|limit| shown < limit) {
+        let now = Instant::now();
+        if !video.poll(&mut controls) {
+            break;
+        }
+        let elapsed = now.duration_since(previous_frame).as_secs_f32().min(0.1);
+        controls.yaw += video.orbit_direction() * elapsed * 1.25;
+        previous_frame = now;
+
+        draw(controls, &mut pixels)?;
+        video.present(&pixels, pitch)?;
+        shown += 1;
+        report_count += 1;
+        let report_interval = report_start.elapsed();
+        if report_interval >= Duration::from_secs(1) {
+            let fps = report_count as f32 / report_interval.as_secs_f32();
+            let status = if controls.paused { " · Paused" } else { "" };
+            let color = if controls.speed_color {
+                "speed"
+            } else {
+                "velocity change"
+            };
+            video.set_title(&format!("Hair · {fps:.1} FPS{status} · {color}"));
+            report_start = Instant::now();
+            report_count = 0;
+        }
+        thread::sleep(FRAME_TIME.saturating_sub(now.elapsed()));
+    }
+    if frames.is_some() {
+        eprintln!("Presented {shown} frames with SDL2.");
+    }
+    Ok(())
+}
+
+const INIT_VIDEO: u32 = 0x20;
+const WINDOW_CENTERED: c_int = 0x2fff_0000;
+const WINDOW_RESIZABLE: u32 = 0x20;
+const WINDOW_HIGH_DPI: u32 = 0x2000;
+const TEXTURE_STREAMING: c_int = 1;
+const RGBA32: u32 = if cfg!(target_endian = "little") {
+    376_840_196 // SDL_PIXELFORMAT_ABGR8888
+} else {
+    373_694_468 // SDL_PIXELFORMAT_RGBA8888
+};
+
+const QUIT: u32 = 0x100;
+const WINDOW_EVENT: u32 = 0x200;
+const WINDOW_CLOSE: u8 = 14;
+const KEY_DOWN: u32 = 0x300;
+const KEY_1: i32 = 30;
+const KEY_2: i32 = 31;
+const KEY_3: i32 = 32;
+const KEY_4: i32 = 33;
+const KEY_5: i32 = 34;
+const KEY_6: i32 = 35;
+const KEY_7: i32 = 36;
+const KEY_ESCAPE: i32 = 41;
+const KEY_SPACE: i32 = 44;
+const KEY_RIGHT: usize = 79;
+const KEY_LEFT: usize = 80;
+const KEY_DOWN_ARROW: usize = 81;
+const KEY_UP: usize = 82;
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct WindowEvent {
+    kind: u32,
+    timestamp: u32,
+    window_id: u32,
+    event: u8,
+    padding: [u8; 3],
+    data: [i32; 2],
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct KeyboardEvent {
+    kind: u32,
+    timestamp: u32,
+    window_id: u32,
+    state: u8,
+    repeat: u8,
+    padding: [u8; 2],
+    scancode: i32,
+    keycode: i32,
+    modifiers: u16,
+    unused: u32,
+}
+
+#[repr(C)]
+union Event {
+    kind: u32,
+    window: WindowEvent,
+    key: KeyboardEvent,
+    // SDL2's public event union occupies 56 bytes on 32/64-bit targets.
+    storage: [u64; 7],
+}
+
+type Handle = *mut c_void;
+
+struct Sdl {
+    _library: Library,
+    init: unsafe extern "C" fn(u32) -> c_int,
+    quit: unsafe extern "C" fn(),
+    get_error: unsafe extern "C" fn() -> *const c_char,
+    get_driver: unsafe extern "C" fn() -> *const c_char,
+    create_window: unsafe extern "C" fn(*const c_char, c_int, c_int, c_int, c_int, u32) -> Handle,
+    destroy_window: unsafe extern "C" fn(Handle),
+    set_title: unsafe extern "C" fn(Handle, *const c_char),
+    create_renderer: unsafe extern "C" fn(Handle, c_int, u32) -> Handle,
+    destroy_renderer: unsafe extern "C" fn(Handle),
+    set_logical_size: unsafe extern "C" fn(Handle, c_int, c_int) -> c_int,
+    create_texture: unsafe extern "C" fn(Handle, u32, c_int, c_int, c_int) -> Handle,
+    destroy_texture: unsafe extern "C" fn(Handle),
+    update_texture: unsafe extern "C" fn(Handle, *const c_void, *const c_void, c_int) -> c_int,
+    render_clear: unsafe extern "C" fn(Handle) -> c_int,
+    render_copy: unsafe extern "C" fn(Handle, Handle, *const c_void, *const c_void) -> c_int,
+    render_present: unsafe extern "C" fn(Handle),
+    poll_event: unsafe extern "C" fn(*mut Event) -> c_int,
+    keyboard_state: unsafe extern "C" fn(*mut c_int) -> *const u8,
+}
+
+impl Sdl {
+    fn load() -> Result<Self> {
+        // Resolve the SDL2 runtime soname shipped by Linux distributions. This keeps
+        // snapshot generation usable on machines with no SDL development package.
+        let library = unsafe { Library::new("libSDL2-2.0.so.0") }
+            .context("load SDL2 (the libSDL2-2.0.so.0 runtime library)")?;
+        macro_rules! symbol {
+            ($name:literal) => {{
+                // Each inferred pointer type matches the corresponding SDL2 C ABI.
+                *unsafe { library.get(concat!($name, "\0").as_bytes()) }.context($name)?
+            }};
+        }
+        Ok(Self {
+            init: symbol!("SDL_Init"),
+            quit: symbol!("SDL_Quit"),
+            get_error: symbol!("SDL_GetError"),
+            get_driver: symbol!("SDL_GetCurrentVideoDriver"),
+            create_window: symbol!("SDL_CreateWindow"),
+            destroy_window: symbol!("SDL_DestroyWindow"),
+            set_title: symbol!("SDL_SetWindowTitle"),
+            create_renderer: symbol!("SDL_CreateRenderer"),
+            destroy_renderer: symbol!("SDL_DestroyRenderer"),
+            set_logical_size: symbol!("SDL_RenderSetLogicalSize"),
+            create_texture: symbol!("SDL_CreateTexture"),
+            destroy_texture: symbol!("SDL_DestroyTexture"),
+            update_texture: symbol!("SDL_UpdateTexture"),
+            render_clear: symbol!("SDL_RenderClear"),
+            render_copy: symbol!("SDL_RenderCopy"),
+            render_present: symbol!("SDL_RenderPresent"),
+            poll_event: symbol!("SDL_PollEvent"),
+            keyboard_state: symbol!("SDL_GetKeyboardState"),
+            _library: library,
+        })
+    }
+
+    fn error(&self, what: &str) -> anyhow::Error {
+        let message = unsafe { CStr::from_ptr((self.get_error)()) }.to_string_lossy();
+        anyhow::anyhow!("{what}: {message}")
+    }
+
+    fn check(&self, status: c_int, what: &str) -> Result<()> {
+        if status < 0 {
+            return Err(self.error(what));
+        }
+        Ok(())
+    }
+}
+
+struct Video {
+    sdl: Sdl,
+    window: Handle,
+    renderer: Handle,
+    texture: Handle,
+}
+
+impl Video {
+    fn open(width: c_int, height: c_int) -> Result<Self> {
+        let sdl = Sdl::load()?;
+        sdl.check(unsafe { (sdl.init)(INIT_VIDEO) }, "initialize SDL2 video")?;
+        let mut video = Self {
+            sdl,
+            window: ptr::null_mut(),
+            renderer: ptr::null_mut(),
+            texture: ptr::null_mut(),
+        };
+        video.window = unsafe {
+            (video.sdl.create_window)(
+                c"Hair".as_ptr(),
+                WINDOW_CENTERED,
+                WINDOW_CENTERED,
+                width,
+                height,
+                WINDOW_RESIZABLE | WINDOW_HIGH_DPI,
+            )
+        };
+        if video.window.is_null() {
+            return Err(video.sdl.error("create the Hair window"));
+        }
+        video.renderer = unsafe { (video.sdl.create_renderer)(video.window, -1, 0) };
+        if video.renderer.is_null() {
+            return Err(video.sdl.error("create the SDL2 renderer"));
+        }
+        video.sdl.check(
+            unsafe { (video.sdl.set_logical_size)(video.renderer, width, height) },
+            "set the render extent",
+        )?;
+        video.texture = unsafe {
+            (video.sdl.create_texture)(video.renderer, RGBA32, TEXTURE_STREAMING, width, height)
+        };
+        if video.texture.is_null() {
+            return Err(video.sdl.error("allocate the RGBA frame texture"));
+        }
+        Ok(video)
+    }
+
+    fn driver(&self) -> Option<&[u8]> {
+        let driver = unsafe { (self.sdl.get_driver)() };
+        (!driver.is_null()).then(|| unsafe { CStr::from_ptr(driver) }.to_bytes())
+    }
+
+    fn poll(&self, controls: &mut Controls) -> bool {
+        let mut event = Event { storage: [0; 7] };
+        while unsafe { (self.sdl.poll_event)(&mut event) } == 1 {
+            match unsafe { event.kind } {
+                QUIT => return false,
+                WINDOW_EVENT if unsafe { event.window.event } == WINDOW_CLOSE => return false,
+                KEY_DOWN => {
+                    let event = unsafe { event.key };
+                    if event.repeat > 0 {
+                        continue;
+                    }
+                    match event.scancode {
+                        KEY_1 => controls.layers.avatar ^= true,
+                        KEY_2 => controls.layers.hair ^= true,
+                        KEY_3 => controls.layers.sphere ^= true,
+                        KEY_4 => controls.layers.flow ^= true,
+                        KEY_5 => controls.speed_color ^= true,
+                        KEY_6 => controls.layers.reach ^= true,
+                        KEY_7 => controls.layers.body_obstacles ^= true,
+                        KEY_SPACE => controls.paused ^= true,
+                        KEY_ESCAPE => return false,
+                        _ => (),
+                    }
+                }
+                _ => (),
+            }
+        }
+        true
+    }
+
+    fn orbit_direction(&self) -> f32 {
+        let mut count = 0;
+        let state = unsafe { (self.sdl.keyboard_state)(&mut count) };
+        if state.is_null() || count <= KEY_UP as c_int {
+            return 0.0;
+        }
+        let keys = unsafe { std::slice::from_raw_parts(state, count as usize) };
+        let right = keys[KEY_RIGHT] != 0 || keys[KEY_UP] != 0;
+        let left = keys[KEY_LEFT] != 0 || keys[KEY_DOWN_ARROW] != 0;
+        (i8::from(right) - i8::from(left)) as f32
+    }
+
+    fn present(&self, pixels: &[u8], pitch: c_int) -> Result<()> {
+        self.sdl.check(
+            unsafe {
+                (self.sdl.update_texture)(self.texture, ptr::null(), pixels.as_ptr().cast(), pitch)
+            },
+            "upload the RGBA frame",
+        )?;
+        self.sdl.check(
+            unsafe { (self.sdl.render_clear)(self.renderer) },
+            "clear the window",
+        )?;
+        self.sdl.check(
+            unsafe {
+                (self.sdl.render_copy)(self.renderer, self.texture, ptr::null(), ptr::null())
+            },
+            "draw the RGBA frame",
+        )?;
+        unsafe { (self.sdl.render_present)(self.renderer) };
+        Ok(())
+    }
+
+    fn set_title(&self, title: &str) {
+        if let Ok(title) = CString::new(title) {
+            unsafe { (self.sdl.set_title)(self.window, title.as_ptr()) };
+        }
+    }
+}
+
+impl Drop for Video {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.texture.is_null() {
+                (self.sdl.destroy_texture)(self.texture);
+            }
+            if !self.renderer.is_null() {
+                (self.sdl.destroy_renderer)(self.renderer);
+            }
+            if !self.window.is_null() {
+                (self.sdl.destroy_window)(self.window);
+            }
+            (self.sdl.quit)();
+        }
+    }
+}
