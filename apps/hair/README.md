@@ -23,8 +23,11 @@ The viewer loads the system SDL2 runtime (`libSDL2-2.0.so.0`). The executable
 embeds the mesh and texture atlases. The solver and raster shaders are local
 and the demo makes no network requests.
 
-The preview opens facing the avatar. Move the mouse left or right over the
-window to spin her in the plane of the screen. Use the window close button to exit.
+The preview opens facing the avatar. Move the mouse left or right to spin her
+in the plane of the screen. Move down to tilt her toward the camera or up to
+tilt her back to horizontal. Use the window close button to exit.
+Use `--yaw 150 --hide hair --hide body-obstacles` for a clear view of the
+guide roots behind the avatar.
 
 A headless run can write a PNG.
 
@@ -32,11 +35,11 @@ A headless run can write a PNG.
 target/x86_64-unknown-linux-gnu/release/hair --frames 180 --snapshot /tmp/hair.png
 ```
 
-Use `--roll 180` to start upside down. During a roll the airflow stays
-world-down while the root seeds and obstacle proxies follow the avatar.
-Ubuntu starts with the hair guides visible and the head sphere, reach outline,
-and general field streamlines hidden. To include them in snapshots, use
-`--show sphere --show reach --show field`.
+Use `--roll 180` to start upside down or `--tilt -90` to start flat on her back.
+The airflow stays world-down while the roots and obstacle proxies follow the avatar.
+In guide mode, Ubuntu starts with the hair guides visible and the head sphere,
+reach outline, and general field streamlines hidden. To include these overlays
+in snapshots, use `--show sphere --show reach --show field`.
 
 The UI4 frame entry shares the same renderer. Check the native target locally
 with `CARGO_NET_OFFLINE=true cargo bp hair --check`.
@@ -51,14 +54,11 @@ the lattice, and the incoming speed changes gently over time. The solver uses
 these volumes even when their overlays are hidden. Streamlines sample local
 velocities, with the fork's rainbow mapping in [the local raster shader](shaders/raster.rs).
 The solver box surrounds the full hair-reach sphere. There are 44 optional
-field seeds across an upstream cross-section and 64 hair-root seeds on Ubuntu.
-The roots are spaced across area samples on the authored `Back Hair AnkorSurf`
-mesh. Its rest-pose positions were
-extracted from Blender in metres, with world `(x, y, z)` mapped to Hair
-`(x, z, -y)`. Each guide starts on the mesh. Tracing samples the fluid outward
-along the local scalp normal for head clearance, then follows flow downstream.
-Both sets use the same coloring and stop at the reach
-boundary or if a trace would cross a solid obstacle. Ubuntu guides stay visible
+field seeds across an upstream cross-section. Each of the 150 vertices on the
+authored `Back Hair AnkorSurf` mesh starts one guide. Blender coordinates
+`(x, y, z)` map to Hair `(x, z, -y)`. The guides start straight down under the
+headband and follow the world-space flow after clearing the head proxy.
+Fluid traces stop at the reach boundary or a solid obstacle. Ubuntu guides stay visible
 at lower flow speeds and use higher minimum opacity for low-contrast segments.
 The tip-spread test adds a gentle sideways force to fluid cells behind the
 avatar, starting halfway down the resting back hair and building toward the

@@ -7,11 +7,12 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use libloading::Library;
 
-use crate::Controls;
+use crate::{Controls, TILT_LIMIT};
 
 const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
-const HELP: &str = "Move the mouse left or right to spin";
+const HELP: &str = "Mouse left/right spins · down tilts forward · up tilts back";
+const WATER_KEYS: &str = "I/K volume  J/L flow speed  U/O viscosity";
 const RADIANS_PER_PIXEL: f32 = 0.008;
 
 pub(crate) fn run(
@@ -34,13 +35,16 @@ pub(crate) fn run(
     }
 
     eprintln!("Hair · {HELP}");
+    if controls.water {
+        eprintln!("Hair · {WATER_KEYS}");
+    }
     let mut pixels = vec![0; size];
     let mut shown = 0;
     let mut report_count = 0;
     let mut report_start = Instant::now();
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
-        if !video.poll(&mut controls.roll) {
+        if !video.poll(&mut controls) {
             break;
         }
 
@@ -51,7 +55,15 @@ pub(crate) fn run(
         let report_interval = report_start.elapsed();
         if report_interval >= Duration::from_secs(1) {
             let fps = report_count as f32 / report_interval.as_secs_f32();
-            video.set_title(&format!("Hair · {fps:.1} FPS · {HELP}"));
+            let title = if controls.water {
+                format!(
+                    "Hair · Water · {fps:.1} FPS · Volume {:.2}× · Flow {:.2}× · Viscosity {:.3} · {WATER_KEYS}",
+                    controls.water_volume, controls.flow.speed, controls.flow.viscosity,
+                )
+            } else {
+                format!("Hair · {fps:.1} FPS · {HELP}")
+            };
+            video.set_title(&title);
             report_start = Instant::now();
             report_count = 0;
         }
@@ -77,7 +89,14 @@ const RGBA32: u32 = if cfg!(target_endian = "little") {
 const QUIT: u32 = 0x100;
 const WINDOW_EVENT: u32 = 0x200;
 const WINDOW_CLOSE: u8 = 14;
+const KEY_DOWN: u32 = 0x300;
 const MOUSE_MOTION: u32 = 0x400;
+const KEY_I: i32 = 12;
+const KEY_J: i32 = 13;
+const KEY_K: i32 = 14;
+const KEY_L: i32 = 15;
+const KEY_O: i32 = 18;
+const KEY_U: i32 = 20;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -88,6 +107,21 @@ struct WindowEvent {
     event: u8,
     padding: [u8; 3],
     data: [i32; 2],
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct KeyboardEvent {
+    kind: u32,
+    timestamp: u32,
+    window_id: u32,
+    state: u8,
+    repeat: u8,
+    padding: [u8; 2],
+    scancode: i32,
+    keycode: i32,
+    modifiers: u16,
+    unused: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +142,7 @@ struct MouseMotionEvent {
 union Event {
     kind: u32,
     window: WindowEvent,
+    key: KeyboardEvent,
     mouse: MouseMotionEvent,
     // SDL2's public event union occupies 56 bytes on 32/64-bit targets.
     storage: [u64; 7],
@@ -235,17 +270,28 @@ impl Video {
         (!driver.is_null()).then(|| unsafe { CStr::from_ptr(driver) }.to_bytes())
     }
 
-    fn poll(&self, roll: &mut f32) -> bool {
+    fn poll(&self, controls: &mut Controls) -> bool {
         let mut event = Event { storage: [0; 7] };
         while unsafe { (self.sdl.poll_event)(&mut event) } == 1 {
             match unsafe { event.kind } {
                 QUIT => return false,
                 WINDOW_EVENT if unsafe { event.window.event } == WINDOW_CLOSE => return false,
                 MOUSE_MOTION => {
-                    let horizontal = unsafe { event.mouse.xrel };
-                    *roll = (*roll + horizontal as f32 * RADIANS_PER_PIXEL)
+                    let motion = unsafe { event.mouse };
+                    controls.roll = (controls.roll + motion.xrel as f32 * RADIANS_PER_PIXEL)
                         .rem_euclid(std::f32::consts::TAU);
+                    controls.tilt = (controls.tilt + motion.yrel as f32 * RADIANS_PER_PIXEL)
+                        .clamp(-TILT_LIMIT, TILT_LIMIT);
                 }
+                KEY_DOWN if controls.water => match unsafe { event.key.scancode } {
+                    KEY_I => controls.water_volume = (controls.water_volume + 0.1).min(2.5),
+                    KEY_K => controls.water_volume = (controls.water_volume - 0.1).max(0.15),
+                    KEY_J => controls.flow.speed = (controls.flow.speed - 0.1).max(0.4),
+                    KEY_L => controls.flow.speed = (controls.flow.speed + 0.1).min(1.5),
+                    KEY_U => controls.flow.viscosity = (controls.flow.viscosity - 0.006).max(0.022),
+                    KEY_O => controls.flow.viscosity = (controls.flow.viscosity + 0.006).min(0.12),
+                    _ => (),
+                },
                 _ => (),
             }
         }

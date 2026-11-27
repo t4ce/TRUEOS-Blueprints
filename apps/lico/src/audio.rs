@@ -297,8 +297,9 @@ async fn serve_audio(
     status: Sender<Status>,
     monitor: watch::Sender<MonitorFrame>,
     mut midi_input: MidiInput,
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))] dance:
-        watch::Sender<Option<Arc<lico_graph::DanceClueSnapshot>>>,
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))] dance: watch::Sender<
+        Option<Arc<lico_graph::DanceClueSnapshot>>,
+    >,
 ) -> Result<(), Box<dyn Error>> {
     let mut engine = engine()?;
     let mut playing = None;

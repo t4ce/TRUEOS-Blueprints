@@ -364,30 +364,12 @@ impl<'a> Surface<'a> {
         camera: Camera,
         start: Vec3,
         end: Vec3,
-        attachment: Option<Vec3>,
         value: f32,
         minimum_opacity: f32,
     ) {
         let color = rainbow(value);
         let opacity = minimum_opacity + (0.8 - minimum_opacity) * value.clamp(0.0, 1.0).sqrt();
-        let mut start = camera.project(start);
-        let end = camera.project(end);
-        if let Some(root) = attachment {
-            let root = camera.project(root);
-            let join = start.lerp(end, 0.35);
-            // The first fluid sample is the quadratic control point. The bend
-            // leaves along the scalp normal and arrives along the solved flow.
-            const STEPS: u32 = 6;
-            let mut previous = root;
-            for step in 1..=STEPS {
-                let t = step as f32 / STEPS as f32;
-                let next = root.lerp(start, t).lerp(start.lerp(join, t), t);
-                self.line::<true>(previous, next, color, opacity);
-                previous = next;
-            }
-            start = join;
-        }
-        self.line::<true>(start, end, color, opacity);
+        self.line::<true>(camera.project(start), camera.project(end), color, opacity);
     }
 
     fn line<const WRITE_DEPTH: bool>(&mut self, start: Vec3, end: Vec3, color: Vec3, opacity: f32) {

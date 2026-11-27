@@ -1,0 +1,822 @@
+{
+  "source": {
+    "filename": "6493143135142452442.vrm",
+    "sha256": "7fca4a77fdc60ab2c78a9907430744562626180125fa386eb74fb2ea15c2e518",
+    "format": "VRM 0.0",
+    "title": "AvatarSample_B",
+    "version": "1.0",
+    "author": "VRoid Project",
+    "copyright": "pixiv Inc.",
+    "modelPage": "https://hub.vroid.com/en/characters/7939147878897061040/models/2292219474373673889",
+    "sampleTerms": "https://vroid.pixiv.help/hc/en-us/articles/4402394424089-VRoidPreset-A-Z",
+    "assetTerms": "https://hub.vroid.com/license?allowed_to_use_user=everyone&characterization_allowed_user=everyone&corporate_commercial_use=allow&credit=unnecessary&modification=allow&personal_commercial_use=profit&redistribution=allow&sexual_expression=allow&version=1&violent_expression=allow",
+    "matchingPublicMirror": "https://raw.githubusercontent.com/hirokazuniimoto/virtual-avatar-sdk/ab8f0d4d2ee5bdfa2321b7ac94bfbf4f0a6547eb/assets/avatars/AvatarSample_B.vrm"
+  },
+  "materials": {
+    "face": {
+      "materialIndex": 3,
+      "name": "N00_000_00_Face_00_SKIN (Instance)",
+      "shader": "VRM/MToon",
+      "doubleSided": true,
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.5,
+      "mtoonFloatProperties": {
+        "_BlendMode": 1,
+        "_BumpScale": 1,
+        "_CullMode": 0,
+        "_Cutoff": 0.5,
+        "_DebugMode": 0,
+        "_DstBlend": 0,
+        "_IndirectLightIntensity": 0.1,
+        "_LightColorAttenuation": 0,
+        "_MToonVersion": 34,
+        "_OutlineColorMode": 0,
+        "_OutlineCullMode": 1,
+        "_OutlineLightingMix": 1,
+        "_OutlineScaledMaxDistance": 1,
+        "_OutlineWidth": 0.1279469,
+        "_OutlineWidthMode": 1,
+        "_ReceiveShadowRate": 1,
+        "_RimFresnelPower": 7.999984,
+        "_RimLift": 0.1,
+        "_RimLightingMix": 0,
+        "_ShadeShift": -0.9,
+        "_ShadeToony": 0,
+        "_ShadingGradeRate": 1,
+        "_SrcBlend": 1,
+        "_UvAnimRotation": 0,
+        "_UvAnimScrollX": 0,
+        "_UvAnimScrollY": 0,
+        "_ZWrite": 1
+      },
+      "mtoonVectorProperties": {
+        "_BumpMap": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_Color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "_EmissionColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "_EmissionMap": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_MainTex": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_OutlineColor": [
+          0.2745098,
+          0.0901960656,
+          0.125490159,
+          1
+        ],
+        "_OutlineWidthTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_ReceiveShadowTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_RimColor": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "_RimTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_ShadeColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "_ShadeTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_ShadingGradeTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_SphereAdd": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_UvAnimMaskTexture": [
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "textures": {
+        "base": {
+          "file": "face-base.png",
+          "property": "_MainTex",
+          "textureIndex": 0,
+          "imageIndex": 0,
+          "imageName": null,
+          "dimensions": [
+            4096,
+            4096
+          ],
+          "mode": "RGBA",
+          "channelsMinMax": [
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "e661e329ac2f4404885bfc06f1a9aa566a50ca081f848aa5b240a8a9c9bde279",
+          "rgbPixelSha256": "7a34b269ffd312714f6d617ef519a33eb4bd1eff61e3a77993e24e8b1d9835c5"
+        },
+        "shade": {
+          "file": "face-shade.png",
+          "property": "_ShadeTexture",
+          "textureIndex": 7,
+          "imageIndex": 7,
+          "imageName": null,
+          "dimensions": [
+            4096,
+            4096
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "5510fbbdbbf278ec9802d5164bc237ab485741b83f092fad9a62abcbd2153e1e",
+          "rgbPixelSha256": "e8101f2586ddaa79b7abc0426bf1f455cd70cb2ad4196c15d964a0077bf959cf"
+        },
+        "width": {
+          "file": "face-width.png",
+          "property": "_OutlineWidthTexture",
+          "textureIndex": 9,
+          "imageIndex": 9,
+          "imageName": null,
+          "dimensions": [
+            256,
+            256
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              205
+            ],
+            [
+              0,
+              205
+            ],
+            [
+              0,
+              205
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "73729c9da7aafa8ed43032ce524c9bf9d2a5c58afed5ee7151e9064bee77e2e5",
+          "rgbPixelSha256": "762f658bb6f5c3f1c0e151101fd215b34b77fa852146691efca3cce522819e43"
+        },
+        "emission": {
+          "file": "face-emission.png",
+          "property": "_EmissionMap",
+          "textureIndex": 1,
+          "imageIndex": 1,
+          "imageName": null,
+          "dimensions": [
+            2048,
+            2048
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "ab3cea6431e3db3e6ff122bbc3255830e569e286cd071626e3235bdd9afcd7f2",
+          "rgbPixelSha256": "cfadd44a103cbd6d5726fa07b27d7aad2f67ed3930ff96901c486a5beaf7e723"
+        },
+        "sphere": {
+          "file": "face-sphere.png",
+          "property": "_SphereAdd",
+          "textureIndex": 10,
+          "imageIndex": 10,
+          "imageName": "MatcapWarp",
+          "dimensions": [
+            8,
+            8
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "9e084b8d331ed370ca9822b57c207a18b7ec0aa672a2b0487d2caaa86df26567",
+          "rgbPixelSha256": "5d89f056865052bcb89c910d2d62872e029fb273c3db03f8968a52a41593c1b5"
+        }
+      },
+      "baseComparison": {
+        "workspacePath": "apps/emomodel/assets/AvatarSample_B-face-base-color-4096.png",
+        "workspacePngSha256": "e661e329ac2f4404885bfc06f1a9aa566a50ca081f848aa5b240a8a9c9bde279",
+        "workspaceRgbPixelSha256": "7a34b269ffd312714f6d617ef519a33eb4bd1eff61e3a77993e24e8b1d9835c5",
+        "pixelMatch": true
+      },
+      "shadeComparison": {
+        "pixelMatch": false,
+        "changedPixels": 1048576,
+        "totalPixels": 16777216,
+        "changedBoundsPixels": [
+          2048,
+          3072,
+          3072,
+          4096
+        ],
+        "canonicalSkinUvCoverage": {
+          "coveredPixels": 3450547,
+          "changedCoveredPixels": 0,
+          "maskRasterResolution": [
+            4096,
+            4096
+          ]
+        }
+      },
+      "outlineWidthComparison": {
+        "redZeroPixels": 49345,
+        "redFullPixels": 0,
+        "redIntermediatePixels": 16191,
+        "totalPixels": 65536,
+        "canonicalSkinUvCoverage": {
+          "coveredPixels": 13686,
+          "nonZeroCoveredPixels": 13493,
+          "fullCoveredPixels": 0,
+          "meanRed": 183.55465439134883,
+          "maxRed": 205
+        },
+        "canonicalVertexLinearSamples": {
+          "vertices": 2266,
+          "fullWidthVertices": 0,
+          "minimumLinearRed": 0.0,
+          "maximumLinearRed": 205.0,
+          "meanLinearRed": 157.47118656328743
+        }
+      }
+    },
+    "body": {
+      "materialIndex": 4,
+      "name": "N00_000_00_Body_00_SKIN (Instance)",
+      "shader": "VRM/MToon",
+      "doubleSided": false,
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.5,
+      "mtoonFloatProperties": {
+        "_BlendMode": 1,
+        "_BumpScale": 1,
+        "_CullMode": 2,
+        "_Cutoff": 0.5,
+        "_DebugMode": 0,
+        "_DstBlend": 0,
+        "_IndirectLightIntensity": 0.1,
+        "_LightColorAttenuation": 0,
+        "_MToonVersion": 34,
+        "_OutlineColorMode": 0,
+        "_OutlineCullMode": 1,
+        "_OutlineLightingMix": 1,
+        "_OutlineScaledMaxDistance": 1,
+        "_OutlineWidth": 0.1279469,
+        "_OutlineWidthMode": 1,
+        "_ReceiveShadowRate": 1,
+        "_RimFresnelPower": 7.999984,
+        "_RimLift": 0.1,
+        "_RimLightingMix": 0,
+        "_ShadeShift": -1,
+        "_ShadeToony": 1,
+        "_ShadingGradeRate": 1,
+        "_SrcBlend": 1,
+        "_UvAnimRotation": 0,
+        "_UvAnimScrollX": 0,
+        "_UvAnimScrollY": 0,
+        "_ZWrite": 1
+      },
+      "mtoonVectorProperties": {
+        "_BumpMap": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_Color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "_EmissionColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "_EmissionMap": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_MainTex": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_OutlineColor": [
+          0.2745098,
+          0.0901960656,
+          0.125490159,
+          1
+        ],
+        "_OutlineWidthTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_ReceiveShadowTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_RimColor": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "_RimTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_ShadeColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "_ShadeTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_ShadingGradeTexture": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_SphereAdd": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "_UvAnimMaskTexture": [
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "textures": {
+        "base": {
+          "file": "body-base.png",
+          "property": "_MainTex",
+          "textureIndex": 3,
+          "imageIndex": 3,
+          "imageName": null,
+          "dimensions": [
+            4096,
+            4096
+          ],
+          "mode": "RGBA",
+          "channelsMinMax": [
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "4abd6bbd2b20d55c984511d6e0b93b99a04b6ee0e646e369a439149000e41b4a",
+          "rgbPixelSha256": "e0e042665d6c2e249b7fa754e0ce83fb66d1bc8edd6a9619a32ee5725f76d227"
+        },
+        "shade": {
+          "file": "body-shade.png",
+          "property": "_ShadeTexture",
+          "textureIndex": 11,
+          "imageIndex": 11,
+          "imageName": null,
+          "dimensions": [
+            4096,
+            4096
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "bf0b453189e141d9396a4297fdfa1637c1e837d335eddc566d649a62cd047b59",
+          "rgbPixelSha256": "e0e042665d6c2e249b7fa754e0ce83fb66d1bc8edd6a9619a32ee5725f76d227"
+        },
+        "width": {
+          "file": "body-width.png",
+          "property": "_OutlineWidthTexture",
+          "textureIndex": 12,
+          "imageIndex": 12,
+          "imageName": null,
+          "dimensions": [
+            256,
+            256
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ],
+            [
+              0,
+              255
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "dcdf12562796b50add5251cc80624a954a56b2922f7e8ad7f40674159de2f615",
+          "rgbPixelSha256": "92a9b2c554012e51ab1df0b14ad5356401311144e32bb794cf9f77749144b9f1"
+        },
+        "emission": {
+          "file": "body-emission.png",
+          "property": "_EmissionMap",
+          "textureIndex": 4,
+          "imageIndex": 4,
+          "imageName": null,
+          "dimensions": [
+            2048,
+            2048
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "ab3cea6431e3db3e6ff122bbc3255830e569e286cd071626e3235bdd9afcd7f2",
+          "rgbPixelSha256": "cfadd44a103cbd6d5726fa07b27d7aad2f67ed3930ff96901c486a5beaf7e723"
+        },
+        "sphere": {
+          "file": "body-sphere.png",
+          "property": "_SphereAdd",
+          "textureIndex": 10,
+          "imageIndex": 10,
+          "imageName": "MatcapWarp",
+          "dimensions": [
+            8,
+            8
+          ],
+          "mode": "RGB",
+          "channelsMinMax": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "sampler": {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 10497,
+            "wrapT": 10497
+          },
+          "uvTransform": {
+            "texCoord": 0,
+            "offset": [
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1
+            ]
+          },
+          "pngSha256": "9e084b8d331ed370ca9822b57c207a18b7ec0aa672a2b0487d2caaa86df26567",
+          "rgbPixelSha256": "5d89f056865052bcb89c910d2d62872e029fb273c3db03f8968a52a41593c1b5"
+        }
+      },
+      "baseComparison": {
+        "workspacePath": "apps/emomodel/assets/AvatarSample_B-body-base-color-4096.png",
+        "workspacePngSha256": "4abd6bbd2b20d55c984511d6e0b93b99a04b6ee0e646e369a439149000e41b4a",
+        "workspaceRgbPixelSha256": "e0e042665d6c2e249b7fa754e0ce83fb66d1bc8edd6a9619a32ee5725f76d227",
+        "pixelMatch": true
+      },
+      "shadeComparison": {
+        "pixelMatch": true,
+        "changedPixels": 0,
+        "totalPixels": 16777216,
+        "changedBoundsPixels": null,
+        "canonicalSkinUvCoverage": {
+          "coveredPixels": 3354426,
+          "changedCoveredPixels": 0,
+          "maskRasterResolution": [
+            4096,
+            4096
+          ]
+        }
+      },
+      "outlineWidthComparison": {
+        "redZeroPixels": 5120,
+        "redFullPixels": 35840,
+        "redIntermediatePixels": 24576,
+        "totalPixels": 65536,
+        "canonicalSkinUvCoverage": {
+          "coveredPixels": 13884,
+          "nonZeroCoveredPixels": 13884,
+          "fullCoveredPixels": 13884,
+          "meanRed": 255.0,
+          "maxRed": 255
+        },
+        "canonicalVertexLinearSamples": {
+          "vertices": 5870,
+          "fullWidthVertices": 5870,
+          "minimumLinearRed": 255.0,
+          "maximumLinearRed": 255.0,
+          "meanLinearRed": 255.0
+        }
+      }
+    }
+  }
+}

@@ -282,7 +282,7 @@ mod tests {
         let alpha = (255.0 * patch.alpha(center)).round() as usize;
         assert_eq!(center_pixel, floor_material::shadow_colors()[alpha]);
         assert_eq!(&image.bmp()[..2], b"BM");
-        assert!(image.swatch(2).iter().all(|uv| (0.0..1.0).contains(uv)));
+        assert!(image.swatch(1).iter().all(|uv| (0.0..1.0).contains(uv)));
         assert_eq!(
             floor_material::CLEAR_RGBA.to_le_bytes()[..3],
             floor_material::CLEAR_RGB

@@ -7,6 +7,8 @@ mod dance_graph;
 
 use dance_graph::Choreography;
 
+#[cfg(target_os = "trueos")]
+use super::pupil::Stage;
 use super::reel::PlacedPose;
 use crate::{animation::Animation, mesh::BODY_MATERIAL};
 
@@ -240,6 +242,8 @@ struct Phrase {
     steps: [Step; STEPS_PER_PHRASE],
     // How much of an interval an arm travels before it settles.
     reach: f32,
+    #[cfg(target_os = "trueos")]
+    pupil: Stage,
 }
 
 use Arm::*;
@@ -266,6 +270,8 @@ const PHRASES: [Phrase; 8] = [
             step(L, -0.09, -0.05, 7.0, Close),
         ],
         reach: 0.53,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Attentive,
     },
     Phrase {
         title: "Corte",
@@ -281,6 +287,8 @@ const PHRASES: [Phrase; 8] = [
             step(R, 0.15, -0.02, -11.0, Close),
         ],
         reach: 0.36,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Engaged,
     },
     Phrase {
         title: "Ocho",
@@ -296,6 +304,8 @@ const PHRASES: [Phrase; 8] = [
             step(L, -0.07, -0.02, 11.0, Close),
         ],
         reach: 0.76,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Wide,
     },
     Phrase {
         title: "Robot lock",
@@ -311,6 +321,8 @@ const PHRASES: [Phrase; 8] = [
             step(R, 0.09, 0.04, -11.0, Close),
         ],
         reach: 0.32,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Neutral,
     },
     Phrase {
         title: "Tango hook",
@@ -326,6 +338,8 @@ const PHRASES: [Phrase; 8] = [
             step(L, -0.12, 0.01, 12.0, Snap),
         ],
         reach: 0.50,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Wide,
     },
     Phrase {
         title: "Promenade",
@@ -341,6 +355,8 @@ const PHRASES: [Phrase; 8] = [
             step(R, 0.08, 0.015, -8.0, Close),
         ],
         reach: 0.74,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Attentive,
     },
     Phrase {
         title: "Clockwork ripple",
@@ -356,6 +372,8 @@ const PHRASES: [Phrase; 8] = [
             step(L, -0.12, 0.045, 11.0, Close),
         ],
         reach: 0.42,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Engaged,
     },
     Phrase {
         title: "Suspended finish",
@@ -371,6 +389,8 @@ const PHRASES: [Phrase; 8] = [
             step(R, 0.09, 0.05, -10.0, Close),
         ],
         reach: 0.65,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Wide,
     },
 ];
 
@@ -517,6 +537,17 @@ impl Dance {
             "Suspended line"
         } else {
             "Planted isolations"
+        }
+    }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn pupil_stage(&self, elapsed_seconds: f64) -> Stage {
+        if let Some(count) = Count::at(&self.choreography, elapsed_seconds) {
+            PHRASES[count.phrase].pupil
+        } else if self.choreography.suspended {
+            Stage::Attentive
+        } else {
+            Stage::Neutral
         }
     }
 

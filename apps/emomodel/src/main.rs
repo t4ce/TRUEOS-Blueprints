@@ -26,6 +26,9 @@ mod greeting {
     mod dance;
     mod foot_contact;
     mod hand_contact;
+    mod heart;
+    mod heart_arm;
+    mod pupil;
     mod reel;
 }
 #[cfg(any(target_os = "trueos", test))]
@@ -54,6 +57,26 @@ const HUMANOID_FILE: &str = "AvatarSample_B.glb";
 const HUMANOID_GLB: &[u8] = include_bytes!("../assets/AvatarSample_B.glb");
 #[cfg(target_os = "trueos")]
 const GREETING_FILE: &str = "AvatarSample_B_Greeting.glb";
+
+#[derive(Clone, Copy)]
+enum EyeStyle {
+    Amethyst,
+    Nebula,
+    Doll,
+}
+
+#[cfg(target_os = "trueos")]
+impl EyeStyle {
+    fn random() -> Self {
+        // Use the same xorshift step as the Blueprint UI SoftRng in hello_world.
+        let mut state = (trueos::rng::u64() ^ trueos::clock::monotonic_nanos()).max(1);
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let styles = [Self::Amethyst, Self::Nebula, Self::Doll];
+        styles[(state % styles.len() as u64) as usize]
+    }
+}
 
 #[derive(Deserialize)]
 struct Artifact {
@@ -271,14 +294,32 @@ async fn install(root: &Path, model: &Model, client: &reqwest::Client) -> Result
 
 async fn run() -> Result<()> {
     let mut root = PathBuf::from("/apps/emomodel");
+    let mut msaa_samples = 4;
+    let mut eyes = None;
     let mut positional = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => root = args.next().context("--root requires a directory")?.into(),
+            "--msaa" => {
+                msaa_samples = match args.next().as_deref() {
+                    Some("1") => 1,
+                    Some("2") => 2,
+                    Some("4") => 4,
+                    _ => bail!("--msaa requires 1, 2, or 4 samples"),
+                };
+            }
+            "--eyes" => {
+                eyes = Some(match args.next().as_deref() {
+                    Some("amethyst") => EyeStyle::Amethyst,
+                    Some("nebula") => EyeStyle::Nebula,
+                    Some("doll") => EyeStyle::Doll,
+                    _ => bail!("--eyes requires amethyst, nebula, or doll"),
+                });
+            }
             "--help" | "-h" => {
                 println!(
-                    "emomodel [--root PATH] [show | skin | reel | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the original diffuse lighting.\nIn skin and reel, Lico's Run starts graph-driven dance and Lico's Stop resumes the previous motion.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
+                    "emomodel [--root PATH] [--msaa 1|2|4] [--eyes amethyst|nebula|doll] [show | skin | reel | heart | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the original diffuse lighting.\nheart traces the authored heart once with the right index finger.\nskin and reel default to 4x MSAA on supported GPUs. Use --msaa 1 for single-sample rendering.\nAnimated previews select one random Lily eye style per launch. Use --eyes to select a style.\nIn skin and reel, Lico's Run starts graph-driven dance and Lico's Stop resumes the previous motion.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
                 );
                 return Ok(());
             }
@@ -286,6 +327,8 @@ async fn run() -> Result<()> {
             _ => positional.push(arg),
         }
     }
+    #[cfg(not(target_os = "trueos"))]
+    let _ = (msaa_samples, eyes);
     let default_command = if cfg!(target_os = "trueos") {
         "skin"
     } else {
@@ -296,7 +339,7 @@ async fn run() -> Result<()> {
         .map(String::as_str)
         .unwrap_or(default_command)
     {
-        command @ ("show" | "skin" | "reel" | "greeting" | "base-color")
+        command @ ("show" | "skin" | "reel" | "heart" | "greeting" | "base-color")
             if positional.len() <= 1 =>
         {
             #[cfg(target_os = "trueos")]
@@ -307,11 +350,12 @@ async fn run() -> Result<()> {
                 use greeting::Appearance;
                 let appearance = match command {
                     "skin" => Appearance::SkinStudy,
+                    "heart" => Appearance::Heart,
                     "base-color" => Appearance::BaseColor,
                     _ => Appearance::Lighting,
                 };
                 let clip = root.join(GREETING_FILE);
-                let data = if appearance != Appearance::SkinStudy
+                let data = if !matches!(appearance, Appearance::SkinStudy | Appearance::Heart)
                     && (command == "greeting" || clip.is_file())
                 {
                     Some(
@@ -322,11 +366,14 @@ async fn run() -> Result<()> {
                     None
                 };
                 let motions = matches!(command, "skin" | "reel").then(|| root.join("motions"));
+                let eyes = eyes.unwrap_or_else(EyeStyle::random);
                 return greeting::show(
                     HUMANOID_GLB,
                     data.as_deref(),
                     motions.as_deref(),
                     appearance,
+                    msaa_samples,
+                    eyes,
                 )
                 .await;
             }
@@ -345,7 +392,7 @@ async fn run() -> Result<()> {
         }
         "setup" if positional.len() <= 2 => (),
         _ => bail!(
-            "use show, skin, reel, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"
+            "use show, skin, reel, heart, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"
         ),
     }
     let models = catalog()?;

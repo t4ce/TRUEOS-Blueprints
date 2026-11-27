@@ -31,6 +31,11 @@ On a local UI4 Shell3 window, thin amber outlines follow the current `seq`
 notes and rests as Lico renders audio. Editing the draft clears the playheads
 until the next successful run.
 
+When EmoModel is open in `skin` or `reel`, a successful Run sends it a
+`DanceClueSnapshot` from the active DSP graph. The dance follows the accepted
+connections and scheduled cues. Run again to pick up changes made during
+playback. Stop returns EmoModel to its previous motion.
+
 Press **Alt+V** to open or close Lico's native UI4 visualizer on the TRUEOS
 display. It runs in its own window at a target of 30 Hz. A precompiled Intel
 shader draws the output waveform, a 40-band spectrum, and up to eight

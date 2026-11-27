@@ -6,7 +6,7 @@ pub(super) const SWATCH_ROWS: usize = 4;
 const SWATCHES: [[u8; 3]; 3] = [
     [0x87, 0x53, 0xbd], // Hair
     [0xd0, 0xc8, 0xbe], // Mouth
-    [0x2d, 0x23, 0x35], // Iris
+    [0, 0, 0],          // Pupil
 ];
 const HEADER: usize = 54;
 
@@ -48,6 +48,11 @@ impl Palette {
 
     pub(super) fn swatch(&self, slot: usize) -> [f32; 2] {
         self.texel_uv(slot * 4 + 2, SWATCH_ROWS / 2)
+    }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn pupil(&self) -> [f32; 2] {
+        self.swatch(2)
     }
 
     pub(super) fn texel_uv(&self, x: usize, y: usize) -> [f32; 2] {

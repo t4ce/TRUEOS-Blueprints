@@ -18,7 +18,7 @@ pub(super) fn apply_coordinates(
 ) -> Result<()> {
     let asset = gltf::Gltf::from_slice(glb).context("parse base-color mesh")?;
     let blob = asset.blob.as_deref().context("mesh has no BIN chunk")?;
-    // The face and mouth have opaque coverage in atlas #0. The iris uses blend.
+    // The face and mouth have opaque coverage in atlas #0.
     for section in [0, 1, 3] {
         let material = MATERIALS[section];
         let primitive = asset

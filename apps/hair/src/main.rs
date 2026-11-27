@@ -8,14 +8,15 @@ mod obstacle;
 mod raster;
 mod scene;
 mod solver;
-mod water;
-mod water_iso;
 #[cfg(target_os = "trueos")]
 mod ui4;
+mod water;
+mod water_iso;
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 720;
-const WATER_PREVIEW: bool = true;
+const WATER_PREVIEW: bool = false;
+const TILT_LIMIT: f32 = std::f32::consts::FRAC_PI_2;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Layers {
@@ -53,6 +54,7 @@ pub(crate) struct Controls {
     pub(crate) layers: Layers,
     pub(crate) yaw: f32,
     pub(crate) roll: f32,
+    pub(crate) tilt: f32,
     #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
@@ -81,6 +83,7 @@ impl Default for Controls {
                 0.0
             },
             roll: 0.0,
+            tilt: 0.0,
             #[cfg(target_os = "trueos")]
             paused: false,
             speed_color: false,
@@ -131,6 +134,11 @@ fn main() -> Result<()> {
                 ensure!(degrees.is_finite(), "roll angle must be finite");
                 controls.roll = degrees.rem_euclid(360.0).to_radians();
             }
+            "--tilt" => {
+                let degrees = args.next().context("missing tilt angle")?.parse::<f32>()?;
+                ensure!(degrees.is_finite(), "tilt angle must be finite");
+                controls.tilt = degrees.to_radians().clamp(-TILT_LIMIT, TILT_LIMIT);
+            }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
             "--hide" | "--show" => {
@@ -139,8 +147,11 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu: Move the mouse left or right to spin. Water preview keys: I/K volume, J/L flow speed, U/O viscosity. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu: Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. Close the window to exit."
                 );
+                if controls.water {
+                    println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");
+                }
                 return Ok(());
             }
             _ => bail!("unknown option {arg}; use --help"),
@@ -176,7 +187,7 @@ fn main() -> Result<()> {
                     0
                 },
                 if controls.layers.guides {
-                    solver::ROOT_STREAMLINE_SEEDS
+                    scene.guide_count()
                 } else {
                     0
                 },

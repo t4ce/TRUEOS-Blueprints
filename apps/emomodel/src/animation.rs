@@ -526,7 +526,7 @@ impl Animation {
         self.update_world(None);
     }
 
-    #[cfg(target_os = "trueos")]
+    #[cfg(any(target_os = "trueos", test))]
     pub(super) fn bind_positions(
         &self,
         section: usize,
@@ -568,6 +568,50 @@ impl Animation {
         self.world[node]
     }
 
+    pub(super) fn orient_joint(&mut self, joint: usize, rotation: Quat) {
+        self.place_joint(joint, self.joint_position(joint), rotation);
+    }
+
+    fn place_joint(&mut self, joint: usize, position: Vec3, rotation: Quat) {
+        let world = self.world[joint];
+        let (scale, _, _) = world.to_scale_rotation_translation();
+        let target = Mat4::from_scale_rotation_translation(scale, rotation, position);
+        self.transform_joint_tree(joint, target * world.inverse());
+    }
+
+    /// Pose a subtree from its rest rotations in parent-first order.
+    pub(super) fn apply_joint_offsets(&mut self, offsets: &[(usize, Quat)]) {
+        for &(index, offset) in offsets {
+            let node = &self.nodes[index];
+            let pose = node.rest;
+            let local = Mat4::from_scale_rotation_translation(
+                pose.scale,
+                pose.rotation * offset,
+                pose.translation,
+            );
+            let target = node
+                .parent
+                .map_or(local, |parent| self.world[parent] * local);
+            self.transform_joint_tree(index, target * self.world[index].inverse());
+        }
+    }
+
+    pub(super) fn skin_point(&self, section: usize, index: usize) -> Vec3 {
+        let part = &self.sections[section];
+        let vertex = &part.vertices[index];
+        vertex
+            .joints
+            .iter()
+            .zip(vertex.weights)
+            .filter(|(_, weight)| *weight > 0.0)
+            .map(|(&joint, weight)| {
+                let joint = &part.joints[usize::from(joint)];
+                (self.world[joint.node] * joint.inverse_bind).transform_point3(vertex.position)
+                    * weight
+            })
+            .sum()
+    }
+
     /// Set one foot's world-space placement with a two-bone leg solve. The
     /// authored pose provides the leg lengths and the side of the knee bend.
     pub(super) fn place_foot(&mut self, joints: [usize; 3], target: Vec3, rotation: Quat) {
@@ -577,23 +621,13 @@ impl Animation {
         let lower = ankle - knee;
         let upper_len = upper.length();
         let lower_len = lower.length();
-        let Some(axis) = (target - hip).try_normalize() else {
-            return;
-        };
-        let distance = target.distance(hip).clamp(
-            (upper_len - lower_len).abs() + 1e-5,
-            upper_len + lower_len - 1e-5,
-        );
         let forward = (ankle - hip).normalize();
         let bend = upper - forward * upper.dot(forward);
-        let pole = (bend - axis * bend.dot(axis))
-            .try_normalize()
-            .unwrap_or_else(|| axis.any_orthonormal_vector());
-        let along = (upper_len * upper_len - lower_len * lower_len + distance * distance)
-            / (2.0 * distance);
-        let height = (upper_len * upper_len - along * along).max(0.0).sqrt();
-        let new_knee = hip + axis * along + pole * height;
-        let new_ankle = hip + axis * distance;
+        let Some([new_knee, new_ankle]) =
+            two_bone_positions(hip, target, [upper_len, lower_len], bend)
+        else {
+            return;
+        };
 
         let rotate_upper = Quat::from_rotation_arc(upper.normalize(), (new_knee - hip).normalize());
         self.transform_joint_tree(thigh, around(hip, rotate_upper));
@@ -602,10 +636,7 @@ impl Animation {
             (new_ankle - new_knee).normalize(),
         );
         self.transform_joint_tree(shin, around(new_knee, rotate_lower));
-        let foot_world = self.world[foot];
-        let (scale, _, _) = foot_world.to_scale_rotation_translation();
-        let foot_target = Mat4::from_scale_rotation_translation(scale, rotation, new_ankle);
-        self.transform_joint_tree(foot, foot_target * foot_world.inverse());
+        self.place_joint(foot, new_ankle, rotation);
     }
 
     fn transform_joint_tree(&mut self, root: usize, transform: Mat4) {
@@ -733,6 +764,24 @@ impl Animation {
             joint_world: &self.world,
         }
     }
+}
+
+pub(super) fn two_bone_positions(
+    root: Vec3,
+    target: Vec3,
+    [upper, lower]: [f32; 2],
+    bend: Vec3,
+) -> Option<[Vec3; 2]> {
+    let axis = (target - root).try_normalize()?;
+    let distance = target
+        .distance(root)
+        .clamp((upper - lower).abs() + 1e-5, upper + lower - 1e-5);
+    let pole = (bend - axis * bend.dot(axis))
+        .try_normalize()
+        .unwrap_or_else(|| axis.any_orthonormal_vector());
+    let along = (upper * upper - lower * lower + distance * distance) / (2.0 * distance);
+    let height = (upper * upper - along * along).max(0.0).sqrt();
+    Some([root + axis * along + pole * height, root + axis * distance])
 }
 
 fn around(point: Vec3, rotation: Quat) -> Mat4 {

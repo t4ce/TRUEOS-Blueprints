@@ -10,7 +10,6 @@ use crate::obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER, HEAD_RADIUS};
 // The longest resting back-hair vertices sit about 0.733 m from the head center.
 pub(crate) const HAIR_REACH_RADIUS: f32 = 0.75;
 pub(crate) const FIELD_STREAMLINE_SEEDS: usize = 44;
-pub(crate) const ROOT_STREAMLINE_SEEDS: usize = if cfg!(target_os = "trueos") { 32 } else { 64 };
 
 const SIZE: [usize; 3] = [64; 3];
 const CELL_COUNT: usize = SIZE[0] * SIZE[1] * SIZE[2];
@@ -95,13 +94,15 @@ pub(crate) struct FlowSettings {
 }
 
 impl FlowSettings {
-    pub(crate) const DEFAULT: Self = Self { speed: 1.0, viscosity: 0.10 / 3.0 };
+    pub(crate) const DEFAULT: Self = Self {
+        speed: 1.0,
+        viscosity: 0.10 / 3.0,
+    };
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RootSample {
-    pub(crate) position: Vec3,
-    pub(crate) outward: Vec3,
+struct GuideRoot {
+    position: Vec3,
+    launch: Vec3,
 }
 
 pub(crate) struct Solver {
@@ -116,17 +117,12 @@ pub(crate) struct Solver {
     flow_direction: Vec3,
     world_to_avatar: Quat,
     field_seeds: [Vec3; FIELD_STREAMLINE_SEEDS],
-    root_positions: [Vec3; ROOT_STREAMLINE_SEEDS],
-    root_seeds: [Vec3; ROOT_STREAMLINE_SEEDS],
+    roots: Vec<GuideRoot>,
     tick: u64,
 }
 
 impl Solver {
-    pub(crate) fn new(
-        flow_direction: Vec3,
-        world_to_avatar: Quat,
-        roots: [RootSample; ROOT_STREAMLINE_SEEDS],
-    ) -> Self {
+    pub(crate) fn new(flow_direction: Vec3, world_to_avatar: Quat, roots: Vec<Vec3>) -> Self {
         let flow_direction = flow_direction.normalize();
         let inflow = inlet_velocity(flow_direction, 0);
         let equilibrium = equilibrium(1.0, inflow);
@@ -161,8 +157,13 @@ impl Solver {
             flow_direction,
             world_to_avatar,
             field_seeds: field_seeds(flow_direction),
-            root_positions: roots.map(|root| root.position),
-            root_seeds: roots.map(root_seed),
+            roots: roots
+                .into_iter()
+                .map(|position| GuideRoot {
+                    position,
+                    launch: downward_launch(position),
+                })
+                .collect(),
             tick: 0,
         };
         solver.update_obstacles(world_to_avatar, inflow);
@@ -307,34 +308,52 @@ impl Solver {
         segments
     }
 
-    /// Emit downstream guide segments from the authored root patch.
-    /// The first fluid segment of each guide also carries its surface attachment.
+    pub(crate) fn guide_count(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Emit one straight downward spawn from each authored vertex, followed
+    /// by the downstream trace where the guide enters a fluid cell.
     pub(crate) fn for_each_guide_line(
         &self,
         mut emit: impl FnMut(Option<Vec3>, Vec3, Vec3, f32, f32),
     ) -> usize {
-        let head = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
         let avatar_to_world = self.world_to_avatar.conjugate();
-        self.root_positions
-            .iter()
-            .zip(&self.root_seeds)
-            .map(|(&position, &seed)| {
-                let mut attachment = Some(position);
-                let seed = if avatar_to_world == Quat::IDENTITY {
-                    seed
-                } else {
-                    head + avatar_to_world * (seed - head)
-                };
-                self.trace(
+        let mut segments = 0;
+        for root in &self.roots {
+            let mut launch = root.position - CELL_WIDTH * Vec3::Y;
+            let mut sample = None;
+            for step in 0..=8 {
+                let candidate = root.launch - (step as f32 * 0.25 * CELL_WIDTH) * Vec3::Y;
+                if BODY_OBSTACLES
+                    .iter()
+                    .any(|shape| shape.intersects(root.position, candidate))
+                {
+                    break;
+                }
+                launch = candidate;
+                let world = rotate_about_head(candidate, avatar_to_world);
+                let seed = (world - DOMAIN_MIN) / CELL_WIDTH;
+                if let Some(velocity) = self.velocity_at(seed) {
+                    sample = Some((seed, (velocity.length() / COLOR_SPEED).min(1.0)));
+                    break;
+                }
+            }
+            let speed = sample.map_or(0.0, |(_, speed)| speed);
+            emit(Some(root.position), root.position, launch, speed, 0.0);
+            segments += 1;
+            if let Some((seed, _)) = sample {
+                segments += self.trace(
                     seed,
                     1.0,
                     GUIDE_MIN_SPEED,
                     &mut |from, to, speed, change| {
-                        emit(attachment.take(), from, to, speed, change);
+                        emit(None, from, to, speed, change);
                     },
-                )
-            })
-            .sum()
+                );
+            }
+        }
+        segments
     }
 
     fn trace(
@@ -426,16 +445,17 @@ fn field_seeds(flow_direction: Vec3) -> [Vec3; FIELD_STREAMLINE_SEEDS] {
     })
 }
 
-fn root_seed(root: RootSample) -> Vec3 {
-    // Follow the local surface normal to a sampling position with one cell of
-    // clearance from the head proxy, including room for voxel discretization.
-    let radius = HEAD_RADIUS + CELL_WIDTH;
-    let offset = root.position - HEAD_CENTER;
-    let along = offset.dot(root.outward);
-    let inside = (radius * radius - offset.length_squared()).max(0.0);
-    let distance = (along * along + inside).sqrt() - along;
-    let position = root.position + distance * root.outward;
-    (position - DOMAIN_MIN) / CELL_WIDTH
+fn downward_launch(root: Vec3) -> Vec3 {
+    // Exit the approximate head obstacle along the same vertical line as the
+    // authored root. A small margin avoids sampling the boundary voxel.
+    let offset = root - HEAD_CENTER;
+    let span = HEAD_RADIUS * HEAD_RADIUS - offset.x * offset.x - offset.z * offset.z;
+    let drop = if span > 0.0 {
+        CELL_WIDTH.max(offset.y + span.sqrt() + 0.25 * CELL_WIDTH)
+    } else {
+        CELL_WIDTH
+    };
+    root - drop * Vec3::Y
 }
 
 fn inlet_velocity(flow_direction: Vec3, tick: u64) -> Vec3 {
@@ -532,8 +552,8 @@ mod tests {
     fn tip_spread_adds_outward_velocity_in_the_lower_rear_field() {
         let mut baseline = standing_solver();
         let mut spread = standing_solver();
-        baseline.step(Quat::IDENTITY, false);
-        spread.step(Quat::IDENTITY, true);
+        baseline.step(Quat::IDENTITY, false, FlowSettings::DEFAULT);
+        spread.step(Quat::IDENTITY, true, FlowSettings::DEFAULT);
         let delta = |position| {
             let lattice = (position - DOMAIN_MIN) / CELL_WIDTH;
             spread.velocity_at(lattice).unwrap() - baseline.velocity_at(lattice).unwrap()
@@ -567,30 +587,38 @@ mod tests {
         }
         assert!(quadrants.into_iter().all(|count| (9..=13).contains(&count)));
         assert_eq!(solver.field_seeds.len(), 44);
+    }
+
+    #[test]
+    fn every_authored_vertex_spawns_one_straight_downward_guide() {
         let roots = crate::scene::reference_roots();
-        for (&seed, root) in solver.root_seeds.iter().zip(roots) {
-            let position = world_position(seed);
-            assert!(solver.velocity_at(seed).is_some());
-            let direction = (position - root.position).normalize();
-            assert!(direction.distance(root.outward) < 1e-5);
-            assert!(position.distance(HEAD_CENTER) >= HEAD_RADIUS + CELL_WIDTH - 1e-6);
+        for angle in [0.0_f32, 90.0, 180.0, 270.0] {
+            let spin = Quat::from_rotation_z(angle.to_radians());
+            let solver = Solver::new(Vec3::NEG_Y, spin, roots.clone());
+            let mut attached = 0;
+            let mut last_end: Option<Vec3> = None;
+            solver.for_each_guide_line(|attachment, from, to, _, _| {
+                if let Some(position) = attachment {
+                    assert_eq!(position, roots[attached]);
+                    assert_eq!(from, position);
+                    assert_eq!((to.x, to.z), (position.x, position.z));
+                    assert!(to.y < position.y);
+                    assert!(!HEAD.contains(to));
+                    attached += 1;
+                } else {
+                    assert!(from.distance(last_end.unwrap()) < 1e-6);
+                }
+                last_end = Some(to);
+            });
+            assert_eq!(attached, roots.len());
         }
-        let mut attached = 0;
-        solver.for_each_guide_line(|attachment, from, _, _, _| {
-            if let Some(position) = attachment {
-                assert_eq!(position, roots[attached].position);
-                assert_eq!(from, world_position(solver.root_seeds[attached]));
-                attached += 1;
-            }
-        });
-        assert_eq!(attached, ROOT_STREAMLINE_SEEDS);
     }
 
     #[test]
     fn obstacles_change_the_field_and_streamlines_remain_outside() {
         let mut solver = standing_solver();
         for _ in 0..18 {
-            solver.step(Quat::IDENTITY, true);
+            solver.step(Quat::IDENTITY, true, FlowSettings::DEFAULT);
         }
         let head = (HEAD_CENTER - DOMAIN_MIN) / CELL_WIDTH;
         assert!(solver.velocity_at(head).is_none());
@@ -610,20 +638,6 @@ mod tests {
         assert!(free_flow.dot(Vec3::NEG_Y) > 0.06);
         let arm_wake = sample(Vec3::new(0.430, 1.10, 0.016));
         assert!(arm_wake.dot(Vec3::NEG_Y) < free_flow.dot(Vec3::NEG_Y) * 0.96);
-        let mut roots_below_shoulders = 0;
-        for &seed in &solver.root_seeds {
-            let mut lowest = world_position(seed).y;
-            assert!(
-                solver.trace(seed, 1.0, GUIDE_MIN_SPEED, &mut |_, to, _, _| {
-                    lowest = lowest.min(to.y);
-                }) > 0
-            );
-            roots_below_shoulders += usize::from(lowest < 1.15);
-        }
-        assert!(
-            roots_below_shoulders >= ROOT_STREAMLINE_SEEDS * 3 / 4,
-            "{roots_below_shoulders} roots below the shoulders"
-        );
         let mut count = 0;
         let mut varied = false;
         let mut reach_exits = [false; 2];
@@ -646,14 +660,36 @@ mod tests {
             }
         };
         let field_segments = solver.for_each_field_line(&mut observe);
-        let guide_segments =
-            solver.for_each_guide_line(|_, from, to, speed, delta| observe(from, to, speed, delta));
-        assert_eq!(field_segments + guide_segments, count);
+        let mut roots_below_shoulders = 0;
+        let mut crosses_shoulders = false;
+        let guide_segments = solver.for_each_guide_line(|attachment, from, to, speed, delta| {
+            if attachment.is_some() {
+                crosses_shoulders = false;
+                assert!(
+                    !BODY_OBSTACLES
+                        .iter()
+                        .any(|shape| shape.intersects(from, to))
+                );
+            } else {
+                observe(from, to, speed, delta);
+                if !crosses_shoulders && to.y < 1.15 {
+                    roots_below_shoulders += 1;
+                    crosses_shoulders = true;
+                }
+            }
+        });
+        assert_eq!(
+            field_segments + guide_segments - solver.guide_count(),
+            count
+        );
         assert!(
             (1_200..=1_600).contains(&field_segments) && varied,
             "{field_segments} field segments, {guide_segments} guide segments"
         );
-        assert!(guide_segments >= ROOT_STREAMLINE_SEEDS * 10);
+        assert!(
+            roots_below_shoulders >= solver.guide_count() / 2,
+            "{roots_below_shoulders} roots below the shoulders with {guide_segments} guide segments"
+        );
         assert_eq!(reach_exits, [true; 2]);
     }
 
@@ -699,7 +735,7 @@ mod tests {
         assert_eq!(solver.field_seeds, field_seeds);
         assert_eq!(solver.populations[distant_cell], populations);
         assert_eq!(solver.velocity[distant_cell], velocity);
-        solver.step(roll, false);
+        solver.step(roll, false, FlowSettings::DEFAULT);
         assert_eq!(
             solver.velocity[index(0, 32, 0)],
             inlet_velocity(Vec3::NEG_Y, 1)

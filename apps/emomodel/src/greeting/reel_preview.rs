@@ -11,16 +11,20 @@ use super::{
     SECOND_NS, compact_mesh,
     dance::Dance,
     eye_detail::{self, EyeDetail},
+    eye_sprite::{self, EyeSprite},
     floor, floor_material,
     foot_contact::FootProbe,
     hand_contact::HandProbe,
+    heart::Heart,
     lico_graph::{DanceClueSnapshot, Observer},
+    pupil::{self, Stage},
     reel::{GROUND_Y, PlacedPose, Reel},
     reel_draw::{ReelDraw, VERTEX_BYTES},
     report,
     skin_study::{self, Lighting, Material},
 };
 use crate::{
+    EyeStyle,
     animation::{Animation, RigPose},
     autobs::{ARC_LIMIT, BASE_YAW, camera_back, view_back},
     hair::{Hair, PARTICLES},
@@ -32,7 +36,9 @@ use crate::{
 
 const LIGHT_SIZE: usize = skin_study::SIZE;
 const LIGHT_ROW: usize = floor_material::SWATCH_ROWS;
-const EYE_ROW: usize = LIGHT_ROW + LIGHT_SIZE;
+const IRIS_ROW: usize = LIGHT_ROW;
+const IRIS_COLUMN: usize = LIGHT_SIZE + 1;
+const EYE_ROW: usize = IRIS_ROW + eye_sprite::SIZE;
 const CONTACT_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
 const ATLAS_HEIGHT: usize = 512;
 const MAX_ATLAS_WIDTH: usize = 1024;
@@ -42,6 +48,7 @@ const MODE_BLEND_NS: u64 = 400_000_000;
 pub(super) enum Motion {
     Reel(Reel),
     Nod(Animation),
+    Heart(Heart),
 }
 
 impl Motion {
@@ -49,6 +56,15 @@ impl Motion {
         match self {
             Self::Reel(reel) => reel.frame_count(),
             Self::Nod(nod) => (nod.duration() * super::HZ as f32).round() as usize + 1,
+            Self::Heart(heart) => heart.frame_count(),
+        }
+    }
+
+    fn frame(&self, tick: usize) -> usize {
+        if matches!(self, Self::Heart(_)) {
+            tick.min(self.frame_count() - 1)
+        } else {
+            tick % self.frame_count()
         }
     }
 
@@ -56,12 +72,29 @@ impl Motion {
         match self {
             Self::Reel(reel) => reel.phase(frame),
             Self::Nod(_) => "Nod",
+            Self::Heart(heart) => heart.phase(frame),
+        }
+    }
+
+    fn pupil_stage(&self, frame: usize) -> Stage {
+        match self {
+            Self::Reel(reel) => reel.pupil_stage(frame),
+            Self::Nod(nod) => pupil::nod_stage(frame as f32 / super::HZ as f32, nod.duration()),
+            Self::Heart(heart) => heart.pupil_stage(frame),
+        }
+    }
+
+    fn stroke(&self, frame: usize) -> &[[Vec3; 2]] {
+        match self {
+            Self::Heart(heart) => heart.stroke(frame),
+            _ => &[],
         }
     }
 
     fn sample(&mut self, frame: usize) -> Result<PlacedPose<'_>> {
         match self {
             Self::Reel(reel) => reel.sample(frame),
+            Self::Heart(heart) => heart.sample(frame),
             Self::Nod(nod) => {
                 nod.apply(frame as f32 / super::HZ as f32);
                 let head_from_bind = nod.head_from_bind().context("missing Nod head joint")?;
@@ -81,6 +114,7 @@ impl Motion {
         match self {
             Self::Reel(reel) => reel.apply_bind_normals(section, normals),
             Self::Nod(nod) => nod.apply_bind_normals(section, normals),
+            Self::Heart(heart) => heart.apply_bind_normals(section, normals),
         }
     }
 }
@@ -120,6 +154,9 @@ fn skin_materials(motion: &Motion, mesh: &Mesh) -> Result<Vec<Material>> {
         match motion {
             Motion::Reel(reel) => materials.extend(reel.bind_positions(section).map(Material::at)),
             Motion::Nod(nod) => materials.extend(nod.bind_positions(section).map(Material::at)),
+            Motion::Heart(heart) => {
+                materials.extend(heart.bind_positions(section).map(Material::at))
+            }
         }
         ensure!(
             start == range.start && materials.len() == range.end,
@@ -132,8 +169,7 @@ fn skin_materials(motion: &Motion, mesh: &Mesh) -> Result<Vec<Material>> {
 pub(super) struct Preview<'a> {
     mesh: &'a Mesh,
     motion: Motion,
-    dance: Dance,
-    lico: Observer,
+    lico: Option<(Dance, Observer)>,
     dance_clue: Option<Arc<DanceClueSnapshot>>,
     clock: PlaybackClock,
     blend_rig: Animation,
@@ -144,6 +180,8 @@ pub(super) struct Preview<'a> {
     source_vertices: Vec<usize>,
     material_slots: Vec<Option<usize>>,
     eye_detail: EyeDetail,
+    iris: EyeSprite,
+    pupil: pupil::Transition,
     body_start: usize,
     hair: Hair,
     settled: Hair,
@@ -170,13 +208,19 @@ impl<'a> Preview<'a> {
         mut motion: Motion,
         glb: &[u8],
         studying_skin: bool,
+        eyes: EyeStyle,
     ) -> Result<(Self, Vec3, [f32; 2])> {
-        let mut dance = Dance::new(glb, &super::MATERIALS)?;
+        let is_heart = matches!(&motion, Motion::Heart(_));
+        let mut dance = (!is_heart)
+            .then(|| Dance::new(glb, &super::MATERIALS))
+            .transpose()?;
         let mut blend_rig = Animation::procedural(glb, &super::MATERIALS)?;
         if !studying_skin {
             super::apply_normal_maps(glb, |section, normals| {
                 motion.apply_bind_normals(section, normals)?;
-                dance.apply_bind_normals(section, normals)?;
+                if let Some(dance) = &mut dance {
+                    dance.apply_bind_normals(section, normals)?;
+                }
                 blend_rig.apply_bind_normals(section, normals)
             })
             .await?;
@@ -185,33 +229,47 @@ impl<'a> Preview<'a> {
         let feet = FootProbe::new(glb, body_start)?;
         let hands = HandProbe::new(glb, body_start)?;
         let eye_detail = EyeDetail::load(glb).await?;
+        let iris = EyeSprite::load(eyes).await?;
         ensure!(
             eye_detail.rgba().len() == eye_detail::WIDTH * eye_detail::HEIGHT * 4,
             "wrong reel eye detail extent"
         );
         let (source_vertices, compact_indices) = compact_mesh(mesh);
         let eye_base = source_vertices.len();
-        let hair_base = eye_base + eye_detail.len();
+        let pupil_base = eye_base + eye_sprite::VERTEX_COUNT as usize;
+        let detail_base = pupil_base + eye_sprite::PUPIL_VERTEX_COUNT as usize;
+        let hair_base = detail_base + eye_detail.len();
         let strand_count = mesh.strand_guides.len();
         let hair_vertices = strand_count * PARTICLES * 2;
         let skin_materials = studying_skin
             .then(|| skin_materials(&motion, mesh))
             .transpose()?;
-        let vertex_count = hair_base + hair_vertices + 4 * floor::CONTACTS;
+        let stroke_pairs = motion.stroke(motion.frame_count() - 1).len();
+        let stroke_indices = stroke_pairs.saturating_sub(1) * 6;
+        let vertex_count = hair_base + hair_vertices + 4 * floor::CONTACTS + 2 * stroke_pairs;
         let mut indices = Vec::with_capacity(
             (compact_indices.len()
+                + eye_sprite::INDEX_COUNT
+                + eye_sprite::PUPIL_INDEX_COUNT
                 + eye_detail.indices().len()
                 + strand_count * PARTICLES * 6
-                + floor::CONTACTS * 6)
+                + floor::CONTACTS * 6
+                + stroke_indices)
                 * size_of::<u32>(),
         );
         indices.extend(compact_indices.into_iter().flat_map(u32::to_le_bytes));
-        let eye_base = u32::try_from(eye_base)?;
+        indices.extend(
+            EyeSprite::indices(u32::try_from(eye_base)?)
+                .chain(EyeSprite::pupil_indices(u32::try_from(pupil_base)?))
+                .flatten()
+                .flat_map(u32::to_le_bytes),
+        );
+        let detail_base = u32::try_from(detail_base)?;
         indices.extend(
             eye_detail
                 .indices()
                 .iter()
-                .flat_map(|&index| (eye_base + index).to_le_bytes()),
+                .flat_map(|&index| (detail_base + index).to_le_bytes()),
         );
         for strand in 0..strand_count {
             let base = (hair_base + strand * PARTICLES * 2) as u32;
@@ -230,7 +288,7 @@ impl<'a> Preview<'a> {
         let draw = ReelDraw::new(
             device,
             vertex_count * VERTEX_BYTES,
-            geometry_index_bytes + floor::CONTACTS * 6 * size_of::<u32>(),
+            geometry_index_bytes + (floor::CONTACTS * 6 + stroke_indices) * size_of::<u32>(),
             4 * MAX_ATLAS_WIDTH * ATLAS_HEIGHT,
         )?;
         let light_pixels = if studying_skin {
@@ -267,6 +325,7 @@ impl<'a> Preview<'a> {
                 "reel",
             ),
             Motion::Nod(_) => ("Nod", "nod"),
+            Motion::Heart(_) => ("Heart", "gesture"),
         };
         report(format_args!(
             "avatar ready target_hz={} clips={clips} poses={} playback={playback}",
@@ -277,8 +336,7 @@ impl<'a> Preview<'a> {
             Self {
                 mesh,
                 motion,
-                dance,
-                lico: Observer::new(),
+                lico: dance.map(|dance| (dance, Observer::new())),
                 dance_clue: None,
                 clock: PlaybackClock::default(),
                 blend_rig,
@@ -289,6 +347,8 @@ impl<'a> Preview<'a> {
                 source_vertices,
                 material_slots,
                 eye_detail,
+                iris,
+                pupil: pupil::Transition::default(),
                 body_start,
                 hair,
                 settled,
@@ -313,14 +373,17 @@ impl<'a> Preview<'a> {
     }
 
     pub(super) fn sync_lico(&mut self, elapsed_ns: u64) {
-        let clue = self.lico.current();
+        let Some((dance, observer)) = &mut self.lico else {
+            return;
+        };
+        let clue = observer.current();
         match (&self.dance_clue, &clue) {
             (None, None) => return,
             (Some(current), Some(next)) if Arc::ptr_eq(current, next) => return,
             _ => {}
         }
         if let Some(snapshot) = &clue {
-            self.dance.set_graph(&snapshot.graph);
+            dance.set_graph(&snapshot.graph);
             report(format_args!(
                 "avatar mode=lico-dance run={} nodes={} patterns={}",
                 snapshot.run,
@@ -338,14 +401,14 @@ impl<'a> Preview<'a> {
     }
 
     pub(super) fn pose(&self, elapsed_ns: u64, now_ns: u64) -> (usize, &'static str) {
-        if let Some(snapshot) = &self.dance_clue {
+        if let (Some((dance, _)), Some(snapshot)) = (&self.lico, &self.dance_clue) {
             let time = now_ns.saturating_sub(snapshot.started_ns);
             let tick = (time.saturating_mul(u64::from(super::HZ)) / SECOND_NS) as usize;
-            (tick, self.dance.phrase(time as f64 / SECOND_NS as f64))
+            (tick, dance.phrase(time as f64 / SECOND_NS as f64))
         } else {
             let tick =
                 (self.clock.motion_time(elapsed_ns) * u64::from(super::HZ) / SECOND_NS) as usize;
-            let index = tick % self.motion.frame_count();
+            let index = self.motion.frame(tick);
             (index, self.motion.phase(index))
         }
     }
@@ -408,9 +471,18 @@ impl<'a> Preview<'a> {
                 }
             }
         }
-        let pose = if let Some(snapshot) = &self.dance_clue {
-            self.dance
-                .sample(now_ns.saturating_sub(snapshot.started_ns) as f64 / SECOND_NS as f64)?
+        let dance_seconds = self
+            .dance_clue
+            .as_ref()
+            .map(|snapshot| now_ns.saturating_sub(snapshot.started_ns) as f64 / SECOND_NS as f64);
+        let stage = if let (Some((dance, _)), Some(seconds)) = (&self.lico, dance_seconds) {
+            dance.pupil_stage(seconds)
+        } else {
+            self.motion.pupil_stage(frame)
+        };
+        let pupil_area = self.pupil.sample(stage, elapsed_ns);
+        let pose = if let (Some((dance, _)), Some(seconds)) = (&mut self.lico, dance_seconds) {
+            dance.sample(seconds)?
         } else {
             self.motion.sample(frame)?
         };
@@ -476,16 +548,17 @@ impl<'a> Preview<'a> {
         let [width, height] = palette.extent();
         palette.write_rgba(&mut self.texture);
         let stride = width as usize * 4;
-        for (start_row, source_width, pixels) in [
-            (LIGHT_ROW, LIGHT_SIZE, self.light_pixels.as_slice()),
-            (EYE_ROW, eye_detail::WIDTH, self.eye_detail.rgba()),
+        for (column, start_row, source_width, pixels) in [
+            (0, LIGHT_ROW, LIGHT_SIZE, self.light_pixels.as_slice()),
+            (0, EYE_ROW, eye_detail::WIDTH, self.eye_detail.rgba()),
+            (IRIS_COLUMN, IRIS_ROW, eye_sprite::SIZE, self.iris.rgba()),
         ] {
             for (row, colors) in pixels.chunks_exact(source_width * 4).enumerate() {
-                let start = (start_row + row) * stride;
+                let start = (start_row + row) * stride + column * 4;
                 self.texture[start..start + colors.len()].copy_from_slice(colors);
             }
         }
-        let swatches = [palette.swatch(0), palette.swatch(1), palette.swatch(2)];
+        let swatches = [palette.swatch(0), palette.swatch(1)];
         let view_projection = Mat4::from_cols_array(&camera.view_projection);
         let back = -Vec3::from_array(
             camera.forward_far[..3]
@@ -522,6 +595,19 @@ impl<'a> Preview<'a> {
             };
             append(Vec3::from_array(pose.positions[index]), uv);
         }
+        for (position, [u, v]) in self.iris.vertices(pose.positions) {
+            append(
+                position,
+                [
+                    (u + IRIS_COLUMN as f32) / width as f32,
+                    (v + IRIS_ROW as f32) / height as f32,
+                ],
+            );
+        }
+        let pupil_uv = palette.pupil();
+        for position in self.iris.pupil_vertices(pose.positions, pupil_area) {
+            append(position, pupil_uv);
+        }
         for (position, [u, v]) in self.eye_detail.vertices(pose.positions) {
             let uv = [
                 u * eye_detail::WIDTH as f32 / width as f32,
@@ -546,19 +632,34 @@ impl<'a> Preview<'a> {
                 append(vertex, swatches[0]);
             }
         }
-        let ground_base = (self.source_vertices.len()
+        let mut next_vertex = (self.source_vertices.len()
+            + eye_sprite::VERTEX_COUNT as usize
+            + eye_sprite::PUPIL_VERTEX_COUNT as usize
             + self.eye_detail.len()
             + self.drape.len() * PARTICLES * 2) as u32;
         self.indices.truncate(self.geometry_index_bytes);
-        for (i, (points, uv)) in self.contacts.quads(0, GROUND_Y, &palette).enumerate() {
+        for (points, uv) in self.contacts.quads(0, GROUND_Y, &palette) {
             for (point, uv) in points.into_iter().zip(uv) {
                 append(Vec3::from_array(point), uv);
             }
             self.indices.extend(
                 [0, 1, 2, 2, 1, 3]
                     .into_iter()
-                    .flat_map(|corner| (ground_base + 4 * i as u32 + corner).to_le_bytes()),
+                    .flat_map(|corner| (next_vertex + corner).to_le_bytes()),
             );
+            next_vertex += 4;
+        }
+        let stroke = self.motion.stroke(frame);
+        for &position in stroke.iter().flatten() {
+            append(position, swatches[0]);
+        }
+        for _ in stroke.windows(2) {
+            self.indices.extend(
+                [0, 1, 2, 2, 1, 3]
+                    .into_iter()
+                    .flat_map(|corner| (next_vertex + corner).to_le_bytes()),
+            );
+            next_vertex += 2;
         }
         Ok([width, height])
     }
@@ -570,8 +671,12 @@ fn body_indices(mesh: &Mesh, body_start: usize) -> &[u32] {
 }
 
 fn frame_bounds(motion: &mut Motion, source: &[usize]) -> Result<(Vec3, [f32; 2])> {
-    let right = Vec3::Y.cross(camera_back(BASE_YAW));
-    let back = view_back(BASE_YAW);
+    let is_heart = matches!(motion, Motion::Heart(_));
+    let (right, back) = if is_heart {
+        (-Vec3::X, -Vec3::Z)
+    } else {
+        (Vec3::Y.cross(camera_back(BASE_YAW)), view_back(BASE_YAW))
+    };
     let up = back.cross(right);
     let mut low = Vec3::splat(f32::INFINITY);
     let mut high = Vec3::splat(f32::NEG_INFINITY);
@@ -586,11 +691,13 @@ fn frame_bounds(motion: &mut Motion, source: &[usize]) -> Result<(Vec3, [f32; 2]
             include(Vec3::from_array(pose.positions[index]));
         }
     }
-    let (min, max) = Dance::framing_bounds();
-    for x in [min[0], max[0]] {
-        for y in [min[1], max[1]] {
-            for z in [min[2], max[2]] {
-                include(Vec3::new(x, y, z));
+    if !is_heart {
+        let (min, max) = Dance::framing_bounds();
+        for x in [min[0], max[0]] {
+            for y in [min[1], max[1]] {
+                for z in [min[2], max[2]] {
+                    include(Vec3::new(x, y, z));
+                }
             }
         }
     }

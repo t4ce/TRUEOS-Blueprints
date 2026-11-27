@@ -44,6 +44,7 @@ pub(super) struct Autobs {
     started_ns: u64,
     duration_ns: u64,
     yaw_arc: f32,
+    front_on: bool,
 }
 
 impl Autobs {
@@ -80,7 +81,13 @@ impl Autobs {
             started_ns: 0,
             duration_ns: 0,
             yaw_arc: 0.0,
+            front_on: false,
         }
+    }
+
+    pub(super) fn front_on(mut self) -> Self {
+        self.front_on = true;
+        self
     }
 
     pub(super) fn aim_at_landing(&mut self, target: Vec3, weight: f32) {
@@ -109,7 +116,11 @@ impl Autobs {
             .ln()
             .abs()
             .max((goal.zoom / from.zoom).ln().abs());
-        let available_arc = (ARC_LIMIT - from.yaw_offset.abs()).max(0.0);
+        let available_arc = if self.front_on {
+            0.0
+        } else {
+            (ARC_LIMIT - from.yaw_offset.abs()).max(0.0)
+        };
         let arc_sign = if receding { -1.0 } else { 1.0 };
         self.yaw_arc = arc_sign * available_arc * (change / 0.55).min(1.0);
         self.from = from;
@@ -154,7 +165,11 @@ impl Autobs {
     }
 
     fn matrices(&self, pose: ObserverPose, extent: (u32, u32)) -> (Mat4, Mat4, Vec3, Vec3) {
-        let back = view_back(BASE_YAW + pose.yaw_offset);
+        let back = if self.front_on {
+            -Vec3::Z
+        } else {
+            view_back(BASE_YAW + pose.yaw_offset)
+        };
         let eye = pose.target + back * pose.distance;
         let view = look_at_mat4(eye, pose.target, Vec3::Y);
         let diameter_pixels_per_unit = 2.0 * self.reference_pixels_per_unit * pose.zoom;
@@ -223,6 +238,17 @@ mod tests {
 
     fn observer() -> Autobs {
         Autobs::new(REFERENCE, TARGET, PIXELS_PER_UNIT, HALF_SPAN)
+    }
+
+    #[test]
+    fn front_on_heart_view_keeps_the_drawing_plane_parallel_on_resize() {
+        let mut observer = observer().front_on();
+        let larger = (960, 840);
+        observer.retarget(larger, observer.pose(0), 1);
+        let pose = observer.pose(1 + APPROACH_NS / 2);
+        let (_, _, _, forward) = observer.matrices(pose, larger);
+        assert_eq!(forward, Vec3::Z);
+        assert_eq!(pose.yaw_offset, 0.0);
     }
 
     #[test]

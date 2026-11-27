@@ -16,6 +16,7 @@ use trueos::{
 };
 
 use crate::{
+    EyeStyle,
     animation::{ARM_RECOVERY_SECONDS, Animation, SAMPLE_HZ as HZ},
     autobs::{ARC_LIMIT, Autobs, BASE_YAW, CAMERA_PITCH, ObserverPose, camera_back, view_back},
     greeting_motion::{MotionPhase, MotionSample, Timeline},
@@ -34,13 +35,17 @@ use hand_contact::HandProbe;
 mod base_color;
 mod dance;
 mod eye_detail;
+mod eye_sprite;
 mod floor;
 mod floor_material;
 mod foot_contact;
 mod hand_contact;
+mod heart;
+mod heart_arm;
 mod idle;
 mod lico_graph;
 mod normal_detail;
+mod pupil;
 mod reel;
 mod reel_draw;
 mod reel_preview;
@@ -54,12 +59,11 @@ const VERTEX_BYTES: usize = 32;
 const WAIT_NS: u64 = 2 * SECOND_NS;
 const DRAW_GROUPS: usize = 3;
 const LIT_MATERIALS: usize = 2;
-const MATERIALS: [&str; 5] = [
+const MATERIALS: [&str; 4] = [
     mesh::FACE_MATERIAL,
     mesh::BODY_MATERIAL,
     mesh::HAIR_MATERIAL,
     "N00_000_00_FaceMouth_00_FACE (Instance)",
-    "N00_000_00_EyeIris_00_EYE (Instance)",
 ];
 const NORMAL_MAP_SIZE: u32 = 1024;
 const SKIN_NORMAL_MAPS: [&[u8]; LIT_MATERIALS] = [
@@ -81,6 +85,7 @@ pub(super) enum Appearance {
     Lighting,
     BaseColor,
     SkinStudy,
+    Heart,
 }
 
 pub(super) async fn show(
@@ -88,6 +93,8 @@ pub(super) async fn show(
     greeting_glb: Option<&[u8]>,
     motions: Option<&Path>,
     appearance: Appearance,
+    msaa_samples: u8,
+    eyes: EyeStyle,
 ) -> Result<()> {
     let (x, y, width, height) = window_placement()?;
     let mesh = mesh::prepare_materials(glb, width, height, &MATERIALS, true)?;
@@ -99,8 +106,15 @@ pub(super) async fn show(
             Some(path) => reel::Reel::load(path, glb, &MATERIALS, mesh.material_vertices[1].start)?,
             None => None,
         };
-        let studying_skin = appearance == Appearance::SkinStudy;
-        let motion = if let Some(reel) = reel {
+        let drawing_heart = appearance == Appearance::Heart;
+        let studying_skin = matches!(appearance, Appearance::SkinStudy | Appearance::Heart);
+        let motion = if drawing_heart {
+            Some(reel_preview::Motion::Heart(heart::Heart::new(
+                glb,
+                &MATERIALS,
+                mesh.material_vertices[1].end,
+            )?))
+        } else if let Some(reel) = reel {
             Some(reel_preview::Motion::Reel(reel))
         } else if studying_skin {
             Some(reel_preview::Motion::Nod(Animation::nod(
@@ -112,7 +126,7 @@ pub(super) async fn show(
         let color = appearance == Appearance::BaseColor;
         let (mut playback, target, half_span) = if let Some(motion) = motion {
             let (preview, center, span) =
-                reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin).await?;
+                reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin, eyes).await?;
             (Playback::Reel(preview), center.to_array(), span)
         } else {
             let mut greeting = greeting_glb
@@ -134,7 +148,7 @@ pub(super) async fn show(
                 .await?;
             }
             let renderer =
-                AvatarRenderer::prepare(device, &mesh, &mut sequence, glb, color).await?;
+                AvatarRenderer::prepare(device, &mesh, &mut sequence, glb, color, eyes).await?;
             let skin = if color {
                 Skin::BaseColor(base_color::retain(device).await?)
             } else {
@@ -148,14 +162,25 @@ pub(super) async fn show(
             )
         };
         let mut observer = Autobs::new((width, height), target, mesh.pixels_per_unit, half_span);
+        if drawing_heart {
+            observer = observer.front_on();
+        }
         let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
         let title = match appearance {
             Appearance::SkinStudy => "EmoModel · Skin",
+            Appearance::Heart => "EmoModel · Heart",
             Appearance::BaseColor => "EmoModel · 4K Base Color",
             Appearance::Lighting => "EmoModel",
         };
         frame.set_title(title).map_err(ui_error)?;
-        play(&mut frame, device, &mut playback, &mut observer).await
+        play(
+            &mut frame,
+            device,
+            &mut playback,
+            &mut observer,
+            msaa_samples,
+        )
+        .await
     }
     .await;
     let released = device.close().map_err(gpu_error);
@@ -325,12 +350,15 @@ impl AvatarRenderer {
         sequence: &mut AnimationSequence,
         glb: &[u8],
         color: bool,
+        eyes: EyeStyle,
     ) -> Result<Self> {
         let started = clock::monotonic_nanos();
         let queue = device.create_queue(QueueClass::Render).map_err(gpu_error)?;
         let eye = eye_detail::EyeDetail::load(glb).await?;
+        let iris = eye_sprite::EyeSprite::load(eyes).await?;
         let greeting_duration = sequence.greeting.as_ref().map(Animation::duration);
-        let timeline = Timeline::new(greeting_duration, sequence.nod.duration());
+        let nod_duration = sequence.nod.duration();
+        let timeline = Timeline::new(greeting_duration, nod_duration);
         let pose_count = timeline.forward_frame_count();
         let frame_count = timeline.frame_count();
         let (source_vertices, compact_indices) = compact_mesh(mesh);
@@ -424,14 +452,16 @@ impl AvatarRenderer {
             }
         }
         let eye_row = floor_material::SWATCH_ROWS;
+        let iris_row = eye_row + eye_detail::HEIGHT;
         let mut palette =
-            contacts.bake_rows(&[512, 1024, 2048], 4096, eye_row + eye_detail::HEIGHT)?;
-        for (i, pixel) in eye.rgba().chunks_exact(4).enumerate() {
-            palette.set(
-                i % eye_detail::WIDTH,
-                eye_row + i / eye_detail::WIDTH,
-                [pixel[0], pixel[1], pixel[2]],
-            );
+            contacts.bake_rows(&[512, 1024, 2048], 4096, iris_row + eye_sprite::SIZE)?;
+        for (row, width, pixels) in [
+            (eye_row, eye_detail::WIDTH, eye.rgba()),
+            (iris_row, eye_sprite::SIZE, iris.rgba()),
+        ] {
+            for (i, pixel) in pixels.chunks_exact(4).enumerate() {
+                palette.set(i % width, row + i / width, [pixel[0], pixel[1], pixel[2]]);
+            }
         }
         let [palette_width, palette_height] = palette.extent().map(|size| size as f32);
         let eye_uv = |[u, v]: [f32; 2]| {
@@ -441,17 +471,24 @@ impl AvatarRenderer {
             ]
         };
         let hair_uv = palette.swatch(0);
+        let pupil_uv = palette.pupil();
         let strand_vertices = u32::try_from(PARTICLES * 2)?;
         let eye_base = u32::try_from(source_vertices.len())?;
-        let first_strand_vertex = eye_base + u32::try_from(eye.len())?;
-        // The authored eye material is double-sided. The retained pass culls
-        // back faces, so include its winding in both directions.
-        let eye_indices: Vec<_> = eye
+        let pupil_base = eye_base + eye_sprite::VERTEX_COUNT;
+        let detail_base = pupil_base + eye_sprite::PUPIL_VERTEX_COUNT;
+        let first_strand_vertex = detail_base + u32::try_from(eye.len())?;
+        // Keep the planar iris and authored details visible on both sides of
+        // the retained camera arc. Depth still resolves the face and lids.
+        let detail_indices = eye
             .indices()
             .as_chunks::<3>()
             .0
             .iter()
-            .flat_map(|&[a, b, c]| [a, b, c, a, c, b].map(|index| eye_base + index))
+            .map(|triangle| triangle.map(|index| detail_base + index));
+        let eye_indices: Vec<_> = eye_sprite::EyeSprite::indices(eye_base)
+            .chain(eye_sprite::EyeSprite::pupil_indices(pupil_base))
+            .chain(detail_indices)
+            .flat_map(|[a, b, c]| [a, b, c, a, c, b])
             .collect();
         let strand_indices: Vec<_> = (0..u32::try_from(strand_count)?)
             .flat_map(|strand| {
@@ -520,13 +557,13 @@ impl AvatarRenderer {
         };
         let light_plane = LightPlane::new();
         let sections: [Vec<Range<usize>>; DRAW_GROUPS] = if color {
-            let [face, body, hair, mouth, iris] = mesh.material_triangles.as_slice() else {
+            let [face, body, hair, mouth] = mesh.material_triangles.as_slice() else {
                 anyhow::bail!("unexpected avatar material sections");
             };
             [
                 vec![face.clone(), mouth.clone()],
                 vec![body.clone()],
-                vec![hair.clone(), iris.clone()],
+                vec![hair.clone()],
             ]
         } else {
             [
@@ -584,6 +621,15 @@ impl AvatarRenderer {
                         .unwrap_or_else(|| light_plane.coordinates(Vec3::from_array(normal)));
                     append_vertex(position, normal, material_uv);
                     compact_positions.push(position);
+                }
+                for (position, [u, v]) in iris.vertices(sample.positions) {
+                    let uv = [u / palette_width, (iris_row as f32 + v) / palette_height];
+                    append_vertex(position.to_array(), Vec3::NEG_Z.to_array(), uv);
+                }
+                let pupil_area =
+                    pupil::retained_area(motion, nod_duration, greeting_duration.is_some());
+                for position in iris.pupil_vertices(sample.positions, pupil_area) {
+                    append_vertex(position.to_array(), Vec3::NEG_Z.to_array(), pupil_uv);
                 }
                 for (position, uv) in eye.vertices(sample.positions) {
                     append_vertex(position, Vec3::NEG_Z.to_array(), eye_uv(uv));
@@ -1009,6 +1055,7 @@ async fn play(
     device: Device,
     playback: &mut Playback<'_>,
     observer: &mut Autobs,
+    msaa_samples: u8,
 ) -> Result<()> {
     let mut pending_resize = None;
     let mut resizing = false;
@@ -1027,7 +1074,11 @@ async fn play(
     } else {
         (false, false)
     };
-    let mut requested_samples = 1;
+    let mut requested_samples = match msaa_samples {
+        2 if msaa2_available => 2,
+        4 if msaa4_available => 4,
+        _ => 1,
+    };
     let mut previous_samples = 1;
     if msaa2_available {
         report(format_args!("avatar 2x MSAA available, press M to toggle"));

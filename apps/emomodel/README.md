@@ -20,7 +20,9 @@ The Blueprint uses argv-v1 and TRUEOSFS scope. Commands:
 emomodel
 emomodel show
 emomodel skin
+emomodel skin --eyes nebula
 emomodel reel
+emomodel heart
 emomodel greeting
 emomodel base-color
 emomodel status
@@ -42,10 +44,15 @@ the motion reel when the seven locally retargeted files `motions/01.glb` through
 Roughness is fixed at 100% while the key light sweeps across the posed skin.
 The bind-space roughness uses a 64-entry lighting ramp in the reel atlas.
 
-The native motion reel starts at 1× sampling. On a supported Alder Lake-S GPU,
-press `M` to toggle 2× MSAA or `Shift+M` to toggle 4× MSAA. Both modes
-support render targets up to 1280×720.
-After the first toggle, the window title reports the active sample count.
+The native motion reel starts at 4× MSAA on a supported Alder Lake-S GPU.
+Use `--msaa 1` for single-sample rendering or `--msaa 2` to start at 2×.
+Press `M` to toggle 2× MSAA or `Shift+M` to toggle 4× MSAA during playback.
+Both modes support render targets up to 1280×720, with 1× used outside that limit.
+
+The [offline MToon study](studies/mtoon/emomodel-mtoon-study.html) compares
+the isolated shade-map difference, a directional toon ramp on flat skin, and
+mapped outlines under one key light.
+Open the texture inspector in the study to view and download the source maps.
 
 In `skin` and `reel`, running a patch in Lico switches EmoModel into
 graph-driven dance. Lico publishes a `DanceClueSnapshot` with the active DSP
@@ -59,6 +66,10 @@ Shoot, and Peace Sign, then takes two short steps into the opening Greeting
 crouch with both feet and fingertips close to the floor. The correction eases
 out during takeoff, and a smaller height adjustment settles the landing. The
 motion files are installed privately on the rig.
+
+`heart` opens a front-on preview and plays the gesture once. The avatar raises
+her right arm, traces the Blender curve with her index fingertip, and lowers her
+arm. The heart is a quarter of her standing height and the stroke stays visible.
 
 `greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
 `/apps/emomodel`, or under `--root` when supplied. It opens the body lighting
@@ -80,14 +91,31 @@ generated 64 × 64 diffuse lookup that refreshes as the light moves. Two
 1024 × 1024 RGB normal atlases from AvatarSample_B add face and body detail.
 Startup decodes them to RGBA8 and samples them at the original skin UVs in
 bind space. Playback skins the adjusted vertex normals through the existing
-diffuse pass. The hair, eye and mouth geometry, and irises sample solid
-palette colors.
+diffuse pass. The hair and mouth geometry sample solid palette colors.
+
+The animated previews use the irises from [the Lily sprite atlas](assets/lily-eyes.png)
+with AvatarSample_B's sclera and eye decorations. The crossed and uncrossed
+Lily portraits supplied the baseline eye shape and violet palette. The atlas
+contains three 512 × 512 RGBA cells, in order from left to right. Each cell is
+drawn twice, with one eye mirrored in the renderer. On an animated launch,
+TRUEOS picks one style at random and keeps it for both eyes throughout the run.
+Pass `--eyes` to pick a specific style.
+
+| `--eyes` | Style |
+| --- | --- |
+| `amethyst` | Electric violet and magenta fibers |
+| `nebula` | Indigo and cyan with a prismatic lower arc |
+| `doll` | Soft lavender, pink, and glassy reflections |
+
+Each iris has a black pupil overlay fitted to the artwork. Its four stages
+cover 1×, 2×, 3×, and 4× the neutral pupil area. The pupil eases between
+animation cues in the motion reel, built-in Nod, Greeting, Heart, and Lico
+dance. The eyelash and decoration cutouts stay in front of both sprite layers.
 
 `base-color` previews the original 4096 × 4096 RGBA face and body atlases
 on the animated avatar. It samples the painted skin and mouth per fragment
-through the unlit retained shader. The iris uses the flat palette because its
-authored material requires alpha blending. Both atlases are decoded once and
-occupy 128 MiB of texture residency together.
+through the unlit retained shader. Both atlases are decoded once and occupy
+128 MiB of texture residency together.
 
 In the animated preview, 28 procedural guides take the place of the long
 back hair. The source surface provides the roots, segment lengths, the direction

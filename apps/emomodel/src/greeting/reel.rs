@@ -3,6 +3,8 @@ use std::{fs, io::ErrorKind, path::Path};
 use anyhow::{Context, Result, ensure};
 use glam::{Mat4, Quat, Vec3};
 
+#[cfg(target_os = "trueos")]
+use super::pupil::Stage;
 use super::{foot_contact::FootProbe, hand_contact::HandProbe};
 use crate::{
     animation::{Animation, SAMPLE_HZ},
@@ -26,6 +28,8 @@ struct Action {
     file: Option<&'static str>,
     transition: &'static str,
     transition_seconds: f32,
+    #[cfg(target_os = "trueos")]
+    pupil: Stage,
 }
 
 const ACTIONS: [Action; 8] = [
@@ -34,48 +38,64 @@ const ACTIONS: [Action; 8] = [
         file: Some("02.glb"),
         transition: "Greeting-to-Nod",
         transition_seconds: 0.0,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Wide,
     },
     Action {
         title: "Nod",
         file: None,
         transition: "Nod-to-Squat",
         transition_seconds: 1.05,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Attentive,
     },
     Action {
         title: "Squat",
         file: Some("07.glb"),
         transition: "Squat-to-Spin",
         transition_seconds: 0.48,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Neutral,
     },
     Action {
         title: "Spin",
         file: Some("05.glb"),
         transition: "Spin-to-Model Pose",
         transition_seconds: 0.58,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Engaged,
     },
     Action {
         title: "Model Pose",
         file: Some("06.glb"),
         transition: "Model Pose-to-Show Full Body",
         transition_seconds: 0.66,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Attentive,
     },
     Action {
         title: "Show Full Body",
         file: Some("01.glb"),
         transition: "Show Full Body-to-Shoot",
         transition_seconds: 0.48,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Neutral,
     },
     Action {
         title: "Shoot",
         file: Some("04.glb"),
         transition: "Shoot-to-Peace Sign",
         transition_seconds: 0.48,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Wide,
     },
     Action {
         title: "Peace Sign",
         file: Some("03.glb"),
         transition: "Peace Sign-to-Greeting",
         transition_seconds: 1.50,
+        #[cfg(target_os = "trueos")]
+        pupil: Stage::Engaged,
     },
 ];
 
@@ -302,6 +322,15 @@ impl Reel {
             Part::Clip(index) => ACTIONS[index].title,
             Part::Bridge(index) => ACTIONS[index].transition,
         }
+    }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn pupil_stage(&self, frame: usize) -> Stage {
+        let action = match self.section(frame % self.frames).part {
+            Part::Clip(index) => index,
+            Part::Bridge(index) => (index + 1) % ACTIONS.len(),
+        };
+        ACTIONS[action].pupil
     }
 
     pub(super) fn apply_bind_normals(

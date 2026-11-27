@@ -133,4 +133,8 @@ impl HandProbe {
         self.vertices
             .map(|index| (Vec3::from_array(positions[index]), FINGERTIP_CONTACT))
     }
+
+    pub(super) fn right_index_vertex(&self) -> usize {
+        self.vertices[FINGERS.len() + 1]
+    }
 }
