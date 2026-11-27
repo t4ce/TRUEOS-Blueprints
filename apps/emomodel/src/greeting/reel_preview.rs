@@ -48,6 +48,7 @@ const EYE_ROW: usize = IRIS_ROW + eye_sprite::SIZE;
 const SKY_COLUMN: usize = eye_detail::WIDTH + 1;
 const SPARK_COLUMN: usize = SKY_COLUMN + sky_palette::WIDTH;
 const SPARK_SIZE: usize = 8;
+const SPARK_SCREEN_SCALE: f32 = 4.0;
 const SPARK_EDGE: [Vec2; 8] = [
     Vec2::X,
     Vec2::new(0.24, 0.24),
@@ -61,6 +62,7 @@ const SPARK_EDGE: [Vec2; 8] = [
 const SPARK_VERTICES: usize = 1 + SPARK_EDGE.len();
 const SPARK_INDICES: usize = 3 * SPARK_EDGE.len();
 const HAIRBAND_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
+const BODY_MARKS_COLUMN: usize = hairband::WIDTH + 1;
 const CONTACT_ROW: usize = HAIRBAND_ROW + hairband::HEIGHT;
 const ATLAS_HEIGHT: usize = 512 + hairband::HEIGHT;
 const MAX_ATLAS_WIDTH: usize = 1024;
@@ -91,6 +93,8 @@ const _: () = assert!(TOP_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + top::COVERAGE_ROWS <= EYE_ROW);
 const _: () = assert!(BODY_TINT_COLUMN + body_tint::WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + body_tint::HEIGHT <= EYE_ROW);
+const _: () = assert!(BODY_MARKS_COLUMN + body_tint::MARKS_EXTENT[0] <= ATLAS_WIDTHS[0]);
+const _: () = assert!(HAIRBAND_ROW + body_tint::MARKS_EXTENT[1] <= CONTACT_ROW);
 const _: () = assert!(SPARK_COLUMN + SPARK_SIZE <= ATLAS_WIDTHS[0]);
 const _: () = assert!(EYE_ROW + SPARK_SIZE <= HAIRBAND_ROW);
 const _: () = assert!(EYE_ROW + sky_palette::HEIGHT <= HAIRBAND_ROW);
@@ -471,7 +475,13 @@ impl<'a> Preview<'a> {
             eye_detail.rgba().len() == eye_detail::WIDTH * eye_detail::HEIGHT * 4,
             "wrong reel eye detail extent"
         );
-        let body_tint = BodyTint::load(glb, mesh).await?;
+        let body_tint = BodyTint::load(
+            glb,
+            mesh,
+            [BODY_TINT_COLUMN, LIGHT_ROW],
+            [BODY_MARKS_COLUMN, HAIRBAND_ROW],
+        )
+        .await?;
         let hairband = Hairband::load(glb, mesh).await?;
         let (source_vertices, mut compact_indices) = compact_mesh(mesh);
         body_tint.remap_indices(&mut compact_indices, u32::try_from(source_vertices.len())?);
@@ -664,7 +674,7 @@ impl<'a> Preview<'a> {
                     self.body_start,
                     self.mesh.material_triangles[1].clone(),
                     self.mesh.indices.as_chunks::<3>().0,
-                    |triangle| self.body_tint.triangle_brightness(triangle),
+                    |triangle| self.body_tint.triangle_tint(triangle),
                 )
                 .context("shirt trim atlas exceeds its extent")?
             } else {
@@ -741,25 +751,21 @@ impl<'a> Preview<'a> {
         }
     }
 
-    /// Returns true when the first completed sketch comes alive.
+    /// Reports a completed sketch and whether it is the first of the session.
     pub(super) fn on_published(
         &mut self,
         frame: usize,
         now_ns: u64,
         camera: RetainedCamera,
         viewport: (u32, u32),
-    ) -> bool {
-        let Some(seed) = self.sketch_seed else {
-            return false;
-        };
+    ) -> Option<bool> {
+        let seed = self.sketch_seed?;
         let motion = if self.butterfly_started_ns.is_some() {
             self.butterfly.as_ref().unwrap_or(&self.motion)
         } else {
             &self.motion
         };
-        let Some(birth) = motion.birth(frame, camera, viewport) else {
-            return false;
-        };
+        let birth = motion.birth(frame, camera, viewport)?;
         self.sketch_seed = None;
         self.live_butterflies
             .retain(|butterfly| !butterfly.has_departed(now_ns));
@@ -775,7 +781,7 @@ impl<'a> Preview<'a> {
             self.live_butterflies.len(),
             live_butterfly::artwork(seed),
         ));
-        !std::mem::replace(&mut self.first_butterfly_spawned, true)
+        Some(!std::mem::replace(&mut self.first_butterfly_spawned, true))
     }
 
     pub(super) fn firefly_phase(&self) -> FireflyPhase {
@@ -986,6 +992,10 @@ impl<'a> Preview<'a> {
             self.feet.sample(pose.positions).map(|foot| foot.points());
         self.live_butterflies
             .retain(|butterfly| !butterfly.has_departed(now_ns));
+        let view_projection = Mat4::from_cols_array(&camera.view_projection);
+        for butterfly in &mut self.live_butterflies {
+            butterfly.reproject_birth(view_projection, viewport, now_ns);
+        }
         let back = super::camera_view_back(camera);
         let pelvis_marker = if self.pelvis_markers {
             let [upper, lower] = PELVIS_ANCHORS.map(|index| self.body_start + index);
@@ -1080,7 +1090,6 @@ impl<'a> Preview<'a> {
             );
         }
         let swatches = [palette.swatch(0), palette.swatch(1)];
-        let view_projection = Mat4::from_cols_array(&camera.view_projection);
         let diffuse_direction = sky.key_direction();
         let skin = self
             .skin_materials
@@ -1177,16 +1186,14 @@ impl<'a> Preview<'a> {
         self.body_tint.write_tiles(
             &mut self.texture,
             [width as usize, height as usize],
-            [BODY_TINT_COLUMN, LIGHT_ROW],
             (!self.top_rows.is_empty()).then_some(LIGHT_ROW),
             shade_uv,
         );
-        let tile_origin = Vec2::new(BODY_TINT_COLUMN as f32, LIGHT_ROW as f32);
         let dimensions = Vec2::new(width as f32, height as f32);
         for (index, uv) in self.body_tint.vertices() {
             append(
                 Vec3::from_array(pose.positions[index]),
-                ((uv + tile_origin) / dimensions).to_array(),
+                (uv / dimensions).to_array(),
             );
         }
         for (position, [u, v]) in self.iris.vertices(pose.positions) {
@@ -1294,7 +1301,7 @@ impl<'a> Preview<'a> {
             let pixel_to_clip = Vec2::new(2.0 / viewport.0 as f32, 2.0 / viewport.1 as f32);
             let t = frame as f32;
             let twinkle = 0.5 + 0.5 * (1.53 * t).sin();
-            let radius = 2.5 + 1.5 * twinkle;
+            let radius = SPARK_SCREEN_SCALE * (2.5 + 1.5 * twinkle);
             let rotation = Vec2::from_angle(0.17 * t);
             let uv_min = Vec2::from_array(palette.texel_uv(SPARK_COLUMN, EYE_ROW));
             let uv_max = Vec2::from_array(

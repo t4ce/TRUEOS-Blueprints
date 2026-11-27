@@ -1043,8 +1043,8 @@ impl ObserverSample {
             self.extent.0,
             self.extent.1,
             self.elapsed / 1_000_000,
-            self.pose.zoom,
-            self.pose.distance,
+            self.pose.rendered_zoom(),
+            self.pose.rendered_distance(),
             self.pose.yaw_offset.to_degrees(),
         ));
     }
@@ -1350,14 +1350,17 @@ async fn play(
             }
             last_camera_pose = camera_pose;
             if let Playback::Reel(preview) = &mut *playback
-                && preview.on_published(pose, finished, camera, extent)
+                && let Some(first) = preview.on_published(pose, finished, camera, extent)
             {
-                match frame.display_bottom_color() {
-                    Ok(rgb) => display_backdrop = Some((Backdrop::new(rgb, finished), rgb)),
-                    Err(Error::NotFound) => return Ok(()),
-                    Err(error) => report(format_args!(
-                        "avatar read display bottom color failed: {error:?}"
-                    )),
+                observer.butterfly_departure(camera_pose, finished);
+                if first {
+                    match frame.display_bottom_color() {
+                        Ok(rgb) => display_backdrop = Some((Backdrop::new(rgb, finished), rgb)),
+                        Err(Error::NotFound) => return Ok(()),
+                        Err(error) => report(format_args!(
+                            "avatar read display bottom color failed: {error:?}"
+                        )),
+                    }
                 }
             }
             stats.add(wait_start, admitted, finished, submitted - submit_started);

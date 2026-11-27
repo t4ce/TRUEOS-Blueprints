@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use glam::{Vec2, Vec3};
+use glam::{Mat2, Vec2, Vec3};
 use trueos::vmedia::{self, ImageFormat};
 
 use super::gpu_error;
@@ -8,12 +8,24 @@ use crate::{
     top::Surface,
 };
 
-const PNG: &[u8] = include_bytes!("../../assets/AvatarSample_B-body-tint.png");
-const MASK_ATLAS: [usize; 2] = [34, 29];
+mod marks;
+
+const BODY_TINT: usize = 0;
+const BODY_MARKS: usize = 1;
+const PNGS: [&[u8]; 2] = [
+    include_bytes!("../../assets/AvatarSample_B-body-tint.png"),
+    include_bytes!("../../assets/AvatarSample_B-body-marks.png"),
+];
+const MASK_ATLASES: [[usize; 2]; 2] = [[34, 29], [64, 64]];
 const BODY_ATLAS_SIZE: f32 = 1024.0;
 const TILE_HEIGHT: usize = 40;
 pub(super) const WIDTH: usize = 40;
 pub(super) const HEIGHT: usize = TILE_HEIGHT * 3;
+const MARK_COLUMNS: usize = 3;
+pub(super) const MARKS_EXTENT: [usize; 2] = [
+    WIDTH * MARK_COLUMNS,
+    TILE_HEIGHT * marks::PLACEMENTS.len().div_ceil(MARK_COLUMNS),
+];
 
 struct Mask {
     // Coordinates in the source UV atlas and in the packed tint image.
@@ -21,8 +33,10 @@ struct Mask {
     span: Vec2,
     offset: [usize; 2],
     size: [usize; 2],
+    atlas: usize,
+    uv_to_mark: Option<Mat2>,
     mirror_u: bool,
-    darkening: f32,
+    attenuation: Vec3,
 }
 
 const BELLY: Mask = Mask {
@@ -30,8 +44,10 @@ const BELLY: Mask = Mask {
     span: Vec2::new(4.5, 8.0),
     offset: [0, 0],
     size: [9, 16],
+    atlas: BODY_TINT,
+    uv_to_mark: None,
     mirror_u: false,
-    darkening: 0.16,
+    attenuation: Vec3::splat(0.16),
 };
 
 impl Mask {
@@ -42,19 +58,27 @@ impl Mask {
             span,
             offset: [9, 0],
             size: [25, 29],
+            atlas: BODY_TINT,
+            uv_to_mark: None,
             mirror_u,
-            darkening: 0.14,
+            attenuation: Vec3::splat(0.14),
         }
     }
 
-    fn brightness(&self, rgba: &[u8], uv: Vec2) -> f32 {
+    fn tint(&self, rgba: &[u8], uv: Vec2) -> Vec3 {
         let [width, height] = self.size;
         let size = Vec2::new(width as f32, height as f32);
-        let local = (uv * BODY_ATLAS_SIZE - self.origin) * (size / self.span);
+        let pixel_uv = uv * BODY_ATLAS_SIZE;
+        let local = if let Some(to_mark) = self.uv_to_mark {
+            let center = self.origin + self.span * 0.5;
+            (to_mark * (pixel_uv - center) + Vec2::splat(0.5)) * size
+        } else {
+            (pixel_uv - self.origin) * (size / self.span)
+        };
         if local.min_element() < 0.0 || local.cmpge(size).any() {
-            return 1.0;
+            return Vec3::ONE;
         }
-        // Both packed masks have a black border.
+        // Every packed mask has a black border.
         let mut pixel = (local - 0.5).clamp(Vec2::ZERO, size - 1.0);
         if self.mirror_u {
             pixel.x = size.x - 1.0 - pixel.x;
@@ -64,14 +88,14 @@ impl Mask {
         let right = (x + 1).min(width - 1);
         let bottom = (y + 1).min(height - 1);
         let sample = |column, row| {
-            let i = (self.offset[1] + row) * MASK_ATLAS[0] + self.offset[0] + column;
+            let i = (self.offset[1] + row) * MASK_ATLASES[self.atlas][0] + self.offset[0] + column;
             f32::from(rgba[i * 4]) / 255.0
         };
         let top = sample(x, y) + (sample(right, y) - sample(x, y)) * pixel.x.fract();
         let bottom =
             sample(x, bottom) + (sample(right, bottom) - sample(x, bottom)) * pixel.x.fract();
         let shade = top + (bottom - top) * pixel.y.fract();
-        1.0 - self.darkening * shade
+        Vec3::ONE - self.attenuation * shade
     }
 }
 
@@ -102,16 +126,17 @@ impl Triangle {
 struct Texel {
     triangle: usize,
     weights: Vec3,
-    brightness: f32,
+    tint: Vec3,
 }
 
 pub(super) struct BodyTint {
-    tiles: [TintTile; 3],
-    rgba: Vec<u8>,
+    tiles: Vec<TintTile>,
+    rgba: [Vec<u8>; 2],
 }
 
 struct TintTile {
     mask: Mask,
+    atlas_origin: [usize; 2],
     triangles: Vec<Triangle>,
     texels: Vec<Texel>,
     origin: Vec2,
@@ -120,19 +145,13 @@ struct TintTile {
 }
 
 impl BodyTint {
-    pub(super) async fn load(glb: &[u8], mesh: &Mesh) -> Result<Self> {
-        let image = vmedia::decode(ImageFormat::Png, PNG)
-            .await
-            .map_err(gpu_error)
-            .context("decode the body tint atlas")?;
-        let [width, height] = MASK_ATLAS;
-        ensure!(
-            image.info.width as usize == width
-                && image.info.height as usize == height
-                && image.info.stride_bytes as usize == width * 4
-                && image.rgba.len() == width * height * 4,
-            "unexpected body tint atlas extent"
-        );
+    pub(super) async fn load(
+        glb: &[u8],
+        mesh: &Mesh,
+        [body_x, body_y]: [usize; 2],
+        [marks_x, marks_y]: [usize; 2],
+    ) -> Result<Self> {
+        let rgba = [load_atlas(BODY_TINT).await?, load_atlas(BODY_MARKS).await?];
         let asset = gltf::Gltf::from_slice(glb).context("parse body tint mesh")?;
         let primitive = asset
             .meshes()
@@ -160,19 +179,40 @@ impl BodyTint {
         // 2190). Their UVs mirror about U=0.25.
         let center = Vec2::new(225.4891, 640.6290);
         let opposite = Vec2::new(BODY_ATLAS_SIZE * 0.5 - center.x, center.y);
-        let tile = |mask| TintTile::new(mesh, &coords, &image.rgba, mask);
-        Ok(Self {
-            tiles: [
-                tile(BELLY)?,
-                tile(Mask::chest(center, false))?,
-                tile(Mask::chest(opposite, true))?,
-            ],
-            rgba: image.rgba,
-        })
+        let tile =
+            |mask: Mask, origin| TintTile::new(mesh, &coords, &rgba[mask.atlas], mask, origin);
+        let mut tiles = Vec::with_capacity(3 + marks::PLACEMENTS.len());
+        for (slot, mask) in [
+            BELLY,
+            Mask::chest(center, false),
+            Mask::chest(opposite, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            tiles.push(tile(mask, [body_x, body_y + slot * TILE_HEIGHT])?);
+        }
+        for (slot, placement) in marks::PLACEMENTS.iter().enumerate() {
+            let x = marks_x + slot % MARK_COLUMNS * WIDTH;
+            let y = marks_y + slot / MARK_COLUMNS * TILE_HEIGHT;
+            tiles.push(tile(placement.mask(), [x, y])?);
+        }
+        // Every tile replaces its triangles' indices. Keep source triangles
+        // disjoint so a later tile cannot hide an earlier mark.
+        let body = mesh.material_triangles[1].clone();
+        let mut claimed = vec![false; body.len()];
+        for triangle in tiles.iter().flat_map(|tile| &tile.triangles) {
+            ensure!(
+                !std::mem::replace(&mut claimed[triangle.index - body.start], true),
+                "body tint tiles overlap at triangle {}",
+                triangle.index
+            );
+        }
+        Ok(Self { tiles, rgba })
     }
 
-    pub(super) fn triangle_brightness(&self, triangle_index: usize) -> impl Fn(Vec3) -> f32 + '_ {
-        let matched = self.tiles.iter().rev().find_map(|tile| {
+    pub(super) fn triangle_tint(&self, triangle_index: usize) -> impl Fn(Vec3) -> Vec3 + '_ {
+        let matched = self.tiles.iter().find_map(|tile| {
             let slot = tile
                 .triangles
                 .binary_search_by_key(&triangle_index, |triangle| triangle.index)
@@ -180,8 +220,8 @@ impl BodyTint {
             Some((&tile.mask, &tile.triangles[slot]))
         });
         move |weights| {
-            matched.map_or(1.0, |(mask, triangle)| {
-                mask.brightness(&self.rgba, triangle.point(weights))
+            matched.map_or(Vec3::ONE, |(mask, triangle)| {
+                mask.tint(&self.rgba[mask.atlas], triangle.point(weights))
             })
         }
     }
@@ -198,8 +238,9 @@ impl BodyTint {
     }
 
     pub(super) fn vertices(&self) -> impl Iterator<Item = (usize, Vec2)> + '_ {
-        self.tiles.iter().enumerate().flat_map(|(slot, tile)| {
-            let offset = Vec2::Y * (slot * TILE_HEIGHT) as f32;
+        self.tiles.iter().flat_map(|tile| {
+            let [x, y] = tile.atlas_origin;
+            let offset = Vec2::new(x as f32, y as f32);
             tile.vertices().map(move |(index, uv)| (index, uv + offset))
         })
     }
@@ -208,24 +249,39 @@ impl BodyTint {
         &mut self,
         atlas: &mut [u8],
         extent: [usize; 2],
-        [x, y]: [usize; 2],
         top_row: Option<usize>,
         shade_uv: impl Fn(usize) -> [f32; 2],
     ) {
-        for (slot, tile) in self.tiles.iter_mut().enumerate() {
-            tile.write(
-                atlas,
-                extent,
-                [x, y + slot * TILE_HEIGHT],
-                top_row,
-                &shade_uv,
-            );
+        for tile in &mut self.tiles {
+            tile.write(atlas, extent, top_row, &shade_uv);
         }
     }
 }
 
+async fn load_atlas(atlas: usize) -> Result<Vec<u8>> {
+    let image = vmedia::decode(ImageFormat::Png, PNGS[atlas])
+        .await
+        .map_err(gpu_error)
+        .with_context(|| format!("decode body mask atlas {atlas}"))?;
+    let [width, height] = MASK_ATLASES[atlas];
+    ensure!(
+        image.info.width as usize == width
+            && image.info.height as usize == height
+            && image.info.stride_bytes as usize == width * 4
+            && image.rgba.len() == width * height * 4,
+        "unexpected body mask atlas extent"
+    );
+    Ok(image.rgba)
+}
+
 impl TintTile {
-    fn new(mesh: &Mesh, coords: &[Vec2], rgba: &[u8], mask: Mask) -> Result<Self> {
+    fn new(
+        mesh: &Mesh,
+        coords: &[Vec2],
+        rgba: &[u8],
+        mask: Mask,
+        atlas_origin: [usize; 2],
+    ) -> Result<Self> {
         let min = mask.origin / BODY_ATLAS_SIZE;
         let max = (mask.origin + mask.span) / BODY_ATLAS_SIZE;
         let material_vertices = &mesh.material_vertices[1];
@@ -266,13 +322,14 @@ impl TintTile {
                 texels.push(Texel {
                     triangle,
                     weights,
-                    brightness: mask.brightness(rgba, uv),
+                    tint: mask.tint(rgba, uv),
                 });
             }
         }
         let shade_uvs = Vec::with_capacity(triangles.len());
         Ok(Self {
             mask,
+            atlas_origin,
             triangles,
             texels,
             origin,
@@ -305,11 +362,11 @@ impl TintTile {
         &mut self,
         atlas: &mut [u8],
         extent: [usize; 2],
-        tile: [usize; 2],
         top_row: Option<usize>,
         shade_uv: &impl Fn(usize) -> [f32; 2],
     ) {
         let [width, height] = extent;
+        let [left, top] = self.atlas_origin;
         let dimensions = Vec2::new(width as f32, height as f32);
         self.shade_uvs.clear();
         self.shade_uvs.extend(self.triangles.iter().map(|triangle| {
@@ -324,17 +381,17 @@ impl TintTile {
             let column = (uv.x as usize).min(width - 1);
             let row = (uv.y as usize).min(height - 1);
             let source = (row * width + column) * 4;
-            let target = ((tile[1] + index / WIDTH) * width + tile[0] + index % WIDTH) * 4;
-            let brightness = if top_row
+            let target = ((top + index / WIDTH) * width + left + index % WIDTH) * 4;
+            let tint = if top_row
                 .is_none_or(|start| Surface::at_row(row.saturating_sub(start)) == Surface::Skin)
             {
-                texel.brightness
+                texel.tint
             } else {
-                1.0
+                Vec3::ONE
             };
-            for channel in 0..3 {
+            for (channel, factor) in tint.to_array().into_iter().enumerate() {
                 atlas[target + channel] =
-                    (f32::from(atlas[source + channel]) * brightness).round() as u8;
+                    (f32::from(atlas[source + channel]) * factor).round() as u8;
             }
             atlas[target + 3] = atlas[source + 3];
         }

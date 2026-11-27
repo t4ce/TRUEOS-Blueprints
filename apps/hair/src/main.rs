@@ -59,7 +59,7 @@ pub(crate) struct Controls {
     pub(crate) roll: f32,
     pub(crate) tilt: f32,
     pub(crate) hair_motion: Option<hair_rope::HairMotion>,
-    pub(crate) motion_speed_percent: u8,
+    pub(crate) rod_tuning: hair_rope::RodTuning,
     #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
@@ -90,7 +90,7 @@ impl Default for Controls {
             roll: 0.0,
             tilt: 0.0,
             hair_motion: cfg!(target_os = "linux").then_some(hair_rope::HairMotion::Rod),
-            motion_speed_percent: 100,
+            rod_tuning: hair_rope::RodTuning::default(),
             #[cfg(target_os = "trueos")]
             paused: false,
             speed_color: false,
@@ -164,7 +164,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu bending rod: Tab increases hair motion speed by 10 percentage points. Shift+Tab decreases it. The range wraps between 50% and 150%. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu bending rod: 1 selects tip weight, 2 spread shape, and 3 spread width. Tab and Shift+Tab cycle the selected value from 0% to 100% in steps of 10. Set spread width above zero to see the spread shape. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");

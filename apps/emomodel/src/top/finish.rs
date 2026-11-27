@@ -32,7 +32,7 @@ struct Texel {
     weights: Vec3,
     material: [f32; Surface::ALL.len()],
     tilt: Vec2,
-    tint: f32,
+    tint: Vec3,
 }
 
 impl Finish {
@@ -45,7 +45,7 @@ impl Finish {
         tint_for: impl Fn(usize) -> F,
     ) -> Option<Self>
     where
-        F: Fn(Vec3) -> f32,
+        F: Fn(Vec3) -> Vec3,
     {
         let positions = |id: usize| triangles[id].map(|i| fits[i as usize - body_start].position);
         let candidates = body_triangles.filter_map(|id| {
@@ -62,7 +62,7 @@ impl Finish {
                 let points = positions(chart.id);
                 let per_texel = barycentric_steps(chart.uv);
                 let steps = per_texel.map(|weights| interpolate(points, weights));
-                let brightness = tint_for(chart.id);
+                let tint_at = tint_for(chart.id);
                 let texels = chart
                     .texels()
                     .map(|(_, weights)| {
@@ -74,9 +74,9 @@ impl Finish {
                             (trim::sample(row, 0.0, 0.0, 0.0), Vec2::ZERO)
                         };
                         let tint = if sample.weights[Surface::Skin as usize] > 0.0 {
-                            brightness(weights)
+                            tint_at(weights)
                         } else {
-                            1.0
+                            Vec3::ONE
                         };
                         Texel {
                             weights,
@@ -167,7 +167,7 @@ impl Finish {
                     let flat = (unbumped_column as usize).min(last_column);
                     let skin = texel.material[Surface::Skin as usize];
                     let fabric = texel.material[Surface::Fabric as usize];
-                    if fabric == 1.0 || (skin == 1.0 && texel.tint == 1.0) {
+                    if fabric == 1.0 || (skin == 1.0 && texel.tint == Vec3::ONE) {
                         let surface = if fabric == 1.0 {
                             Surface::Fabric
                         } else {
@@ -319,8 +319,10 @@ mod tests {
             hem: 1.0,
             ..TopStyle::default()
         };
-        let mut finish =
-            Finish::build(style, &fits, 0, 0..triangles.len(), triangles, |_| |_| 1.0).unwrap();
+        let mut finish = Finish::build(style, &fits, 0, 0..triangles.len(), triangles, |_| {
+            |_| Vec3::ONE
+        })
+        .unwrap();
         let mut remapped = original.clone();
         finish.replace_indices(&mut remapped, positions.len() as u32);
         assert_ne!(remapped, original);

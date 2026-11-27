@@ -128,7 +128,7 @@ impl Scene {
             solver.step(pose, controls.tip_spread, controls.flow);
         }
         if let Some(ropes) = &mut self.ropes {
-            ropes.advance(pose, controls.motion_speed_percent);
+            ropes.advance(pose, controls.rod_tuning);
         }
         if let Some(water) = &mut self.water {
             water.advance(controls.flow.speed);

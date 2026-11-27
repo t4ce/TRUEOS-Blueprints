@@ -20,6 +20,7 @@ const TIER_MOVE_NS: u64 = 4_400_000_000;
 const DEPARTURE_LEAD_NS: u64 = 2_000_000_000;
 const BIRTH_REST_NS: u64 = 1_500_000_000;
 const RELEASE_DELAY_NS: [u64; 3] = [0, 220_000_000, 460_000_000];
+const CLEARANCE_NS: u64 = 440_000_000;
 const TAKEOFF_NS: u64 = 1_200_000_000;
 const ORBIT_SECONDS: f32 = 2.5;
 const ORBIT_RAMP: f32 = 0.6;
@@ -101,12 +102,20 @@ pub(super) struct LiveButterfly {
 }
 
 #[derive(Clone, Copy)]
+pub(super) struct BirthAnchor {
+    pub draw_to_world: Mat4,
+    pub center: Vec3,
+    pub width: Vec3,
+}
+
+#[derive(Clone, Copy)]
 pub(super) struct Birth {
     pub center: Vec2,
     pub span: f32,
     pub depth: f32,
     pub draw_to_clip: Mat4,
     pub stroke_width: f32,
+    pub anchor: Option<BirthAnchor>,
 }
 
 pub(super) struct FlightLight {
@@ -122,6 +131,7 @@ struct FlightSample {
     bank: Vec2,
     flaps: [f32; 2],
     takeoff: f32,
+    clearance: f32,
     clip_depths: [f32; 2],
     fill_steps: usize,
     outline_steps: usize,
@@ -181,6 +191,29 @@ impl LiveButterfly {
         now_ns.saturating_sub(self.started_ns) >= self.duration_ns
     }
 
+    pub(super) fn reproject_birth(
+        &mut self,
+        view_projection: Mat4,
+        extent: (u32, u32),
+        now_ns: u64,
+    ) {
+        let Some(anchor) = self.birth.anchor else {
+            return;
+        };
+        let min_extent = extent.0.min(extent.1);
+        if min_extent == 0 {
+            return;
+        }
+        let center = view_projection.project_point3(anchor.center);
+        let width = view_projection.transform_vector3(anchor.width).x.abs();
+        self.birth.draw_to_clip = view_projection * anchor.draw_to_world;
+        self.birth.center = center.truncate() * 0.5 + Vec2::splat(0.5);
+        self.birth.depth = center.z;
+        self.birth.span = width * (0.5 * extent.0 as f32 / min_extent as f32);
+        if now_ns.saturating_sub(self.started_ns) >= self.release_ns() + TAKEOFF_NS {
+            self.birth.anchor = None;
+        }
+    }
     pub(super) fn light(&self, extent: (u32, u32), now_ns: u64) -> Option<FlightLight> {
         let size = Vec2::new(extent.0 as f32, extent.1 as f32);
         let flight = self.visible_flight(size, now_ns)?;
@@ -201,12 +234,17 @@ impl LiveButterfly {
             .min(TAKEOFF_NS + travel_ns);
         let age = age_ns as f32 * NANOS_TO_SECONDS;
         let takeoff = smoothstep(age_ns as f32 / TAKEOFF_NS as f32);
+        let clearance = smoothstep(age_ns as f32 / CLEARANCE_NS as f32);
+        let sideways = smoothstep(
+            age_ns.saturating_sub(CLEARANCE_NS) as f32 / (TAKEOFF_NS - CLEARANCE_NS) as f32,
+        );
         let recede_ns = age_ns.saturating_sub(TAKEOFF_NS);
         let progress = smoothstep(recede_ns as f32 / travel_ns as f32);
         let settle = smoothstep(recede_ns as f32 * NANOS_TO_SECONDS);
         let level = TIER as f32 - takeoff + progress * (LAST_TIER - TIER + 1) as f32;
         let start = self.birth.center * size;
         let min_size = size.min_element();
+        let birth_width = (self.birth.span * min_size).max(1.0);
         let (aim_x, up, bend) = match self.lane {
             0 => (start.x * 0.5, 0.04, Vec2::new(-0.025, -0.04)),
             1 => (start.x * 0.72, -0.07, Vec2::new(-0.12, 0.035)),
@@ -217,7 +255,10 @@ impl LiveButterfly {
             ),
         };
         let aim = Vec2::new(aim_x, (start.y + up * min_size).clamp(0.0, size.y));
-        let launch = start.lerp(aim, takeoff) + 4.0 * takeoff * (1.0 - takeoff) * min_size * bend;
+        // Clear the avatar by one projected wing before turning into the old lanes.
+        let clear = start + Vec2::Y * (0.5 * birth_width * clearance);
+        let launch =
+            clear.lerp(aim, sideways) + 4.0 * sideways * (1.0 - sideways) * min_size * bend;
         let (orbit, tangent) = flight_path(self.flight_seed, self.speed_percent, age);
         let variation = self.flight_seed.wrapping_mul(0x9e37_79b9);
         let spread = 0.13 + (variation >> 24) as f32 * (0.06 / 255.0);
@@ -238,7 +279,6 @@ impl LiveButterfly {
         ) + loop_offset * (min_size * 0.065 * drift);
         let bank = -18.0_f32.to_radians() * tangent.normalize_or_zero().x * settle;
         let [bottom, half_span, top] = WING_BOUNDS[self.artwork];
-        let birth_width = (self.birth.span * min_size).max(1.0);
         // Keep the projection denominator positive even when a wing folds
         // toward the camera at unusually large viewport sizes.
         let birth_depth = 2.0 * half_span * (FOCAL_LENGTH / birth_width).max(2.0);
@@ -269,6 +309,7 @@ impl LiveButterfly {
             bank: Vec2::from_angle(bank),
             flaps,
             takeoff,
+            clearance,
             clip_depths,
             fill_steps,
             outline_steps,
@@ -311,6 +352,7 @@ impl LiveButterfly {
             bank,
             flaps,
             takeoff,
+            clearance,
             clip_depths,
             fill_steps,
             outline_steps,
@@ -357,7 +399,7 @@ impl LiveButterfly {
                     BIRTH_DEPTH_BIAS
                 };
                 let birth_depth = (source.z + bias).clamp(0.0, 1.0);
-                let clip_depth = birth_depth + (layer_depth - birth_depth) * takeoff;
+                let clip_depth = birth_depth + (layer_depth - birth_depth) * clearance;
                 (center + birth_offset.lerp(offset, takeoff)).extend(clip_depth)
             };
             let origin = project(inset_origin, false);
@@ -391,7 +433,8 @@ impl LiveButterfly {
                             let normal = direction.normalize_or_zero().perp();
                             let local = normal * (self.birth.stroke_width * 0.5);
                             let clip = self.birth.draw_to_clip.transform_vector3(local.extend(0.0));
-                            let mut drawn_offset = (clip.truncate() * 0.5 * size).extend(clip.z);
+                            let mut drawn_offset =
+                                (clip.truncate() * 0.5 * size).extend(clip.z * (1.0 - clearance));
                             if drawn_offset.truncate().dot(live_offset.truncate()) < 0.0 {
                                 drawn_offset = -drawn_offset;
                             }
@@ -572,6 +615,7 @@ mod tests {
             Vec4::new(-0.34, 0.31, 0.23, 1.0),
         ),
         stroke_width: 0.009,
+        anchor: None,
     };
 
     #[test]
@@ -694,6 +738,62 @@ mod tests {
             assert!(flying.clip_depths[0] < TEST_BIRTH.depth);
             assert_eq!(flying.recession, 0.0);
         }
+    }
+
+    #[test]
+    fn each_butterfly_clears_one_wing_before_turning_sideways() {
+        let size = Vec2::new(1024.0, 720.0);
+        let start = TEST_BIRTH.center * size;
+        let wing = 0.5 * TEST_BIRTH.span * size.min_element();
+        for lane in 0..RELEASE_DELAY_NS.len() {
+            let butterfly = LiveButterfly::new(1, 0, TEST_BIRTH, lane);
+            let release = butterfly.release_ns();
+            let midpoint = butterfly.flight(size, release + CLEARANCE_NS / 2);
+            assert_eq!(midpoint.center.x, start.x);
+            assert!((midpoint.center.y - (start.y + wing * 0.5)).abs() < 1e-4);
+            assert_eq!(midpoint.clearance, 0.5);
+            let turn = release + CLEARANCE_NS;
+            let apex = butterfly.flight(size, turn);
+            assert!(apex.center.abs_diff_eq(start + Vec2::Y * wing, 1e-4));
+            assert_eq!(apex.clearance, 1.0);
+            assert_eq!(apex.recession, 0.0);
+            for near in [turn - 1_000_000, turn + 1_000_000] {
+                assert!(butterfly.flight(size, near).center.distance(apex.center) < 0.01);
+            }
+            let merge = release + TAKEOFF_NS;
+            let before = butterfly.flight(size, merge - 1_000_000);
+            let after = butterfly.flight(size, merge + 1_000_000);
+            assert!(before.center.distance(after.center) < 0.01);
+        }
+    }
+
+    #[test]
+    fn birth_tracks_observer_until_takeoff_finishes() {
+        let extent = (1024, 720);
+        let birth = Birth {
+            anchor: Some(BirthAnchor {
+                draw_to_world: TEST_BIRTH.draw_to_clip,
+                center: (2.0 * TEST_BIRTH.center - 1.0).extend(TEST_BIRTH.depth),
+                width: Vec3::X * (2.0 * TEST_BIRTH.span * extent.1 as f32 / extent.0 as f32),
+            }),
+            ..TEST_BIRTH
+        };
+        let mut butterfly = LiveButterfly::new(0, 0, birth, 0);
+        let pullback = Mat4::from_translation(Vec3::new(0.0, -0.2, 0.1))
+            * Mat4::from_scale(Vec3::new(0.8, 0.8, 1.0));
+        let center = TEST_BIRTH.center * 0.8 + Vec2::X * 0.1;
+        butterfly.reproject_birth(pullback, extent, BIRTH_REST_NS / 2);
+        assert!(butterfly.birth.center.abs_diff_eq(center, 1e-6));
+        assert!((butterfly.birth.span - 0.8 * TEST_BIRTH.span).abs() < 1e-6);
+        assert!((butterfly.birth.depth - (TEST_BIRTH.depth + 0.1)).abs() < 1e-6);
+        assert_eq!(
+            butterfly.birth.draw_to_clip,
+            pullback * TEST_BIRTH.draw_to_clip
+        );
+        butterfly.reproject_birth(pullback, extent, BIRTH_REST_NS + TAKEOFF_NS);
+        assert!(butterfly.birth.anchor.is_none());
+        butterfly.reproject_birth(Mat4::IDENTITY, extent, BIRTH_REST_NS + 2 * TAKEOFF_NS);
+        assert!(butterfly.birth.center.abs_diff_eq(center, 1e-6));
     }
 
     #[test]

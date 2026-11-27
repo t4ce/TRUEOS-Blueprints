@@ -101,9 +101,11 @@ motion files are installed privately on the rig.
 
 `butterfly` opens a front-on preview of the drawing gesture. The top-row `3`
 rolls one of the two `bfly` Key 5 wing shapes and traces it in the current
-camera view. The fingertip trail and live outline share the rolled color. The
-leader holds the exact projected drawing for 1.5 seconds, then flies toward
-the camera and halfway to the left edge while growing by one size tier. Two
+camera view. The fingertip trail and live outline share the rolled color, with
+a white spark at the end of the active stroke. When drawing ends, the
+observer pulls back to show 25% more space above the fixed bottom edge. The
+leader holds the drawn position for 1.5 seconds, then clears the avatar by
+roughly one wing span before turning left and growing by one size tier. Two
 followers leave the same spot in quick succession on their own curves. The
 butterflies recede through the background tiers at two thirds of the former
 speed and sometimes orbit with slow, nearly closed wingbeats.
@@ -165,6 +167,10 @@ The lit preview samples [body tint masks](assets/AvatarSample_B-body-tint.png)
 on the original body UVs. One mask shades the navel, and a mirrored grayscale
 reference crop shades the two chest details on exposed skin. The lighting
 study uses the full body normal atlas and the same two folds.
+The [64 × 64 body marks atlas](assets/AvatarSample_B-body-marks.png)
+places the same beauty spot at three sizes and repeats the brown, pink, and
+pale marks at two sizes each. The marks follow the body UVs and show on
+exposed skin as the outfit changes.
 
 `base-color` previews the original 4096 × 4096 RGBA face and body atlases
 on the animated avatar. It samples the painted skin and mouth per fragment
@@ -185,7 +191,7 @@ same drape. Idle frames share their settled body pose. The primary guides draw
 as tapered ribbons in the same flat hair color, about 3 to 4 pixels wide at the
 default preview size.
 
-`autobs` holds a fixed camera throughout each playback mode. The frame reserves
+`autobs` normally holds a fixed camera in each playback mode. The frame reserves
 room for the full motion, including raised and outstretched hands. Butterfly and
 Lico Dance use their own framing when active. Once the camera settles, the
 limiting window axis leaves at least four pixels of clearance around the motion

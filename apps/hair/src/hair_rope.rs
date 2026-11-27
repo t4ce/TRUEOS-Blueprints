@@ -1,9 +1,9 @@
 use glam::{Quat, Vec3};
 
 use crate::{
-    hair_rod::Rod,
+    hair_rod::{Rod, RodEffects},
     hair_spring::Spring,
-    obstacle::{BODY_OBSTACLES, HEAD, downward_head_exit, rotate_about_head},
+    obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER, downward_head_exit, rotate_about_head},
 };
 
 pub(crate) const POINTS: usize = 13;
@@ -11,7 +11,9 @@ pub(crate) const MAX_SEGMENTS: usize = 12;
 pub(crate) const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
 const FRAME_SECONDS: f32 = 1.0 / 45.0;
 const SUBSTEPS: u32 = 4;
+const ROD_SPEED: f32 = 0.9;
 const CLEARANCE: f32 = 0.009;
+const MAX_SPREAD_ACCELERATION: f32 = 13.0;
 // Approximate longest free span in the reference cape hair, in metres.
 const REFERENCE_LENGTH: f32 = 0.68;
 const REFERENCE_SEGMENTS: f32 = 8.0;
@@ -33,15 +35,24 @@ impl HairMotion {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RodTuning {
+    pub(crate) tip_weight_percent: u8,
+    pub(crate) spread_shape_percent: u8,
+    pub(crate) spread_width_percent: u8,
+}
+
 pub(crate) struct RopeGuides {
     strands: Vec<Strand>,
     pose: Quat,
+    step_seconds: f32,
 }
 
 struct Strand {
     origin: Vec3,
     launch: Vec3,
     link_length: f32,
+    spread_side: f32,
     chain: Chain,
 }
 
@@ -79,12 +90,13 @@ impl Chain {
         anchor: Vec3,
         length: f32,
         dt: f32,
+        effects: RodEffects,
         project: impl FnMut(usize, Vec3) -> Vec3,
     ) {
         match self {
             Self::Rope(chain) => chain.step(anchor, length, dt, project),
             Self::Spring(chain) => chain.step(anchor, length, dt, project),
-            Self::Rod(chain) => chain.step(anchor, length, dt, project),
+            Self::Rod(chain) => chain.step(anchor, length, dt, effects, project),
         }
     }
 }
@@ -92,6 +104,10 @@ impl Chain {
 impl RopeGuides {
     pub(crate) fn new(roots: &[Vec3], tip_y: f32, pose: Quat, motion: HairMotion) -> Self {
         let avatar_to_world = pose.conjugate();
+        let half_width = roots
+            .iter()
+            .map(|root| (root.x - HEAD_CENTER.x).abs())
+            .fold(1e-6, f32::max);
         let strands = roots
             .iter()
             .map(|&origin| {
@@ -117,26 +133,46 @@ impl RopeGuides {
                     origin,
                     launch,
                     link_length,
+                    spread_side: (origin.x - HEAD_CENTER.x) / half_width,
                     chain: Chain::new(motion, points),
                 }
             })
             .collect();
-        Self { strands, pose }
+        let speed = if motion == HairMotion::Rod {
+            ROD_SPEED
+        } else {
+            1.0
+        };
+        Self {
+            strands,
+            pose,
+            step_seconds: FRAME_SECONDS * speed / SUBSTEPS as f32,
+        }
     }
 
-    pub(crate) fn advance(&mut self, pose: Quat, motion_speed_percent: u8) {
-        let speed = f32::from(motion_speed_percent) / 100.0;
-        let dt = FRAME_SECONDS * speed / SUBSTEPS as f32;
+    pub(crate) fn advance(&mut self, pose: Quat, tuning: RodTuning) {
+        let tip_weight = f32::from(tuning.tip_weight_percent) / 100.0;
+        let spread_shape = f32::from(tuning.spread_shape_percent) / 100.0;
+        let spread_strength =
+            MAX_SPREAD_ACCELERATION * f32::from(tuning.spread_width_percent) / 100.0;
         for step in 1..=SUBSTEPS {
             let world_to_avatar = self.pose.slerp(pose, step as f32 / SUBSTEPS as f32);
             let avatar_to_world = world_to_avatar.conjugate();
+            let outward = avatar_to_world * Vec3::X * spread_strength;
             for strand in &mut self.strands {
                 let anchor = rotate_about_head(strand.launch, avatar_to_world);
-                strand
-                    .chain
-                    .step(anchor, strand.link_length, dt, |_, point| {
-                        contact(point, world_to_avatar, avatar_to_world)
-                    });
+                let effects = RodEffects {
+                    tip_weight,
+                    spread_shape,
+                    spread_acceleration: outward * strand.spread_side,
+                };
+                strand.chain.step(
+                    anchor,
+                    strand.link_length,
+                    self.step_seconds,
+                    effects,
+                    |_, point| contact(point, world_to_avatar, avatar_to_world),
+                );
             }
         }
         self.pose = pose;
@@ -231,7 +267,7 @@ mod tests {
             for frame in 0..30 {
                 let phase = frame as f32 * 0.07;
                 let pose = Quat::from_rotation_x(0.9 * phase.sin()) * Quat::from_rotation_z(phase);
-                guides.advance(pose, 100);
+                guides.advance(pose, RodTuning::default());
                 let mut remaining = 0;
                 let mut strands = guides.strands.iter();
                 let count = guides.for_each_line(|from, to, _| {
@@ -275,29 +311,43 @@ mod tests {
     }
 
     #[test]
-    fn rod_speed_changes_motion_without_resampling_links() {
-        let root = crate::scene::reference_roots()[45];
-        let make_guides = || RopeGuides::new(&[root], 0.74, Quat::IDENTITY, HairMotion::Rod);
-        let mut slow = make_guides();
-        let mut fast = make_guides();
-        let pose = Quat::from_rotation_z(1.0);
-        for _ in 0..8 {
-            slow.advance(pose, 90);
-            fast.advance(pose, 110);
+    fn spread_widens_the_tips_on_both_sides_and_shape_delays_the_fan() {
+        let roots = crate::scene::reference_roots();
+        let left = *roots.iter().min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+        let right = *roots.iter().max_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+        let roots = [left, right];
+        let settle = |tuning| {
+            let mut guides = RopeGuides::new(&roots, 0.74, Quat::IDENTITY, HairMotion::Rod);
+            for _ in 0..120 {
+                guides.advance(Quat::IDENTITY, tuning);
+            }
+            guides
+        };
+        let base = settle(RodTuning::default());
+        let fan = settle(RodTuning {
+            spread_width_percent: 100,
+            ..RodTuning::default()
+        });
+        let late_fan = settle(RodTuning {
+            spread_width_percent: 100,
+            spread_shape_percent: 100,
+            ..RodTuning::default()
+        });
+        for (side, ((base, fan), late_fan)) in [-1.0, 1.0]
+            .into_iter()
+            .zip(base.strands.iter().zip(&fan.strands).zip(&late_fan.strands))
+        {
+            let base = base.chain.points();
+            let fan = fan.chain.points();
+            let late_fan = late_fan.chain.points();
+            assert_eq!(base[0], fan[0]);
+            assert_eq!(fan[0], late_fan[0]);
+            assert_eq!(base.len(), fan.len());
+            let tip = fan.len() - 1;
+            let lower = tip * 3 / 4;
+            assert!(side * (fan[tip].x - base[tip].x) > 0.025);
+            assert!(side * (late_fan[tip].x - base[tip].x) > 0.01);
+            assert!(side * (fan[lower].x - late_fan[lower].x) > 0.005);
         }
-        let slow = &slow.strands[0];
-        let fast = &fast.strands[0];
-        let slow_points = slow.chain.points();
-        let fast_points = fast.chain.points();
-        assert_eq!(slow.link_length, fast.link_length);
-        assert_eq!(slow_points.len(), fast_points.len());
-        assert_eq!(slow_points[0], fast_points[0]);
-        assert!(
-            slow_points
-                .last()
-                .unwrap()
-                .distance(*fast_points.last().unwrap())
-                > 1e-3
-        );
     }
 }

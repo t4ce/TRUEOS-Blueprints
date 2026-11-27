@@ -5,7 +5,7 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 use super::pupil::Stage;
 use super::{
     heart_arm::PointingArm,
-    live_butterfly::{Birth, Curve, WING_BOUNDS, artwork_geometry},
+    live_butterfly::{Birth, BirthAnchor, Curve, WING_BOUNDS, artwork_geometry},
     reel::PlacedPose,
 };
 use crate::animation::{Animation, RigPose, SAMPLE_HZ};
@@ -482,10 +482,15 @@ impl Butterfly {
         // Keep both the exact drawing plane and its screen bounds for flight.
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
+        let mut min_world_x = f32::INFINITY;
+        let mut max_world_x = f32::NEG_INFINITY;
         for &point in &self.strokes[0].targets {
-            let clip = view_projection.transform_point3(point + self.offset);
+            let world = point + self.offset;
+            let clip = view_projection.transform_point3(world);
             min = min.min(clip);
             max = max.max(clip);
+            min_world_x = min_world_x.min(world.x);
+            max_world_x = max_world_x.max(world.x);
         }
         let midpoint = (min + max) * 0.5;
         Some(Birth {
@@ -494,6 +499,11 @@ impl Butterfly {
             depth: midpoint.z,
             draw_to_clip: view_projection * self.draw_to_world,
             stroke_width: 2.0 * STROKE_HALF_WIDTH / self.draw_to_world.x_axis.truncate().length(),
+            anchor: Some(BirthAnchor {
+                draw_to_world: self.draw_to_world,
+                center: view_projection.inverse().transform_point3(midpoint),
+                width: Vec3::X * (max_world_x - min_world_x),
+            }),
         })
     }
 
@@ -672,20 +682,28 @@ mod tests {
     const MATERIALS: [&str; 2] = [crate::mesh::FACE_MATERIAL, crate::mesh::BODY_MATERIAL];
 
     #[test]
-    fn live_birth_matches_the_completed_outline_for_both_artworks() -> Result<()> {
+    fn live_birth_matches_both_artworks_through_the_camera_pullback() -> Result<()> {
         use super::super::live_butterfly::LiveButterfly;
 
         let glb = crate::HUMANOID_GLB;
         let rig = Animation::procedural(glb, &MATERIALS)?;
         let skin_end = rig.bind_positions(0).len() + rig.bind_positions(1).len();
 
-        let projection = Mat4::from_scale(Vec3::new(0.8, 0.85, 0.25))
+        let initial_projection = Mat4::from_scale(Vec3::new(0.8, 0.85, 0.25))
             * Mat4::from_rotation_y(0.37)
             * Mat4::from_translation(Vec3::new(0.0, -0.93, 1.4));
+        let pullback = Mat4::from_scale_rotation_translation(
+            Vec3::new(0.8, 0.8, 1.0),
+            Quat::IDENTITY,
+            Vec3::new(0.0, -0.2, 0.05),
+        );
         for artwork in [0, 1] {
             let butterfly = Butterfly::new(glb, &MATERIALS, skin_end, artwork)?;
             let complete = butterfly.draw_end();
-            for viewport in [(640, 560), (560, 640)] {
+            for (viewport, projection) in [
+                ((640, 560), initial_projection),
+                ((560, 640), pullback * initial_projection),
+            ] {
                 let pixels = Vec2::new(viewport.0 as f32, viewport.1 as f32);
                 assert!(
                     butterfly
@@ -696,7 +714,11 @@ mod tests {
                 let expected_center = birth.center * pixels;
                 let expected_width = birth.span * pixels.min_element();
                 let clip_to_birth = birth.draw_to_clip.inverse();
-                let live = LiveButterfly::new(artwork as u32, 0, birth, 0);
+                let original = butterfly
+                    .birth(complete, initial_projection, viewport)
+                    .unwrap();
+                let mut live = LiveButterfly::new(artwork as u32, 0, original, 0);
+                live.reproject_birth(projection, viewport, 750_000_000);
                 let mut min = Vec2::splat(f32::INFINITY);
                 let mut max = Vec2::splat(f32::NEG_INFINITY);
                 let mut live_outline = Vec::new();

@@ -28,9 +28,16 @@ in the plane of the screen. Move down to tilt her toward the camera or up to
 tilt her back to horizontal. Use the window close button to exit.
 The bending rod is the default. Guides get 8 segments at the 0.68 m reference
 length, with a minimum of 4 at half that length and a maximum of 12 at 1.5×.
-Motion speed starts at 100%. `Tab` increases it by 10 percentage points and
-`Shift+Tab` decreases it, wrapping between 50% and 150%. The window title
-shows the current speed.
+Rod motion runs at 90% of the original speed. The number row selects what to
+adjust. `Tab` increases the selected value by 10 percentage points and
+`Shift+Tab` decreases it, wrapping between 0% and 100%. The window title shows
+the selected control and all three values.
+
+- `1` adds tip weight. The lower half retains more momentum when the hair
+  brushes against the body.
+- `2` changes the spread shape. Higher values keep the spread closer to the tips.
+- `3` sets the spread width. Raise it above zero to see the shape from `2`.
+
 `--motion 1`, `--motion 2`, and `--motion 3` select the loose rope, elastic
 springs, and bending rod at launch.
 `--motion flow` opens the original field-tracing study.

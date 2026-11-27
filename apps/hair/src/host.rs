@@ -12,12 +12,19 @@ use crate::{Controls, TILT_LIMIT, hair_rope::HairMotion};
 const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
 const HELP: &str = "Mouse left/right spins · down tilts forward · up tilts back";
-const ROD_KEYS: &str = "Tab / Shift+Tab adjusts motion speed";
+const ROD_KEYS: &str =
+    "1 tip weight · 2 spread shape · 3 spread width · Tab / Shift+Tab steps by 10 points";
 const WATER_KEYS: &str = "I/K volume  J/L flow speed  U/O viscosity";
 const RADIANS_PER_PIXEL: f32 = 0.008;
-const MOTION_SPEED_MIN: u8 = 50;
-const MOTION_SPEED_MAX: u8 = 150;
-const MOTION_SPEED_STEP: u8 = 10;
+const TUNING_STEP: u8 = 10;
+const TUNING_MAX: u8 = 100;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RodParameter {
+    TipWeight,
+    SpreadShape,
+    SpreadWidth,
+}
 
 pub(crate) fn run(
     width: u32,
@@ -45,15 +52,16 @@ pub(crate) fn run(
         eprintln!("Hair · {ROD_KEYS}");
     }
     let mut fps = None;
-    video.set_title(&window_title(&controls, fps));
+    let mut selected = RodParameter::TipWeight;
+    video.set_title(&window_title(&controls, selected, fps));
     let mut pixels = vec![0; size];
     let mut shown = 0;
     let mut report_count = 0;
     let mut report_start = Instant::now();
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
-        let motion_speed_percent = controls.motion_speed_percent;
-        if !video.poll(&mut controls) {
+        let previous_tuning = (controls.rod_tuning, selected);
+        if !video.poll(&mut controls, &mut selected) {
             break;
         }
 
@@ -68,8 +76,8 @@ pub(crate) fn run(
             report_start = Instant::now();
             report_count = 0;
         }
-        if report_due || motion_speed_percent != controls.motion_speed_percent {
-            video.set_title(&window_title(&controls, fps));
+        if report_due || previous_tuning != (controls.rod_tuning, selected) {
+            video.set_title(&window_title(&controls, selected, fps));
         }
         thread::sleep(FRAME_TIME.saturating_sub(now.elapsed()));
     }
@@ -79,7 +87,7 @@ pub(crate) fn run(
     Ok(())
 }
 
-fn window_title(controls: &Controls, fps: Option<f32>) -> String {
+fn window_title(controls: &Controls, selected: RodParameter, fps: Option<f32>) -> String {
     let fps = fps.map_or_else(String::new, |fps| format!(" · {fps:.1} FPS"));
     if controls.water {
         format!(
@@ -87,10 +95,32 @@ fn window_title(controls: &Controls, fps: Option<f32>) -> String {
             controls.water_volume, controls.flow.speed, controls.flow.viscosity,
         )
     } else if rod_controls_active(controls) {
-        format!(
-            "Hair · Bending rod · Motion {}%{fps} · {ROD_KEYS}",
-            controls.motion_speed_percent
-        )
+        let tuning = controls.rod_tuning;
+        let [weight, shape, width] = [
+            (
+                RodParameter::TipWeight,
+                "1 Tip weight",
+                tuning.tip_weight_percent,
+            ),
+            (
+                RodParameter::SpreadShape,
+                "2 Spread shape",
+                tuning.spread_shape_percent,
+            ),
+            (
+                RodParameter::SpreadWidth,
+                "3 Spread width",
+                tuning.spread_width_percent,
+            ),
+        ]
+        .map(|(parameter, label, value)| {
+            if parameter == selected {
+                format!("[{label} {value}%]")
+            } else {
+                format!("{label} {value}%")
+            }
+        });
+        format!("Hair{fps} · {weight} · {shape} · {width} · Tab / Shift+Tab")
     } else if let Some(motion) = controls.hair_motion {
         format!("Hair · {}{fps} · {HELP}", motion.label())
     } else {
@@ -102,18 +132,35 @@ fn rod_controls_active(controls: &Controls) -> bool {
     !controls.water && controls.hair_motion == Some(HairMotion::Rod)
 }
 
-fn rod_key(controls: &mut Controls, scancode: i32, repeat: bool, modifiers: u16) {
-    if scancode != KEY_TAB || repeat || !rod_controls_active(controls) {
+fn rod_key(
+    controls: &mut Controls,
+    selected: &mut RodParameter,
+    scancode: i32,
+    repeat: bool,
+    modifiers: u16,
+) {
+    if repeat || !rod_controls_active(controls) {
         return;
     }
-    let shift = modifiers & MOD_SHIFT != 0;
-    let speed = controls.motion_speed_percent;
-    controls.motion_speed_percent = match (shift, speed) {
-        (true, MOTION_SPEED_MIN) => MOTION_SPEED_MAX,
-        (true, _) => speed - MOTION_SPEED_STEP,
-        (false, MOTION_SPEED_MAX) => MOTION_SPEED_MIN,
-        (false, _) => speed + MOTION_SPEED_STEP,
-    };
+    match scancode {
+        KEY_1 => *selected = RodParameter::TipWeight,
+        KEY_2 => *selected = RodParameter::SpreadShape,
+        KEY_3 => *selected = RodParameter::SpreadWidth,
+        KEY_TAB => {
+            let value = match selected {
+                RodParameter::TipWeight => &mut controls.rod_tuning.tip_weight_percent,
+                RodParameter::SpreadShape => &mut controls.rod_tuning.spread_shape_percent,
+                RodParameter::SpreadWidth => &mut controls.rod_tuning.spread_width_percent,
+            };
+            *value = match (modifiers & MOD_SHIFT != 0, *value) {
+                (true, 0) => TUNING_MAX,
+                (true, value) => value.saturating_sub(TUNING_STEP),
+                (false, TUNING_MAX) => 0,
+                (false, value) => value.saturating_add(TUNING_STEP).min(TUNING_MAX),
+            };
+        }
+        _ => (),
+    }
 }
 
 const INIT_VIDEO: u32 = 0x20;
@@ -132,6 +179,9 @@ const WINDOW_EVENT: u32 = 0x200;
 const WINDOW_CLOSE: u8 = 14;
 const KEY_DOWN: u32 = 0x300;
 const MOUSE_MOTION: u32 = 0x400;
+const KEY_1: i32 = 30;
+const KEY_2: i32 = 31;
+const KEY_3: i32 = 32;
 const KEY_TAB: i32 = 43;
 const KEY_I: i32 = 12;
 const KEY_J: i32 = 13;
@@ -313,7 +363,7 @@ impl Video {
         (!driver.is_null()).then(|| unsafe { CStr::from_ptr(driver) }.to_bytes())
     }
 
-    fn poll(&self, controls: &mut Controls) -> bool {
+    fn poll(&self, controls: &mut Controls, selected: &mut RodParameter) -> bool {
         let mut event = Event { storage: [0; 7] };
         while unsafe { (self.sdl.poll_event)(&mut event) } == 1 {
             match unsafe { event.kind } {
@@ -337,7 +387,13 @@ impl Video {
                 },
                 KEY_DOWN => {
                     let key = unsafe { event.key };
-                    rod_key(controls, key.scancode, key.repeat != 0, key.modifiers);
+                    rod_key(
+                        controls,
+                        selected,
+                        key.scancode,
+                        key.repeat != 0,
+                        key.modifiers,
+                    );
                 }
                 _ => (),
             }
@@ -378,47 +434,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tab_steps_rod_motion_speed_and_wraps_in_both_directions() {
+    fn number_keys_select_which_rod_parameter_tab_adjusts() {
         let mut controls = Controls {
             hair_motion: Some(HairMotion::Rod),
             water: false,
             ..Controls::default()
         };
-        assert_eq!(controls.motion_speed_percent, 100);
-        for speed in [110, 120, 130, 140, 150, 50] {
-            rod_key(&mut controls, KEY_TAB, false, 0);
-            assert_eq!(controls.motion_speed_percent, speed);
-            rod_key(&mut controls, KEY_TAB, true, 0);
-            assert_eq!(controls.motion_speed_percent, speed);
+        let mut selected = RodParameter::TipWeight;
+        let initial_tuning = controls.rod_tuning;
+        rod_key(&mut controls, &mut selected, KEY_2, false, 0);
+        assert_eq!(selected, RodParameter::SpreadShape);
+        assert!(controls.rod_tuning == initial_tuning);
+        rod_key(&mut controls, &mut selected, KEY_3, true, 0);
+        assert_eq!(selected, RodParameter::SpreadShape);
+        for _ in 0..2 {
+            rod_key(&mut controls, &mut selected, KEY_TAB, false, 0);
         }
-        rod_key(&mut controls, KEY_TAB, false, 0x0001);
-        assert_eq!(controls.motion_speed_percent, 150);
-        rod_key(&mut controls, KEY_TAB, true, 0x0001);
-        assert_eq!(controls.motion_speed_percent, 150);
-        rod_key(&mut controls, KEY_TAB, false, 0x0002);
-        assert_eq!(controls.motion_speed_percent, 140);
-        assert!(window_title(&controls, None).contains("Motion 140%"));
+        rod_key(&mut controls, &mut selected, KEY_3, false, 0);
+        rod_key(&mut controls, &mut selected, KEY_TAB, false, 0);
+        assert_eq!(selected, RodParameter::SpreadWidth);
+        assert_eq!(controls.rod_tuning.tip_weight_percent, 0);
+        assert_eq!(controls.rod_tuning.spread_shape_percent, 20);
+        assert_eq!(controls.rod_tuning.spread_width_percent, 10);
+        assert!(window_title(&controls, selected, None).contains("[3 Spread width 10%]"));
+        rod_key(&mut controls, &mut selected, KEY_1, false, 0);
+        rod_key(&mut controls, &mut selected, KEY_TAB, false, 0);
+        assert_eq!(selected, RodParameter::TipWeight);
+        assert_eq!(controls.rod_tuning.tip_weight_percent, 10);
+        assert_eq!(controls.rod_tuning.spread_shape_percent, 20);
+        assert_eq!(controls.rod_tuning.spread_width_percent, 10);
     }
 
     #[test]
-    fn rod_speed_controls_ignore_other_keys_and_modes() {
+    fn tab_steps_rod_tuning_and_wraps_in_both_directions() {
         let mut controls = Controls {
             hair_motion: Some(HairMotion::Rod),
             water: false,
             ..Controls::default()
         };
-        for scancode in [KEY_I, KEY_J, KEY_K, KEY_L, 30, 31, 32] {
-            rod_key(&mut controls, scancode, false, 0);
+        let mut selected = RodParameter::TipWeight;
+        assert_eq!(controls.rod_tuning.tip_weight_percent, 0);
+        for value in (10..=100).step_by(10).chain([0]) {
+            rod_key(&mut controls, &mut selected, KEY_TAB, false, 0);
+            assert_eq!(controls.rod_tuning.tip_weight_percent, value);
+            rod_key(&mut controls, &mut selected, KEY_TAB, true, 0);
+            assert_eq!(controls.rod_tuning.tip_weight_percent, value);
         }
-        assert_eq!(controls.motion_speed_percent, 100);
+        rod_key(&mut controls, &mut selected, KEY_TAB, false, 0x0001);
+        assert_eq!(controls.rod_tuning.tip_weight_percent, 100);
+        rod_key(&mut controls, &mut selected, KEY_TAB, true, 0x0001);
+        assert_eq!(controls.rod_tuning.tip_weight_percent, 100);
+        rod_key(&mut controls, &mut selected, KEY_TAB, false, 0x0002);
+        assert_eq!(controls.rod_tuning.tip_weight_percent, 90);
+    }
+
+    #[test]
+    fn rod_tuning_ignores_other_keys_and_modes() {
+        let mut controls = Controls {
+            hair_motion: Some(HairMotion::Rod),
+            water: false,
+            ..Controls::default()
+        };
+        let mut selected = RodParameter::TipWeight;
+        let initial_tuning = controls.rod_tuning;
+        for scancode in [KEY_I, KEY_J, KEY_K, KEY_L] {
+            rod_key(&mut controls, &mut selected, scancode, false, 0);
+        }
+        assert_eq!(selected, RodParameter::TipWeight);
+        assert!(controls.rod_tuning == initial_tuning);
         controls.water = true;
-        rod_key(&mut controls, KEY_TAB, false, 0);
-        assert_eq!(controls.motion_speed_percent, 100);
+        rod_key(&mut controls, &mut selected, KEY_2, false, 0);
+        rod_key(&mut controls, &mut selected, KEY_TAB, false, 0);
+        assert_eq!(selected, RodParameter::TipWeight);
+        assert!(controls.rod_tuning == initial_tuning);
         controls.water = false;
         for motion in [Some(HairMotion::Spring), Some(HairMotion::Rope), None] {
             controls.hair_motion = motion;
-            rod_key(&mut controls, KEY_TAB, false, 0);
-            assert_eq!(controls.motion_speed_percent, 100);
+            rod_key(&mut controls, &mut selected, KEY_3, false, 0);
+            rod_key(&mut controls, &mut selected, KEY_TAB, false, 0);
+            assert_eq!(selected, RodParameter::TipWeight);
+            assert!(controls.rod_tuning == initial_tuning);
         }
     }
 }

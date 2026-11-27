@@ -14,6 +14,10 @@ const NEAR: f32 = 0.05;
 const FAR: f32 = 16.0;
 const APPROACH_NS: u64 = 1_650_000_000;
 const RECEDE_NS: u64 = 3_000_000_000;
+const DEPARTURE_ROOM: f32 = 0.25;
+const DEPARTURE_PULLBACK_NS: u64 = 900_000_000;
+const DEPARTURE_HOLD_UNTIL_NS: u64 = 3_500_000_000;
+const DEPARTURE_RETURN_NS: u64 = 1_650_000_000;
 
 pub(super) fn camera_back(yaw: f32) -> Vec3 {
     Vec3::new(-yaw.sin(), 0.0, -yaw.cos())
@@ -88,6 +92,39 @@ pub(super) struct ObserverPose {
     pub(super) zoom: f32,
     pub(super) distance: f32,
     pub(super) yaw_offset: f32,
+    departure: f32,
+}
+
+impl ObserverPose {
+    fn departure_scale(self) -> f32 {
+        1.0 + DEPARTURE_ROOM * self.departure
+    }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn rendered_zoom(self) -> f32 {
+        self.zoom / self.departure_scale()
+    }
+
+    pub(super) fn rendered_distance(self) -> f32 {
+        self.distance * self.departure_scale()
+    }
+}
+
+struct ButterflyDeparture {
+    start_ns: u64,
+    from: f32,
+}
+
+impl ButterflyDeparture {
+    fn amount(&self, now_ns: u64) -> f32 {
+        let elapsed = now_ns.saturating_sub(self.start_ns);
+        if elapsed < DEPARTURE_PULLBACK_NS {
+            self.from + (1.0 - self.from) * ease(elapsed as f32 / DEPARTURE_PULLBACK_NS as f32)
+        } else {
+            let returning = elapsed.saturating_sub(DEPARTURE_HOLD_UNTIL_NS);
+            1.0 - ease((returning as f32 / DEPARTURE_RETURN_NS as f32).min(1.0))
+        }
+    }
 }
 
 pub(super) struct Autobs {
@@ -100,6 +137,7 @@ pub(super) struct Autobs {
     started_ns: u64,
     duration_ns: u64,
     yaw_arc: f32,
+    departure: Option<ButterflyDeparture>,
 }
 
 impl Autobs {
@@ -121,6 +159,7 @@ impl Autobs {
             started_ns: 0,
             duration_ns: 0,
             yaw_arc: 0.0,
+            departure: None,
         }
     }
 
@@ -128,7 +167,7 @@ impl Autobs {
         if framing == self.framing {
             return false;
         }
-        let previous = self.pose(now_ns);
+        let previous = self.resize_pose(now_ns);
         let remaining = self
             .duration_ns
             .saturating_sub(now_ns.saturating_sub(self.started_ns));
@@ -154,6 +193,10 @@ impl Autobs {
     }
 
     pub(super) fn retarget(&mut self, extent: (u32, u32), from: ObserverPose, now_ns: u64) {
+        let from = ObserverPose {
+            departure: 0.0,
+            ..from
+        };
         let goal = self.fitted_pose(extent);
         let area = u64::from(extent.0) * u64::from(extent.1);
         let prior_area = u64::from(self.extent.0) * u64::from(self.extent.1);
@@ -200,6 +243,24 @@ impl Autobs {
     }
 
     pub(super) fn pose(&self, now_ns: u64) -> ObserverPose {
+        let departure = self
+            .departure
+            .as_ref()
+            .map_or(0.0, |effect| effect.amount(now_ns));
+        ObserverPose {
+            departure,
+            ..self.resize_pose(now_ns)
+        }
+    }
+
+    pub(super) fn butterfly_departure(&mut self, from: ObserverPose, now_ns: u64) {
+        self.departure = Some(ButterflyDeparture {
+            start_ns: now_ns,
+            from: from.departure,
+        });
+    }
+
+    fn resize_pose(&self, now_ns: u64) -> ObserverPose {
         if !self.is_moving(now_ns) {
             return self.goal;
         }
@@ -215,6 +276,7 @@ impl Autobs {
             zoom: self.from.zoom + (self.goal.zoom - self.from.zoom) * eased,
             distance: self.from.distance + (self.goal.distance - self.from.distance) * eased,
             yaw_offset: self.from.yaw_offset * (1.0 - eased) + self.yaw_arc * arc,
+            departure: 0.0,
         }
     }
 
@@ -225,20 +287,15 @@ impl Autobs {
             view_back(BASE_YAW + pose.yaw_offset)
         };
         let target = self.framing.target;
-        let eye = target + back * pose.distance;
+        let eye = target + back * pose.rendered_distance();
         let view = look_at_mat4(eye, target, Vec3::Y);
         // Keep the sampled pixel scale even when the backing extent changes.
         let diameter_pixels_per_unit = 2.0 * self.reference_pixels_per_unit * pose.zoom;
-        let half_width = extent.0.max(1) as f32 / diameter_pixels_per_unit;
+        let half_width = extent.0.max(1) as f32 / diameter_pixels_per_unit * pose.departure_scale();
         let half_height = extent.1.max(1) as f32 / diameter_pixels_per_unit;
-        let projection = orthographic(
-            -half_width,
-            half_width,
-            -half_height,
-            half_height,
-            NEAR,
-            FAR,
-        );
+        // Grow the frame above its current bottom edge and keep it centered horizontally.
+        let top = half_height * (2.0 * pose.departure_scale() - 1.0);
+        let projection = orthographic(-half_width, half_width, -half_height, top, NEAR, FAR);
         (view, projection, eye, -back)
     }
 
@@ -282,6 +339,7 @@ fn fitted_pose(
         zoom: fitted_zoom(extent, reference_pixels_per_unit, framing),
         distance: (REFERENCE_DISTANCE / area_scale).clamp(1.6, 8.0),
         yaw_offset: 0.0,
+        departure: 0.0,
     }
 }
 
@@ -435,5 +493,66 @@ mod tests {
             assert!(observer.pose(now).yaw_offset.abs() <= ARC_LIMIT + 1e-6);
         }
         assert_eq!(observer.pose(second_resize + RECEDE_NS).yaw_offset, 0.0);
+    }
+
+    #[test]
+    fn butterfly_departure_expands_upward_and_keeps_the_bottom_stationary() {
+        let start = 50_000_000;
+        for framing in [NORMAL, HEART] {
+            let mut observer = Autobs::new(REFERENCE, framing, PIXELS_PER_UNIT);
+            let parked = observer.pose(start);
+            let before = observer.matrices(parked, REFERENCE);
+            let clip_to_world = (before.1 * before.0).inverse();
+            let bottom = clip_to_world.project_point3(Vec3::new(0.0, -1.0, 0.25));
+            let old_top = clip_to_world.project_point3(Vec3::new(0.0, 1.0, 0.25));
+            observer.butterfly_departure(parked, start);
+            assert_eq!(observer.matrices(observer.pose(start), REFERENCE), before);
+
+            for offset in [
+                1,
+                DEPARTURE_PULLBACK_NS / 2,
+                DEPARTURE_PULLBACK_NS,
+                DEPARTURE_HOLD_UNTIL_NS,
+                DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS / 2,
+            ] {
+                let (view, projection, _, _) =
+                    observer.matrices(observer.pose(start + offset), REFERENCE);
+                let bottom_clip = (projection * view).project_point3(bottom);
+                assert!(
+                    (bottom_clip.y + 1.0).abs() < 1e-5,
+                    "{offset}: {bottom_clip:?}"
+                );
+            }
+
+            let expanded = observer.pose(start + DEPARTURE_PULLBACK_NS);
+            let (view, projection, eye, forward) = observer.matrices(expanded, REFERENCE);
+            assert!(((projection * view).project_point3(old_top).y - 0.6).abs() < 1e-5);
+            assert!((projection.x_axis.x / before.1.x_axis.x - 0.8).abs() < 1e-5);
+            assert!(
+                (eye - before.2 + forward * (parked.distance * DEPARTURE_ROOM)).length() < 1e-5
+            );
+            let returned = observer.pose(start + DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS);
+            assert_eq!(observer.matrices(returned, REFERENCE), before);
+        }
+    }
+
+    #[test]
+    fn butterfly_departure_composes_with_resize_and_does_not_stack() {
+        let mut observer = observer();
+        observer.butterfly_departure(observer.pose(0), 0);
+        let next = DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS / 2;
+        let visible = observer.pose(next);
+        observer.retarget((950, 840), visible, next);
+        assert_eq!(observer.pose(next), visible);
+        observer.butterfly_departure(visible, next);
+        assert_eq!(observer.pose(next), visible);
+        assert_eq!(
+            observer
+                .pose(next + DEPARTURE_PULLBACK_NS)
+                .departure_scale(),
+            1.25
+        );
+        let finished = next + DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS;
+        assert_eq!(observer.pose(finished), observer.fitted_pose((950, 840)));
     }
 }
