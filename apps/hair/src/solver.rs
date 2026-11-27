@@ -5,7 +5,9 @@
 
 use glam::{IVec3, Quat, Vec3};
 
-use crate::obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER, HEAD_RADIUS};
+use crate::obstacle::{
+    BODY_OBSTACLES, HEAD, HEAD_CENTER, HEAD_RADIUS, downward_head_exit, rotate_about_head,
+};
 
 // The longest resting back-hair vertices sit about 0.733 m from the head center.
 pub(crate) const HAIR_REACH_RADIUS: f32 = 0.75;
@@ -161,7 +163,7 @@ impl Solver {
                 .into_iter()
                 .map(|position| GuideRoot {
                     position,
-                    launch: downward_launch(position),
+                    launch: downward_head_exit(position, CELL_WIDTH, 0.25 * CELL_WIDTH),
                 })
                 .collect(),
             tick: 0,
@@ -445,19 +447,6 @@ fn field_seeds(flow_direction: Vec3) -> [Vec3; FIELD_STREAMLINE_SEEDS] {
     })
 }
 
-fn downward_launch(root: Vec3) -> Vec3 {
-    // Exit the approximate head obstacle along the same vertical line as the
-    // authored root. A small margin avoids sampling the boundary voxel.
-    let offset = root - HEAD_CENTER;
-    let span = HEAD_RADIUS * HEAD_RADIUS - offset.x * offset.x - offset.z * offset.z;
-    let drop = if span > 0.0 {
-        CELL_WIDTH.max(offset.y + span.sqrt() + 0.25 * CELL_WIDTH)
-    } else {
-        CELL_WIDTH
-    };
-    root - drop * Vec3::Y
-}
-
 fn inlet_velocity(flow_direction: Vec3, tick: u64) -> Vec3 {
     let phase = (tick % 360) as f32 * (core::f32::consts::TAU / 360.0);
     flow_direction * (0.074 * (1.0 + 0.16 * phase.sin()))
@@ -505,14 +494,6 @@ fn cell_center(x: usize, y: usize, z: usize) -> Vec3 {
 
 fn world_position(lattice: Vec3) -> Vec3 {
     DOMAIN_MIN + lattice * CELL_WIDTH
-}
-
-fn rotate_about_head(position: Vec3, rotation: Quat) -> Vec3 {
-    if rotation == Quat::IDENTITY {
-        position
-    } else {
-        HEAD_CENTER + rotation * (position - HEAD_CENTER)
-    }
 }
 
 // The start is inside and the end is outside, so the larger root marks the exit.

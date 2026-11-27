@@ -372,6 +372,11 @@ impl<'a> Surface<'a> {
         self.line::<true>(camera.project(start), camera.project(end), color, opacity);
     }
 
+    pub(crate) fn hair_line(&mut self, camera: Camera, start: Vec3, end: Vec3, shade: f32) {
+        let color = Vec3::new(0.40, 0.25, 0.57).lerp(Vec3::new(0.69, 0.53, 0.86), shade);
+        self.line::<true>(camera.project(start), camera.project(end), color, 0.86);
+    }
+
     fn line<const WRITE_DEPTH: bool>(&mut self, start: Vec3, end: Vec3, color: Vec3, opacity: f32) {
         let span = (end - start).abs().truncate().max_element();
         let steps = (span.ceil() as u32).max(1);

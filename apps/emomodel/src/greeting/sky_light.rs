@@ -98,6 +98,7 @@ pub(super) struct Levels {
     pub sky: u8,
     pub sheen: u8,
     pub key: Key,
+    pub firefly: bool,
 }
 
 impl Default for Levels {
@@ -106,12 +107,14 @@ impl Default for Levels {
             sky: 5,
             sheen: 5,
             key: Key::Neutral,
+            firefly: true,
         }
     }
 }
 
 pub(super) struct SkyLight {
     pub(super) key: Key,
+    pub(super) firefly: bool,
     key_tint: Vec3,
     view_back: Vec3,
     key_direction: Vec3,
@@ -134,6 +137,7 @@ impl SkyLight {
         let sheen_strength = f32::from(levels.sheen.min(MAX_LEVEL)) / f32::from(MAX_LEVEL);
         Self {
             key: levels.key,
+            firefly: levels.firefly,
             key_tint: levels.key.color() - Vec3::ONE,
             view_back,
             key_direction,
@@ -155,11 +159,19 @@ impl SkyLight {
         key_with_ambient: Vec3,
         ambient: f32,
     ) -> Vec3 {
-        let mut color = key_with_ambient;
-        if self.key != Key::Neutral {
-            let direct = key_with_ambient - base_linear * ambient;
-            color += self.key_tint * direct;
+        let color = self.key_light(base_linear, key_with_ambient, ambient);
+        self.environment(normal, base_linear, color)
+    }
+
+    pub(super) fn key_light(&self, base: Vec3, key_with_ambient: Vec3, ambient: f32) -> Vec3 {
+        if self.key == Key::Neutral {
+            key_with_ambient
+        } else {
+            key_with_ambient + self.key_tint * (key_with_ambient - base * ambient)
         }
+    }
+
+    pub(super) fn environment(&self, normal: Vec3, base_linear: Vec3, mut color: Vec3) -> Vec3 {
         if self.sky_strength == 0.0 {
             return color;
         }

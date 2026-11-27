@@ -7,13 +7,17 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use libloading::Library;
 
-use crate::{Controls, TILT_LIMIT};
+use crate::{Controls, TILT_LIMIT, hair_rope::HairMotion};
 
 const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
 const HELP: &str = "Mouse left/right spins · down tilts forward · up tilts back";
+const ROD_KEYS: &str = "Tab / Shift+Tab adjusts motion speed";
 const WATER_KEYS: &str = "I/K volume  J/L flow speed  U/O viscosity";
 const RADIANS_PER_PIXEL: f32 = 0.008;
+const MOTION_SPEED_MIN: u8 = 50;
+const MOTION_SPEED_MAX: u8 = 150;
+const MOTION_SPEED_STEP: u8 = 10;
 
 pub(crate) fn run(
     width: u32,
@@ -37,13 +41,18 @@ pub(crate) fn run(
     eprintln!("Hair · {HELP}");
     if controls.water {
         eprintln!("Hair · {WATER_KEYS}");
+    } else if rod_controls_active(&controls) {
+        eprintln!("Hair · {ROD_KEYS}");
     }
+    let mut fps = None;
+    video.set_title(&window_title(&controls, fps));
     let mut pixels = vec![0; size];
     let mut shown = 0;
     let mut report_count = 0;
     let mut report_start = Instant::now();
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
+        let motion_speed_percent = controls.motion_speed_percent;
         if !video.poll(&mut controls) {
             break;
         }
@@ -53,19 +62,14 @@ pub(crate) fn run(
         shown += 1;
         report_count += 1;
         let report_interval = report_start.elapsed();
-        if report_interval >= Duration::from_secs(1) {
-            let fps = report_count as f32 / report_interval.as_secs_f32();
-            let title = if controls.water {
-                format!(
-                    "Hair · Water · {fps:.1} FPS · Volume {:.2}× · Flow {:.2}× · Viscosity {:.3} · {WATER_KEYS}",
-                    controls.water_volume, controls.flow.speed, controls.flow.viscosity,
-                )
-            } else {
-                format!("Hair · {fps:.1} FPS · {HELP}")
-            };
-            video.set_title(&title);
+        let report_due = report_interval >= Duration::from_secs(1);
+        if report_due {
+            fps = Some(report_count as f32 / report_interval.as_secs_f32());
             report_start = Instant::now();
             report_count = 0;
+        }
+        if report_due || motion_speed_percent != controls.motion_speed_percent {
+            video.set_title(&window_title(&controls, fps));
         }
         thread::sleep(FRAME_TIME.saturating_sub(now.elapsed()));
     }
@@ -73,6 +77,43 @@ pub(crate) fn run(
         eprintln!("Presented {shown} frames with SDL2.");
     }
     Ok(())
+}
+
+fn window_title(controls: &Controls, fps: Option<f32>) -> String {
+    let fps = fps.map_or_else(String::new, |fps| format!(" · {fps:.1} FPS"));
+    if controls.water {
+        format!(
+            "Hair · Water{fps} · Volume {:.2}× · Flow {:.2}× · Viscosity {:.3} · {WATER_KEYS}",
+            controls.water_volume, controls.flow.speed, controls.flow.viscosity,
+        )
+    } else if rod_controls_active(controls) {
+        format!(
+            "Hair · Bending rod · Motion {}%{fps} · {ROD_KEYS}",
+            controls.motion_speed_percent
+        )
+    } else if let Some(motion) = controls.hair_motion {
+        format!("Hair · {}{fps} · {HELP}", motion.label())
+    } else {
+        format!("Hair{fps} · {HELP}")
+    }
+}
+
+fn rod_controls_active(controls: &Controls) -> bool {
+    !controls.water && controls.hair_motion == Some(HairMotion::Rod)
+}
+
+fn rod_key(controls: &mut Controls, scancode: i32, repeat: bool, modifiers: u16) {
+    if scancode != KEY_TAB || repeat || !rod_controls_active(controls) {
+        return;
+    }
+    let shift = modifiers & MOD_SHIFT != 0;
+    let speed = controls.motion_speed_percent;
+    controls.motion_speed_percent = match (shift, speed) {
+        (true, MOTION_SPEED_MIN) => MOTION_SPEED_MAX,
+        (true, _) => speed - MOTION_SPEED_STEP,
+        (false, MOTION_SPEED_MAX) => MOTION_SPEED_MIN,
+        (false, _) => speed + MOTION_SPEED_STEP,
+    };
 }
 
 const INIT_VIDEO: u32 = 0x20;
@@ -91,12 +132,14 @@ const WINDOW_EVENT: u32 = 0x200;
 const WINDOW_CLOSE: u8 = 14;
 const KEY_DOWN: u32 = 0x300;
 const MOUSE_MOTION: u32 = 0x400;
+const KEY_TAB: i32 = 43;
 const KEY_I: i32 = 12;
 const KEY_J: i32 = 13;
 const KEY_K: i32 = 14;
 const KEY_L: i32 = 15;
 const KEY_O: i32 = 18;
 const KEY_U: i32 = 20;
+const MOD_SHIFT: u16 = 0x0003; // SDL KMOD_LSHIFT | KMOD_RSHIFT
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -292,6 +335,10 @@ impl Video {
                     KEY_O => controls.flow.viscosity = (controls.flow.viscosity + 0.006).min(0.12),
                     _ => (),
                 },
+                KEY_DOWN => {
+                    let key = unsafe { event.key };
+                    rod_key(controls, key.scancode, key.repeat != 0, key.modifiers);
+                }
                 _ => (),
             }
         }
@@ -322,6 +369,56 @@ impl Video {
     fn set_title(&self, title: &str) {
         if let Ok(title) = CString::new(title) {
             unsafe { (self.sdl.set_title)(self.window, title.as_ptr()) };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tab_steps_rod_motion_speed_and_wraps_in_both_directions() {
+        let mut controls = Controls {
+            hair_motion: Some(HairMotion::Rod),
+            water: false,
+            ..Controls::default()
+        };
+        assert_eq!(controls.motion_speed_percent, 100);
+        for speed in [110, 120, 130, 140, 150, 50] {
+            rod_key(&mut controls, KEY_TAB, false, 0);
+            assert_eq!(controls.motion_speed_percent, speed);
+            rod_key(&mut controls, KEY_TAB, true, 0);
+            assert_eq!(controls.motion_speed_percent, speed);
+        }
+        rod_key(&mut controls, KEY_TAB, false, 0x0001);
+        assert_eq!(controls.motion_speed_percent, 150);
+        rod_key(&mut controls, KEY_TAB, true, 0x0001);
+        assert_eq!(controls.motion_speed_percent, 150);
+        rod_key(&mut controls, KEY_TAB, false, 0x0002);
+        assert_eq!(controls.motion_speed_percent, 140);
+        assert!(window_title(&controls, None).contains("Motion 140%"));
+    }
+
+    #[test]
+    fn rod_speed_controls_ignore_other_keys_and_modes() {
+        let mut controls = Controls {
+            hair_motion: Some(HairMotion::Rod),
+            water: false,
+            ..Controls::default()
+        };
+        for scancode in [KEY_I, KEY_J, KEY_K, KEY_L, 30, 31, 32] {
+            rod_key(&mut controls, scancode, false, 0);
+        }
+        assert_eq!(controls.motion_speed_percent, 100);
+        controls.water = true;
+        rod_key(&mut controls, KEY_TAB, false, 0);
+        assert_eq!(controls.motion_speed_percent, 100);
+        controls.water = false;
+        for motion in [Some(HairMotion::Spring), Some(HairMotion::Rope), None] {
+            controls.hair_motion = motion;
+            rod_key(&mut controls, KEY_TAB, false, 0);
+            assert_eq!(controls.motion_speed_percent, 100);
         }
     }
 }

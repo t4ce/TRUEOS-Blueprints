@@ -31,6 +31,7 @@ use crate::{
 use floor_material::CLEAR_RGBA;
 use foot_contact::FootProbe;
 use hand_contact::HandProbe;
+use reel_preview::FireflyPhase;
 use sky_controls::SkyControls;
 use sky_light::{Key, Levels, SkyLight};
 use sky_palette::NormalPalette;
@@ -44,6 +45,7 @@ mod dance;
 mod ear_detail;
 mod eye_detail;
 mod eye_sprite;
+mod fire_light;
 mod floor;
 mod floor_material;
 mod foot_contact;
@@ -54,6 +56,7 @@ mod idle;
 mod lico_graph;
 mod live_butterfly;
 mod normal_detail;
+mod pelvis_detail;
 mod pupil;
 mod reel;
 mod reel_draw;
@@ -141,11 +144,10 @@ pub(super) async fn show(
         let drawing_butterfly = appearance == Appearance::Butterfly;
         let studying_skin = matches!(appearance, Appearance::SkinStudy | Appearance::Butterfly);
         let motion = if drawing_butterfly {
-            Some(reel_preview::Motion::Butterfly(butterfly::Butterfly::new(
+            Some(reel_preview::Motion::butterflies(
                 glb,
-                &MATERIALS,
                 mesh.material_vertices[1].end,
-            )?))
+            )?)
         } else if let Some(reel) = reel {
             Some(reel_preview::Motion::Reel(reel))
         } else if studying_skin {
@@ -227,10 +229,13 @@ async fn apply_normal_maps(
     mut apply: impl FnMut(usize, &[[f32; 3]]) -> Result<()>,
 ) -> Result<()> {
     let ear = ear_detail::EarDetail::load().await?;
-    let belly = if full_maps {
+    let local_body = if full_maps {
         None
     } else {
-        Some(belly_detail::BellyDetail::load().await?)
+        Some((
+            belly_detail::BellyDetail::load().await?,
+            pelvis_detail::PelvisDetail::load().await?,
+        ))
     };
     for (section, (material, png)) in MATERIALS.iter().zip(SKIN_NORMAL_MAPS).enumerate() {
         let image = if full_maps {
@@ -251,16 +256,21 @@ async fn apply_normal_maps(
         let map = image
             .as_ref()
             .map(|image| (image.rgba.as_slice(), NORMAL_MAP_SIZE as usize));
-        let normals = normal_detail::bake(glb, material, map, |uv| {
+        let mut normals = normal_detail::bake(glb, material, map, |uv| {
             if section == 0 {
                 ear.tangent_offset(uv)
             } else {
-                belly
+                local_body
                     .as_ref()
-                    .map_or(Vec2::ZERO, |detail| detail.tangent_offset(uv))
+                    .map_or(Vec2::ZERO, |(belly, pelvis)| {
+                        belly.tangent_offset(uv) + pelvis.tangent_offset(uv)
+                    })
                     + belly_detail::fold_offset(uv)
             }
         })?;
+        if section == 1 && !full_maps {
+            pelvis_detail::smooth_front_seam(&mut normals);
+        }
         apply(section, &normals)?;
     }
     if full_maps {
@@ -269,7 +279,7 @@ async fn apply_normal_maps(
             SKIN_NORMAL_MAPS.len()
         ));
     } else {
-        report(format_args!("belly normal crop sampling=bind-vertex"));
+        report(format_args!("belly and pelvis normal crops sampling=bind-vertex"));
     }
     report(format_args!(
         "shared mirrored ear relief sampling=bind-vertex"
@@ -1136,6 +1146,12 @@ async fn play(
                             continue;
                         };
                         let selected = match key {
+                            'p' | 'P' => {
+                                if let Playback::Reel(preview) = &mut *playback {
+                                    preview.toggle_pelvis_markers();
+                                }
+                                continue;
+                            }
                             'M' if msaa4_available => 4,
                             'm' | 'M' if msaa2_available => 2,
                             'm' if msaa4_available => 4,
@@ -1306,6 +1322,10 @@ async fn play(
             Err(code) => return Err(gpu_error(code)).context("draw the avatar pose"),
         }
         let submitted = clock::monotonic_nanos();
+        let firefly = match playback {
+            Playback::Reel(preview) => preview.firefly_phase(),
+            Playback::Retained(..) => FireflyPhase::Idle,
+        };
         let damage = Damage::full(extent.0, extent.1);
         let receipt = loop {
             match frame.publish_tracked(damage) {
@@ -1330,7 +1350,7 @@ async fn play(
             }
             last_camera_pose = camera_pose;
             if let Playback::Reel(preview) = &mut *playback
-                && preview.on_published(pose, finished)
+                && preview.on_published(pose, finished, camera, extent)
             {
                 match frame.display_bottom_color() {
                     Ok(rgb) => display_backdrop = Some((Backdrop::new(rgb, finished), rgb)),
@@ -1344,7 +1364,7 @@ async fn play(
             let camera_sample = resize_trace
                 .as_mut()
                 .and_then(|trace| trace.sample(admitted, extent, camera_pose));
-            receipts.push_back((serial, camera_sample, phase, pose, levels));
+            receipts.push_back((serial, camera_sample, phase, pose, levels, firefly));
         }
         resizing = false;
         // UI4 retains eight recent display receipts. Leave delayed ones in the queue
@@ -1352,7 +1372,7 @@ async fn play(
         let mut remaining = receipts.len();
         while remaining > 0 {
             let receipt = receipts.pop_front().expect("pending presentation receipt");
-            let (serial, camera_sample, phase, pose, levels) = receipt;
+            let (serial, camera_sample, phase, pose, levels, firefly) = receipt;
             match frame.was_presented(serial) {
                 Ok(true) => {
                     stats.displayed += 1;
@@ -1363,17 +1383,19 @@ async fn play(
                             phase.name()
                         ));
                     }
-                    if lighting_active && presented_levels != Some(levels) {
-                        presented_levels = Some(levels);
+                    if lighting_active && presented_levels != Some((levels, firefly)) {
+                        presented_levels = Some((levels, firefly));
                         let key = match levels.key {
                             Key::Neutral => "white".into(),
                             Key::Sunrise => "sunrise".into(),
                             Key::Kelvin(temperature) => format!("{temperature}K"),
                         };
                         report(format_args!(
-                            "avatar light levels sky={} sheen={} key={key} present_serial={serial} phase={}",
+                            "avatar light levels sky={} sheen={} key={key} firefly={} effect={} present_serial={serial} phase={}",
                             levels.sky,
                             levels.sheen,
+                            if levels.firefly { "on" } else { "off" },
+                            firefly.name(),
                             phase.name(),
                         ));
                     }
@@ -1381,7 +1403,9 @@ async fn play(
                         sample.report(serial);
                     }
                 }
-                Ok(false) => receipts.push_back((serial, camera_sample, phase, pose, levels)),
+                Ok(false) => {
+                    receipts.push_back((serial, camera_sample, phase, pose, levels, firefly));
+                }
                 Err(Error::NotFound) => return Ok(()),
                 Err(error) => return Err(ui_error(error)),
             }

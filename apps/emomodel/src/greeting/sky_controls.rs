@@ -24,6 +24,13 @@ const LEVEL_COUNT: u16 = 10;
 const KEY_LABEL: &str = "key  ";
 const KEY_ROW: u16 = LABELS.len() as u16;
 const KELVIN_ROW: u16 = KEY_ROW + 1;
+const FIREFLY_LABEL: &str = "firefly ";
+const FIREFLY_CHOICES: &[(u16, &str, bool)] = &[
+    (FIREFLY_LABEL.len() as u16, "off", false),
+    (FIREFLY_LABEL.len() as u16 + 4, "on", true),
+];
+const INLINE_FIREFLY_COLUMN: u16 = 26;
+const INLINE_FIREFLY_LABEL: &str = "fly";
 const KELVIN_VALUE_WIDTH: u16 = 5;
 const MAX_TRACK_WIDTH: u16 = 16;
 const EVENTS_PER_FRAME: usize = 8;
@@ -88,28 +95,39 @@ impl SkyControls {
     }
 
     fn select(&mut self, row: u16, column: u16) {
+        if row < KEY_ROW {
+            if let Some(level) = level_at(column) {
+                match row {
+                    0 => self.levels.sky = level,
+                    1 => self.levels.sheen = level,
+                    _ => {}
+                }
+            }
+            return;
+        }
+        let Ok((columns, rows)) = terminal::size() else {
+            return;
+        };
+        if let Some(control) = FireflyControl::layout(self.levels.key, columns, rows)
+            && let Some(enabled) = control.selection(row, column, self.levels.firefly)
+        {
+            self.levels.firefly = enabled;
+            return;
+        }
         if row == KEY_ROW {
-            let choice = terminal::size().ok().and_then(|(columns, _)| {
-                self.key_choices()
-                    .find(|(cells, _, _)| cells.end <= columns && cells.contains(&column))
-            });
+            let choice = self
+                .key_choices()
+                .find(|(cells, _, _)| cells.end <= columns && cells.contains(&column));
             if let Some((_, _, key)) = choice {
                 self.levels.key = key;
             }
-        } else if row == KELVIN_ROW {
-            if matches!(self.levels.key, Key::Kelvin(_))
-                && let Ok((columns, _)) = terminal::size()
-                && let Some(kelvin) = kelvin_at(column, kelvin_track(columns))
-            {
-                self.kelvin = kelvin;
-                self.levels.key = Key::Kelvin(kelvin);
-            }
-        } else if let Some(level) = level_at(column) {
-            match row {
-                0 => self.levels.sky = level,
-                1 => self.levels.sheen = level,
-                _ => {}
-            }
+        } else if row == KELVIN_ROW
+            && rows > KELVIN_ROW
+            && matches!(self.levels.key, Key::Kelvin(_))
+            && let Some(kelvin) = kelvin_at(column, kelvin_track(columns))
+        {
+            self.kelvin = kelvin;
+            self.levels.key = Key::Kelvin(kelvin);
         }
     }
 
@@ -144,6 +162,7 @@ impl SkyControls {
             Err(error) if !setup && error.kind() == io::ErrorKind::NotConnected => return Ok(()),
             Err(error) => return Err(error),
         };
+        let firefly = FireflyControl::layout(self.levels.key, columns, rows);
         let digits = columns
             .saturating_sub(FIRST_COLUMN)
             .div_ceil(2)
@@ -170,11 +189,25 @@ impl SkyControls {
                     draw_choice(&mut output, label, self.levels.key == key)?;
                 }
             }
+            if matches!(firefly, Some(FireflyControl::Inline)) {
+                queue!(output, MoveTo(INLINE_FIREFLY_COLUMN, KEY_ROW))?;
+                draw_choice(&mut output, INLINE_FIREFLY_LABEL, self.levels.firefly)?;
+            }
         }
-        if rows > KELVIN_ROW {
-            draw_label(&mut output, KELVIN_ROW, columns, "")?;
-            if let Key::Kelvin(kelvin) = self.levels.key {
-                draw_kelvin_track(&mut output, columns, kelvin)?;
+        for row in KELVIN_ROW..(KELVIN_ROW + 2).min(rows) {
+            if matches!(firefly, Some(FireflyControl::Row(at)) if at == row) {
+                draw_label(&mut output, row, columns, FIREFLY_LABEL)?;
+                for &(column, choice, enabled) in FIREFLY_CHOICES {
+                    queue!(output, MoveTo(column, row))?;
+                    draw_choice(&mut output, choice, self.levels.firefly == enabled)?;
+                }
+            } else {
+                draw_label(&mut output, row, columns, "")?;
+                if row == KELVIN_ROW
+                    && let Key::Kelvin(kelvin) = self.levels.key
+                {
+                    draw_kelvin_track(&mut output, columns, kelvin)?;
+                }
             }
         }
         write_terminal(&output)?;
@@ -184,6 +217,45 @@ impl SkyControls {
                 .map_err(|error| io::Error::other(error.to_string()))?;
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FireflyControl {
+    Row(u16),
+    Inline,
+}
+
+impl FireflyControl {
+    fn layout(key: Key, columns: u16, rows: u16) -> Option<Self> {
+        let row = KELVIN_ROW + u16::from(matches!(key, Key::Kelvin(_)));
+        let (column, label, _) = FIREFLY_CHOICES[1];
+        if rows > row && columns >= column + label.len() as u16 {
+            Some(Self::Row(row))
+        } else if rows > KEY_ROW
+            && columns >= INLINE_FIREFLY_COLUMN + INLINE_FIREFLY_LABEL.len() as u16
+        {
+            Some(Self::Inline)
+        } else {
+            None
+        }
+    }
+
+    fn selection(self, row: u16, column: u16, enabled: bool) -> Option<bool> {
+        match self {
+            Self::Row(at) if row == at => {
+                FIREFLY_CHOICES.iter().find_map(|&(start, label, value)| {
+                    (start..start + label.len() as u16)
+                        .contains(&column)
+                        .then_some(value)
+                })
+            }
+            Self::Inline if row == KEY_ROW => (INLINE_FIREFLY_COLUMN
+                ..INLINE_FIREFLY_COLUMN + INLINE_FIREFLY_LABEL.len() as u16)
+                .contains(&column)
+                .then_some(!enabled),
+            _ => None,
+        }
     }
 }
 

@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use crate::{
     Controls,
+    hair_rope::RopeGuides,
     obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER},
     raster::{Alpha, Camera, Material, Surface, Texture, Vertex},
     solver::{HAIR_REACH_RADIUS, Solver},
@@ -27,7 +28,8 @@ pub(crate) struct Scene {
     parts: Vec<Part>,
     body_bounds: (Vec3, Vec3),
     textures: Vec<Texture>,
-    solver: Solver,
+    solver: Option<Solver>,
+    ropes: Option<RopeGuides>,
     water: Option<WaterPass>,
     camera_scale: Option<f32>,
     camera_center: Option<Vec3>,
@@ -62,6 +64,22 @@ impl Scene {
         // Masked/opaque surfaces establish the depth used by eye overlays.
         parts.sort_by_key(|part| matches!(part.material.alpha, Alpha::Blend));
         let roots = back_hair_roots()?;
+        let pose = world_to_avatar(controls);
+        let ropes = controls
+            .hair_motion
+            .filter(|_| !controls.water)
+            .map(|motion| {
+                let tip_y = parts
+                    .iter()
+                    .filter(|part| part.back_hair)
+                    .flat_map(|part| &part.vertices)
+                    .map(|vertex| vertex.position.y)
+                    .reduce(f32::min)
+                    .unwrap_or(0.75);
+                RopeGuides::new(&roots, tip_y, pose, motion)
+            });
+        let solver = (ropes.is_none() || controls.layers.field)
+            .then(|| Solver::new(WORLD_FLOW_DOWN, pose, roots));
         let body_bounds = parts.iter().flat_map(|part| &part.vertices).fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(minimum, maximum), vertex| {
@@ -92,7 +110,8 @@ impl Scene {
             parts,
             body_bounds,
             textures,
-            solver: Solver::new(WORLD_FLOW_DOWN, world_to_avatar(controls), roots),
+            solver,
+            ropes,
             water: controls.water.then(WaterPass::default),
             camera_scale,
             camera_center,
@@ -104,18 +123,23 @@ impl Scene {
     }
 
     pub(crate) fn advance(&mut self, controls: Controls) {
-        self.solver.step(
-            world_to_avatar(controls),
-            controls.tip_spread,
-            controls.flow,
-        );
+        let pose = world_to_avatar(controls);
+        if let Some(solver) = &mut self.solver {
+            solver.step(pose, controls.tip_spread, controls.flow);
+        }
+        if let Some(ropes) = &mut self.ropes {
+            ropes.advance(pose, controls.motion_speed_percent);
+        }
         if let Some(water) = &mut self.water {
             water.advance(controls.flow.speed);
         }
     }
 
     pub(crate) fn guide_count(&self) -> usize {
-        self.solver.guide_count()
+        self.ropes.as_ref().map_or_else(
+            || self.solver.as_ref().map_or(0, Solver::guide_count),
+            RopeGuides::len,
+        )
     }
 
     #[cfg(target_os = "trueos")]
@@ -178,32 +202,36 @@ impl Scene {
         if layers.reach {
             target.reach_sphere(camera, HEAD_CENTER, HAIR_REACH_RADIUS);
         }
-        let primitives = if let Some(water) = &mut self.water {
-            water.rebuild(&self.solver, controls.water_volume);
+        let primitives = if let (Some(water), Some(solver)) = (&mut self.water, &self.solver) {
+            water.rebuild(solver, controls.water_volume);
             target.water_mesh(camera, &water.vertices, &water.triangles);
             water.triangles.len()
         } else {
             let mut segments = 0;
-            if layers.field {
-                segments += self
-                    .solver
-                    .for_each_field_line(|start, end, speed, change| {
-                        let value = if controls.speed_color { speed } else { change };
-                        target.flow_line(camera, start, end, value, 0.24);
-                    });
+            if layers.field
+                && let Some(solver) = &self.solver
+            {
+                segments += solver.for_each_field_line(|start, end, speed, change| {
+                    let value = if controls.speed_color { speed } else { change };
+                    target.flow_line(camera, start, end, value, 0.24);
+                });
             }
             if layers.guides {
-                let opacity = if cfg!(target_os = "trueos") {
-                    0.24
-                } else {
-                    0.50
-                };
-                segments += self
-                    .solver
-                    .for_each_guide_line(|_, start, end, speed, change| {
+                if let Some(ropes) = &self.ropes {
+                    segments += ropes.for_each_line(|start, end, shade| {
+                        target.hair_line(camera, start, end, shade);
+                    });
+                } else if let Some(solver) = &self.solver {
+                    let opacity = if cfg!(target_os = "trueos") {
+                        0.24
+                    } else {
+                        0.50
+                    };
+                    segments += solver.for_each_guide_line(|_, start, end, speed, change| {
                         let value = if controls.speed_color { speed } else { change };
                         target.flow_line(camera, start, end, value, opacity);
                     });
+                }
             }
             segments
         };

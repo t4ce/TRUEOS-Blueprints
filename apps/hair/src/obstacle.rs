@@ -1,4 +1,4 @@
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Ellipsoid {
@@ -31,11 +31,43 @@ impl Ellipsoid {
             (-offset.dot(step) / step.length_squared().max(f32::MIN_POSITIVE)).clamp(0.0, 1.0);
         (offset + nearest * step).length_squared() <= 1.0
     }
+
+    pub(crate) fn push_out(self, point: Vec3, clearance: f32) -> Vec3 {
+        let offset = point - self.center;
+        let radii = self.radii + clearance;
+        let squared = (offset / radii).length_squared();
+        if squared >= 1.0 {
+            point
+        } else if squared > 1e-12 {
+            self.center + offset / squared.sqrt()
+        } else {
+            self.center + radii.z * Vec3::Z
+        }
+    }
 }
 
 pub(crate) const HEAD_CENTER: Vec3 = Vec3::new(0.0, 1.42, -0.015);
 pub(crate) const HEAD_RADIUS: f32 = 0.135;
 pub(crate) const HEAD: Ellipsoid = Ellipsoid::new(HEAD_CENTER, Vec3::splat(HEAD_RADIUS));
+
+pub(crate) fn rotate_about_head(position: Vec3, rotation: Quat) -> Vec3 {
+    if rotation == Quat::IDENTITY {
+        position
+    } else {
+        HEAD_CENTER + rotation * (position - HEAD_CENTER)
+    }
+}
+
+pub(crate) fn downward_head_exit(root: Vec3, minimum_drop: f32, clearance: f32) -> Vec3 {
+    let offset = root - HEAD_CENTER;
+    let span = HEAD_RADIUS * HEAD_RADIUS - offset.x * offset.x - offset.z * offset.z;
+    let drop = if span > 0.0 {
+        minimum_drop.max(offset.y + span.sqrt() + clearance)
+    } else {
+        minimum_drop
+    };
+    root - drop * Vec3::Y
+}
 
 // Fit to the static AvatarSample_B in metres. The torso follows the coat and
 // skirt, and the arm shapes overlap under the loose sleeves and cuffs.

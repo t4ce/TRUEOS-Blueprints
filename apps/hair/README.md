@@ -26,6 +26,14 @@ and the demo makes no network requests.
 The preview opens facing the avatar. Move the mouse left or right to spin her
 in the plane of the screen. Move down to tilt her toward the camera or up to
 tilt her back to horizontal. Use the window close button to exit.
+The bending rod is the default. Guides get 8 segments at the 0.68 m reference
+length, with a minimum of 4 at half that length and a maximum of 12 at 1.5×.
+Motion speed starts at 100%. `Tab` increases it by 10 percentage points and
+`Shift+Tab` decreases it, wrapping between 50% and 150%. The window title
+shows the current speed.
+`--motion 1`, `--motion 2`, and `--motion 3` select the loose rope, elastic
+springs, and bending rod at launch.
+`--motion flow` opens the original field-tracing study.
 Use `--yaw 150 --hide hair --hide body-obstacles` for a clear view of the
 guide roots behind the avatar.
 
@@ -36,7 +44,8 @@ target/x86_64-unknown-linux-gnu/release/hair --frames 180 --snapshot /tmp/hair.p
 ```
 
 Use `--roll 180` to start upside down or `--tilt -90` to start flat on her back.
-The airflow stays world-down while the roots and obstacle proxies follow the avatar.
+Gravity and airflow stay world-down while the roots and obstacle proxies follow
+the avatar.
 In guide mode, Ubuntu starts with the hair guides visible and the head sphere,
 reach outline, and general field streamlines hidden. To include these overlays
 in snapshots, use `--show sphere --show reach --show field`.

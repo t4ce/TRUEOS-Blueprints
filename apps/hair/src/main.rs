@@ -1,6 +1,9 @@
 use anyhow::{Context, Result, bail, ensure};
 use std::{fs::File, path::PathBuf};
 
+mod hair_rod;
+mod hair_rope;
+mod hair_spring;
 #[cfg(target_os = "linux")]
 mod host;
 mod obstacle;
@@ -55,6 +58,8 @@ pub(crate) struct Controls {
     pub(crate) yaw: f32,
     pub(crate) roll: f32,
     pub(crate) tilt: f32,
+    pub(crate) hair_motion: Option<hair_rope::HairMotion>,
+    pub(crate) motion_speed_percent: u8,
     #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
@@ -84,6 +89,8 @@ impl Default for Controls {
             },
             roll: 0.0,
             tilt: 0.0,
+            hair_motion: cfg!(target_os = "linux").then_some(hair_rope::HairMotion::Rod),
+            motion_speed_percent: 100,
             #[cfg(target_os = "trueos")]
             paused: false,
             speed_color: false,
@@ -139,6 +146,16 @@ fn main() -> Result<()> {
                 ensure!(degrees.is_finite(), "tilt angle must be finite");
                 controls.tilt = degrees.to_radians().clamp(-TILT_LIMIT, TILT_LIMIT);
             }
+            "--motion" => {
+                use hair_rope::HairMotion;
+                controls.hair_motion = match args.next().as_deref() {
+                    Some("1") => Some(HairMotion::Rope),
+                    Some("2") => Some(HairMotion::Spring),
+                    Some("3") => Some(HairMotion::Rod),
+                    Some("flow") => None,
+                    _ => bail!("expected 1, 2, 3, or flow after --motion"),
+                };
+            }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
             "--hide" | "--show" => {
@@ -147,7 +164,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu: Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu bending rod: Tab increases hair motion speed by 10 percentage points. Shift+Tab decreases it. The range wraps between 50% and 150%. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");
@@ -178,6 +195,12 @@ fn main() -> Result<()> {
         );
         if controls.water {
             println!("hair: medium water surface, {primitives} triangles");
+        } else if let Some(motion) = controls.hair_motion {
+            println!(
+                "hair: {}, {} roots, {primitives} drawn segments",
+                motion.label(),
+                scene.guide_count()
+            );
         } else if controls.layers.field || controls.layers.guides {
             println!(
                 "hair: {} field seeds, {} hair-root seeds, {primitives} traced segments",

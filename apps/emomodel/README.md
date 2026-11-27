@@ -79,6 +79,13 @@ The [offline firelight study](studies/sky/emomodel-fire-study.html) compares a
 low-light reference with a moving light pattern. Strength, speed, mask scale,
 contrast, and two colors can be tuned independently.
 
+Firefly is enabled by default in Shell3. During the top-row `3` sketch, the
+direct key fades toward the rolled butterfly's colors. The lead butterfly
+drives the key from its flight position and wingbeat. The previous key returns
+when the leader leaves, and the lead from the next completed sketch takes over.
+Firefly uses the same moving mask as the study at 136% scale and 10% contrast,
+with a soft distance fade toward half strength.
+
 In `skin` and `reel`, running a patch in Lico switches EmoModel into
 graph-driven dance. Lico publishes a `DanceClueSnapshot` with the active DSP
 connections and scheduled cues. EmoModel uses that information to shape its
@@ -92,13 +99,14 @@ crouch with both feet and fingertips close to the floor. The correction eases
 out during takeoff, and a smaller height adjustment settles the landing. The
 motion files are installed privately on the rig.
 
-`butterfly` opens a front-on preview of the drawing gesture. The avatar traces
-the `bfly` outline and both inner wing strokes in the former heart's drawing
-plane. The sketch spans 0.87 meters in model space. The top-row `3` plays the
-gesture in the current camera view. Each completed sketch adds one live
-butterfly in the second-largest `bfly` size tier. Each uses either Key 5 wing
-design, keeps its rolled inset color, and follows its own flight path. It
-shrinks through smaller tiers as it descends off the bottom of the frame.
+`butterfly` opens a front-on preview of the drawing gesture. The top-row `3`
+rolls one of the two `bfly` Key 5 wing shapes and traces it in the current
+camera view. The fingertip trail and live outline share the rolled color. The
+leader holds the exact projected drawing for 1.5 seconds, then flies toward
+the camera and halfway to the left edge while growing by one size tier. Two
+followers leave the same spot in quick succession on their own curves. The
+butterflies recede through the background tiers at two thirds of the former
+speed and sometimes orbit with slow, nearly closed wingbeats.
 When the first butterfly appears, EmoModel reads the current opaque display
 color and uses Bfly's easing to settle on the nearest palette swatch. White
 and gray ease toward green. The transparent avatar surface reveals the solid
@@ -151,6 +159,8 @@ the opposite side.
 The default skin preview also samples a [32 × 32 belly normal crop](assets/AvatarSample_B-belly-normal.png)
 from the authored body atlas. It adds the original navel relief to the nearby
 vertex normals with two short folds and fades into the surrounding skin.
+In the local Skin trial, two blue markers locate the [pelvis normal crop](assets/AvatarSample_B-pelvis-normal.png).
+Press `P` to toggle them in Skin or Butterfly.
 The lit preview samples [body tint masks](assets/AvatarSample_B-body-tint.png)
 on the original body UVs. One mask shades the navel, and a mirrored grayscale
 reference crop shades the two chest details on exposed skin. The lighting
@@ -177,20 +187,20 @@ default preview size.
 
 `autobs` holds a fixed camera throughout each playback mode. The frame reserves
 room for the full motion, including raised and outstretched hands. Butterfly and
-Lico Dance use their own framing when active. The limiting window axis leaves
-at least four pixels of clearance around the motion bounds.
+Lico Dance use their own framing when active. Once the camera settles, the
+limiting window axis leaves at least four pixels of clearance around the motion
+bounds.
 Soft black contact marks show nearby heels, toes, and fingertips. Each pose
 projects contacts onto the ground plane and composites overlaps from one R8
 brush into the material atlas. In the lighting study, reverse playback reuses
 the baked contact masks. The reel's opening crouch registers one fingertip on
 each hand.
 After UI4 commits a resize, the observer eases along a shallow arc while looking
-at the avatar.
-It moves in gradually for a larger area. When space shrinks, it fits the
-motion bounds immediately and eases the viewing angle back. Its orthographic
-framing keeps the avatar proportional. A new resize starts from the last drawn
-camera pose. The trace records confirmed camera frames per resize alongside the
-existing timing reports.
+at the avatar. It zooms in as the frame grows and zooms out as it shrinks. Each
+resize starts from the last drawn camera pose, so a large downsize can briefly
+crop the avatar as the camera zooms out. Orthographic framing keeps the avatar
+proportional. The trace records confirmed camera frames per resize alongside
+the existing timing reports.
 
 `shaders/retained-unlit.bundle` combines the stock `churn-forward`,
 `helio-retained-transform`, and `picasso-textured` packages from

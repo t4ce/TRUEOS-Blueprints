@@ -48,7 +48,7 @@ impl Lighting {
     }
 
     pub(super) fn coordinate(&self, normal: Vec3, material: Material) -> f32 {
-        texel_center(self.energy(normal, material) / MAX_ENERGY)
+        energy_coordinate(self.energy(normal, material))
     }
 
     pub(super) fn energy(&self, normal: Vec3, material: Material) -> f32 {
@@ -69,6 +69,11 @@ impl Lighting {
         // in the texture lookup used by the existing single-sample renderer.
         diffuse + highlight * (1.15 + 0.65 * direct)
     }
+}
+
+#[cfg(any(test, target_os = "trueos"))]
+pub(super) fn energy_coordinate(energy: f32) -> f32 {
+    texel_center(energy / MAX_ENERGY)
 }
 
 #[cfg(test)]

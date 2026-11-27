@@ -21,12 +21,15 @@ const TINT: Vec3 = Vec3::new(-0.5549, 0.064, 1.0);
 const MIN_TINT: f32 = -0.10;
 const MIN_SUNRISE_TINT: f32 = -0.28;
 const MIN_KELVIN_TINT: f32 = -0.48;
+const MIN_FIREFLY_TINT: f32 = -0.72;
 const MAX_TINT: f32 = 0.36;
 const MAX_ENERGY: f32 = 2.15;
 
 pub(super) struct Palette {
     pub(super) base: Vec3,
     key: Key,
+    firefly: Option<[[u8; 3]; 2]>,
+    firefly_axis: Vec3,
     min_tint: f32,
     luma_scale: f32,
     pub(super) rgba: Vec<u8>,
@@ -34,12 +37,17 @@ pub(super) struct Palette {
 
 impl Palette {
     pub(super) fn new(key: Key) -> Self {
+        Self::with_firefly(key, None)
+    }
+
+    fn with_firefly(key: Key, firefly: Option<[[u8; 3]; 2]>) -> Self {
         let base = linear_rgb(SKIN_SRGB);
         let luma_scale = base.dot(LUMA).recip();
-        let min_tint = match key {
-            Key::Neutral => MIN_TINT,
-            Key::Sunrise => MIN_SUNRISE_TINT,
-            Key::Kelvin(_) => MIN_KELVIN_TINT,
+        let min_tint = match (key, firefly) {
+            (_, Some(_)) => MIN_FIREFLY_TINT,
+            (Key::Neutral, None) => MIN_TINT,
+            (Key::Sunrise, None) => MIN_SUNRISE_TINT,
+            (Key::Kelvin(_), None) => MIN_KELVIN_TINT,
         };
         // On the warm side, fit the sunlit skin hue at the same luminance.
         // Both axes use the same blue coordinate and meet at neutral skin.
@@ -63,10 +71,15 @@ impl Palette {
             let amount = chroma.z / extent;
             *axis = *axis * (1.0 - amount * amount) + chroma * (amount / extent);
         }
+        if let Some([ember, flare]) = firefly {
+            let tint = linear_rgb(ember).lerp(linear_rgb(flare), 0.5);
+            warm_axis = -chroma(tint).try_normalize().unwrap_or(-TINT.normalize());
+            cool_axis = TINT.normalize();
+        }
         let mut rgba = Vec::with_capacity(WIDTH * HEIGHT * 4);
         for row in 0..HEIGHT {
             let tint = min_tint + (MAX_TINT - min_tint) * row as f32 / (HEIGHT - 1) as f32;
-            let axis = if key != Key::Neutral && tint < 0.0 {
+            let axis = if (firefly.is_some() || key != Key::Neutral) && tint < 0.0 {
                 warm_axis
             } else {
                 cool_axis
@@ -80,15 +93,17 @@ impl Palette {
         Self {
             base,
             key,
+            firefly,
+            firefly_axis: warm_axis,
             min_tint,
             luma_scale,
             rgba,
         }
     }
 
-    pub(super) fn update(&mut self, key: Key) {
-        if self.key != key {
-            *self = Self::new(key);
+    pub(super) fn update(&mut self, key: Key, firefly: Option<[[u8; 3]; 2]>) {
+        if self.key != key || self.firefly != firefly {
+            *self = Self::with_firefly(key, firefly);
         }
     }
 
@@ -97,7 +112,9 @@ impl Palette {
         // the warm/cool variation of the sky in those two coordinates.
         let energy = color.dot(LUMA) * self.luma_scale;
         let chroma = color - self.base * energy;
-        let tint = if self.key != Key::Neutral {
+        let tint = if self.firefly.is_some() {
+            chroma.dot(self.firefly_axis)
+        } else if self.key != Key::Neutral {
             chroma.z
         } else {
             chroma.dot(TINT) / TINT.length_squared()
@@ -106,6 +123,10 @@ impl Palette {
         let v = ((tint - self.min_tint) / (MAX_TINT - self.min_tint)).clamp(0.0, 1.0);
         [u * (WIDTH - 1) as f32 + 0.5, v * (HEIGHT - 1) as f32 + 0.5]
     }
+}
+
+pub(super) fn luminance(color: Vec3) -> f32 {
+    color.dot(LUMA)
 }
 
 const NORMAL_SIZE: usize = 64;
@@ -179,7 +200,10 @@ impl NormalPalette {
         levels: Levels,
         sky: &SkyLight,
     ) -> Result<()> {
-        if self.levels != levels || self.view_back.dot(view_back) < 0.99999 {
+        if (self.levels.sky, self.levels.sheen, self.levels.key)
+            != (levels.sky, levels.sheen, levels.key)
+            || self.view_back.dot(view_back) < 0.99999
+        {
             *self = Self::new(device, view_back, levels, sky).await?;
         }
         Ok(())

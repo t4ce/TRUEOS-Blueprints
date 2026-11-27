@@ -3,10 +3,13 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 
 #[cfg(target_os = "trueos")]
 use super::pupil::Stage;
-use super::{heart_arm::PointingArm, reel::PlacedPose};
+use super::{
+    heart_arm::PointingArm,
+    live_butterfly::{Birth, Curve, WING_BOUNDS, artwork_geometry},
+    reel::PlacedPose,
+};
 use crate::animation::{Animation, RigPose, SAMPLE_HZ};
 
-const BUTTERFLY_CURVES: &str = include_str!("../../assets/butterfly-curve.json");
 const ARC_SAMPLES: usize = 96;
 const HOLD: usize = 12;
 const RAISE: usize = 36;
@@ -23,59 +26,66 @@ const DRAW_SPEED: f32 = 0.52;
 const STROKE_SUBDIVISIONS: usize = 3;
 const STROKE_HALF_WIDTH: f32 = 0.003;
 
-type Span = [Vec3; 4];
-
-fn weighted([x, y, w]: [f32; 3]) -> Vec3 {
-    Vec3::new(x * w, y * w, w)
-}
-
-struct Curve {
-    spans: Vec<Span>,
+struct Trace {
+    spans: Vec<Curve>,
     distance: Vec<f32>,
     closed: bool,
 }
 
-impl Curve {
-    fn load() -> Result<[Self; 3]> {
-        let [outline, right, left]: [Vec<[[f32; 3]; 4]>; 3] =
-            serde_json::from_str(BUTTERFLY_CURVES).context("read authored butterfly curves")?;
-        let read = |spans: Vec<[[f32; 3]; 4]>, closed| {
-            Self::new(
-                spans.into_iter().map(|span| span.map(weighted)).collect(),
-                closed,
-            )
+impl Trace {
+    fn load(artwork: usize) -> Result<[Self; 4]> {
+        let (mut right, mut inset, hinge) = artwork_geometry(artwork);
+        let mirror_and_reverse = |mut curve: Curve| {
+            curve.points.reverse();
+            for point in &mut curve.points {
+                point.x = -point.x;
+            }
+            curve
         };
+        let left = right
+            .iter()
+            .rev()
+            .copied()
+            .map(mirror_and_reverse)
+            .collect::<Vec<_>>();
+        right.extend(left);
+
+        // Finish the first inset on the hinge side and start the second there.
+        if inset.points[0].x < inset.points[3].x {
+            inset.points.reverse();
+        }
         Ok([
-            read(outline, true)?,
-            read(right, false)?,
-            read(left, false)?,
+            Self::new(right, true)?,
+            Self::new(vec![inset], false)?,
+            Self::new(vec![mirror_and_reverse(inset)], false)?,
+            Self::new(vec![hinge], false)?,
         ])
     }
 
-    fn new(spans: Vec<Span>, closed: bool) -> Result<Self> {
+    fn new(spans: Vec<Curve>, closed: bool) -> Result<Self> {
         let (Some(first), Some(last)) = (spans.first(), spans.last()) else {
             anyhow::bail!("empty drawing curve");
         };
         for span in &spans {
             ensure!(
-                span.iter().all(|point| point.is_finite() && point.z > 0.0),
+                span.points.iter().all(|point| point.is_finite()),
                 "invalid drawing control point"
             );
         }
         ensure!(
             spans
                 .windows(2)
-                .all(|pair| evaluate(&pair[0], 1.0) == evaluate(&pair[1], 0.0))
-                && (evaluate(first, 0.0) == evaluate(last, 1.0)) == closed,
+                .all(|pair| pair[0].points[3].abs_diff_eq(pair[1].points[0], 0.000_001))
+                && first.points[0].abs_diff_eq(last.points[3], 0.000_001) == closed,
             "drawing curve has unexpected joins"
         );
 
         let mut distance = Vec::with_capacity(spans.len() * ARC_SAMPLES + 1);
         distance.push(0.0);
         for span in &spans {
-            let mut previous = evaluate(span, 0.0);
+            let mut previous = span.points[0];
             for sample in 1..=ARC_SAMPLES {
-                let point = evaluate(span, sample as f32 / ARC_SAMPLES as f32);
+                let point = span.sample(sample as f32 / ARC_SAMPLES as f32);
                 distance.push(distance.last().unwrap() + point.distance(previous));
                 previous = point;
             }
@@ -99,21 +109,14 @@ impl Curve {
         let wanted = progress * self.length();
         let upper = self.distance.partition_point(|&length| length <= wanted);
         if upper == self.distance.len() {
-            return evaluate(self.spans.last().unwrap(), 1.0);
+            return self.spans.last().unwrap().points[3];
         }
         let lower = upper - 1;
         let interval = self.distance[upper] - self.distance[lower];
         let fraction = (wanted - self.distance[lower]) / interval;
         let t = ((lower % ARC_SAMPLES) as f32 + fraction) / ARC_SAMPLES as f32;
-        evaluate(&self.spans[lower / ARC_SAMPLES], t)
+        self.spans[lower / ARC_SAMPLES].sample(t)
     }
-}
-
-fn evaluate(span: &Span, t: f32) -> Vec2 {
-    let u = 1.0 - t;
-    let [a, b, c, d] = *span;
-    let point = a * (u * u * u) + b * (3.0 * u * u * t) + c * (3.0 * u * t * t) + d * (t * t * t);
-    point.truncate() / point.z
 }
 
 /// Ease onto and off each stroke, with steady speed between the ramps.
@@ -145,9 +148,8 @@ struct Stroke {
 
 impl Stroke {
     fn new(
-        curve: &Curve,
-        center: Vec3,
-        size: f32,
+        curve: &Trace,
+        draw_plane: Mat4,
         ground_offset: Vec3,
         start: usize,
         frames: usize,
@@ -156,7 +158,7 @@ impl Stroke {
         let targets: Vec<_> = (0..=count)
             .map(|i| {
                 let progress = trace_progress(i as f32 / count as f32);
-                drawing_point(curve.at(progress), center, size)
+                draw_plane.transform_point3(curve.at(progress).extend(0.0))
             })
             .collect();
         let ribbon = targets
@@ -199,11 +201,6 @@ impl Stroke {
         let drawn = frame.saturating_sub(self.start).min(self.frames);
         (drawn > 0).then(|| &self.ribbon[..=drawn * STROKE_SUBDIVISIONS])
     }
-}
-
-fn drawing_point(point: Vec2, center: Vec3, size: f32) -> Vec3 {
-    // The avatar faces -Z, so screen right is world -X.
-    center + size * Vec3::new(-point.x, point.y, 0.0)
 }
 
 struct PlantedFoot {
@@ -301,8 +298,9 @@ impl Stance {
         let displacement = Vec3::new(0.0, -0.004, -0.006)
             + Vec3::new(0.031 * (1.0 - step.unload), -0.008, -0.022) * outward
             + Vec3::new(-0.018, -0.006, -0.009) * across;
+        // Keep some weight on the inside foot when the drawing arm crosses back.
         let support = Vec3::new(
-            0.10 * step.follow - 0.043 * step.unload,
+            0.10 * step.follow * (1.0 - 0.65 * across) - 0.043 * step.unload,
             -0.018 * step.spread - 0.005 * step.unload * (1.0 + step.spread) - 0.11 * step.lift,
             0.0,
         );
@@ -354,14 +352,20 @@ pub(super) struct Butterfly {
     rest: RigPose,
     opening: RigPose,
     closing: RigPose,
-    strokes: [Stroke; 3],
+    strokes: [Stroke; 4],
+    draw_to_world: Mat4,
     positions: Vec<[f32; 3]>,
     offset: Vec3,
 }
 
 impl Butterfly {
-    pub(super) fn new(glb: &[u8], materials: &[&str], body_end: usize) -> Result<Self> {
-        let [outline, inner_right, inner_left] = Curve::load()?;
+    pub(super) fn new(
+        glb: &[u8],
+        materials: &[&str],
+        body_end: usize,
+        artwork: usize,
+    ) -> Result<Self> {
+        let [outline, inner_right, inner_left, hinge] = Trace::load(artwork)?;
         let asset = gltf::Gltf::from_slice(glb).context("parse butterfly rig")?;
         let mut animation = Animation::nod(glb, materials, None)?;
         animation.apply(0.0);
@@ -384,8 +388,16 @@ impl Butterfly {
         rest.save(surface.joint_world, Vec3::ZERO);
         // Keep the drawing plane centered where the heart was.
         let center = arm.shoulder(&animation) + Vec3::new(0.05, -0.07, -0.40);
-        let butterfly_stroke = |curve: &Curve, previous: Option<&Stroke>| {
-            let start_point = drawing_point(curve.at(0.0), center, BUTTERFLY_WIDTH);
+        let [bottom, half_span, top] = WING_BOUNDS[artwork];
+        let scale = BUTTERFLY_WIDTH / (2.0 * half_span);
+        // The avatar faces -Z, so screen right is world -X.
+        let draw_plane = Mat4::from_scale_rotation_translation(
+            Vec3::new(-scale, scale, 1.0),
+            Quat::IDENTITY,
+            center - Vec3::Y * ((bottom + top) * 0.5 * scale),
+        );
+        let butterfly_stroke = |curve: &Trace, previous: Option<&Stroke>| {
+            let start_point = draw_plane.transform_point3(curve.at(0.0).extend(0.0));
             let start = if let Some(previous) = previous {
                 let travel = previous.last_point().distance(start_point);
                 let move_frames = if travel > 0.001 {
@@ -397,17 +409,18 @@ impl Butterfly {
             } else {
                 DRAW_START
             };
-            let frames = (curve.length() * BUTTERFLY_WIDTH * SAMPLE_HZ as f32 / DRAW_SPEED)
+            let frames = (curve.length() * scale * SAMPLE_HZ as f32 / DRAW_SPEED)
                 .round()
                 .max(12.0) as usize;
-            Stroke::new(curve, center, BUTTERFLY_WIDTH, offset, start, frames)
+            Stroke::new(curve, draw_plane, offset, start, frames)
         };
         let outline = butterfly_stroke(&outline, None);
         let inner_right = butterfly_stroke(&inner_right, Some(&outline));
         let inner_left = butterfly_stroke(&inner_left, Some(&inner_right));
-        let strokes = [outline, inner_right, inner_left];
+        let hinge = butterfly_stroke(&hinge, Some(&inner_left));
+        let strokes = [outline, inner_right, inner_left, hinge];
         let first = strokes[0].start;
-        let last = strokes[2].end();
+        let last = strokes[3].end();
         stance.draw(
             &mut animation,
             &arm,
@@ -423,7 +436,7 @@ impl Butterfly {
         stance.draw(
             &mut animation,
             &arm,
-            strokes[2].last_point(),
+            strokes[3].last_point(),
             lead_x(&strokes, last),
             &SideStep::at(last, last),
         );
@@ -437,17 +450,66 @@ impl Butterfly {
             opening,
             closing,
             strokes,
+            draw_to_world: Mat4::from_translation(offset) * draw_plane,
             positions: Vec::new(),
             offset,
         })
     }
 
     pub(super) fn frame_count(&self) -> usize {
-        self.strokes[2].end() + LOWER + 1
+        self.draw_end() + LOWER + 1
     }
 
     pub(super) fn drawing_complete(&self, frame: usize) -> bool {
-        frame >= self.strokes[2].end()
+        frame >= self.draw_end()
+    }
+
+    fn draw_end(&self) -> usize {
+        self.strokes[3].end()
+    }
+
+    pub(super) fn birth(
+        &self,
+        frame: usize,
+        view_projection: Mat4,
+        viewport: (u32, u32),
+    ) -> Option<Birth> {
+        let (width, height) = viewport;
+        if !self.drawing_complete(frame) || width.min(height) == 0 {
+            return None;
+        }
+
+        // Keep both the exact drawing plane and its screen bounds for flight.
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for &point in &self.strokes[0].targets {
+            let clip = view_projection.transform_point3(point + self.offset);
+            min = min.min(clip);
+            max = max.max(clip);
+        }
+        let midpoint = (min + max) * 0.5;
+        Some(Birth {
+            center: midpoint.truncate() * 0.5 + Vec2::splat(0.5),
+            span: (max.x - min.x) * 0.5 * width as f32 / width.min(height) as f32,
+            depth: midpoint.z,
+            draw_to_clip: view_projection * self.draw_to_world,
+            stroke_width: 2.0 * STROKE_HALF_WIDTH / self.draw_to_world.x_axis.truncate().length(),
+        })
+    }
+
+    pub(super) fn drawing_light(&self, frame: usize) -> Option<(Vec3, f32)> {
+        let drawing_frames = frame.checked_sub(self.strokes[0].start)?;
+        let target = self.target(frame.min(self.draw_end()))?;
+        let ramp = smooth((2.0 * drawing_frames as f32 / SAMPLE_HZ as f32).min(1.0));
+        Some((target + self.offset, ramp))
+    }
+
+    pub(super) fn ink_tip(&self, frame: usize) -> Option<Vec3> {
+        let stroke = self
+            .strokes
+            .iter()
+            .find(|stroke| (stroke.start..=stroke.end()).contains(&frame))?;
+        Some(stroke.targets[(frame - stroke.start) * STROKE_SUBDIVISIONS] + self.offset)
     }
 
     pub(super) fn phase(&self, frame: usize) -> &'static str {
@@ -455,7 +517,7 @@ impl Butterfly {
             0..HOLD => "Butterfly ready",
             HOLD..DRAW_START => "Butterfly lift",
             _ if frame >= self.frame_count() - 1 => "Butterfly complete",
-            _ if frame > self.strokes[2].end() => "Butterfly lower",
+            _ if frame > self.draw_end() => "Butterfly lower",
             _ => self
                 .strokes
                 .iter()
@@ -463,6 +525,7 @@ impl Butterfly {
                     "Butterfly outline",
                     "Butterfly right inset",
                     "Butterfly left inset",
+                    "Butterfly hinge",
                 ])
                 .find_map(|(stroke, name)| {
                     (stroke.start..=stroke.end())
@@ -517,7 +580,7 @@ impl Butterfly {
     }
 
     pub(super) fn sample(&mut self, frame: usize) -> Result<PlacedPose<'_>> {
-        let step = SideStep::at(frame, self.strokes[2].end());
+        let step = SideStep::at(frame, self.draw_end());
         if let Some(target) = self.target(frame) {
             self.stance.draw(
                 &mut self.animation,
@@ -535,7 +598,7 @@ impl Butterfly {
             } else {
                 let t = (self.frame_count() - 1).saturating_sub(frame) as f32 / LOWER as f32;
                 let body = smooth((t / 0.77).min(1.0));
-                (&self.closing, smooth(t), body, self.strokes[2].end())
+                (&self.closing, smooth(t), body, self.draw_end())
             };
             self.animation
                 .blend_pose(&self.rest, &key.joints, Vec3::ZERO, arm_weight);
@@ -570,7 +633,7 @@ impl Butterfly {
     }
 }
 
-fn drawing_target(strokes: &[Stroke; 3], frame: usize) -> Option<Vec3> {
+fn drawing_target(strokes: &[Stroke; 4], frame: usize) -> Option<Vec3> {
     let next = strokes.partition_point(|stroke| stroke.start <= frame);
     let current = strokes.get(next.checked_sub(1)?)?;
     if frame <= current.end() {
@@ -588,9 +651,9 @@ fn drawing_target(strokes: &[Stroke; 3], frame: usize) -> Option<Vec3> {
     )
 }
 
-fn lead_x(strokes: &[Stroke; 3], frame: usize) -> f32 {
+fn lead_x(strokes: &[Stroke; 4], frame: usize) -> f32 {
     let start = strokes[0].start;
-    let end = strokes[2].end();
+    let end = strokes[3].end();
     // Average around a point roughly 220 ms ahead so the weight starts moving
     // early and doesn't pivot abruptly when the fingertip rounds a corner.
     [(-4, 0.15), (4, 0.20), (12, 0.40), (20, 0.25)]
@@ -609,20 +672,142 @@ mod tests {
     const MATERIALS: [&str; 2] = [crate::mesh::FACE_MATERIAL, crate::mesh::BODY_MATERIAL];
 
     #[test]
-    fn authored_butterfly_preserves_its_outline_and_inner_join() -> Result<()> {
-        let [outline, right, left] = Curve::load()?;
-        assert_eq!(outline.at(0.0), outline.at(1.0));
-        assert_eq!(right.at(1.0), left.at(0.0));
-        let mut low = Vec2::splat(f32::INFINITY);
-        let mut high = Vec2::splat(f32::NEG_INFINITY);
-        for i in 0..=2048 {
-            let p = outline.at(i as f32 / 2048.0);
-            low = low.min(p);
-            high = high.max(p);
+    fn live_birth_matches_the_completed_outline_for_both_artworks() -> Result<()> {
+        use super::super::live_butterfly::LiveButterfly;
+
+        let glb = crate::HUMANOID_GLB;
+        let rig = Animation::procedural(glb, &MATERIALS)?;
+        let skin_end = rig.bind_positions(0).len() + rig.bind_positions(1).len();
+
+        let projection = Mat4::from_scale(Vec3::new(0.8, 0.85, 0.25))
+            * Mat4::from_rotation_y(0.37)
+            * Mat4::from_translation(Vec3::new(0.0, -0.93, 1.4));
+        for artwork in [0, 1] {
+            let butterfly = Butterfly::new(glb, &MATERIALS, skin_end, artwork)?;
+            let complete = butterfly.draw_end();
+            for viewport in [(640, 560), (560, 640)] {
+                let pixels = Vec2::new(viewport.0 as f32, viewport.1 as f32);
+                assert!(
+                    butterfly
+                        .birth(complete - 1, projection, viewport)
+                        .is_none()
+                );
+                let birth = butterfly.birth(complete, projection, viewport).unwrap();
+                let expected_center = birth.center * pixels;
+                let expected_width = birth.span * pixels.min_element();
+                let clip_to_birth = birth.draw_to_clip.inverse();
+                let live = LiveButterfly::new(artwork as u32, 0, birth, 0);
+                let mut min = Vec2::splat(f32::INFINITY);
+                let mut max = Vec2::splat(f32::NEG_INFINITY);
+                let mut live_outline = Vec::new();
+                let pixel = |clip: Vec3| (clip.truncate() * 0.5 + Vec2::splat(0.5)) * pixels;
+                live.triangles(viewport, 750_000_000, |triangle, outline| {
+                    if outline {
+                        live_outline.push(triangle.map(pixel));
+                        for clip in triangle {
+                            let point = pixel(clip);
+                            min = min.min(point);
+                            max = max.max(point);
+                            let local = clip_to_birth.transform_point3(clip);
+                            assert!(local.z.abs() < 0.01, "{local:?}");
+                        }
+                    }
+                });
+                assert!(((min + max) * 0.5).distance(expected_center) < 2.5);
+                assert!((max.x - min.x - expected_width).abs() < 4.0);
+                for stroke in &butterfly.strokes {
+                    for &target in stroke.targets.iter().step_by(8) {
+                        let drawn = pixel(projection.transform_point3(target + butterfly.offset));
+                        assert!(
+                            live_outline.iter().any(|triangle| {
+                                (0..3).all(|i| {
+                                    let p = triangle[i];
+                                    let edge = triangle[(i + 1) % 3] - p;
+                                    edge.perp_dot(drawn - p) >= -edge.length()
+                                })
+                            }),
+                            "artwork {artwork} loses the drawn line at pixel {drawn:?}"
+                        );
+                    }
+                }
+            }
         }
-        let size = high - low;
-        assert!((size.x - 1.0).abs() < 0.000_02, "{size:?}");
-        assert!((size.y - 0.500_735).abs() < 0.000_02, "{size:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn drawing_light_follows_the_trace_and_holds_the_endpoint() -> Result<()> {
+        let glb = crate::HUMANOID_GLB;
+        let rig = Animation::procedural(glb, &MATERIALS)?;
+        let skin_end = rig.bind_positions(0).len() + rig.bind_positions(1).len();
+        let butterfly = Butterfly::new(glb, &MATERIALS, skin_end, 0)?;
+        let start = butterfly.strokes[0].start;
+        assert_eq!(butterfly.drawing_light(start - 1), None);
+        assert_eq!(
+            butterfly.drawing_light(start),
+            Some((butterfly.strokes[0].first_point() + butterfly.offset, 0.0)),
+        );
+        let middle = start + SAMPLE_HZ as usize / 4;
+        let (target, light) = butterfly.drawing_light(middle).unwrap();
+        assert_eq!(target, butterfly.target(middle).unwrap() + butterfly.offset);
+        assert!(light > 0.0 && light < 1.0);
+        let last = butterfly.strokes[3].last_point() + butterfly.offset;
+        assert_eq!(
+            butterfly.drawing_light(butterfly.frame_count() + 1),
+            Some((last, 1.0)),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ink_tip_tracks_the_ribbon_and_goes_out_between_strokes() -> Result<()> {
+        let glb = crate::HUMANOID_GLB;
+        let rig = Animation::procedural(glb, &MATERIALS)?;
+        let skin_end = rig.bind_positions(0).len() + rig.bind_positions(1).len();
+        for artwork in [0, 1] {
+            let butterfly = Butterfly::new(glb, &MATERIALS, skin_end, artwork)?;
+            assert_eq!(butterfly.ink_tip(DRAW_START - 1), None);
+            for stroke in &butterfly.strokes {
+                for frame in stroke.start + 1..=stroke.end() {
+                    let [a, b] = *stroke.visible(frame).unwrap().last().unwrap();
+                    assert!(
+                        butterfly
+                            .ink_tip(frame)
+                            .unwrap()
+                            .abs_diff_eq((a + b) * 0.5, 1e-6)
+                    );
+                }
+            }
+            assert_eq!(butterfly.ink_tip(butterfly.strokes[0].end() + 1), None);
+            assert_eq!(butterfly.ink_tip(butterfly.draw_end() + 1), None);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn drawing_traces_preserve_each_artworks_outline_and_inner_join() -> Result<()> {
+        for (artwork, [bottom, half_span, top]) in WING_BOUNDS.into_iter().enumerate() {
+            let [outline, right, left, hinge] = Trace::load(artwork)?;
+            assert_eq!(outline.at(0.0), outline.at(1.0));
+            assert_eq!(right.at(1.0), left.at(0.0));
+            assert!(hinge.at(0.0).x.abs() < 0.000_001);
+            assert!(hinge.at(1.0).x.abs() < 0.000_001);
+            let mut low = Vec2::splat(f32::INFINITY);
+            let mut high = Vec2::splat(f32::NEG_INFINITY);
+            for i in 0..=2048 {
+                let p = outline.at(i as f32 / 2048.0);
+                low = low.min(p);
+                high = high.max(p);
+            }
+            assert!(
+                low.abs_diff_eq(Vec2::new(-half_span, bottom), 0.000_02),
+                "{low:?}"
+            );
+            assert!(
+                high.abs_diff_eq(Vec2::new(half_span, top), 0.000_02),
+                "{high:?}"
+            );
+        }
         Ok(())
     }
 
@@ -631,9 +816,16 @@ mod tests {
         let glb = crate::HUMANOID_GLB;
         let rig = Animation::procedural(glb, &MATERIALS)?;
         let skin_end = rig.bind_positions(0).len() + rig.bind_positions(1).len();
-        let mut butterfly = Butterfly::new(glb, &MATERIALS, skin_end)?;
+        for artwork in [0, 1] {
+            check_stance(glb, skin_end, artwork)?;
+        }
+        Ok(())
+    }
+
+    fn check_stance(glb: &[u8], skin_end: usize, artwork: usize) -> Result<()> {
+        let mut butterfly = Butterfly::new(glb, &MATERIALS, skin_end, artwork)?;
         let [inside, stepping] = butterfly.stance.feet.each_ref().map(|foot| foot.joints[2]);
-        let draw_end = butterfly.strokes[2].end();
+        let draw_end = butterfly.draw_end();
         assert!(!butterfly.drawing_complete(draw_end - 1));
         assert!(butterfly.drawing_complete(draw_end));
         let spine = butterfly.stance.spine;
@@ -717,7 +909,7 @@ mod tests {
             );
         }
         let result: Vec<_> = butterfly.strokes(usize::MAX).collect();
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 4);
         for (index, stroke) in result.into_iter().enumerate() {
             assert_eq!(stroke.first() == stroke.last(), index == 0);
         }

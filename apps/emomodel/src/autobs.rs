@@ -176,10 +176,7 @@ impl Autobs {
         };
         let arc_sign = if receding { -1.0 } else { 1.0 };
         self.yaw_arc = arc_sign * available_arc * (change / 0.55).min(1.0);
-        self.from = ObserverPose {
-            zoom: from.zoom.min(goal.zoom),
-            ..from
-        };
+        self.from = from;
         self.goal = goal;
         self.started_ns = now_ns;
         self.extent = extent;
@@ -230,11 +227,8 @@ impl Autobs {
         let target = self.framing.target;
         let eye = target + back * pose.distance;
         let view = look_at_mat4(eye, target, Vec3::Y);
-        // The first frame after a buffer resize still uses the last pose.
-        // Fit a smaller viewport immediately while distance and yaw ease.
-        let fit_zoom = fitted_zoom(extent, self.reference_pixels_per_unit, self.framing);
-        let zoom = pose.zoom.min(fit_zoom);
-        let diameter_pixels_per_unit = 2.0 * self.reference_pixels_per_unit * zoom;
+        // Keep the sampled pixel scale even when the backing extent changes.
+        let diameter_pixels_per_unit = 2.0 * self.reference_pixels_per_unit * pose.zoom;
         let half_width = extent.0.max(1) as f32 / diameter_pixels_per_unit;
         let half_height = extent.1.max(1) as f32 / diameter_pixels_per_unit;
         let projection = orthographic(
@@ -375,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn approaches_on_growth_and_fits_smaller_buffers_immediately() {
+    fn eases_projected_scale_when_the_frame_grows_or_shrinks() {
         let mut observer = observer();
         let parked = observer.pose(0);
         let larger = (1280, 1120);
@@ -388,14 +382,24 @@ mod tests {
         assert!(approaching.yaw_offset > 0.0 && approaching.yaw_offset <= ARC_LIMIT);
         assert!(arrived.distance < approaching.distance && approaching.distance < parked.distance);
 
-        let (_, before_retarget, _, _) = observer.matrices(arrived, REFERENCE);
-        let (_, fitted, _, _) = observer.matrices(parked, REFERENCE);
-        assert_eq!(before_retarget, fitted);
+        let pixels_per_unit = |observer: &Autobs, pose, extent: (u32, u32)| {
+            let (_, projection, _, _) = observer.matrices(pose, extent);
+            projection.y_axis.y * extent.1 as f32 * 0.5
+        };
+        let large_scale = pixels_per_unit(&observer, arrived, larger);
+        let first_small_scale = pixels_per_unit(&observer, arrived, REFERENCE);
+        assert!((first_small_scale - large_scale).abs() < 1e-3);
+
         let shrink_start = 1 + APPROACH_NS;
         observer.retarget(REFERENCE, arrived, shrink_start);
         assert_eq!(observer.duration_ns(), RECEDE_NS);
-        assert_eq!(observer.pose(shrink_start).zoom, parked.zoom);
-        assert_eq!(observer.pose(shrink_start + RECEDE_NS), parked);
+        assert_eq!(observer.pose(shrink_start), arrived);
+        let receding = observer.pose(shrink_start + RECEDE_NS / 2);
+        let settled = observer.pose(shrink_start + RECEDE_NS);
+        let receding_scale = pixels_per_unit(&observer, receding, REFERENCE);
+        let settled_scale = pixels_per_unit(&observer, settled, REFERENCE);
+        assert!(settled_scale < receding_scale && receding_scale < first_small_scale);
+        assert_eq!(settled, parked);
     }
 
     #[test]
@@ -424,7 +428,7 @@ mod tests {
         let visible = observer.pose(200_000_000);
         let second_resize = 340_000_000;
         observer.retarget((500, 400), visible, second_resize);
-        assert_eq!(observer.pose(second_resize).distance, visible.distance);
+        assert_eq!(observer.pose(second_resize), visible);
         assert_eq!(observer.duration_ns(), RECEDE_NS);
         for step in 0..=100 {
             let now = second_resize + step * (RECEDE_NS / 100);

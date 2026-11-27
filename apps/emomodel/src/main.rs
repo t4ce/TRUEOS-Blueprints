@@ -28,6 +28,7 @@ mod greeting;
 mod greeting {
     mod butterfly;
     mod dance;
+    mod fire_light;
     mod foot_contact;
     mod hairband;
     mod hand_contact;
