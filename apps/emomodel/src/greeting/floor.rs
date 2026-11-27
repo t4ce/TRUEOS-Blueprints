@@ -102,15 +102,15 @@ impl Patch {
             .fold(1.0, |light, brush| light * (1.0 - brush.alpha(position)))
     }
 
-    fn write(&self, palette: &mut Palette, colors: &[[u8; 3]; 256]) {
+    fn write(&self, palette: &mut Palette, colors: &[[u8; 4]; 256]) {
         let [width, height] = self.size;
         let [x, y] = self.origin;
-        // The outer texels and the gutter match the UI4 background exactly.
+        // The outer texels and gutter stay fully transparent.
         for row in 1..height - 1 {
             for col in 1..width - 1 {
                 let position = (self.low + Vec2::new(col as f32, row as f32)) * TEXEL_METERS;
                 let alpha = (255.0 * self.alpha(position)).round() as usize;
-                palette.set(x + col, y + row, colors[alpha]);
+                palette.set_rgba(x + col, y + row, colors[alpha]);
             }
         }
     }
@@ -276,17 +276,15 @@ mod tests {
         assert!((patch.alpha(Vec2::ZERO) - (1.0 - (1.0 - each).powi(2))).abs() < 1.0e-5);
         let [x, y] = patch.origin;
         let [w, h] = patch.size;
-        assert_eq!(image.pixel(x, y + h / 2), floor_material::CLEAR_RGB);
+        assert_eq!(image.pixel(x, y + h / 2), [0; 4]);
         let center_pixel = image.pixel(x + w / 2, y + h / 2);
         let center = (patch.low + Vec2::new((w / 2) as f32, (h / 2) as f32)) * TEXEL_METERS;
         let alpha = (255.0 * patch.alpha(center)).round() as usize;
         assert_eq!(center_pixel, floor_material::shadow_colors()[alpha]);
-        assert_eq!(&image.bmp()[..2], b"BM");
+        assert_eq!(&center_pixel[..3], &[0; 3]);
+        assert!(center_pixel[3] > 0);
         assert!(image.swatch(1).iter().all(|uv| (0.0..1.0).contains(uv)));
-        assert_eq!(
-            floor_material::CLEAR_RGBA.to_le_bytes()[..3],
-            floor_material::CLEAR_RGB
-        );
+        assert_eq!(floor_material::CLEAR_RGBA.to_le_bytes(), [0; 4]);
         assert!(atlas.patches.len() <= CONTACTS);
         atlas.clear();
     }

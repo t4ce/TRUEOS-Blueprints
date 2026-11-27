@@ -1,40 +1,20 @@
-// These all-white clear values are represented exactly by the native clear shader.
-pub(super) const CLEAR_RGB: [u8; 3] = [255; 3];
-pub(super) const CLEAR_RGBA: u32 =
-    u32::from_le_bytes([CLEAR_RGB[0], CLEAR_RGB[1], CLEAR_RGB[2], 255]);
+pub(super) const CLEAR_RGBA: u32 = 0;
 pub(super) const SWATCH_ROWS: usize = 4;
 const SWATCHES: [[u8; 3]; 3] = [
     [0x87, 0x53, 0xbd], // Hair
     [0xd0, 0xc8, 0xbe], // Mouth
     [0, 0, 0],          // Pupil
 ];
-const HEADER: usize = 54;
-
 pub(super) struct Palette {
     size: [usize; 2],
-    bmp: Vec<u8>,
+    pixels: Vec<[u8; 4]>,
 }
 
 impl Palette {
     pub(super) fn new(width: usize, height: usize) -> Self {
-        // Atlas widths are multiples of four, so BMP rows need no padding.
-        let mut bmp = vec![CLEAR_RGB[0]; HEADER + width * height * 3];
-        bmp[..HEADER].fill(0);
-        bmp[..2].copy_from_slice(b"BM");
-        for (offset, value) in [
-            (2, bmp.len() as u32),
-            (10, HEADER as u32),
-            (14, 40),
-            (18, width as u32),
-            (22, height as u32),
-            (34, (width * height * 3) as u32),
-        ] {
-            bmp[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-        }
-        bmp[26..30].copy_from_slice(&[1, 0, 24, 0]);
         let mut image = Self {
             size: [width, height],
-            bmp,
+            pixels: vec![[0; 4]; width * height],
         };
         for (slot, color) in SWATCHES.into_iter().enumerate() {
             for y in 0..SWATCH_ROWS {
@@ -62,24 +42,32 @@ impl Palette {
         ]
     }
 
-    fn pixel_offset(&self, x: usize, y: usize) -> usize {
-        // Positive-height BMP rows are stored bottom first.
-        HEADER + 3 * ((self.size[1] - 1 - y) * self.size[0] + x)
+    pub(super) fn set(&mut self, x: usize, y: usize, [r, g, b]: [u8; 3]) {
+        self.set_rgba(x, y, [r, g, b, 255]);
     }
 
-    pub(super) fn set(&mut self, x: usize, y: usize, [r, g, b]: [u8; 3]) {
-        let offset = self.pixel_offset(x, y);
-        self.bmp[offset..offset + 3].copy_from_slice(&[b, g, r]);
+    pub(super) fn set_rgba(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        self.pixels[y * self.size[0] + x] = rgba;
     }
 
     #[cfg(test)]
-    pub(super) fn pixel(&self, x: usize, y: usize) -> [u8; 3] {
-        let offset = self.pixel_offset(x, y);
-        [self.bmp[offset + 2], self.bmp[offset + 1], self.bmp[offset]]
+    pub(super) fn pixel(&self, x: usize, y: usize) -> [u8; 4] {
+        self.pixels[y * self.size[0] + x]
     }
 
-    pub(super) fn bmp(&self) -> &[u8] {
-        &self.bmp
+    #[cfg(target_os = "trueos")]
+    pub(super) fn png(&self) -> Result<Vec<u8>, png::EncodingError> {
+        // The native BMP decoder treats a zero alpha byte as opaque RGBX.
+        let [width, height] = self.extent();
+        let mut output = Vec::new();
+        let mut encoder = png::Encoder::new(&mut output, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fastest);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(self.pixels.as_flattened())?;
+        writer.finish()?;
+        Ok(output)
     }
 
     #[cfg(target_os = "trueos")]
@@ -90,17 +78,11 @@ impl Palette {
     #[cfg(target_os = "trueos")]
     pub(super) fn write_rgba(&self, output: &mut Vec<u8>) {
         output.clear();
-        output.reserve(self.size[0] * self.size[1] * 4);
-        for row in self.bmp[HEADER..].chunks_exact(3 * self.size[0]).rev() {
-            output.extend(
-                row.chunks_exact(3)
-                    .flat_map(|bgr| [bgr[2], bgr[1], bgr[0], 255]),
-            );
-        }
+        output.extend_from_slice(self.pixels.as_flattened());
     }
 }
 
-pub(super) fn shadow_colors() -> [[u8; 3]; 256] {
+pub(super) fn shadow_colors() -> [[u8; 4]; 256] {
     std::array::from_fn(|alpha| {
         let linear = 1.0 - alpha as f32 / 255.0;
         let srgb = if linear <= 0.003_130_8 {
@@ -108,6 +90,8 @@ pub(super) fn shadow_colors() -> [[u8; 3]; 256] {
         } else {
             1.055 * linear.powf(1.0 / 2.4) - 0.055
         };
-        [(255.0 * srgb).round() as u8; 3]
+        // Match the old apparent darkness over white with an alpha mask that
+        // also composes over any other UI4 background.
+        [0, 0, 0, 255 - (255.0 * srgb).round() as u8]
     })
 }

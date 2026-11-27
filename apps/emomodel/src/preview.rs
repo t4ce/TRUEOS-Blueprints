@@ -141,7 +141,7 @@ impl Renderer {
             .map_err(gpu_error)?;
         write_geometry(device, index_buffer, &indices)?;
         let mut batch = IndexedDrawBatchV2 {
-            clear_rgba8_srgb: u32::from_le_bytes([249, 249, 248, 255]),
+            clear_rgba8_srgb: 0,
             draw_count: 1,
             ..Default::default()
         };

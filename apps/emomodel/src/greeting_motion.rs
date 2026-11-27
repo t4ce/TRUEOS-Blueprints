@@ -136,23 +136,6 @@ impl Timeline {
             .contains(&body_pose)
             .then(|| self.forward_frame_count() + (arm_end - 1 - body_pose))
     }
-
-    pub(super) fn landing_weight(&self, frame: usize) -> f32 {
-        let Some(greeting) = self.greeting else {
-            return 0.0;
-        };
-        let sample = self.sample(frame);
-        let t = match sample.phase {
-            MotionPhase::Greeting => 0.0,
-            MotionPhase::ToNod | MotionPhase::Nod => {
-                (sample.body_pose - greeting.frames) as f32
-                    / (ARM_FRAMES + greeting.nod_frames) as f32
-            }
-            MotionPhase::FromNod => 1.0,
-            MotionPhase::ReverseGreeting => sample.body_pose as f32 / greeting.frames as f32,
-        };
-        t * t * t * (10.0 + t * (-15.0 + t * 6.0))
-    }
 }
 
 #[cfg(test)]
@@ -219,25 +202,6 @@ mod tests {
     }
 
     #[test]
-    fn camera_pans_to_landing_and_eases_back_through_the_reverse() {
-        let timeline = Timeline::new(Some(7.266_812), 2.4);
-        let greeting = timeline.greeting.unwrap();
-        let peak = timeline.forward_frame_count() - 1;
-        assert_eq!(timeline.landing_weight(0), 0.0);
-        assert_eq!(timeline.landing_weight(greeting.frames), 0.0);
-        assert_eq!(timeline.landing_weight(peak), 1.0);
-        assert_eq!(timeline.landing_weight(timeline.forward_frame_count()), 1.0);
-        for frame in greeting.frames..peak {
-            assert!(timeline.landing_weight(frame) <= timeline.landing_weight(frame + 1));
-        }
-        for frame in peak..timeline.frame_count() {
-            assert!(timeline.landing_weight(frame) >= timeline.landing_weight(frame + 1));
-        }
-        assert!(timeline.landing_weight(timeline.frame_count() - 1) < 0.0001);
-        assert_eq!(timeline.landing_weight(timeline.frame_count()), 0.0);
-    }
-
-    #[test]
     fn standalone_nod_keeps_its_settled_tail() {
         let timeline = Timeline::new(None, 1.4);
         assert_eq!(timeline.frame_count(), 84);
@@ -247,6 +211,5 @@ mod tests {
         assert_eq!(timeline.sample(83).seconds, 1.4);
         assert_eq!(timeline.sample(timeline.frame_count()), timeline.sample(0));
         assert_eq!(timeline.reverse_frame(1), None);
-        assert_eq!(timeline.landing_weight(45), 0.0);
     }
 }

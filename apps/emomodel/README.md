@@ -22,7 +22,7 @@ emomodel show
 emomodel skin
 emomodel skin --eyes nebula
 emomodel reel
-emomodel heart
+emomodel butterfly
 emomodel greeting
 emomodel base-color
 emomodel status
@@ -41,18 +41,28 @@ original pixel size, with any overflow clipped by the frame.
 Bare launch through `§§emomodel` opens the skin study. It uses
 the motion reel when the seven locally retargeted files `motions/01.glb` through
 `motions/07.glb` are installed, or the built-in Nod on a clean install.
-Roughness is fixed at 100% while the key light sweeps across the posed skin.
-The bind-space roughness uses a 64-entry lighting ramp in the reel atlas.
+Roughness is fixed at 100%. The key azimuth and the baked 2K sky rotate with
+the observer camera. Sky diffuse and view-dependent sheen shade the skin
+through a 64 × 32 color lookup in the reel atlas. Shell3 keeps the sky and
+sheen levels and the selected key through the motion reel, dance, and the
+butterfly gesture. White is the default. Sunrise uses the Long path color
+from the [offline sunlight study](studies/sky/emomodel-sunlight-study.html).
+Kelvin ranges from 9,000 K (cool) to 2,200 K (warm) and uses an equal-luminance
+blackbody color curve.
 
-Right-click in `skin` or `heart` to choose a pastel top or restore the original
+Right-click in `skin` or `butterfly` to choose a pastel top or restore the original
 appearance. The controls are also available in `reel` when its motion files are
 installed. The shortest top ends above the navel and near the shoulders.
 Adjust the avatar's left sleeve, right sleeve, and hem independently in 10%
 steps. Each sleeve reaches its wrist at maximum length, and the hem reaches the
 upper thighs. Press `T` to cycle colors, `[` or `]` for the left sleeve, `{` or
-`}` for the right sleeve, and `-` or `=` to raise or lower the hem. The top
-follows the body mesh and its animated normals using a color in the lighting
-lookup.
+`}` for the right sleeve, and `-` or `=` to raise or lower the hem. Press
+`Space` to roll a random pastel top with matching sleeves and a separately
+chosen hem length. The next press removes the top, and the one after rolls
+again. The neckline, sleeve openings, and hem follow rounded contours with
+dark edges and two staggered rows of gray stitch dashes. The neckline trim is
+half as wide as the sleeve and hem trim. A shallow procedural bump makes the
+ribbons catch the light as the avatar moves.
 
 The native motion reel starts at 4× MSAA on a supported Alder Lake-S GPU.
 Use `--msaa 1` for single-sample rendering or `--msaa 2` to start at 2×.
@@ -64,29 +74,33 @@ the isolated shade-map difference, a directional toon ramp on flat skin, and
 mapped outlines under one key light.
 Open the texture inspector in the study to view and download the source maps.
 
+The [offline firelight study](studies/sky/emomodel-fire-study.html) compares a
+low-light reference with a moving light pattern. Strength, speed, mask scale,
+contrast, and two colors can be tuned independently.
+
 In `skin` and `reel`, running a patch in Lico switches EmoModel into
 graph-driven dance. Lico publishes a `DanceClueSnapshot` with the active DSP
 connections and scheduled cues. EmoModel uses that information to shape its
 steps, weight shifts, and upper-body gestures. Lico Stop blends back to where
 the previous motion paused.
 
-`reel` plays the motion reel with the original diffuse lighting. The reel
+`reel` plays the motion reel with the same sky and a smooth diffuse key. The reel
 plays Greeting, Nod, Squat, Spin, Model Pose, Show Full Body,
 Shoot, and Peace Sign, then takes two short steps into the opening Greeting
 crouch with both feet and fingertips close to the floor. The correction eases
 out during takeoff, and a smaller height adjustment settles the landing. The
 motion files are installed privately on the rig.
 
-`heart` opens a front-on preview and plays the gesture once. The avatar raises
-her right arm, traces the Blender curve with her index fingertip, and lowers her
-arm. The heart is a quarter of her standing height and the stroke stays visible.
-Press the top-row `3` in the skin preview or motion reel to play the gesture
-once, briefly hold the finished stroke, and resume playback.
+`butterfly` opens a front-on preview of the drawing gesture. The avatar traces
+the `bfly` outline and both inner wing strokes in the former heart's drawing
+plane. The sketch spans 0.87 meters in model space. The top-row `3` plays the
+gesture in the current camera view. After the drawing is complete, one live
+butterfly appears in the second-largest `bfly` size tier. It uses either Key 5
+wing design and keeps its rolled inset color. The transparent avatar surface
+reveals a matching contrast gradient on the window's background layer.
 
 `greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
-`/apps/emomodel`, or under `--root` when supplied. It opens the body lighting
-study. The camera and body pose hold for an eight-second light sweep. With the
-local clip, the avatar
+`/apps/emomodel`, or under `--root` when supplied. With the local clip, the avatar
 plays the Greeting jump, lowers its arms, nods once, raises its arms back to
 the landing pose, and plays Greeting in reverse. The full sequence repeats.
 A clean install alternates Nod with 15 seconds of varied wind and five seconds
@@ -99,7 +113,7 @@ The Picasso draws include body skin, face skin, eyes, mouth,
 and hair. The face holds its neutral expression and follows the head joint
 during playback. Each frame draws lit skin and flat-color parts from the same
 retained pose with shared depth and back-face culling. The skin samples a
-generated 64 × 64 diffuse lookup that refreshes as the light moves. Two
+generated 64 × 64 lookup that refreshes with the camera and sky levels. Two
 1024 × 1024 RGB normal atlases from AvatarSample_B add face and body detail.
 Startup decodes them to RGBA8 and samples them at the original skin UVs in
 bind space. Playback skins the adjusted vertex normals through the existing
@@ -121,8 +135,21 @@ Pass `--eyes` to pick a specific style.
 
 Each iris has a black pupil overlay fitted to the artwork. Its four stages
 cover 1×, 2×, 3×, and 4× the neutral pupil area. The pupil eases between
-animation cues in the motion reel, built-in Nod, Greeting, Heart, and Lico
+animation cues in the motion reel, built-in Nod, Greeting, Butterfly, and Lico
 dance. The eyelash and decoration cutouts stay in front of both sprite layers.
+
+The lit avatar gets its ear color from the skin mesh. The
+[ear height map](assets/AvatarSample_B-ear-height.png) adds soft folds to the
+front ear normals. Both ears sample the same texture, using reflected UVs on
+the opposite side.
+
+The default skin preview also samples a [32 × 32 belly normal crop](assets/AvatarSample_B-belly-normal.png)
+from the authored body atlas. It adds the original navel relief to the nearby
+vertex normals with two short folds and fades into the surrounding skin.
+The lit preview samples [body tint masks](assets/AvatarSample_B-body-tint.png)
+on the original body UVs. One mask shades the navel, and a mirrored grayscale
+reference crop shades the two chest details on exposed skin. The lighting
+study uses the full body normal atlas and the same two folds.
 
 `base-color` previews the original 4096 × 4096 RGBA face and body atlases
 on the animated avatar. It samples the painted skin and mouth per fragment
@@ -143,12 +170,10 @@ same drape. Idle frames share their settled body pose. The primary guides draw
 as tapered ribbons in the same flat hair color, about 3 to 4 pixels wide at the
 default preview size.
 
-`autobs` is the automatic observer for the animated preview. In the lighting
-study, it pans toward the landing stance for Nod and returns to the opening view
-during the reverse jump. The observer fits the visible pose with a three-pixel
-inset on the limiting axis. Standing poses fill the available height when the
-window is wide enough. Raised hands and the animated hair count toward the fit,
-and a standing-height reference limits zoom during crouches.
+`autobs` holds a fixed camera throughout each playback mode. The frame reserves
+room for the full motion, including raised and outstretched hands. Butterfly and
+Lico Dance use their own framing when active. The limiting window axis leaves
+at least four pixels of clearance around the motion bounds.
 Soft black contact marks show nearby heels, toes, and fingertips. Each pose
 projects contacts onto the ground plane and composites overlaps from one R8
 brush into the material atlas. In the lighting study, reverse playback reuses
@@ -157,7 +182,7 @@ each hand.
 After UI4 commits a resize, the observer eases along a shallow arc while looking
 at the avatar.
 It moves in gradually for a larger area. When space shrinks, it fits the
-silhouette immediately and eases the viewing angle back. Its orthographic
+motion bounds immediately and eases the viewing angle back. Its orthographic
 framing keeps the avatar proportional. A new resize starts from the last drawn
 camera pose. The trace records confirmed camera frames per resize alongside the
 existing timing reports.

@@ -32,6 +32,22 @@ impl TopControls {
         Ok(())
     }
 
+    pub(super) fn toggle_random(&mut self) {
+        if self.style.color.take().is_some() {
+            return;
+        }
+        let roll = trueos::rng::u64();
+        let colors = Pastel::ALL.len() as u64;
+        let lengths = roll / colors;
+        let sleeves = (lengths % 11) as f32 / 10.0;
+        self.style = TopStyle {
+            color: Some(Pastel::ALL[(roll % colors) as usize]),
+            left_sleeve: sleeves,
+            right_sleeve: sleeves,
+            hem: (lengths / 11 % 11) as f32 / 10.0,
+        };
+    }
+
     pub(super) fn key(&mut self, key: char) {
         if matches!(key, 't' | 'T') {
             let index = self
@@ -69,7 +85,7 @@ impl TopControls {
                 percentage(self.style.right_sleeve),
                 percentage(self.style.hem),
             ),
-            None => format!("{base}{sampling} · Right-click for tops"),
+            None => format!("{base}{sampling} · Space for random top · Right-click for tops"),
         }
     }
 }

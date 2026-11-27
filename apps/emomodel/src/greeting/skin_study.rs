@@ -1,11 +1,13 @@
 use glam::Vec3;
 
+#[cfg(test)]
 use crate::autobs::{BASE_YAW, camera_back};
 
 pub(super) const SIZE: usize = 64;
+#[cfg(test)]
 const KEY_ELEVATION: f32 = 28.0_f32.to_radians();
 const MAX_ENERGY: f32 = 1.42;
-const AMBIENT: f32 = 0.22;
+pub(super) const AMBIENT: f32 = 0.22;
 
 #[derive(Clone, Copy)]
 pub(super) struct Material {
@@ -29,11 +31,16 @@ pub(super) struct Lighting {
 }
 
 impl Lighting {
+    #[cfg(test)]
     pub(super) fn new(angle: i16, view_back: Vec3) -> Self {
         let back = camera_back(BASE_YAW);
         let (rise, run) = KEY_ELEVATION.sin_cos();
         let (side, center) = f32::from(angle).to_radians().sin_cos();
         let key = center * (back * run + Vec3::Y * rise) + side * Vec3::Y.cross(back);
+        Self::with_key(key, view_back)
+    }
+
+    pub(super) fn with_key(key: Vec3, view_back: Vec3) -> Self {
         Self {
             key,
             half: (key + view_back).normalize_or_zero(),
@@ -41,6 +48,10 @@ impl Lighting {
     }
 
     pub(super) fn coordinate(&self, normal: Vec3, material: Material) -> f32 {
+        texel_center(self.energy(normal, material) / MAX_ENERGY)
+    }
+
+    pub(super) fn energy(&self, normal: Vec3, material: Material) -> f32 {
         let key = normal.dot(self.key);
         let direct = key.clamp(0.0, 1.0);
         let wrap = ((key + 0.21) / 1.21).clamp(0.0, 1.0);
@@ -56,11 +67,11 @@ impl Lighting {
             (0.28 * h16 * h16 * (1.0 - rough) + 0.10 * h8 * rough) * smooth((key + 0.015) / 0.315);
         // A scalar energy is enough to retain the moving narrow/broad sheen
         // in the texture lookup used by the existing single-sample renderer.
-        let energy = diffuse + highlight * (1.15 + 0.65 * direct);
-        texel_center(energy / MAX_ENERGY)
+        diffuse + highlight * (1.15 + 0.65 * direct)
     }
 }
 
+#[cfg(test)]
 pub(super) fn lookup_rgba() -> Vec<u8> {
     color_lookup_rgba(crate::light::SKIN_SRGB)
 }
@@ -70,16 +81,20 @@ pub(super) fn color_lookup_rgba(rgb: [u8; 3]) -> Vec<u8> {
     let mut rgba = Vec::with_capacity(SIZE * 4);
     for x in 0..SIZE {
         let energy = projection(x) * MAX_ENERGY;
-        let lit = ((energy - AMBIENT) / 0.73).clamp(0.0, 1.0);
-        let warm = [0.041 * lit, 0.0, -0.035 * lit];
+        let light = light_rgb(energy).to_array();
         let color: [u8; 3] = std::array::from_fn(|channel| {
-            let value = encode_srgb(linear[channel] * (energy + warm[channel]));
+            let value = encode_srgb(linear[channel] * light[channel]);
             (value.clamp(0.0, 1.0) * 255.0).round() as u8
         });
         rgba.extend(color);
         rgba.push(255);
     }
     rgba
+}
+
+pub(super) fn light_rgb(energy: f32) -> Vec3 {
+    let lit = ((energy - AMBIENT) / 0.73).clamp(0.0, 1.0);
+    Vec3::splat(energy) + lit * Vec3::new(0.041, 0.0, -0.035)
 }
 
 fn projection(texel: usize) -> f32 {

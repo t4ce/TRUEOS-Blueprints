@@ -572,7 +572,7 @@ impl Animation {
         self.place_joint(joint, self.joint_position(joint), rotation);
     }
 
-    fn place_joint(&mut self, joint: usize, position: Vec3, rotation: Quat) {
+    pub(super) fn place_joint(&mut self, joint: usize, position: Vec3, rotation: Quat) {
         let world = self.world[joint];
         let (scale, _, _) = world.to_scale_rotation_translation();
         let target = Mat4::from_scale_rotation_translation(scale, rotation, position);

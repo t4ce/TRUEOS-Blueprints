@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use glam::{Mat3, Mat4, Vec3};
+use glam::{Vec2, Vec3};
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::path::Path;
@@ -18,42 +18,50 @@ use trueos::{
 use crate::{
     EyeStyle,
     animation::{ARM_RECOVERY_SECONDS, Animation, SAMPLE_HZ as HZ},
-    autobs::{
-        ARC_LIMIT, Autobs, BASE_YAW, CAMERA_PITCH, ObserverPose, PoseBounds, camera_back,
-        fit_projection, view_back,
-    },
+    autobs::{Autobs, BASE_YAW, Bounds, Framing, ObserverPose, camera_back},
     greeting_motion::{MotionPhase, MotionSample, Timeline},
     hair::{Hair, PARTICLES, breeze},
     hair_body::BodyBack,
     hair_ribbon,
     idle_wind::{IDLE_FRAMES, WIND_FRAMES},
-    light::{self, ANGLE_COUNT, DiffuseLookup, LightPlane, SWEEP_NS},
     mesh::{self, Mesh},
     preview::{UI4_IMPORT_BUSY, gpu_error, ui_error, window_placement, write_geometry},
 };
+use butterfly_backdrop::Backdrop;
 use floor_material::CLEAR_RGBA;
 use foot_contact::FootProbe;
 use hand_contact::HandProbe;
+use sky_controls::SkyControls;
+use sky_light::{Key, Levels, SkyLight};
+use sky_palette::NormalPalette;
 use top_controls::TopControls;
 
 mod base_color;
+mod belly_detail;
+mod body_tint;
+mod butterfly;
+mod butterfly_backdrop;
 mod dance;
+mod ear_detail;
 mod eye_detail;
 mod eye_sprite;
 mod floor;
 mod floor_material;
 mod foot_contact;
 mod hand_contact;
-mod heart;
 mod heart_arm;
 mod idle;
 mod lico_graph;
+mod live_butterfly;
 mod normal_detail;
 mod pupil;
 mod reel;
 mod reel_draw;
 mod reel_preview;
 mod skin_study;
+mod sky_controls;
+mod sky_light;
+mod sky_palette;
 mod top_controls;
 
 const SECOND_NS: u64 = 1_000_000_000;
@@ -78,7 +86,9 @@ const SKIN_NORMAL_MAPS: [&[u8]; LIT_MATERIALS] = [
 const QUAD_VERTEX_COUNT: u32 = 4;
 // Surface import and render completion can forward UI4's missing-window status.
 const UI4_SURFACE_GONE: i32 = -3;
-const TOP_ROW_3: u16 = 0x20; // USB HID keyboard-page usage.
+// USB HID keyboard-page usages.
+const TOP_ROW_3: u16 = 0x20;
+const SPACE: u16 = 0x2c;
 
 const SHADER_BYTES: &[u8] = include_bytes!("../shaders/retained-unlit.bundle");
 #[used]
@@ -91,7 +101,7 @@ pub(super) enum Appearance {
     Lighting,
     BaseColor,
     SkinStudy,
-    Heart,
+    Butterfly,
 }
 
 pub(super) async fn show(
@@ -102,6 +112,20 @@ pub(super) async fn show(
     msaa_samples: u8,
     eyes: EyeStyle,
 ) -> Result<()> {
+    let controls = if appearance == Appearance::BaseColor {
+        None
+    } else {
+        match SkyControls::open() {
+            Ok(controls) => Some(controls),
+            Err(error) => {
+                report(format_args!(
+                    "avatar lighting terminal unavailable: {error}"
+                ));
+                None
+            }
+        }
+    };
+    let levels = Levels::default();
     let (x, y, width, height) = window_placement()?;
     let mesh = mesh::prepare_materials(glb, width, height, &MATERIALS, true)?;
     let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))
@@ -112,10 +136,10 @@ pub(super) async fn show(
             Some(path) => reel::Reel::load(path, glb, &MATERIALS, mesh.material_vertices[1].start)?,
             None => None,
         };
-        let drawing_heart = appearance == Appearance::Heart;
-        let studying_skin = matches!(appearance, Appearance::SkinStudy | Appearance::Heart);
-        let motion = if drawing_heart {
-            Some(reel_preview::Motion::Heart(heart::Heart::new(
+        let drawing_butterfly = appearance == Appearance::Butterfly;
+        let studying_skin = matches!(appearance, Appearance::SkinStudy | Appearance::Butterfly);
+        let motion = if drawing_butterfly {
+            Some(reel_preview::Motion::Butterfly(butterfly::Butterfly::new(
                 glb,
                 &MATERIALS,
                 mesh.material_vertices[1].end,
@@ -130,10 +154,11 @@ pub(super) async fn show(
             None
         };
         let color = appearance == Appearance::BaseColor;
-        let (mut playback, target, half_span) = if let Some(motion) = motion {
-            let (preview, center, span) =
+        let (mut playback, framing) = if let Some(motion) = motion {
+            let preview =
                 reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin, eyes).await?;
-            (Playback::Reel(preview), center.to_array(), span)
+            let framing = preview.framing();
+            (Playback::Reel(preview), framing)
         } else {
             let mut greeting = greeting_glb
                 .map(|clip| Animation::prepare(clip, glb, &MATERIALS))
@@ -144,7 +169,7 @@ pub(super) async fn show(
             let nod = Animation::nod(glb, &MATERIALS, greeting.as_mut())?;
             let mut sequence = AnimationSequence { greeting, nod };
             if !color {
-                apply_normal_maps(glb, |section, normals| {
+                apply_normal_maps(glb, true, |section, normals| {
                     sequence.nod.apply_bind_normals(section, normals)?;
                     if let Some(greeting) = &mut sequence.greeting {
                         greeting.apply_bind_normals(section, normals)?;
@@ -158,21 +183,23 @@ pub(super) async fn show(
             let skin = if color {
                 Skin::BaseColor(base_color::retain(device).await?)
             } else {
-                Skin::Lighting(BodyLight::new(device).await?)
+                let view = crate::autobs::view_back(BASE_YAW);
+                let light = SkyLight::new(view, levels);
+                Skin::Lighting(NormalPalette::new(device, view, levels, &light).await?)
             };
-            let span = renderer.animated_half_span;
-            (
-                Playback::Retained(renderer, skin),
-                mesh.observer_target,
-                span,
-            )
+            let framing = renderer.framing;
+            (Playback::Retained(renderer, skin), framing)
         };
-        let mut observer = Autobs::new((width, height), target, mesh.pixels_per_unit, half_span);
-        observer.set_front_on(drawing_heart);
-        let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
+        let mut observer = Autobs::new((width, height), framing, mesh.pixels_per_unit);
+        let mut frame = if matches!(playback, Playback::Reel(_)) {
+            Frame::open_layered(x, y, width, height, 30)
+        } else {
+            Frame::open_streaming(x, y, width, height)
+        }
+        .map_err(ui_error)?;
         let title = match appearance {
             Appearance::SkinStudy => "EmoModel · Skin",
-            Appearance::Heart => "EmoModel · Heart",
+            Appearance::Butterfly => "EmoModel · Butterfly",
             Appearance::BaseColor => "EmoModel · 4K Base Color",
             Appearance::Lighting => "EmoModel",
         };
@@ -184,6 +211,7 @@ pub(super) async fn show(
             &mut observer,
             msaa_samples,
             title,
+            controls,
         )
         .await
     }
@@ -198,32 +226,62 @@ pub(super) async fn show(
 
 async fn apply_normal_maps(
     glb: &[u8],
+    full_maps: bool,
     mut apply: impl FnMut(usize, &[[f32; 3]]) -> Result<()>,
 ) -> Result<()> {
+    let ear = ear_detail::EarDetail::load().await?;
+    let belly = if full_maps {
+        None
+    } else {
+        Some(belly_detail::BellyDetail::load().await?)
+    };
     for (section, (material, png)) in MATERIALS.iter().zip(SKIN_NORMAL_MAPS).enumerate() {
-        let image = vmedia::decode(ImageFormat::Png, png)
-            .await
-            .map_err(gpu_error)
-            .with_context(|| format!("decode the normal map for {material}"))?;
-        ensure!(
-            image.info.width == NORMAL_MAP_SIZE
-                && image.info.height == NORMAL_MAP_SIZE
-                && image.info.stride_bytes == NORMAL_MAP_SIZE * 4,
-            "unexpected normal map extent for {material}"
-        );
-        let normals = normal_detail::bake(glb, material, &image.rgba, NORMAL_MAP_SIZE as usize)?;
+        let image = if full_maps {
+            let image = vmedia::decode(ImageFormat::Png, png)
+                .await
+                .map_err(gpu_error)
+                .with_context(|| format!("decode the normal map for {material}"))?;
+            ensure!(
+                image.info.width == NORMAL_MAP_SIZE
+                    && image.info.height == NORMAL_MAP_SIZE
+                    && image.info.stride_bytes == NORMAL_MAP_SIZE * 4,
+                "unexpected normal map extent for {material}"
+            );
+            Some(image)
+        } else {
+            None
+        };
+        let map = image
+            .as_ref()
+            .map(|image| (image.rgba.as_slice(), NORMAL_MAP_SIZE as usize));
+        let normals = normal_detail::bake(glb, material, map, |uv| {
+            if section == 0 {
+                ear.tangent_offset(uv)
+            } else {
+                belly
+                    .as_ref()
+                    .map_or(Vec2::ZERO, |detail| detail.tangent_offset(uv))
+                    + belly_detail::fold_offset(uv)
+            }
+        })?;
         apply(section, &normals)?;
     }
+    if full_maps {
+        report(format_args!(
+            "skin normal detail atlases={} extent={NORMAL_MAP_SIZE}x{NORMAL_MAP_SIZE} sampling=bind-vertex",
+            SKIN_NORMAL_MAPS.len()
+        ));
+    } else {
+        report(format_args!("belly normal crop sampling=bind-vertex"));
+    }
     report(format_args!(
-        "skin normal detail atlases={} extent={NORMAL_MAP_SIZE}x{NORMAL_MAP_SIZE} sampling=bind-vertex",
-        SKIN_NORMAL_MAPS.len()
+        "shared mirrored ear relief sampling=bind-vertex"
     ));
     Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    LightSweep,
     Motion(MotionPhase),
     Reel(&'static str),
     IdleWind,
@@ -233,7 +291,6 @@ enum Phase {
 impl Phase {
     fn name(self) -> &'static str {
         match self {
-            Self::LightSweep => "Body-light-sweep",
             Self::Motion(MotionPhase::Greeting) => "Greeting",
             Self::Motion(MotionPhase::ToNod) => "Greeting-to-Nod",
             Self::Motion(MotionPhase::Nod) => "Nod",
@@ -271,15 +328,9 @@ struct AvatarRenderer {
     atlas: Vec<RetainedMesh>,
     material_palette: RetainedTexture,
     draw_group_count: usize,
-    light_sweep_ns: u64,
     poses: Vec<PoseDraw>,
-    timeline: Timeline,
     idle: Option<idle::Idle>,
-    landing: Option<Vec3>,
-    animated_half_span: [f32; 2],
-    frame_to_world: Mat4,
-    idle_bounds: PoseBounds,
-    standing_height: f32,
+    framing: Framing,
 }
 
 #[derive(Clone, Copy)]
@@ -287,23 +338,6 @@ struct PoseDraw {
     phase: Phase,
     mesh: usize,
     ranges: [RetainedDrawRange; DRAW_GROUPS],
-    bounds: PoseBounds,
-}
-
-#[derive(Clone, Copy)]
-struct FrameView {
-    camera: RetainedCamera,
-    extent: (u32, u32),
-    resize_zoom: f32,
-}
-
-impl FrameView {
-    fn fit(self, bounds: PoseBounds, standing_height: f32) -> Mat4 {
-        // Keep the zoom steady through deep crouches while still fitting tall reaches.
-        let min_height = standing_height * 0.92 * self.camera.projection[5].abs();
-        Mat4::from_scale(Vec3::new(self.resize_zoom, self.resize_zoom, 1.0))
-            * fit_projection(self.extent, bounds, min_height)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -387,9 +421,7 @@ impl AvatarRenderer {
         let pose_count = timeline.forward_frame_count();
         let frame_count = timeline.frame_count();
         let (source_vertices, compact_indices) = compact_mesh(mesh);
-        let target = Vec3::from_array(mesh.observer_target);
         let back = camera_back(BASE_YAW);
-        let right = Vec3::Y.cross(back);
         sequence.nod.apply(sequence.nod.duration());
         let settled = sequence.nod.skin();
         let skin_indices = &mesh.indices[..mesh.skin_triangle_count * 3];
@@ -398,19 +430,11 @@ impl AvatarRenderer {
             &skin_indices[skin_indices.partition_point(|&index| index < body_start)..];
         let foot_probe = FootProbe::new(glb, mesh.material_vertices[1].start)?;
         let hand_probe = HandProbe::new(glb, mesh.material_vertices[1].start)?;
-        let mut low = Vec3::splat(f32::INFINITY);
-        let mut high = Vec3::splat(f32::NEG_INFINITY);
-        for &index in skin_indices {
-            let point = Vec3::from_array(settled.positions[index as usize]);
-            let coordinates = Vec3::new(point.dot(right), point.y, point.dot(back));
-            low = low.min(coordinates);
-            high = high.max(coordinates);
-        }
-        let center = (low + high) * 0.5;
-        let ground_y = low.y - 0.004;
-        let light_sweep_ns = if color { 0 } else { SWEEP_NS };
-        let landing =
-            greeting_duration.map(|_| right * center.x + back * center.z + Vec3::Y * target.y);
+        let ground_y = skin_indices
+            .iter()
+            .map(|&index| settled.positions[index as usize][1])
+            .fold(f32::INFINITY, f32::min)
+            - 0.004;
         let strand_count = mesh.strand_guides.len();
         ensure!(strand_count > 0, "missing long back hair guides");
         let recovery = if greeting_duration.is_some() {
@@ -563,27 +587,8 @@ impl AvatarRenderer {
         let mut atlas = Vec::with_capacity(pose_count.div_ceil(POSES_PER_MESH));
         let mut poses = vec![None; frame_count];
         let mut idle_base = None;
-        let mut idle_bounds = PoseBounds::default();
         let mut geometry_bytes = 0;
-        let mut animated_half_span = [0.0_f32; 2];
-        let view_back = view_back(BASE_YAW);
-        let up = view_back.cross(right);
-        let frame_axes = Mat3::from_cols(right, up, view_back);
-        let world_to_frame = frame_axes.transpose();
-        let arc_sine = ARC_LIMIT.sin();
-        let arc_depth = 1.0 - ARC_LIMIT.cos();
-        let pitch_sine = CAMERA_PITCH.sin();
-        let include_in_frame = |span: &mut [f32; 2], position: Vec3, center: Vec3| {
-            let offset = position - center;
-            let x = offset.dot(right).abs();
-            let depth = offset.dot(back).abs();
-            let half_width = x + depth * arc_sine;
-            let half_height =
-                offset.dot(up).abs() + pitch_sine * (x * arc_sine + depth * arc_depth);
-            span[0] = span[0].max(half_width);
-            span[1] = span[1].max(half_height);
-        };
-        let light_plane = LightPlane::new();
+        let mut bounds = Bounds::new(false);
         let sections: [Vec<Range<usize>>; DRAW_GROUPS] = if color {
             let [face, body, hair, mouth] = mesh.material_triangles.as_slice() else {
                 anyhow::bail!("unexpected avatar material sections");
@@ -623,18 +628,9 @@ impl AvatarRenderer {
                     "avatar mesh vertex count changed"
                 );
                 compact_positions.clear();
-                let targets = [Some(target), landing];
-                let mut bounds = PoseBounds::default();
                 let body_vertex_offset = vertices.len();
                 let mut append_vertex = |position: [f32; 3], normal, material_uv| {
-                    for &center in targets.iter().flatten() {
-                        // Fit both pan endpoints and any yaw along the resize arc.
-                        include_in_frame(
-                            &mut animated_half_span,
-                            Vec3::from_array(position),
-                            center,
-                        );
-                    }
+                    bounds.include(Vec3::from_array(position));
                     for value in position.into_iter().chain(normal).chain(material_uv) {
                         vertices.extend_from_slice(&value.to_le_bytes());
                     }
@@ -647,8 +643,7 @@ impl AvatarRenderer {
                         "nonfinite avatar pose"
                     );
                     let material_uv = material_coordinates[source]
-                        .unwrap_or_else(|| light_plane.coordinates(Vec3::from_array(normal)));
-                    bounds.include(world_to_frame * Vec3::from_array(position));
+                        .unwrap_or_else(|| NormalPalette::coordinates(Vec3::from_array(normal)));
                     append_vertex(position, normal, material_uv);
                     compact_positions.push(position);
                 }
@@ -666,16 +661,10 @@ impl AvatarRenderer {
                 }
                 // Reverse playback shares the body pose. The hair was simulated in
                 // playback order, so the same head pose can have different strands.
-                let body_bounds = bounds;
-                let mut reverse_bounds = body_bounds;
-                for (frame, frame_bounds) in
-                    [(Some(pose), &mut bounds), (reverse, &mut reverse_bounds)]
-                {
-                    let Some(frame) = frame else { continue };
+                for frame in [Some(pose), reverse].into_iter().flatten() {
                     let start = frame * strand_count;
                     for points in &hair_frames[start..start + strand_count] {
                         for vertex in hair_ribbon::vertices(points, back).into_iter().flatten() {
-                            frame_bounds.include(world_to_frame * vertex);
                             append_vertex(vertex.to_array(), back.to_array(), hair_uv);
                         }
                     }
@@ -683,15 +672,6 @@ impl AvatarRenderer {
                 let contact_offset = vertices.len();
                 let contact_base = u32::try_from(contact_offset / VERTEX_BYTES)?;
                 for (points, uv) in contacts.quads(pose, ground_y, &palette) {
-                    for &center in targets.iter().flatten() {
-                        for point in points {
-                            include_in_frame(
-                                &mut animated_half_span,
-                                Vec3::from_array(point),
-                                center,
-                            );
-                        }
-                    }
                     append_floor_quad(&mut vertices, points, uv);
                 }
                 let vertex_end = u32::try_from(vertices.len() / VERTEX_BYTES)?;
@@ -726,7 +706,6 @@ impl AvatarRenderer {
                     phase: Phase::Motion(motion.phase),
                     mesh: mesh_index,
                     ranges,
-                    bounds,
                 });
                 if let Some(frame) = reverse {
                     let mut reverse_ranges = ranges;
@@ -750,12 +729,10 @@ impl AvatarRenderer {
                         phase: Phase::Motion(timeline.sample(frame).phase),
                         mesh: mesh_index,
                         ranges: reverse_ranges,
-                        bounds: reverse_bounds,
                     });
                 }
                 if greeting_duration.is_none() && pose + 1 == pose_count {
                     // Idle frames share the terminal body pose and its contacts.
-                    idle_bounds = body_bounds;
                     let body_end = body_vertex_offset + first_strand_vertex as usize * VERTEX_BYTES;
                     let mut shared_vertices = vertices[body_vertex_offset..body_end].to_vec();
                     shared_vertices.extend_from_slice(&vertices[contact_offset..]);
@@ -831,17 +808,15 @@ impl AvatarRenderer {
                     view_back: back,
                     hair_uv,
                 },
-                |position| {
-                    include_in_frame(&mut animated_half_span, position, target);
-                    idle_bounds.include(world_to_frame * position);
-                },
+                |position| bounds.include(position),
             )?;
             geometry_bytes += idle.geometry_bytes();
             Some(idle)
         } else {
             None
         };
-        let material_palette = vmedia::decode_retained(device, ImageFormat::Bmp, palette.bmp())
+        let palette_png = palette.png().context("encode the contact material atlas")?;
+        let material_palette = vmedia::decode_retained(device, ImageFormat::Png, &palette_png)
             .await
             .map_err(gpu_error)
             .context("retain the flat materials and ground contact masks")?;
@@ -858,7 +833,7 @@ impl AvatarRenderer {
             .unwrap_or(0);
         report(format_args!(
             "avatar ready target_hz={HZ} clips={} baked_s={:.3} poses={frame_count} body_poses={pose_count} idle_wind_frames={} idle_settle_frames={} resident_meshes={} geometry_bytes={geometry_bytes} triangles={} hair_triangles={} hair_strands={strand_count} segments_per_strand={} max_indices={max_indices} cull=back bake_upload_ms={elapsed_ms}",
-            if landing.is_some() {
+            if greeting_duration.is_some() {
                 "Greeting,Nod,Reverse-Greeting"
             } else {
                 "Nod"
@@ -881,23 +856,14 @@ impl AvatarRenderer {
             atlas,
             material_palette,
             draw_group_count,
-            light_sweep_ns,
             poses,
-            timeline,
             idle,
-            landing,
-            animated_half_span,
-            frame_to_world: Mat4::from_mat3(frame_axes),
-            idle_bounds,
-            standing_height: mesh.standing_height,
+            framing: bounds.framing(0.0),
         })
     }
 
     fn pose(&self, elapsed_ns: u64) -> (usize, Phase) {
-        if elapsed_ns < self.light_sweep_ns {
-            return (0, Phase::LightSweep);
-        }
-        let tick = (elapsed_ns - self.light_sweep_ns) * u64::from(HZ) / SECOND_NS;
+        let tick = elapsed_ns * u64::from(HZ) / SECOND_NS;
         let period = self.poses.len() + if self.idle.is_some() { IDLE_FRAMES } else { 0 };
         let pose = (tick % period as u64) as usize;
         let phase = if let Some(motion) = self.poses.get(pose) {
@@ -913,21 +879,10 @@ impl AvatarRenderer {
     fn submit(
         &self,
         surface: Ui4Surface,
-        view: FrameView,
+        camera: RetainedCamera,
         pose: usize,
         skin: &Skin,
     ) -> Result<(), i32> {
-        let motion = self.poses.get(pose);
-        let mut camera = view.camera;
-        let view_projection = Mat4::from_cols_array(&camera.view_projection);
-        let bounds = motion.map_or(self.idle_bounds, |motion| motion.bounds);
-        let bounds = bounds.clip_bounds(view_projection * self.frame_to_world);
-        let fit = view.fit(bounds, self.standing_height);
-        let fitted = fit * view_projection;
-        camera.projection = (fit * Mat4::from_cols_array(&camera.projection)).to_cols_array();
-        camera.view_projection = fitted.to_cols_array();
-        camera.previous_view_projection = camera.view_projection;
-        camera.inverse_view_projection = fitted.inverse().to_cols_array();
         let mut submit = RetainedTexturedFrameV1 {
             frame: RetainedFrameSubmit {
                 clear_rgba8_srgb: CLEAR_RGBA,
@@ -937,7 +892,7 @@ impl AvatarRenderer {
             ..Default::default()
         };
         let base_groups = self.draw_group_count;
-        let (mesh, groups) = if let Some(motion) = motion {
+        let (mesh, groups) = if let Some(motion) = self.poses.get(pose) {
             submit.ranges[..base_groups].copy_from_slice(&motion.ranges[..base_groups]);
             (self.atlas[motion.mesh], base_groups)
         } else {
@@ -988,54 +943,13 @@ fn import_surface(device: Device, window: u32, deadline: u64) -> Result<Ui4Surfa
 }
 
 enum Skin {
-    Lighting(BodyLight),
+    Lighting(NormalPalette),
     BaseColor([RetainedTexture; 2]),
 }
 
-struct BodyLight {
-    lookup: DiffuseLookup,
-    angle: i16,
-    textures: [Option<RetainedTexture>; ANGLE_COUNT],
-}
-
-impl BodyLight {
-    async fn new(device: Device) -> Result<Self> {
-        let mut lookup = DiffuseLookup::new();
-        let angle = light::angle(0);
-        let texture = vmedia::decode_retained(device, ImageFormat::Bmp, lookup.update(angle))
-            .await
-            .map_err(gpu_error)
-            .context("retain the body lighting lookup")?;
-        let mut textures = [const { None }; ANGLE_COUNT];
-        textures[light::angle_index(angle)] = Some(texture);
-        Ok(Self {
-            lookup,
-            angle,
-            textures,
-        })
-    }
-
-    fn texture(&self) -> &RetainedTexture {
-        self.textures[light::angle_index(self.angle)]
-            .as_ref()
-            .expect("lookup for current light angle")
-    }
-
-    async fn update(&mut self, device: Device, elapsed_ns: u64) -> Result<()> {
-        let angle = light::angle(elapsed_ns);
-        let texture = &mut self.textures[light::angle_index(angle)];
-        // Reuse each angle across sweeps to bound GPU address space usage.
-        if texture.is_none() {
-            *texture = Some(
-                vmedia::decode_retained(device, ImageFormat::Bmp, self.lookup.update(angle))
-                    .await
-                    .map_err(gpu_error)
-                    .context("retain the body lighting lookup")?,
-            );
-        }
-        self.angle = angle;
-        Ok(())
-    }
+fn camera_view_back(camera: RetainedCamera) -> Vec3 {
+    let [x, y, z, _] = camera.forward_far;
+    -Vec3::new(x, y, z)
 }
 
 fn compact_mesh(mesh: &Mesh) -> (Vec<usize>, Vec<u32>) {
@@ -1113,6 +1027,7 @@ async fn play(
     observer: &mut Autobs,
     msaa_samples: u8,
     title: &str,
+    mut controls: Option<SkyControls>,
 ) -> Result<()> {
     let mut pending_resize = None;
     let mut resizing = false;
@@ -1123,7 +1038,13 @@ async fn play(
     let mut last_camera_pose = observer.pose(clock::monotonic_nanos());
     let mut resize_trace = None;
     let mut previous_phase = None;
-    let mut light_markers = light::presentation_markers().peekable();
+    let mut backdrop = matches!(playback, Playback::Reel(_))
+        .then(|| Backdrop::new(frame, device))
+        .transpose()
+        .map_err(ui_error)?;
+    let mut levels = Levels::default();
+    let mut presented_levels = None;
+    let lighting_active = !matches!(playback, Playback::Retained(_, Skin::BaseColor(_)));
     let (msaa2_available, msaa4_available) = if matches!(playback, Playback::Reel(_)) {
         device.info().map_or((false, false), |info| {
             (info.supports_indexed_msaa2(), info.supports_indexed_msaa4())
@@ -1143,7 +1064,7 @@ async fn play(
     };
     let mut previous_samples = 1;
     let mut previous_top = None;
-    let mut heart_requested = false;
+    let mut butterfly_requested = false;
     if msaa2_available {
         report(format_args!("avatar 2x MSAA available, press M to toggle"));
     } else if msaa4_available {
@@ -1152,6 +1073,16 @@ async fn play(
         ));
     }
     loop {
+        if let Some(terminal) = &mut controls {
+            match terminal.poll() {
+                Ok(Some(selected)) => levels = selected,
+                Ok(None) => (),
+                Err(error) => {
+                    report(format_args!("avatar lighting terminal closed: {error}"));
+                    controls = None;
+                }
+            }
+        }
         if matches!(playback, Playback::Reel(_)) {
             // Let the shared graph observer and its asynchronous file requests run.
             tokio::task::yield_now().await;
@@ -1166,11 +1097,14 @@ async fn play(
                 match frame.take_physical_keyboard_event() {
                     Ok(Some(event))
                         if event.kind == input::KEYBOARD_OUTPUT_KIND_PHYSICAL
-                            && event.key_code == TOP_ROW_3
                             && event.modifiers == 0
                             && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0 =>
                     {
-                        heart_requested = true;
+                        match event.key_code {
+                            TOP_ROW_3 => butterfly_requested = true,
+                            SPACE => tops.toggle_random(),
+                            _ => (),
+                        }
                     }
                     Ok(Some(_)) => (),
                     Ok(None) | Err(Error::Busy) => break,
@@ -1218,6 +1152,9 @@ async fn play(
             match frame.resize(extent.0, extent.1) {
                 Ok(()) => {
                     pending_resize = None;
+                    if let Some(backdrop) = &mut backdrop {
+                        backdrop.invalidate();
+                    }
                     stats = Timing::default();
                     receipts.clear();
                     resize_trace = None;
@@ -1233,11 +1170,18 @@ async fn play(
             vsys::sleep_ms((next_frame - wait_start).div_ceil(1_000_000));
             continue;
         }
-        if let (Some(start), Playback::Retained(_, Skin::Lighting(light))) = (epoch, &mut *playback)
-        {
-            light.update(device, wait_start - start).await?;
-        }
         let extent = (frame.width(), frame.height());
+        if let (Some(backdrop), Playback::Reel(preview)) = (&mut backdrop, &*playback) {
+            match backdrop.update(extent, preview.backdrop_tint()) {
+                Ok(true) => (),
+                Ok(false) => {
+                    vsys::sleep_ms(1);
+                    continue;
+                }
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)).context("update butterfly backdrop"),
+            }
+        }
         let samples = if vgpu::indexed_msaa_extent_supported(extent.0, extent.1) {
             requested_samples
         } else {
@@ -1252,7 +1196,7 @@ async fn play(
                 Err(error) => return Err(ui_error(error)),
             }
             if let Playback::Reel(preview) = &mut *playback {
-                preview.set_top(tops.style);
+                preview.set_top(tops.style)?;
             }
             previous_top = Some(tops.style);
         }
@@ -1280,32 +1224,31 @@ async fn play(
         // Anchor deadlines to elapsed time so millisecond wake-ups cannot accumulate drift.
         let tick = elapsed * u64::from(HZ) / SECOND_NS;
         next_frame = epoch + ((tick + 1) * SECOND_NS).div_ceil(u64::from(HZ));
-        let (pose, phase) = match playback {
+        let (pose, phase, framing_changed) = match playback {
             Playback::Retained(renderer, _) => {
                 let (pose, phase) = renderer.pose(elapsed);
-                if let Some(landing) = renderer.landing {
-                    observer.aim_at_landing(landing, renderer.timeline.landing_weight(pose));
-                }
-                (pose, phase)
+                (pose, phase, false)
             }
             Playback::Reel(preview) => {
-                let front_on = preview.sync_motion(elapsed, std::mem::take(&mut heart_requested));
-                observer.set_front_on(front_on);
+                let framing =
+                    preview.sync_motion(elapsed, std::mem::take(&mut butterfly_requested));
+                let framing_changed = observer.set_framing(framing, admitted);
                 let (pose, phase) = preview.pose(elapsed, admitted);
-                (pose, Phase::Reel(phase))
+                (pose, Phase::Reel(phase), framing_changed)
             }
         };
         // Keep the last published camera through the atomic backing swap.
-        let camera_pose = if resizing {
+        let camera_pose = if resizing && !framing_changed {
             last_camera_pose
         } else {
             observer.pose(admitted)
         };
-        let view = FrameView {
-            camera: observer.camera(camera_pose, extent),
-            extent,
-            resize_zoom: observer.framing_zoom(camera_pose, extent),
-        };
+        let camera = observer.camera(camera_pose, extent);
+        let view_back = camera_view_back(camera);
+        let sky = SkyLight::new(view_back, levels);
+        if let Playback::Retained(_, Skin::Lighting(light)) = &mut *playback {
+            light.update(device, view_back, levels, &sky).await?;
+        }
         let surface = match import_surface(device, frame.window_id(), admitted + WAIT_NS) {
             Ok(surface) => surface,
             Err(UI4_SURFACE_GONE) => return Ok(()),
@@ -1313,9 +1256,9 @@ async fn play(
         };
         let submit_started = clock::monotonic_nanos();
         let rendered = match playback {
-            Playback::Retained(renderer, skin) => renderer.submit(surface, view, pose, skin),
+            Playback::Retained(renderer, skin) => renderer.submit(surface, camera, pose, skin),
             Playback::Reel(preview) => {
-                preview.submit(surface, view, pose, elapsed, admitted, samples)
+                preview.submit(surface, camera, pose, elapsed, admitted, samples, &sky)
             }
         };
         match rendered {
@@ -1337,19 +1280,24 @@ async fn play(
         }
         let submitted = clock::monotonic_nanos();
         let damage = Damage::full(extent.0, extent.1);
-        let receipt = loop {
-            match frame.publish_tracked(damage) {
-                Ok(serial) => break Some(serial),
+        let (published, receipt) = loop {
+            let result = if resizing && backdrop.is_some() {
+                frame.publish(damage).map(|()| None)
+            } else {
+                frame.publish_tracked(damage).map(Some)
+            };
+            match result {
+                Ok(serial) => break (true, serial),
                 Err(Error::Busy) if clock::monotonic_nanos() < submitted + WAIT_NS => {
                     vsys::sleep_ms(1)
                 }
                 Err(Error::NotFound) => return Ok(()),
-                Err(Error::InvalidState) if resizing => break None,
+                Err(Error::InvalidState) if resizing && backdrop.is_none() => break (false, None),
                 Err(error) => return Err(ui_error(error)),
             }
         };
         let finished = clock::monotonic_nanos();
-        if let Some(serial) = receipt {
+        if published {
             if resizing {
                 observer.retarget(extent, camera_pose, finished);
                 resize_trace = Some(ResizeTrace {
@@ -1359,15 +1307,16 @@ async fn play(
                 });
             }
             last_camera_pose = camera_pose;
+            if let Playback::Reel(preview) = &mut *playback {
+                preview.on_published(pose, finished);
+            }
+            stats.add(wait_start, admitted, finished, submitted - submit_started);
+        }
+        if let Some(serial) = receipt {
             let camera_sample = resize_trace
                 .as_mut()
                 .and_then(|trace| trace.sample(admitted, extent, camera_pose));
-            let angle = match playback {
-                Playback::Retained(_, Skin::Lighting(light)) => Some(light.angle),
-                _ => None,
-            };
-            receipts.push_back((serial, camera_sample, phase, pose, elapsed, angle));
-            stats.add(wait_start, admitted, finished, submitted - submit_started);
+            receipts.push_back((serial, camera_sample, phase, pose, levels));
         }
         resizing = false;
         // UI4 retains eight recent display receipts. Leave delayed ones in the queue
@@ -1375,7 +1324,7 @@ async fn play(
         let mut remaining = receipts.len();
         while remaining > 0 {
             let receipt = receipts.pop_front().expect("pending presentation receipt");
-            let (serial, camera_sample, phase, pose, elapsed, angle) = receipt;
+            let (serial, camera_sample, phase, pose, levels) = receipt;
             match frame.was_presented(serial) {
                 Ok(true) => {
                     stats.displayed += 1;
@@ -1386,25 +1335,25 @@ async fn play(
                             phase.name()
                         ));
                     }
-                    if let Some(angle) = angle
-                        && light_markers
-                            .peek()
-                            .is_some_and(|&marker| elapsed >= marker)
-                    {
-                        light_markers.next();
+                    if lighting_active && presented_levels != Some(levels) {
+                        presented_levels = Some(levels);
+                        let key = match levels.key {
+                            Key::Neutral => "white".into(),
+                            Key::Sunrise => "sunrise".into(),
+                            Key::Kelvin(temperature) => format!("{temperature}K"),
+                        };
                         report(format_args!(
-                            "body light presented start_ms={} elapsed_ms={} angle_deg={angle} pose={pose} serial={serial}",
-                            epoch / 1_000_000,
-                            elapsed / 1_000_000,
+                            "avatar light levels sky={} sheen={} key={key} present_serial={serial} phase={}",
+                            levels.sky,
+                            levels.sheen,
+                            phase.name(),
                         ));
                     }
                     if let Some(sample) = camera_sample {
                         sample.report(serial);
                     }
                 }
-                Ok(false) => {
-                    receipts.push_back((serial, camera_sample, phase, pose, elapsed, angle))
-                }
+                Ok(false) => receipts.push_back((serial, camera_sample, phase, pose, levels)),
                 Err(Error::NotFound) => return Ok(()),
                 Err(error) => return Err(ui_error(error)),
             }

@@ -23,13 +23,15 @@ mod greeting;
 #[cfg(all(test, not(target_os = "trueos")))]
 #[allow(dead_code)]
 mod greeting {
+    mod butterfly;
     mod dance;
     mod foot_contact;
     mod hand_contact;
-    mod heart;
     mod heart_arm;
+    mod live_butterfly;
     mod pupil;
     mod reel;
+    mod sky_light;
 }
 #[cfg(any(target_os = "trueos", test))]
 mod greeting_motion;
@@ -321,7 +323,7 @@ async fn run() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "emomodel [--root PATH] [--msaa 1|2|4] [--eyes amethyst|nebula|doll] [show | skin | reel | heart | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the original diffuse lighting.\nheart traces the authored heart once with the right index finger.\nRight-click in skin, heart, or an installed reel to choose a pastel top and adjust each sleeve and the hem.\nskin and reel default to 4x MSAA on supported GPUs. Use --msaa 1 for single-sample rendering.\nAnimated previews select one random Lily eye style per launch. Use --eyes to select a style.\nIn skin and reel, Lico's Run starts graph-driven dance and Lico's Stop resumes the previous motion.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and runs the lighting study and both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
+                    "emomodel [--root PATH] [--msaa 1|2|4] [--eyes amethyst|nebula|doll] [show | skin | reel | butterfly | greeting | base-color | status | setup [auto|8m|32m|4m] | mesh]\n\nBare launch on TRUEOS opens skin.\nskin uses 100% roughness on the local motion reel or built-in Nod.\nreel plays the motion reel with the sky and a smooth diffuse key.\nbutterfly draws the bfly outline and both inner wing strokes with the right index finger.\nRight-click in skin, butterfly, or an installed reel to choose a pastel top and adjust each sleeve and the hem.\nPress Space to alternate between a random pastel top and the original appearance.\nskin and reel default to 4x MSAA on supported GPUs. Use --msaa 1 for single-sample rendering.\nAnimated previews select one random Lily eye style per launch. Use --eyes to select a style.\nIn skin and reel, Lico's Run starts graph-driven dance and Lico's Stop resumes the previous motion.\nshow opens the static humanoid mesh in UI4.\ngreeting requires AvatarSample_B_Greeting.glb and plays both clips at a 45 Hz target.\nbase-color shows the animated avatar with the original 4096-pixel face and body color maps.\nHost launch defaults to status.\nmesh installs the embedded AvatarSample_B.glb offline.\nsetup also installs the mesh, then prepares the requested model bundle.\nsetup auto tries 8m, then 32m, then 4m.\n32m is the larger alternative; 4m is the smaller fallback, not claimed equally accurate.\nDownloads pinned weights, tokenizer, and config to /apps/emomodel.\nactive.json identifies the selected complete bundle; no inference service is started."
                 );
                 return Ok(());
             }
@@ -341,7 +343,8 @@ async fn run() -> Result<()> {
         .map(String::as_str)
         .unwrap_or(default_command)
     {
-        command @ ("show" | "skin" | "reel" | "heart" | "greeting" | "base-color")
+        command
+        @ ("show" | "skin" | "reel" | "butterfly" | "heart" | "greeting" | "base-color")
             if positional.len() <= 1 =>
         {
             #[cfg(target_os = "trueos")]
@@ -352,12 +355,12 @@ async fn run() -> Result<()> {
                 use greeting::Appearance;
                 let appearance = match command {
                     "skin" => Appearance::SkinStudy,
-                    "heart" => Appearance::Heart,
+                    "butterfly" | "heart" => Appearance::Butterfly,
                     "base-color" => Appearance::BaseColor,
                     _ => Appearance::Lighting,
                 };
                 let clip = root.join(GREETING_FILE);
-                let data = if !matches!(appearance, Appearance::SkinStudy | Appearance::Heart)
+                let data = if !matches!(appearance, Appearance::SkinStudy | Appearance::Butterfly)
                     && (command == "greeting" || clip.is_file())
                 {
                     Some(
@@ -394,7 +397,7 @@ async fn run() -> Result<()> {
         }
         "setup" if positional.len() <= 2 => (),
         _ => bail!(
-            "use show, skin, reel, heart, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"
+            "use show, skin, reel, butterfly, greeting, base-color, status, setup [auto|8m|32m|4m], or mesh"
         ),
     }
     let models = catalog()?;

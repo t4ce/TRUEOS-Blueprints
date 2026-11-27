@@ -1,12 +1,19 @@
 use anyhow::{Context, Result, ensure};
 use glam::{Vec2, Vec3};
 
-pub(super) fn bake(glb: &[u8], material: &str, rgba: &[u8], size: usize) -> Result<Vec<[f32; 3]>> {
-    ensure!(
-        size != 0
-            && size.checked_mul(size).and_then(|area| area.checked_mul(4)) == Some(rgba.len()),
-        "invalid square RGBA normal map"
-    );
+pub(super) fn bake(
+    glb: &[u8],
+    material: &str,
+    map: Option<(&[u8], usize)>,
+    relief: impl Fn(Vec2) -> Vec2,
+) -> Result<Vec<[f32; 3]>> {
+    if let Some((rgba, size)) = map {
+        ensure!(
+            size != 0
+                && size.checked_mul(size).and_then(|area| area.checked_mul(4)) == Some(rgba.len()),
+            "invalid square RGBA normal map"
+        );
+    }
     let asset = gltf::Gltf::from_slice(glb).context("parse normal-map mesh")?;
     let primitive = asset
         .meshes()
@@ -98,6 +105,11 @@ pub(super) fn bake(glb: &[u8], material: &str, rgba: &[u8], size: usize) -> Resu
         .into_iter()
         .enumerate()
         .map(|(index, authored)| {
+            let uv = texcoords[index];
+            let offset = relief(uv);
+            if map.is_none() && offset == Vec2::ZERO {
+                return authored.to_array();
+            }
             let normal = authored.normalize();
             let tangent = tangents[index];
             let Some(tangent) = (tangent - normal * normal.dot(tangent)).try_normalize() else {
@@ -106,7 +118,8 @@ pub(super) fn bake(glb: &[u8], material: &str, rgba: &[u8], size: usize) -> Resu
             };
             let bitangent = normal.cross(tangent);
             let bitangent = bitangent * bitangent.dot(bitangents[index]).signum();
-            let detail = sample_normal(rgba, size, texcoords[index]);
+            let base = map.map_or(Vec3::Z, |(rgba, size)| sample_normal(rgba, size, uv));
+            let detail = base + offset.extend(0.0);
             ((tangent * detail.x + bitangent * detail.y + normal * detail.z)
                 .try_normalize()
                 .unwrap_or(authored))
@@ -115,7 +128,7 @@ pub(super) fn bake(glb: &[u8], material: &str, rgba: &[u8], size: usize) -> Resu
         .collect())
 }
 
-fn sample_normal(rgba: &[u8], size: usize, uv: Vec2) -> Vec3 {
+pub(super) fn sample_normal(rgba: &[u8], size: usize, uv: Vec2) -> Vec3 {
     let uv = Vec2::new(uv.x.rem_euclid(1.0), uv.y.rem_euclid(1.0));
     let pixel = uv * size as f32 - Vec2::splat(0.5);
     let lower = pixel.floor();
