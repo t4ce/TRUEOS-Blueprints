@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, ensure};
+use bfly::backdrop::Backdrop;
 use glam::{Vec2, Vec3};
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -46,6 +47,7 @@ mod eye_sprite;
 mod floor;
 mod floor_material;
 mod foot_contact;
+mod hairband;
 mod hand_contact;
 mod heart_arm;
 mod idle;
@@ -82,6 +84,8 @@ const SKIN_NORMAL_MAPS: [&[u8]; LIT_MATERIALS] = [
     include_bytes!("../assets/AvatarSample_B-body-normal-1024.png"),
 ];
 const QUAD_VERTEX_COUNT: u32 = 4;
+const HAIRBAND_COLUMN: usize = eye_sprite::SIZE + 1;
+const _: () = assert!(HAIRBAND_COLUMN + hairband::WIDTH <= 512);
 // Surface import and render completion can forward UI4's missing-window status.
 const UI4_SURFACE_GONE: i32 = -3;
 // USB HID keyboard-page usages.
@@ -408,6 +412,7 @@ impl AvatarRenderer {
         let queue = device.create_queue(QueueClass::Render).map_err(gpu_error)?;
         let eye = eye_detail::EyeDetail::load(glb).await?;
         let iris = eye_sprite::EyeSprite::load(eyes).await?;
+        let hairband = hairband::Hairband::load(glb, mesh).await?;
         let greeting_duration = sequence.greeting.as_ref().map(Animation::duration);
         let nod_duration = sequence.nod.duration();
         let timeline = Timeline::new(greeting_duration, nod_duration);
@@ -495,14 +500,19 @@ impl AvatarRenderer {
         }
         let eye_row = floor_material::SWATCH_ROWS;
         let iris_row = eye_row + eye_detail::HEIGHT;
-        let mut palette =
-            contacts.bake_rows(&[512, 1024, 2048], 4096, iris_row + eye_sprite::SIZE)?;
-        for (row, width, pixels) in [
-            (eye_row, eye_detail::WIDTH, eye.rgba()),
-            (iris_row, eye_sprite::SIZE, iris.rgba()),
+        let texture_rows = iris_row + eye_sprite::SIZE.max(hairband::HEIGHT);
+        let mut palette = contacts.bake_rows(&[512, 1024, 2048], 4096, texture_rows)?;
+        for (column, row, width, pixels) in [
+            (0, eye_row, eye_detail::WIDTH, eye.rgba()),
+            (0, iris_row, eye_sprite::SIZE, iris.rgba()),
+            (HAIRBAND_COLUMN, iris_row, hairband::WIDTH, hairband.rgba()),
         ] {
             for (i, pixel) in pixels.chunks_exact(4).enumerate() {
-                palette.set(i % width, row + i / width, [pixel[0], pixel[1], pixel[2]]);
+                palette.set(
+                    column + i % width,
+                    row + i / width,
+                    [pixel[0], pixel[1], pixel[2]],
+                );
             }
         }
         let [palette_width, palette_height] = palette.extent().map(|size| size as f32);
@@ -512,24 +522,38 @@ impl AvatarRenderer {
                 (eye_row as f32 + v * eye_detail::HEIGHT as f32) / palette_height,
             ]
         };
+        let hairband_uv = |[u, v]: [f32; 2]| {
+            [
+                (HAIRBAND_COLUMN as f32 + u * hairband::WIDTH as f32) / palette_width,
+                (iris_row as f32 + v * hairband::HEIGHT as f32) / palette_height,
+            ]
+        };
         let hair_uv = palette.swatch(0);
         let pupil_uv = palette.pupil();
         let strand_vertices = u32::try_from(PARTICLES * 2)?;
         let eye_base = u32::try_from(source_vertices.len())?;
         let pupil_base = eye_base + eye_sprite::VERTEX_COUNT;
         let detail_base = pupil_base + eye_sprite::PUPIL_VERTEX_COUNT;
-        let first_strand_vertex = detail_base + u32::try_from(eye.len())?;
+        let hairband_base = detail_base + u32::try_from(eye.len())?;
+        let first_strand_vertex = hairband_base + u32::try_from(hairband.len())?;
         // Keep the planar iris and authored details visible on both sides of
         // the retained camera arc. Depth still resolves the face and lids.
-        let detail_indices = eye
+        let eye_details = eye
             .indices()
             .as_chunks::<3>()
             .0
             .iter()
             .map(|triangle| triangle.map(|index| detail_base + index));
-        let eye_indices: Vec<_> = eye_sprite::EyeSprite::indices(eye_base)
+        let hairband_triangles = hairband
+            .indices()
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|triangle| triangle.map(|index| hairband_base + index));
+        let detail_indices: Vec<_> = eye_sprite::EyeSprite::indices(eye_base)
             .chain(eye_sprite::EyeSprite::pupil_indices(pupil_base))
-            .chain(detail_indices)
+            .chain(eye_details)
+            .chain(hairband_triangles)
             .flat_map(|[a, b, c]| [a, b, c, a, c, b])
             .collect();
         let strand_indices: Vec<_> = (0..u32::try_from(strand_count)?)
@@ -551,7 +575,7 @@ impl AvatarRenderer {
         let vertex_capacity = vertex_bytes * batch_poses;
         let index_capacity = (compact_indices.len() * 2
             + (compact_indices.len() - skin_indices.len()) * 2 * (variants - 1)
-            + (eye_indices.len() + strand_indices.len() + floor::CONTACTS * 6) * variants)
+            + (detail_indices.len() + strand_indices.len() + floor::CONTACTS * 6) * variants)
             * size_of::<u32>()
             * batch_poses;
         let vertex_buffer = device
@@ -652,6 +676,9 @@ impl AvatarRenderer {
                 for (position, uv) in eye.vertices(sample.positions) {
                     append_vertex(position, Vec3::NEG_Z.to_array(), eye_uv(uv));
                 }
+                for (position, uv) in hairband.vertices(sample.positions) {
+                    append_vertex(position, Vec3::NEG_Z.to_array(), hairband_uv(uv));
+                }
                 // Reverse playback shares the body pose. The hair was simulated in
                 // playback order, so the same head pose can have different strands.
                 for frame in [Some(pose), reverse].into_iter().flatten() {
@@ -681,7 +708,7 @@ impl AvatarRenderer {
                     let body_indices =
                         section_indices(mesh, &compact_indices, &compact_positions, sections);
                     let extra_indices = (group == flat_group)
-                        .then_some(eye_indices.iter().chain(&strand_indices).copied())
+                        .then_some(detail_indices.iter().chain(&strand_indices).copied())
                         .into_iter()
                         .flatten();
                     let draw = body_indices
@@ -709,7 +736,7 @@ impl AvatarRenderer {
                         &sections[flat_group],
                     );
                     let draw = body_indices
-                        .chain(eye_indices.iter().copied())
+                        .chain(detail_indices.iter().copied())
                         .chain(
                             strand_indices
                                 .iter()
@@ -739,8 +766,8 @@ impl AvatarRenderer {
                     {
                         let body_indices =
                             section_indices(mesh, &compact_indices, &compact_positions, sections);
-                        let eyes = (group == flat_group)
-                            .then_some(eye_indices.iter().copied())
+                        let details = (group == flat_group)
+                            .then_some(detail_indices.iter().copied())
                             .into_iter()
                             .flatten();
                         let contact_quads = (group == flat_group)
@@ -749,7 +776,7 @@ impl AvatarRenderer {
                             .flatten();
                         *range = append_range(
                             &mut shared_indices,
-                            body_indices.chain(eyes).chain(contact_quads),
+                            body_indices.chain(details).chain(contact_quads),
                         )?;
                     }
                     idle_base = Some(idle::IdleBase {
@@ -1031,7 +1058,7 @@ async fn play(
     let mut last_camera_pose = observer.pose(clock::monotonic_nanos());
     let mut resize_trace = None;
     let mut previous_phase = None;
-    let mut pending_display_color = None;
+    let mut display_backdrop = None::<(Backdrop, [u8; 3])>;
     let mut levels = Levels::default();
     let mut presented_levels = None;
     let lighting_active = !matches!(playback, Playback::Retained(_, Skin::BaseColor(_)));
@@ -1158,16 +1185,27 @@ async fn play(
             continue;
         }
         let extent = (frame.width(), frame.height());
-        if let Some(rgb) = pending_display_color {
-            match frame.set_display_bottom_color(rgb) {
-                Ok(()) => pending_display_color = None,
+        if let Some((backdrop, applied)) = &mut display_backdrop {
+            let (rgb, settled) = backdrop.sample_entry_at(wait_start);
+            let result = if rgb == *applied {
+                Ok(())
+            } else {
+                frame.set_display_bottom_color(rgb)
+            };
+            match result {
+                Ok(()) => {
+                    *applied = rgb;
+                    if settled {
+                        display_backdrop = None;
+                    }
+                }
                 Err(Error::Busy) => (),
                 Err(Error::NotFound) => return Ok(()),
                 Err(error) => {
                     report(format_args!(
                         "avatar display bottom color failed: {error:?}"
                     ));
-                    pending_display_color = None;
+                    display_backdrop = None;
                 }
             }
         }
@@ -1294,7 +1332,13 @@ async fn play(
             if let Playback::Reel(preview) = &mut *playback
                 && preview.on_published(pose, finished)
             {
-                pending_display_color = Some(bfly::backdrop::opaque_swatch(trueos::rng::u64()));
+                match frame.display_bottom_color() {
+                    Ok(rgb) => display_backdrop = Some((Backdrop::new(rgb, finished), rgb)),
+                    Err(Error::NotFound) => return Ok(()),
+                    Err(error) => report(format_args!(
+                        "avatar read display bottom color failed: {error:?}"
+                    )),
+                }
             }
             stats.add(wait_start, admitted, finished, submitted - submit_started);
             let camera_sample = resize_trace

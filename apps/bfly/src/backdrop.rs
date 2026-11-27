@@ -22,12 +22,6 @@ impl Sample {
     }
 }
 
-/// A swatch from the same opaque display palette used by the backdrop sweep.
-pub fn opaque_swatch(index: u64) -> [u8; 3] {
-    let swatch = (index % SWATCHES as u64) as usize;
-    swatch_sample(swatch, swatch, 0).rgb
-}
-
 pub struct Backdrop {
     initial: [u8; 3],
     entry_rgb: [u8; 3],
@@ -41,7 +35,7 @@ pub struct Backdrop {
 impl Backdrop {
     pub fn new(initial: [u8; 3], now_ns: u64) -> Self {
         let swatch = nearest_swatch(initial);
-        let entry_rgb = opaque_swatch(swatch as u64);
+        let entry_rgb = swatch_sample(swatch, swatch, 0).rgb;
         let max_delta = initial[0]
             .abs_diff(entry_rgb[0])
             .max(initial[1].abs_diff(entry_rgb[1]))
@@ -58,23 +52,38 @@ impl Backdrop {
         }
     }
 
+    /// Sample the transition from the current display color to the entry swatch.
+    /// Once settled, returns that swatch and true without advancing the sweep.
+    pub fn sample_entry_at(&self, now_ns: u64) -> ([u8; 3], bool) {
+        match self.entry_sample(now_ns.saturating_sub(self.started_ns)) {
+            Some(sample) => (sample.rgb, false),
+            None => (self.entry_rgb, true),
+        }
+    }
+
+    fn entry_sample(&self, elapsed_ns: u64) -> Option<Sample> {
+        let intro_ns = self.intro_steps * INTRO_STEP_NS;
+        if elapsed_ns >= intro_ns {
+            return None;
+        }
+        let step = elapsed_ns / INTRO_STEP_NS;
+        let step_elapsed_ns = elapsed_ns % INTRO_STEP_NS;
+        let weight = step * WEIGHT + eased_weight(step_elapsed_ns, INTRO_STEP_NS);
+        let total = self.intro_steps * WEIGHT;
+        let numerators = core::array::from_fn(|channel| {
+            let a = u64::from(self.initial[channel]);
+            let b = u64::from(self.entry_rgb[channel]);
+            a * (total - weight) + b * weight
+        });
+        Some(Sample::from_ratio(numerators, total))
+    }
+
     pub fn sample_at(&mut self, now_ns: u64) -> Sample {
         self.last_ns = self.last_ns.max(now_ns);
         let elapsed_ns = self.last_ns - self.started_ns;
-        let intro_ns = self.intro_steps * INTRO_STEP_NS;
-        if elapsed_ns < intro_ns {
-            let step = elapsed_ns / INTRO_STEP_NS;
-            let step_elapsed_ns = elapsed_ns % INTRO_STEP_NS;
-            let weight = step * WEIGHT + eased_weight(step_elapsed_ns, INTRO_STEP_NS);
-            let total = self.intro_steps * WEIGHT;
-            let numerators = core::array::from_fn(|channel| {
-                let a = u64::from(self.initial[channel]);
-                let b = u64::from(self.entry_rgb[channel]);
-                a * (total - weight) + b * weight
-            });
-            return Sample::from_ratio(numerators, total);
+        if let Some(sample) = self.entry_sample(elapsed_ns) {
+            return sample;
         }
-
         let elapsed_since_segment = elapsed_ns - self.segment_started_ns;
         let mut segment_elapsed_ns = elapsed_since_segment % SWEEP_NS;
         // A full sweep ends at the same swatch regardless of its start.
@@ -256,6 +265,30 @@ mod tests {
             previous = rgb;
         }
         assert_eq!(previous, backdrop.entry_rgb);
+    }
+
+    #[test]
+    fn entry_only_starts_at_the_programmed_color_and_holds_the_nearest_swatch() {
+        let initial = [22, 96, 180];
+        let started = 9_000;
+        let mut backdrop = Backdrop::new(initial, started);
+        let swatch = nearest_swatch(initial);
+        let target = swatch_color(swatch, swatch, 0);
+        let settled = started + backdrop.intro_steps * INTRO_STEP_NS;
+        assert_eq!(backdrop.sample_entry_at(started), (initial, false));
+        for step in 0..backdrop.intro_steps {
+            let now = started + step * INTRO_STEP_NS;
+            assert_eq!(backdrop.sample_entry_at(now), (backdrop.rgb_at(now), false));
+        }
+        assert_eq!(backdrop.sample_entry_at(settled), (target, true));
+        assert_eq!(
+            backdrop.sample_entry_at(settled + SWEEP_NS / 2),
+            (target, true)
+        );
+        assert_eq!(
+            Backdrop::new(target, started).sample_entry_at(started),
+            (target, true)
+        );
     }
 
     #[test]

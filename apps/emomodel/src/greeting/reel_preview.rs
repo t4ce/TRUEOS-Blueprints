@@ -14,6 +14,7 @@ use super::{
     eye_sprite::{self, EyeSprite},
     floor, floor_material,
     foot_contact::FootProbe,
+    hairband::{self, Hairband},
     hand_contact::HandProbe,
     lico_graph::{DanceClueSnapshot, Observer},
     live_butterfly::{self, LiveButterfly},
@@ -44,22 +45,27 @@ const TOP_COLUMN: usize = IRIS_COLUMN + eye_sprite::SIZE + 1;
 const BODY_TINT_COLUMN: usize = TOP_COLUMN + light::DIFFUSE_WIDTH + 1;
 const EYE_ROW: usize = IRIS_ROW + eye_sprite::SIZE;
 const SKY_COLUMN: usize = eye_detail::WIDTH + 1;
-const CONTACT_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
-const ATLAS_HEIGHT: usize = 512;
+const HAIRBAND_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
+const CONTACT_ROW: usize = HAIRBAND_ROW + hairband::HEIGHT;
+const ATLAS_HEIGHT: usize = 512 + hairband::HEIGHT;
 const MAX_ATLAS_WIDTH: usize = 1024;
 const ATLAS_WIDTHS: [usize; 2] = [512, MAX_ATLAS_WIDTH];
 const MODE_BLEND_NS: u64 = 400_000_000;
 const BUTTERFLY_HOLD_NS: u64 = 800_000_000;
+// A sketch takes over seven seconds and the longest flight is under 34 seconds.
+const MAX_LIVE_BUTTERFLIES: usize = 8;
 const LIVE_FILL_SLOT: usize = 3;
-const LIVE_OUTLINE_SLOT: usize = 4;
-const LIVE_VERTICES: usize = 3 * live_butterfly::MAX_TRIANGLES;
+const LIVE_OUTLINE_SLOT: usize = LIVE_FILL_SLOT + MAX_LIVE_BUTTERFLIES;
+const LIVE_VERTICES: usize = MAX_LIVE_BUTTERFLIES * 3 * live_butterfly::MAX_TRIANGLES;
+const LIVE_DEPTH_STEP: f32 = 0.012;
 
 const _: () = assert!(TOP_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + top::COVERAGE_ROWS <= EYE_ROW);
 const _: () = assert!(BODY_TINT_COLUMN + body_tint::WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + body_tint::HEIGHT <= EYE_ROW);
 const _: () = assert!(SKY_COLUMN + sky_palette::WIDTH <= ATLAS_WIDTHS[0]);
-const _: () = assert!(EYE_ROW + sky_palette::HEIGHT <= CONTACT_ROW);
+const _: () = assert!(EYE_ROW + sky_palette::HEIGHT <= HAIRBAND_ROW);
+const _: () = assert!(hairband::WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(finish::ATLAS_WIDTH <= ATLAS_WIDTHS[0]);
 
 pub(super) enum Motion {
@@ -197,7 +203,9 @@ pub(super) struct Preview<'a> {
     motion_framing: Framing,
     dance_framing: Framing,
     butterfly_started_ns: Option<u64>,
-    live_butterfly: Option<LiveButterfly>,
+    sketch_pending: bool,
+    first_butterfly_spawned: bool,
+    live_butterflies: Vec<LiveButterfly>,
     lico: Option<(Dance, Observer)>,
     dance_clue: Option<Arc<DanceClueSnapshot>>,
     clock: PlaybackClock,
@@ -209,6 +217,7 @@ pub(super) struct Preview<'a> {
     source_vertices: Vec<usize>,
     body_tint: BodyTint,
     material_slots: Vec<Option<usize>>,
+    hairband: Hairband,
     eye_detail: EyeDetail,
     iris: EyeSprite,
     pupil: pupil::Transition,
@@ -276,12 +285,14 @@ impl<'a> Preview<'a> {
             "wrong reel eye detail extent"
         );
         let body_tint = BodyTint::load(glb, mesh).await?;
+        let hairband = Hairband::load(glb, mesh).await?;
         let (source_vertices, mut compact_indices) = compact_mesh(mesh);
         body_tint.remap_indices(&mut compact_indices, u32::try_from(source_vertices.len())?);
         let eye_base = source_vertices.len() + body_tint.vertex_count();
         let pupil_base = eye_base + eye_sprite::VERTEX_COUNT as usize;
         let detail_base = pupil_base + eye_sprite::PUPIL_VERTEX_COUNT as usize;
-        let hair_base = detail_base + eye_detail.len();
+        let hairband_base = detail_base + eye_detail.len();
+        let hair_base = hairband_base + hairband.len();
         let strand_count = mesh.strand_guides.len();
         let hair_vertices = strand_count * PARTICLES * 2;
         let skin_materials = studying_skin
@@ -310,6 +321,7 @@ impl<'a> Preview<'a> {
                 + eye_sprite::INDEX_COUNT
                 + eye_sprite::PUPIL_INDEX_COUNT
                 + eye_detail.indices().len()
+                + hairband.indices().len()
                 + strand_count * PARTICLES * 6
                 + floor::CONTACTS * 6
                 + stroke_indices
@@ -329,6 +341,13 @@ impl<'a> Preview<'a> {
                 .indices()
                 .iter()
                 .flat_map(|&index| (detail_base + index).to_le_bytes()),
+        );
+        let hairband_base = u32::try_from(hairband_base)?;
+        indices.extend(
+            hairband
+                .indices()
+                .iter()
+                .flat_map(|&index| (hairband_base + index).to_le_bytes()),
         );
         for strand in 0..strand_count {
             let base = (hair_base + strand * PARTICLES * 2) as u32;
@@ -357,7 +376,7 @@ impl<'a> Preview<'a> {
             ));
         }
 
-        let motion_framing = frame_motion(&mut motion, &source_vertices)?;
+        let motion_framing = frame_motion(&mut motion, &source_vertices, &hairband)?;
         let initial = motion.sample(0)?;
         let mut body = BodyBack::default();
         body.update(initial.positions, body_indices(mesh, body_start));
@@ -386,8 +405,10 @@ impl<'a> Preview<'a> {
             butterfly,
             motion_framing,
             dance_framing: dance_framing(),
-            butterfly_started_ns: None,
-            live_butterfly: None,
+            butterfly_started_ns: is_butterfly.then_some(0),
+            sketch_pending: is_butterfly,
+            first_butterfly_spawned: false,
+            live_butterflies: Vec::with_capacity(MAX_LIVE_BUTTERFLIES),
             lico: dance.map(|dance| (dance, Observer::new())),
             dance_clue: None,
             clock: PlaybackClock::default(),
@@ -399,6 +420,7 @@ impl<'a> Preview<'a> {
             source_vertices,
             body_tint,
             material_slots,
+            hairband,
             eye_detail,
             iris,
             pupil: pupil::Transition::default(),
@@ -432,7 +454,10 @@ impl<'a> Preview<'a> {
         if style == self.top_style {
             return Ok(());
         }
-        let fit = |style| TopStyle { color: None, ..style };
+        let fit = |style| TopStyle {
+            color: None,
+            ..style
+        };
         let fit_changed = self.top_style.color.is_some() != style.color.is_some()
             || fit(self.top_style) != fit(style);
         if fit_changed {
@@ -482,22 +507,26 @@ impl<'a> Preview<'a> {
     }
 
     pub(super) fn sync_motion(&mut self, elapsed_ns: u64, butterfly_requested: bool) -> Framing {
+        if butterfly_requested
+            && !self.sketch_pending
+            && (self.butterfly.is_some() || matches!(self.motion, Motion::Butterfly(_)))
+        {
+            self.butterfly_started_ns = Some(elapsed_ns);
+            self.sketch_pending = true;
+            self.clock.select(true, elapsed_ns);
+            self.blend_from_displayed(elapsed_ns);
+            report(format_args!("avatar mode=butterfly source=key-3"));
+            return self.current_framing();
+        }
         if let (Some(butterfly), Some(start)) = (&self.butterfly, self.butterfly_started_ns) {
             let duration = (butterfly.frame_count() - 1) as u64 * SECOND_NS / u64::from(super::HZ);
-            if elapsed_ns - start < duration + BUTTERFLY_HOLD_NS || self.live_butterfly.is_none() {
+            if elapsed_ns - start < duration + BUTTERFLY_HOLD_NS || self.sketch_pending {
                 return self.current_framing();
             }
             self.butterfly_started_ns = None;
             self.clock.select(self.dance_clue.is_some(), elapsed_ns);
             self.blend_from_displayed(elapsed_ns);
             report(format_args!("avatar gesture=butterfly-complete"));
-        }
-        if butterfly_requested && self.butterfly.is_some() {
-            self.butterfly_started_ns = Some(elapsed_ns);
-            self.clock.select(true, elapsed_ns);
-            self.blend_from_displayed(elapsed_ns);
-            report(format_args!("avatar mode=butterfly source=key-3"));
-            return self.current_framing();
         }
         self.sync_lico(elapsed_ns);
         self.current_framing()
@@ -513,7 +542,7 @@ impl<'a> Preview<'a> {
 
     /// Returns true when the first completed sketch spawns a live butterfly.
     pub(super) fn on_published(&mut self, frame: usize, now_ns: u64) -> bool {
-        if self.live_butterfly.is_some() {
+        if !self.sketch_pending {
             return false;
         }
         let motion = if self.butterfly_started_ns.is_some() {
@@ -524,9 +553,19 @@ impl<'a> Preview<'a> {
         if !motion.drawing_complete(frame) {
             return false;
         }
-        self.live_butterfly = Some(LiveButterfly::new(trueos::rng::u64() as u32, now_ns));
-        report(format_args!("avatar butterfly spawned count=1 tier=1"));
-        true
+        self.sketch_pending = false;
+        self.live_butterflies
+            .retain(|butterfly| !butterfly.has_departed(now_ns));
+        if self.live_butterflies.len() == MAX_LIVE_BUTTERFLIES {
+            self.live_butterflies.remove(0);
+        }
+        self.live_butterflies
+            .push(LiveButterfly::new(trueos::rng::u64() as u32, now_ns));
+        report(format_args!(
+            "avatar butterfly spawned count={} tier=1",
+            self.live_butterflies.len(),
+        ));
+        !std::mem::replace(&mut self.first_butterfly_spawned, true)
     }
 
     fn blend_from_displayed(&mut self, elapsed_ns: u64) {
@@ -562,7 +601,8 @@ impl<'a> Preview<'a> {
     }
 
     pub(super) fn pose(&self, elapsed_ns: u64, now_ns: u64) -> (usize, &'static str) {
-        if let (Some(butterfly), Some(start)) = (&self.butterfly, self.butterfly_started_ns) {
+        if let Some(start) = self.butterfly_started_ns {
+            let butterfly = self.butterfly.as_ref().unwrap_or(&self.motion);
             let tick = ((elapsed_ns - start) * u64::from(super::HZ) / SECOND_NS) as usize;
             let index = butterfly.frame(tick);
             (index, butterfly.phase(index))
@@ -742,15 +782,25 @@ impl<'a> Preview<'a> {
             (IRIS_COLUMN, IRIS_ROW, eye_sprite::SIZE, self.iris.rgba()),
             (TOP_COLUMN, LIGHT_ROW, top_width, self.top_pixels.as_slice()),
             (SKY_COLUMN, EYE_ROW, sky_palette::WIDTH, &skin_palette.rgba),
+            (0, HAIRBAND_ROW, hairband::WIDTH, self.hairband.rgba()),
         ] {
             for (row, colors) in pixels.chunks_exact(source_width * 4).enumerate() {
                 let start = (start_row + row) * stride + column * 4;
                 self.texture[start..start + colors.len()].copy_from_slice(colors);
             }
         }
-        if let Some(butterfly) = &self.live_butterfly {
-            set_live_swatch(&mut self.texture, stride, LIVE_FILL_SLOT, butterfly.fill());
+        self.live_butterflies
+            .retain(|butterfly| !butterfly.has_departed(now_ns));
+        if !self.live_butterflies.is_empty() {
             set_live_swatch(&mut self.texture, stride, LIVE_OUTLINE_SLOT, [255; 4]);
+            for (index, butterfly) in self.live_butterflies.iter().enumerate() {
+                set_live_swatch(
+                    &mut self.texture,
+                    stride,
+                    LIVE_FILL_SLOT + index,
+                    butterfly.fill(),
+                );
+            }
         }
         let swatches = [palette.swatch(0), palette.swatch(1)];
         let view_projection = Mat4::from_cols_array(&camera.view_projection);
@@ -857,6 +907,13 @@ impl<'a> Preview<'a> {
             ];
             append(Vec3::from_array(position), uv);
         }
+        for (position, [u, v]) in self.hairband.vertices(pose.positions) {
+            let uv = [
+                u * hairband::WIDTH as f32 / width as f32,
+                (HAIRBAND_ROW as f32 + v * hairband::HEIGHT as f32) / height as f32,
+            ];
+            append(Vec3::from_array(position), uv);
+        }
         self.drape.clear();
         let drape_blend_start = frame_count.saturating_sub(super::HZ as usize);
         let t = if dancing || self.transition.is_some() {
@@ -891,8 +948,7 @@ impl<'a> Preview<'a> {
             );
             next_vertex += 4;
         }
-        let draw_trace = self.live_butterfly.is_none() || !motion.drawing_complete(frame);
-        for stroke in motion.strokes(frame).filter(|_| draw_trace) {
+        for stroke in motion.strokes(frame).filter(|_| self.sketch_pending) {
             for &position in stroke.iter().flatten() {
                 append(position, swatches[0]);
             }
@@ -906,12 +962,15 @@ impl<'a> Preview<'a> {
             }
             next_vertex += 2 * stroke.len() as u32;
         }
-        if let Some(butterfly) = &self.live_butterfly {
-            let fill = palette.swatch(LIVE_FILL_SLOT);
-            let outline = palette.swatch(LIVE_OUTLINE_SLOT);
+        let outline = palette.swatch(LIVE_OUTLINE_SLOT);
+        for (index, butterfly) in self.live_butterflies.iter().enumerate() {
+            let fill = palette.swatch(LIVE_FILL_SLOT + index);
+            let depth_offset = LIVE_DEPTH_STEP * (self.live_butterflies.len() - 1 - index) as f32;
             butterfly.triangles(viewport, now_ns, |triangle, is_outline| {
                 let uv = if is_outline { outline } else { fill };
-                for vertex in triangle {
+                for mut vertex in triangle {
+                    // New arrivals are nearer than older butterflies.
+                    vertex.z += depth_offset;
                     output.extend(
                         vertex
                             .to_array()
@@ -944,13 +1003,16 @@ fn body_indices(mesh: &Mesh, body_start: usize) -> &[u32] {
     &skin[skin.partition_point(|&index| (index as usize) < body_start)..]
 }
 
-fn frame_motion(motion: &mut Motion, source: &[usize]) -> Result<Framing> {
+fn frame_motion(motion: &mut Motion, source: &[usize], hairband: &Hairband) -> Result<Framing> {
     let mut bounds = Bounds::new(matches!(motion, Motion::Butterfly(_)));
     let last = motion.frame_count() - 1;
     for frame in (0..last).step_by(5).chain([last]) {
         let pose = motion.sample(frame)?;
         for &index in source {
             bounds.include(Vec3::from_array(pose.positions[index]));
+        }
+        for (position, _) in hairband.vertices(pose.positions) {
+            bounds.include(Vec3::from_array(position));
         }
     }
     for &point in motion.strokes(last).flatten().flatten() {

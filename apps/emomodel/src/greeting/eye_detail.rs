@@ -1,11 +1,9 @@
 use anyhow::{Context, Result, ensure};
-use glam::Vec3;
 use gltf::Semantic;
-use std::collections::HashSet;
 use trueos::vmedia::{self, ImageFormat};
 
 use super::gpu_error;
-use crate::mesh::FACE_MATERIAL;
+use crate::{cutout::Cutout, mesh::FACE_MATERIAL};
 
 pub(super) const WIDTH: usize = 435;
 pub(super) const HEIGHT: usize = 78;
@@ -16,20 +14,13 @@ const CUTOUT: &[u8] = include_bytes!("../../assets/AvatarSample_B-eye-cutout.bin
 const EYE_MATERIAL: &str = "N00_000_00_EyeHighlight_00_EYE (Instance)";
 
 pub(super) struct EyeDetail {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
+    cutout: Cutout,
     rgba: Vec<u8>,
-}
-
-struct Vertex {
-    sources: [usize; 3],
-    weights: [f32; 3],
-    uv: [f32; 2],
 }
 
 impl EyeDetail {
     pub(super) async fn load(glb: &[u8]) -> Result<Self> {
-        let (vertices, indices) = cutout(glb)?;
+        let cutout = cutout(glb)?;
         let image = vmedia::decode(ImageFormat::Png, PNG)
             .await
             .map_err(gpu_error)
@@ -42,19 +33,15 @@ impl EyeDetail {
             "unexpected eyebrow and lash atlas extent"
         );
         let rgba = downsample(&image.rgba);
-        Ok(Self {
-            vertices,
-            indices,
-            rgba,
-        })
+        Ok(Self { cutout, rgba })
     }
 
     pub(super) fn len(&self) -> usize {
-        self.vertices.len()
+        self.cutout.len()
     }
 
     pub(super) fn indices(&self) -> &[u32] {
-        &self.indices
+        self.cutout.indices()
     }
 
     pub(super) fn rgba(&self) -> &[u8] {
@@ -65,19 +52,11 @@ impl EyeDetail {
         &'a self,
         positions: &'a [[f32; 3]],
     ) -> impl Iterator<Item = ([f32; 3], [f32; 2])> + 'a {
-        self.vertices.iter().map(move |vertex| {
-            // The atlas crop cuts across the source triangles. Interpolate
-            // their skinned positions with the same weights as the UVs.
-            let [a, b, c] = vertex
-                .sources
-                .map(|index| Vec3::from_array(positions[index]));
-            let [u, v, w] = vertex.weights;
-            ((a * u + b * v + c * w).to_array(), vertex.uv)
-        })
+        self.cutout.vertices(positions)
     }
 }
 
-fn cutout(glb: &[u8]) -> Result<(Vec<Vertex>, Vec<u32>)> {
+fn cutout(glb: &[u8]) -> Result<Cutout> {
     let avatar = gltf::Gltf::from_slice(glb).context("parse the eye-detail avatar")?;
     let blob = avatar.blob.as_deref().context("avatar has no BIN chunk")?;
     let (face, overlay) = avatar
@@ -127,76 +106,7 @@ fn cutout(glb: &[u8]) -> Result<(Vec<Vertex>, Vec<u32>)> {
                 .all(|&index| (index as usize) < source_count),
         "invalid eye-detail source triangles"
     );
-    let source_triangles: HashSet<_> = triangles.iter().copied().map(triangle_key).collect();
-
-    let (header, payload) = CUTOUT
-        .split_first_chunk::<8>()
-        .context("missing eye cutout header")?;
-    let vertex_count = read_u32(header) as usize;
-    let index_count = read_u32(&header[4..]) as usize;
-    let geometry_bytes = vertex_count
-        .checked_mul(28)
-        .context("eye cutout vertex count overflow")?;
-    let (vertex_data, index_data) = payload
-        .split_at_checked(geometry_bytes)
-        .context("short eye cutout vertex data")?;
-    ensure!(
-        vertex_count > 0
-            && index_count > 0
-            && index_count.is_multiple_of(3)
-            && index_count.checked_mul(4) == Some(index_data.len()),
-        "invalid eye cutout extent"
-    );
-
-    let vertices = vertex_data
-        .as_chunks::<28>()
-        .0
-        .iter()
-        .map(|bytes| {
-            let [a, b, c, w0, w1, u, v] = std::array::from_fn(|i| read_u32(&bytes[i * 4..]));
-            let source = [a, b, c];
-            ensure!(
-                source_triangles.contains(&triangle_key(source)),
-                "unknown eye cutout source triangle"
-            );
-            let [w0, w1] = [w0, w1].map(f32::from_bits);
-            let weights = [w0, w1, 1.0 - w0 - w1];
-            let uv = [u, v].map(f32::from_bits);
-            ensure!(
-                weights
-                    .iter()
-                    .all(|value| (-1.0e-6..=1.000001).contains(value))
-                    && uv.iter().all(|value| (0.0..=1.0).contains(value)),
-                "invalid eye cutout interpolation"
-            );
-            Ok(Vertex {
-                sources: source.map(|index| index as usize),
-                weights,
-                uv,
-            })
-        })
-        .collect::<Result<_>>()?;
-    let indices: Vec<_> = index_data
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .copied()
-        .map(u32::from_le_bytes)
-        .collect();
-    ensure!(
-        indices.iter().all(|&index| (index as usize) < vertex_count),
-        "eye cutout triangle outside its vertex range"
-    );
-    Ok((vertices, indices))
-}
-
-fn triangle_key(mut triangle: [u32; 3]) -> [u32; 3] {
-    triangle.sort_unstable();
-    triangle
-}
-
-fn read_u32(bytes: &[u8]) -> u32 {
-    u32::from_le_bytes(bytes[..4].try_into().unwrap())
+    Cutout::read(CUTOUT, triangles.iter().copied(), 0).context("read the eye cutout")
 }
 
 fn downsample(source: &[u8]) -> Vec<u8> {

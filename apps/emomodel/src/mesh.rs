@@ -14,6 +14,11 @@ pub(super) const FACE_MATERIAL: &str = "N00_000_00_Face_00_SKIN (Instance)";
 pub(super) const PREVIEW_MATERIALS: [&str; 3] = [FACE_MATERIAL, BODY_MATERIAL, HAIR_MATERIAL];
 const FRAME_FILL: f32 = 0.86;
 
+pub(super) fn is_hairband_triangle(index: usize) -> bool {
+    // These source triangles match the separated Blender hairband by position.
+    matches!(index, 4901..=5107 | 5928..=5933)
+}
+
 pub(super) struct Mesh {
     vertices: Vec<[f32; 3]>,
     reference_extent: (u32, u32),
@@ -173,10 +178,10 @@ pub(super) fn prepare_materials(
         }
         for (corner, index) in source_indices.enumerate() {
             ensure!(index < vertex_count, "skin index outside its vertex range");
-            if replacement
-                .as_ref()
-                .is_none_or(|guides| !guides.replaced[corner / 3])
-            {
+            if replacement.as_ref().is_none_or(|guides| {
+                let triangle = corner / 3;
+                !guides.replaced[triangle] && !is_hairband_triangle(triangle)
+            }) {
                 indices.push(first_vertex + index);
             }
         }
@@ -252,18 +257,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn procedural_preview_replaces_only_the_long_back_hair_indices() {
+    fn animated_mesh_reserves_the_back_hair_and_hairband_for_their_own_geometry() {
         let glb = crate::HUMANOID_GLB;
         let reference = prepare(glb, 640, 560).unwrap();
         let procedural = prepare_materials(glb, 640, 560, &PREVIEW_MATERIALS, true).unwrap();
         assert_eq!(procedural.vertices, reference.vertices);
-        assert_eq!(procedural.hair_triangle_count, 3_510);
+        assert_eq!(procedural.hair_triangle_count, 3_297);
         assert_eq!(procedural.strand_guides.len(), 28);
         let hair_start = reference.triangle_count - reference.hair_triangle_count;
         let triangles = reference.indices.as_chunks::<3>().0;
         let expected = triangles[..hair_start + 1_749]
             .iter()
-            .chain(&triangles[hair_start + 4_173..hair_start + 5_934]);
+            .chain(&triangles[hair_start + 4_173..hair_start + 4_901])
+            .chain(&triangles[hair_start + 5_108..hair_start + 5_928]);
         assert!(procedural.indices.as_chunks::<3>().0.iter().eq(expected));
     }
 

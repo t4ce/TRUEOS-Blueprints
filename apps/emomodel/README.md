@@ -95,11 +95,14 @@ motion files are installed privately on the rig.
 `butterfly` opens a front-on preview of the drawing gesture. The avatar traces
 the `bfly` outline and both inner wing strokes in the former heart's drawing
 plane. The sketch spans 0.87 meters in model space. The top-row `3` plays the
-gesture in the current camera view. After the drawing is complete, one live
-butterfly appears in the second-largest `bfly` size tier. It uses either Key 5
-wing design and keeps its rolled inset color. When it appears, EmoModel sets
-the opaque display background to one swatch from Bfly's palette. The
-transparent avatar surface reveals that solid color.
+gesture in the current camera view. Each completed sketch adds one live
+butterfly in the second-largest `bfly` size tier. Each uses either Key 5 wing
+design, keeps its rolled inset color, and follows its own flight path. It
+shrinks through smaller tiers as it descends off the bottom of the frame.
+When the first butterfly appears, EmoModel reads the current opaque display
+color and uses Bfly's easing to settle on the nearest palette swatch. White
+and gray ease toward green. The transparent avatar surface reveals the solid
+display color.
 
 `greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
 `/apps/emomodel`, or under `--root` when supplied. With the local clip, the avatar

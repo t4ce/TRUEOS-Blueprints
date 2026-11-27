@@ -12,6 +12,9 @@ use std::{
 mod animation;
 #[cfg(any(target_os = "trueos", test))]
 mod autobs;
+#[cfg(any(target_os = "trueos", test))]
+#[path = "greeting/cutout.rs"]
+mod cutout;
 #[cfg(test)]
 #[path = "greeting/floor.rs"]
 mod floor;
@@ -26,6 +29,7 @@ mod greeting {
     mod butterfly;
     mod dance;
     mod foot_contact;
+    mod hairband;
     mod hand_contact;
     mod heart_arm;
     mod live_butterfly;
