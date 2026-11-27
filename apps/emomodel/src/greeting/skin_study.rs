@@ -5,7 +5,6 @@ use crate::autobs::{BASE_YAW, camera_back};
 pub(super) const SIZE: usize = 64;
 const KEY_ELEVATION: f32 = 28.0_f32.to_radians();
 const MAX_ENERGY: f32 = 1.42;
-const BASE_SRGB: [f32; 3] = [218.0, 171.0, 147.0];
 const AMBIENT: f32 = 0.22;
 
 #[derive(Clone, Copy)]
@@ -63,7 +62,11 @@ impl Lighting {
 }
 
 pub(super) fn lookup_rgba() -> Vec<u8> {
-    let linear = BASE_SRGB.map(|channel| ((channel / 255.0 + 0.055) / 1.055).powf(2.4));
+    color_lookup_rgba(crate::light::SKIN_SRGB)
+}
+
+pub(super) fn color_lookup_rgba(rgb: [u8; 3]) -> Vec<u8> {
+    let linear = rgb.map(|channel| ((f32::from(channel) / 255.0 + 0.055) / 1.055).powf(2.4));
     let mut rgba = Vec::with_capacity(SIZE * 4);
     for x in 0..SIZE {
         let energy = projection(x) * MAX_ENERGY;

@@ -10,6 +10,7 @@ pub(super) const ARC_LIMIT: f32 = 8.0_f32.to_radians();
 pub(super) const CAMERA_PITCH: f32 = 12.0_f32.to_radians();
 const REFERENCE_DISTANCE: f32 = 3.4;
 const FRAME_FILL: f32 = 0.94;
+const POSE_INSET_PIXELS: f32 = 3.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 16.0;
 const APPROACH_NS: u64 = 1_650_000_000;
@@ -22,6 +23,64 @@ pub(super) fn camera_back(yaw: f32) -> Vec3 {
 pub(super) fn view_back(yaw: f32) -> Vec3 {
     let (sin, cos) = CAMERA_PITCH.sin_cos();
     camera_back(yaw) * cos + Vec3::Y * sin
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PoseBounds {
+    low: Vec3,
+    high: Vec3,
+}
+
+impl Default for PoseBounds {
+    fn default() -> Self {
+        Self {
+            low: Vec3::splat(f32::INFINITY),
+            high: Vec3::splat(f32::NEG_INFINITY),
+        }
+    }
+}
+
+impl PoseBounds {
+    pub(super) fn include(&mut self, point: Vec3) {
+        self.low = self.low.min(point);
+        self.high = self.high.max(point);
+    }
+
+    pub(super) fn clip_bounds(self, transform: Mat4) -> Self {
+        if !self.low.is_finite() || !self.high.is_finite() {
+            return self;
+        }
+        let mut bounds = Self::default();
+        for x in [self.low.x, self.high.x] {
+            for y in [self.low.y, self.high.y] {
+                for z in [self.low.z, self.high.z] {
+                    bounds.include(transform.transform_point3(Vec3::new(x, y, z)));
+                }
+            }
+        }
+        bounds
+    }
+}
+
+pub(super) fn fit_projection(extent: (u32, u32), bounds: PoseBounds, min_height: f32) -> Mat4 {
+    let span = bounds.high - bounds.low;
+    if !span.is_finite() || span.x <= 0.0 || span.y <= 0.0 {
+        return Mat4::IDENTITY;
+    }
+    let inset_half_span = |axis: u32| {
+        let pixels = axis.max(1) as f32;
+        (pixels - 2.0 * POSE_INSET_PIXELS).max(1.0) / pixels
+    };
+    let width = inset_half_span(extent.0);
+    let height = inset_half_span(extent.1);
+    let scale = (2.0 * width / span.x).min(2.0 * height / span.y.max(min_height));
+    let center = (bounds.low + bounds.high) * (0.5 * scale);
+    // Leave the observer's horizontal target in place while the pose fits.
+    let x_room = (width - 0.5 * scale * span.x).max(0.0);
+    let shift_x = center.x.clamp(-x_room, x_room) - center.x;
+    let mut fit = Mat4::from_scale(Vec3::new(scale, scale, 1.0));
+    fit.w_axis = Vec3::new(shift_x, -center.y, 0.0).extend(1.0);
+    fit
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -85,9 +144,8 @@ impl Autobs {
         }
     }
 
-    pub(super) fn front_on(mut self) -> Self {
-        self.front_on = true;
-        self
+    pub(super) fn set_front_on(&mut self, front_on: bool) {
+        self.front_on = front_on;
     }
 
     pub(super) fn aim_at_landing(&mut self, target: Vec3, weight: f32) {
@@ -162,6 +220,18 @@ impl Autobs {
             yaw_offset: self.from.yaw_offset * (1.0 - eased) + self.yaw_arc * arc,
             target,
         }
+    }
+
+    #[cfg(any(target_os = "trueos", test))]
+    pub(super) fn framing_zoom(&self, pose: ObserverPose, extent: (u32, u32)) -> f32 {
+        let goal = fitted_pose(
+            self.reference,
+            extent,
+            self.reference_pixels_per_unit,
+            self.animated_half_span,
+            pose.target,
+        );
+        (pose.zoom / goal.zoom).min(1.0)
     }
 
     fn matrices(&self, pose: ObserverPose, extent: (u32, u32)) -> (Mat4, Mat4, Vec3, Vec3) {
@@ -240,9 +310,50 @@ mod tests {
         Autobs::new(REFERENCE, TARGET, PIXELS_PER_UNIT, HALF_SPAN)
     }
 
+    fn inset_bounds() -> PoseBounds {
+        let mut bounds = PoseBounds::default();
+        bounds.include(Vec3::new(-0.2, -0.8, 0.1));
+        bounds.include(Vec3::new(0.4, 0.5, 0.9));
+        bounds
+    }
+
+    #[test]
+    fn pose_fit_leaves_three_pixels_above_and_below() {
+        let bounds = inset_bounds();
+        for extent in [(640, 560), (1280, 720), (1280, 1440)] {
+            let fit = fit_projection(extent, bounds, 0.0);
+            let fitted = bounds.clip_bounds(fit);
+            let top = (1.0 - fitted.high.y) * extent.1 as f32 * 0.5;
+            let bottom = (fitted.low.y + 1.0) * extent.1 as f32 * 0.5;
+            assert!((top - 3.0).abs() < 1e-3);
+            assert!((bottom - 3.0).abs() < 1e-3);
+            assert_eq!(fit.x_axis.x, fit.y_axis.y);
+            assert_eq!(fit.w_axis.x, 0.0);
+            assert_eq!(fitted.low.z, bounds.low.z);
+            assert_eq!(fitted.high.z, bounds.high.z);
+        }
+    }
+
+    #[test]
+    fn pose_fit_can_fit_reaching_hands_or_limit_zoom_on_short_poses() {
+        let mut reaching = inset_bounds();
+        reaching.include(Vec3::new(1.2, 0.5, 0.5));
+        let extent = (240, 700);
+        let fitted = reaching.clip_bounds(fit_projection(extent, reaching, 0.0));
+        let horizontal_inset = 1.0 - 6.0 / extent.0 as f32;
+        assert!((fitted.high.x - horizontal_inset).abs() < 1e-5);
+        assert!((fitted.low.x + horizontal_inset).abs() < 1e-5);
+
+        let crouch = inset_bounds();
+        let limited = crouch.clip_bounds(fit_projection(REFERENCE, crouch, 1.7));
+        assert!(limited.high.y < 0.8);
+        assert!((limited.high.y + limited.low.y).abs() < 1e-5);
+    }
+
     #[test]
     fn front_on_heart_view_keeps_the_drawing_plane_parallel_on_resize() {
-        let mut observer = observer().front_on();
+        let mut observer = observer();
+        observer.set_front_on(true);
         let larger = (960, 840);
         observer.retarget(larger, observer.pose(0), 1);
         let pose = observer.pose(1 + APPROACH_NS / 2);
@@ -281,6 +392,20 @@ mod tests {
         assert!(retreating.yaw_offset < 0.0 && retreating.yaw_offset >= -ARC_LIMIT);
         assert_eq!(observer.pose(retreat_start + RECEDE_NS), parked);
         assert!(!observer.is_moving(retreat_start + RECEDE_NS));
+    }
+
+    #[test]
+    fn tight_framing_eases_into_a_larger_surface_and_fits_a_shrink_immediately() {
+        let mut observer = observer();
+        let larger = (1280, 1120);
+        let parked = observer.pose(0);
+        observer.retarget(larger, parked, 0);
+        let arriving = observer.framing_zoom(observer.pose(APPROACH_NS / 2), larger);
+        assert!(arriving < 1.0);
+        assert!(arriving > observer.framing_zoom(parked, larger));
+        let arrived = observer.pose(APPROACH_NS);
+        assert_eq!(observer.framing_zoom(arrived, larger), 1.0);
+        assert_eq!(observer.framing_zoom(arrived, REFERENCE), 1.0);
     }
 
     #[test]

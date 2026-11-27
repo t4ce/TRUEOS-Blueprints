@@ -11,8 +11,9 @@ pub(super) const ANGLE_COUNT: usize = (2 * LIMIT_DEGREES + 1) as usize;
 const ELEVATION: f32 = 28.0_f32.to_radians();
 const EDGE: usize = 64;
 const BMP_HEADER_BYTES: usize = 54;
-const BASE_SRGB: [f32; 3] = [218.0, 171.0, 147.0];
+pub(super) const SKIN_SRGB: [u8; 3] = [218, 171, 147];
 const AMBIENT: f32 = 0.14;
+const RAMP_SIZE: usize = 256;
 
 pub(super) fn angle_index(angle: i16) -> usize {
     (angle + LIMIT_DEGREES) as usize
@@ -81,11 +82,42 @@ impl LightPlane {
             (texel + 0.5) / EDGE as f32
         })
     }
+
+    #[cfg(target_os = "trueos")]
+    pub(super) fn diffuse_direction(&self, angle: i16) -> Vec3 {
+        let (side, center) = f32::from(angle).to_radians().sin_cos();
+        self.center * center + self.side * side
+    }
 }
 
 pub(super) struct DiffuseLookup {
     bmp: Vec<u8>,
-    ramp_bgr: [[u8; 3]; 256],
+    ramp_bgr: [[u8; 3]; RAMP_SIZE],
+}
+
+fn diffuse_ramp<const N: usize>(rgb: [u8; 3]) -> [[u8; 3]; N] {
+    let linear = rgb.map(|channel| ((f32::from(channel) / 255.0 + 0.055) / 1.055).powf(2.4));
+    std::array::from_fn(|level| {
+        let intensity = AMBIENT + (1.0 - AMBIENT) * level as f32 / (N - 1) as f32;
+        linear.map(|channel| {
+            let encoded = 1.055 * (channel * intensity).powf(1.0 / 2.4) - 0.055;
+            (encoded * 255.0).round() as u8
+        })
+    })
+}
+
+// Include the unlit half of the dot product so clamping happens after the
+// GPU interpolates the normals' projections across the triangle.
+#[cfg(target_os = "trueos")]
+pub(super) const DIFFUSE_WIDTH: usize = 257;
+
+#[cfg(target_os = "trueos")]
+pub(super) fn diffuse_lookup_rgba(rgb: [u8; 3]) -> Vec<u8> {
+    let ramp = diffuse_ramp::<{ DIFFUSE_WIDTH / 2 + 1 }>(rgb);
+    std::iter::repeat_n(ramp[0], DIFFUSE_WIDTH / 2)
+        .chain(ramp)
+        .flat_map(|[r, g, b]| [r, g, b, 255])
+        .collect()
 }
 
 impl DiffuseLookup {
@@ -104,14 +136,7 @@ impl DiffuseLookup {
             bmp[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
         bmp[26..30].copy_from_slice(&[1, 0, 24, 0]);
-        let [r, g, b] = BASE_SRGB.map(|channel| ((channel / 255.0 + 0.055) / 1.055).powf(2.4));
-        let ramp_bgr = std::array::from_fn(|level| {
-            let intensity = AMBIENT + (1.0 - AMBIENT) * level as f32 / 255.0;
-            [b, g, r].map(|channel| {
-                let encoded = 1.055 * (channel * intensity).powf(1.0 / 2.4) - 0.055;
-                (encoded * 255.0).round() as u8
-            })
-        });
+        let ramp_bgr = diffuse_ramp(SKIN_SRGB).map(|[r, g, b]| [b, g, r]);
         Self { bmp, ramp_bgr }
     }
 

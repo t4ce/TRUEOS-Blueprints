@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use glam::Vec3;
+use glam::{Mat3, Mat4, Vec3};
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::path::Path;
@@ -18,7 +18,10 @@ use trueos::{
 use crate::{
     EyeStyle,
     animation::{ARM_RECOVERY_SECONDS, Animation, SAMPLE_HZ as HZ},
-    autobs::{ARC_LIMIT, Autobs, BASE_YAW, CAMERA_PITCH, ObserverPose, camera_back, view_back},
+    autobs::{
+        ARC_LIMIT, Autobs, BASE_YAW, CAMERA_PITCH, ObserverPose, PoseBounds, camera_back,
+        fit_projection, view_back,
+    },
     greeting_motion::{MotionPhase, MotionSample, Timeline},
     hair::{Hair, PARTICLES, breeze},
     hair_body::BodyBack,
@@ -31,6 +34,7 @@ use crate::{
 use floor_material::CLEAR_RGBA;
 use foot_contact::FootProbe;
 use hand_contact::HandProbe;
+use top_controls::TopControls;
 
 mod base_color;
 mod dance;
@@ -50,6 +54,7 @@ mod reel;
 mod reel_draw;
 mod reel_preview;
 mod skin_study;
+mod top_controls;
 
 const SECOND_NS: u64 = 1_000_000_000;
 const FRAME_BUDGET_NS: u64 = SECOND_NS / HZ as u64;
@@ -73,6 +78,7 @@ const SKIN_NORMAL_MAPS: [&[u8]; LIT_MATERIALS] = [
 const QUAD_VERTEX_COUNT: u32 = 4;
 // Surface import and render completion can forward UI4's missing-window status.
 const UI4_SURFACE_GONE: i32 = -3;
+const TOP_ROW_3: u16 = 0x20; // USB HID keyboard-page usage.
 
 const SHADER_BYTES: &[u8] = include_bytes!("../shaders/retained-unlit.bundle");
 #[used]
@@ -162,9 +168,7 @@ pub(super) async fn show(
             )
         };
         let mut observer = Autobs::new((width, height), target, mesh.pixels_per_unit, half_span);
-        if drawing_heart {
-            observer = observer.front_on();
-        }
+        observer.set_front_on(drawing_heart);
         let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
         let title = match appearance {
             Appearance::SkinStudy => "EmoModel · Skin",
@@ -179,6 +183,7 @@ pub(super) async fn show(
             &mut playback,
             &mut observer,
             msaa_samples,
+            title,
         )
         .await
     }
@@ -272,6 +277,9 @@ struct AvatarRenderer {
     idle: Option<idle::Idle>,
     landing: Option<Vec3>,
     animated_half_span: [f32; 2],
+    frame_to_world: Mat4,
+    idle_bounds: PoseBounds,
+    standing_height: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -279,6 +287,23 @@ struct PoseDraw {
     phase: Phase,
     mesh: usize,
     ranges: [RetainedDrawRange; DRAW_GROUPS],
+    bounds: PoseBounds,
+}
+
+#[derive(Clone, Copy)]
+struct FrameView {
+    camera: RetainedCamera,
+    extent: (u32, u32),
+    resize_zoom: f32,
+}
+
+impl FrameView {
+    fn fit(self, bounds: PoseBounds, standing_height: f32) -> Mat4 {
+        // Keep the zoom steady through deep crouches while still fitting tall reaches.
+        let min_height = standing_height * 0.92 * self.camera.projection[5].abs();
+        Mat4::from_scale(Vec3::new(self.resize_zoom, self.resize_zoom, 1.0))
+            * fit_projection(self.extent, bounds, min_height)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -538,10 +563,13 @@ impl AvatarRenderer {
         let mut atlas = Vec::with_capacity(pose_count.div_ceil(POSES_PER_MESH));
         let mut poses = vec![None; frame_count];
         let mut idle_base = None;
+        let mut idle_bounds = PoseBounds::default();
         let mut geometry_bytes = 0;
         let mut animated_half_span = [0.0_f32; 2];
         let view_back = view_back(BASE_YAW);
         let up = view_back.cross(right);
+        let frame_axes = Mat3::from_cols(right, up, view_back);
+        let world_to_frame = frame_axes.transpose();
         let arc_sine = ARC_LIMIT.sin();
         let arc_depth = 1.0 - ARC_LIMIT.cos();
         let pitch_sine = CAMERA_PITCH.sin();
@@ -596,6 +624,7 @@ impl AvatarRenderer {
                 );
                 compact_positions.clear();
                 let targets = [Some(target), landing];
+                let mut bounds = PoseBounds::default();
                 let body_vertex_offset = vertices.len();
                 let mut append_vertex = |position: [f32; 3], normal, material_uv| {
                     for &center in targets.iter().flatten() {
@@ -619,6 +648,7 @@ impl AvatarRenderer {
                     );
                     let material_uv = material_coordinates[source]
                         .unwrap_or_else(|| light_plane.coordinates(Vec3::from_array(normal)));
+                    bounds.include(world_to_frame * Vec3::from_array(position));
                     append_vertex(position, normal, material_uv);
                     compact_positions.push(position);
                 }
@@ -636,10 +666,16 @@ impl AvatarRenderer {
                 }
                 // Reverse playback shares the body pose. The hair was simulated in
                 // playback order, so the same head pose can have different strands.
-                for frame in [Some(pose), reverse].into_iter().flatten() {
+                let body_bounds = bounds;
+                let mut reverse_bounds = body_bounds;
+                for (frame, frame_bounds) in
+                    [(Some(pose), &mut bounds), (reverse, &mut reverse_bounds)]
+                {
+                    let Some(frame) = frame else { continue };
                     let start = frame * strand_count;
                     for points in &hair_frames[start..start + strand_count] {
                         for vertex in hair_ribbon::vertices(points, back).into_iter().flatten() {
+                            frame_bounds.include(world_to_frame * vertex);
                             append_vertex(vertex.to_array(), back.to_array(), hair_uv);
                         }
                     }
@@ -690,6 +726,7 @@ impl AvatarRenderer {
                     phase: Phase::Motion(motion.phase),
                     mesh: mesh_index,
                     ranges,
+                    bounds,
                 });
                 if let Some(frame) = reverse {
                     let mut reverse_ranges = ranges;
@@ -713,10 +750,12 @@ impl AvatarRenderer {
                         phase: Phase::Motion(timeline.sample(frame).phase),
                         mesh: mesh_index,
                         ranges: reverse_ranges,
+                        bounds: reverse_bounds,
                     });
                 }
                 if greeting_duration.is_none() && pose + 1 == pose_count {
                     // Idle frames share the terminal body pose and its contacts.
+                    idle_bounds = body_bounds;
                     let body_end = body_vertex_offset + first_strand_vertex as usize * VERTEX_BYTES;
                     let mut shared_vertices = vertices[body_vertex_offset..body_end].to_vec();
                     shared_vertices.extend_from_slice(&vertices[contact_offset..]);
@@ -792,7 +831,10 @@ impl AvatarRenderer {
                     view_back: back,
                     hair_uv,
                 },
-                |position| include_in_frame(&mut animated_half_span, position, target),
+                |position| {
+                    include_in_frame(&mut animated_half_span, position, target);
+                    idle_bounds.include(world_to_frame * position);
+                },
             )?;
             geometry_bytes += idle.geometry_bytes();
             Some(idle)
@@ -845,6 +887,9 @@ impl AvatarRenderer {
             idle,
             landing,
             animated_half_span,
+            frame_to_world: Mat4::from_mat3(frame_axes),
+            idle_bounds,
+            standing_height: mesh.standing_height,
         })
     }
 
@@ -868,10 +913,21 @@ impl AvatarRenderer {
     fn submit(
         &self,
         surface: Ui4Surface,
-        camera: RetainedCamera,
+        view: FrameView,
         pose: usize,
         skin: &Skin,
     ) -> Result<(), i32> {
+        let motion = self.poses.get(pose);
+        let mut camera = view.camera;
+        let view_projection = Mat4::from_cols_array(&camera.view_projection);
+        let bounds = motion.map_or(self.idle_bounds, |motion| motion.bounds);
+        let bounds = bounds.clip_bounds(view_projection * self.frame_to_world);
+        let fit = view.fit(bounds, self.standing_height);
+        let fitted = fit * view_projection;
+        camera.projection = (fit * Mat4::from_cols_array(&camera.projection)).to_cols_array();
+        camera.view_projection = fitted.to_cols_array();
+        camera.previous_view_projection = camera.view_projection;
+        camera.inverse_view_projection = fitted.inverse().to_cols_array();
         let mut submit = RetainedTexturedFrameV1 {
             frame: RetainedFrameSubmit {
                 clear_rgba8_srgb: CLEAR_RGBA,
@@ -881,7 +937,7 @@ impl AvatarRenderer {
             ..Default::default()
         };
         let base_groups = self.draw_group_count;
-        let (mesh, groups) = if let Some(motion) = self.poses.get(pose) {
+        let (mesh, groups) = if let Some(motion) = motion {
             submit.ranges[..base_groups].copy_from_slice(&motion.ranges[..base_groups]);
             (self.atlas[motion.mesh], base_groups)
         } else {
@@ -1056,6 +1112,7 @@ async fn play(
     playback: &mut Playback<'_>,
     observer: &mut Autobs,
     msaa_samples: u8,
+    title: &str,
 ) -> Result<()> {
     let mut pending_resize = None;
     let mut resizing = false;
@@ -1074,12 +1131,19 @@ async fn play(
     } else {
         (false, false)
     };
+    let mut tops = if matches!(playback, Playback::Reel(_)) {
+        Some(TopControls::new(frame).map_err(ui_error)?)
+    } else {
+        None
+    };
     let mut requested_samples = match msaa_samples {
         2 if msaa2_available => 2,
         4 if msaa4_available => 4,
         _ => 1,
     };
     let mut previous_samples = 1;
+    let mut previous_top = None;
+    let mut heart_requested = false;
     if msaa2_available {
         report(format_args!("avatar 2x MSAA available, press M to toggle"));
     } else if msaa4_available {
@@ -1092,15 +1156,42 @@ async fn play(
             // Let the shared graph observer and its asynchronous file requests run.
             tokio::task::yield_now().await;
         }
-        if msaa2_available || msaa4_available {
+        if let Some(tops) = &mut tops {
+            match tops.tick(frame) {
+                Ok(()) => (),
+                Err(Error::NotFound) => return Ok(()),
+                Err(error) => return Err(ui_error(error)),
+            }
+            loop {
+                match frame.take_physical_keyboard_event() {
+                    Ok(Some(event))
+                        if event.kind == input::KEYBOARD_OUTPUT_KIND_PHYSICAL
+                            && event.key_code == TOP_ROW_3
+                            && event.modifiers == 0
+                            && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0 =>
+                    {
+                        heart_requested = true;
+                    }
+                    Ok(Some(_)) => (),
+                    Ok(None) | Err(Error::Busy) => break,
+                    Err(Error::NotFound) => return Ok(()),
+                    Err(error) => return Err(ui_error(error)),
+                }
+            }
             loop {
                 match frame.take_keyboard_event() {
                     Ok(Some(event)) if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT => {
-                        let selected = match char::from_u32(event.codepoint) {
-                            Some('M') if msaa4_available => 4,
-                            Some('m' | 'M') if msaa2_available => 2,
-                            Some('m') if msaa4_available => 4,
-                            _ => continue,
+                        let Some(key) = char::from_u32(event.codepoint) else {
+                            continue;
+                        };
+                        let selected = match key {
+                            'M' if msaa4_available => 4,
+                            'm' | 'M' if msaa2_available => 2,
+                            'm' if msaa4_available => 4,
+                            _ => {
+                                tops.key(key);
+                                continue;
+                            }
                         };
                         requested_samples = if requested_samples == selected {
                             1
@@ -1152,19 +1243,22 @@ async fn play(
         } else {
             1
         };
-        if samples != previous_samples {
-            stats = Timing::default();
-            receipts.clear();
-            let title = match samples {
-                2 => "EmoModel · 2× MSAA",
-                4 => "EmoModel · 4× MSAA",
-                _ => "EmoModel · 1×",
-            };
-            match frame.set_title(title) {
+        if let Some(tops) = &tops
+            && (samples != previous_samples || Some(tops.style) != previous_top)
+        {
+            match frame.set_title(&tops.title(title, samples)) {
                 Ok(()) => (),
                 Err(Error::NotFound) => return Ok(()),
                 Err(error) => return Err(ui_error(error)),
             }
+            if let Playback::Reel(preview) = &mut *playback {
+                preview.set_top(tops.style);
+            }
+            previous_top = Some(tops.style);
+        }
+        if samples != previous_samples {
+            stats = Timing::default();
+            receipts.clear();
             report(format_args!(
                 "avatar sampling requested={requested_samples} effective={samples} extent={}x{}",
                 extent.0, extent.1,
@@ -1195,7 +1289,8 @@ async fn play(
                 (pose, phase)
             }
             Playback::Reel(preview) => {
-                preview.sync_lico(elapsed);
+                let front_on = preview.sync_motion(elapsed, std::mem::take(&mut heart_requested));
+                observer.set_front_on(front_on);
                 let (pose, phase) = preview.pose(elapsed, admitted);
                 (pose, Phase::Reel(phase))
             }
@@ -1206,7 +1301,11 @@ async fn play(
         } else {
             observer.pose(admitted)
         };
-        let camera = observer.camera(camera_pose, extent);
+        let view = FrameView {
+            camera: observer.camera(camera_pose, extent),
+            extent,
+            resize_zoom: observer.framing_zoom(camera_pose, extent),
+        };
         let surface = match import_surface(device, frame.window_id(), admitted + WAIT_NS) {
             Ok(surface) => surface,
             Err(UI4_SURFACE_GONE) => return Ok(()),
@@ -1214,9 +1313,9 @@ async fn play(
         };
         let submit_started = clock::monotonic_nanos();
         let rendered = match playback {
-            Playback::Retained(renderer, skin) => renderer.submit(surface, camera, pose, skin),
+            Playback::Retained(renderer, skin) => renderer.submit(surface, view, pose, skin),
             Playback::Reel(preview) => {
-                preview.submit(surface, camera, pose, elapsed, admitted, samples)
+                preview.submit(surface, view, pose, elapsed, admitted, samples)
             }
         };
         match rendered {

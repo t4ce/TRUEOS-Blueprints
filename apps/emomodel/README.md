@@ -44,6 +44,16 @@ the motion reel when the seven locally retargeted files `motions/01.glb` through
 Roughness is fixed at 100% while the key light sweeps across the posed skin.
 The bind-space roughness uses a 64-entry lighting ramp in the reel atlas.
 
+Right-click in `skin` or `heart` to choose a pastel top or restore the original
+appearance. The controls are also available in `reel` when its motion files are
+installed. The shortest top ends above the navel and near the shoulders.
+Adjust the avatar's left sleeve, right sleeve, and hem independently in 10%
+steps. Each sleeve reaches its wrist at maximum length, and the hem reaches the
+upper thighs. Press `T` to cycle colors, `[` or `]` for the left sleeve, `{` or
+`}` for the right sleeve, and `-` or `=` to raise or lower the hem. The top
+follows the body mesh and its animated normals using a color in the lighting
+lookup.
+
 The native motion reel starts at 4× MSAA on a supported Alder Lake-S GPU.
 Use `--msaa 1` for single-sample rendering or `--msaa 2` to start at 2×.
 Press `M` to toggle 2× MSAA or `Shift+M` to toggle 4× MSAA during playback.
@@ -70,6 +80,8 @@ motion files are installed privately on the rig.
 `heart` opens a front-on preview and plays the gesture once. The avatar raises
 her right arm, traces the Blender curve with her index fingertip, and lowers her
 arm. The heart is a quarter of her standing height and the stroke stays visible.
+Press the top-row `3` in the skin preview or motion reel to play the gesture
+once, briefly hold the finished stroke, and resume playback.
 
 `greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
 `/apps/emomodel`, or under `--root` when supplied. It opens the body lighting
@@ -133,7 +145,10 @@ default preview size.
 
 `autobs` is the automatic observer for the animated preview. In the lighting
 study, it pans toward the landing stance for Nod and returns to the opening view
-during the reverse jump. The reel fits all eight motions in one camera framing.
+during the reverse jump. The observer fits the visible pose with a three-pixel
+inset on the limiting axis. Standing poses fill the available height when the
+window is wide enough. Raised hands and the animated hair count toward the fit,
+and a standing-height reference limits zoom during crouches.
 Soft black contact marks show nearby heels, toes, and fingertips. Each pose
 projects contacts onto the ground plane and composites overlaps from one R8
 brush into the material atlas. In the lighting study, reverse playback reuses
@@ -141,11 +156,11 @@ the baked contact masks. The reel's opening crouch registers one fingertip on
 each hand.
 After UI4 commits a resize, the observer eases along a shallow arc while looking
 at the avatar.
-It moves in for a larger area and pulls back more slowly for a smaller area.
-Its orthographic framing keeps the avatar proportional and fits the animated
-silhouette to the new aspect ratio. A new resize starts from the last drawn
-camera pose. The trace records several confirmed camera frames per resize,
-alongside the existing timing reports.
+It moves in gradually for a larger area. When space shrinks, it fits the
+silhouette immediately and eases the viewing angle back. Its orthographic
+framing keeps the avatar proportional. A new resize starts from the last drawn
+camera pose. The trace records confirmed camera frames per resize alongside the
+existing timing reports.
 
 `shaders/retained-unlit.bundle` combines the stock `churn-forward`,
 `helio-retained-transform`, and `picasso-textured` packages from

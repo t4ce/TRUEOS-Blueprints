@@ -22,6 +22,8 @@ pub(super) struct Mesh {
     #[cfg(target_os = "trueos")]
     pub pixels_per_unit: f32,
     #[cfg(target_os = "trueos")]
+    pub standing_height: f32,
+    #[cfg(target_os = "trueos")]
     pub material_vertices: Vec<Range<usize>>,
     #[cfg(target_os = "trueos")]
     pub material_triangles: Vec<Range<usize>>,
@@ -239,6 +241,8 @@ pub(super) fn prepare_materials(
         observer_target: (right * center.x + Vec3::Y * center.y + back * center.z).to_array(),
         #[cfg(target_os = "trueos")]
         pixels_per_unit: scale,
+        #[cfg(target_os = "trueos")]
+        standing_height: span.y,
         #[cfg(target_os = "trueos")]
         material_vertices,
         #[cfg(target_os = "trueos")]
