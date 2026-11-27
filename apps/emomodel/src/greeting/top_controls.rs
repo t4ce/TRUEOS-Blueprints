@@ -33,7 +33,8 @@ impl TopControls {
     }
 
     pub(super) fn toggle_random(&mut self) {
-        if self.style.color.take().is_some() {
+        if self.style.color.is_some() {
+            clear_outfit(&mut self.style);
             return;
         }
         let roll = trueos::rng::u64();
@@ -45,6 +46,7 @@ impl TopControls {
             left_sleeve: sleeves,
             right_sleeve: sleeves,
             hem: (lengths / 11 % 11) as f32 / 10.0,
+            socks: Some((lengths / 121 % 11) as f32 / 10.0),
         };
     }
 
@@ -55,7 +57,11 @@ impl TopControls {
                 .color
                 .and_then(|color| Pastel::ALL.iter().position(|&entry| entry == color))
                 .map_or(0, |index| index + 1);
-            self.style.color = Pastel::ALL.get(index).copied();
+            if let Some(&color) = Pastel::ALL.get(index) {
+                self.style.color = Some(color);
+            } else {
+                clear_outfit(&mut self.style);
+            }
             return;
         }
         if self.style.color.is_some() {
@@ -78,14 +84,19 @@ impl TopControls {
             _ => "",
         };
         match self.style.color {
-            Some(color) => format!(
-                "{base}{sampling} · {} top · Left sleeve {}% · Right sleeve {}% · Hem {}%",
-                color.name(),
-                percentage(self.style.left_sleeve),
-                percentage(self.style.right_sleeve),
-                percentage(self.style.hem),
-            ),
-            None => format!("{base}{sampling} · Space for random top · Right-click for tops"),
+            Some(color) => {
+                let socks = self.style.socks.map_or_else(String::new, |length| {
+                    format!(" · Socks {}%", percentage(length))
+                });
+                format!(
+                    "{base}{sampling} · {} top · Left sleeve {}% · Right sleeve {}% · Hem {}%{socks}",
+                    color.name(),
+                    percentage(self.style.left_sleeve),
+                    percentage(self.style.right_sleeve),
+                    percentage(self.style.hem),
+                )
+            }
+            None => format!("{base}{sampling} · Space for random outfit · Right-click for tops"),
         }
     }
 }
@@ -104,7 +115,7 @@ fn with_entries<T>(
     let has_top = style.color.is_some();
     let entries = [
         MenuEntry::disabled(&heading),
-        MenuEntry::new("Original", |style: &mut TopStyle| style.color = None),
+        MenuEntry::new("Original", clear_outfit),
         MenuEntry::new(Pastel::ALL[0].name(), select_color::<0>),
         MenuEntry::new(Pastel::ALL[1].name(), select_color::<1>),
         MenuEntry::new(Pastel::ALL[2].name(), select_color::<2>),
@@ -149,6 +160,11 @@ fn adjustment(label: &str, enabled: bool, action: fn(&mut TopStyle)) -> MenuEntr
 
 fn select_color<const INDEX: usize>(style: &mut TopStyle) {
     style.color = Some(Pastel::ALL[INDEX]);
+}
+
+fn clear_outfit(style: &mut TopStyle) {
+    style.color = None;
+    style.socks = None;
 }
 
 fn percentage(length: f32) -> i32 {

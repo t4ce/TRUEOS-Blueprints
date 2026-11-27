@@ -22,6 +22,12 @@ impl Sample {
     }
 }
 
+/// A swatch from the same opaque display palette used by the backdrop sweep.
+pub fn opaque_swatch(index: u64) -> [u8; 3] {
+    let swatch = (index % SWATCHES as u64) as usize;
+    swatch_sample(swatch, swatch, 0).rgb
+}
+
 pub struct Backdrop {
     initial: [u8; 3],
     entry_rgb: [u8; 3],
@@ -35,7 +41,7 @@ pub struct Backdrop {
 impl Backdrop {
     pub fn new(initial: [u8; 3], now_ns: u64) -> Self {
         let swatch = nearest_swatch(initial);
-        let entry_rgb = swatch_sample(swatch, swatch, 0).rgb;
+        let entry_rgb = opaque_swatch(swatch as u64);
         let max_delta = initial[0]
             .abs_diff(entry_rgb[0])
             .max(initial[1].abs_diff(entry_rgb[1]))

@@ -27,7 +27,6 @@ use crate::{
     mesh::{self, Mesh},
     preview::{UI4_IMPORT_BUSY, gpu_error, ui_error, window_placement, write_geometry},
 };
-use butterfly_backdrop::Backdrop;
 use floor_material::CLEAR_RGBA;
 use foot_contact::FootProbe;
 use hand_contact::HandProbe;
@@ -40,7 +39,6 @@ mod base_color;
 mod belly_detail;
 mod body_tint;
 mod butterfly;
-mod butterfly_backdrop;
 mod dance;
 mod ear_detail;
 mod eye_detail;
@@ -191,12 +189,7 @@ pub(super) async fn show(
             (Playback::Retained(renderer, skin), framing)
         };
         let mut observer = Autobs::new((width, height), framing, mesh.pixels_per_unit);
-        let mut frame = if matches!(playback, Playback::Reel(_)) {
-            Frame::open_layered(x, y, width, height, 30)
-        } else {
-            Frame::open_streaming(x, y, width, height)
-        }
-        .map_err(ui_error)?;
+        let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
         let title = match appearance {
             Appearance::SkinStudy => "EmoModel · Skin",
             Appearance::Butterfly => "EmoModel · Butterfly",
@@ -1038,10 +1031,7 @@ async fn play(
     let mut last_camera_pose = observer.pose(clock::monotonic_nanos());
     let mut resize_trace = None;
     let mut previous_phase = None;
-    let mut backdrop = matches!(playback, Playback::Reel(_))
-        .then(|| Backdrop::new(frame, device))
-        .transpose()
-        .map_err(ui_error)?;
+    let mut pending_display_color = None;
     let mut levels = Levels::default();
     let mut presented_levels = None;
     let lighting_active = !matches!(playback, Playback::Retained(_, Skin::BaseColor(_)));
@@ -1152,9 +1142,6 @@ async fn play(
             match frame.resize(extent.0, extent.1) {
                 Ok(()) => {
                     pending_resize = None;
-                    if let Some(backdrop) = &mut backdrop {
-                        backdrop.invalidate();
-                    }
                     stats = Timing::default();
                     receipts.clear();
                     resize_trace = None;
@@ -1171,15 +1158,17 @@ async fn play(
             continue;
         }
         let extent = (frame.width(), frame.height());
-        if let (Some(backdrop), Playback::Reel(preview)) = (&mut backdrop, &*playback) {
-            match backdrop.update(extent, preview.backdrop_tint()) {
-                Ok(true) => (),
-                Ok(false) => {
-                    vsys::sleep_ms(1);
-                    continue;
-                }
+        if let Some(rgb) = pending_display_color {
+            match frame.set_display_bottom_color(rgb) {
+                Ok(()) => pending_display_color = None,
+                Err(Error::Busy) => (),
                 Err(Error::NotFound) => return Ok(()),
-                Err(error) => return Err(ui_error(error)).context("update butterfly backdrop"),
+                Err(error) => {
+                    report(format_args!(
+                        "avatar display bottom color failed: {error:?}"
+                    ));
+                    pending_display_color = None;
+                }
             }
         }
         let samples = if vgpu::indexed_msaa_extent_supported(extent.0, extent.1) {
@@ -1280,24 +1269,19 @@ async fn play(
         }
         let submitted = clock::monotonic_nanos();
         let damage = Damage::full(extent.0, extent.1);
-        let (published, receipt) = loop {
-            let result = if resizing && backdrop.is_some() {
-                frame.publish(damage).map(|()| None)
-            } else {
-                frame.publish_tracked(damage).map(Some)
-            };
-            match result {
-                Ok(serial) => break (true, serial),
+        let receipt = loop {
+            match frame.publish_tracked(damage) {
+                Ok(serial) => break Some(serial),
                 Err(Error::Busy) if clock::monotonic_nanos() < submitted + WAIT_NS => {
                     vsys::sleep_ms(1)
                 }
                 Err(Error::NotFound) => return Ok(()),
-                Err(Error::InvalidState) if resizing && backdrop.is_none() => break (false, None),
+                Err(Error::InvalidState) if resizing => break None,
                 Err(error) => return Err(ui_error(error)),
             }
         };
         let finished = clock::monotonic_nanos();
-        if published {
+        if let Some(serial) = receipt {
             if resizing {
                 observer.retarget(extent, camera_pose, finished);
                 resize_trace = Some(ResizeTrace {
@@ -1307,12 +1291,12 @@ async fn play(
                 });
             }
             last_camera_pose = camera_pose;
-            if let Playback::Reel(preview) = &mut *playback {
-                preview.on_published(pose, finished);
+            if let Playback::Reel(preview) = &mut *playback
+                && preview.on_published(pose, finished)
+            {
+                pending_display_color = Some(bfly::backdrop::opaque_swatch(trueos::rng::u64()));
             }
             stats.add(wait_start, admitted, finished, submitted - submit_started);
-        }
-        if let Some(serial) = receipt {
             let camera_sample = resize_trace
                 .as_mut()
                 .and_then(|trace| trace.sample(admitted, extent, camera_pose));

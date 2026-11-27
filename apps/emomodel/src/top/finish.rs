@@ -8,7 +8,7 @@ use super::{
 };
 
 pub(crate) const ATLAS_WIDTH: usize = 512;
-pub(crate) const MAX_ROWS: usize = 512;
+pub(crate) const MAX_ROWS: usize = 768;
 const OPENING_TEXEL_METERS: f32 = 0.0011;
 const COLLAR_TEXEL_METERS: f32 = 0.0007;
 

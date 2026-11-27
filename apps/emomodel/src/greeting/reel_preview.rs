@@ -511,23 +511,22 @@ impl<'a> Preview<'a> {
         }
     }
 
-    pub(super) fn on_published(&mut self, frame: usize, now_ns: u64) {
+    /// Returns true when the first completed sketch spawns a live butterfly.
+    pub(super) fn on_published(&mut self, frame: usize, now_ns: u64) -> bool {
         if self.live_butterfly.is_some() {
-            return;
+            return false;
         }
         let motion = if self.butterfly_started_ns.is_some() {
             self.butterfly.as_ref().unwrap_or(&self.motion)
         } else {
             &self.motion
         };
-        if motion.drawing_complete(frame) {
-            self.live_butterfly = Some(LiveButterfly::new(trueos::rng::u64() as u32, now_ns));
-            report(format_args!("avatar butterfly spawned count=1 tier=1"));
+        if !motion.drawing_complete(frame) {
+            return false;
         }
-    }
-
-    pub(super) fn backdrop_tint(&self) -> Option<[u8; 3]> {
-        self.live_butterfly.as_ref().map(LiveButterfly::backdrop)
+        self.live_butterfly = Some(LiveButterfly::new(trueos::rng::u64() as u32, now_ns));
+        report(format_args!("avatar butterfly spawned count=1 tier=1"));
+        true
     }
 
     fn blend_from_displayed(&mut self, elapsed_ns: u64) {

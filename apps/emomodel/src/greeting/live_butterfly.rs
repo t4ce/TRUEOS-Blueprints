@@ -103,14 +103,6 @@ impl LiveButterfly {
         self.fill
     }
 
-    pub(super) fn backdrop(&self) -> [u8; 3] {
-        let [r, g, b, _] = self.fill;
-        let rgb = [r, g, b];
-        // Complement the hue while keeping the original lightness and chroma.
-        let lightness = u16::from(r.max(g).max(b)) + u16::from(r.min(g).min(b));
-        rgb.map(|component| (lightness - u16::from(component)) as u8)
-    }
-
     pub(super) fn triangles(
         &self,
         extent: (u32, u32),
@@ -260,8 +252,6 @@ mod tests {
         }
         assert_eq!(original.fill(), [236, 209, 38, 217]);
         assert_eq!(alternate.fill(), [236, 38, 204, 217]);
-        assert_eq!(original.backdrop(), [38, 65, 236]);
-        assert_eq!(alternate.backdrop(), [38, 236, 70]);
     }
 
     #[test]

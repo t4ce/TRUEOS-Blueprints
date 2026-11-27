@@ -54,12 +54,13 @@ Right-click in `skin` or `butterfly` to choose a pastel top or restore the origi
 appearance. The controls are also available in `reel` when its motion files are
 installed. The shortest top ends above the navel and near the shoulders.
 Adjust the avatar's left sleeve, right sleeve, and hem independently in 10%
-steps. Each sleeve reaches its wrist at maximum length, and the hem reaches the
-upper thighs. Press `T` to cycle colors, `[` or `]` for the left sleeve, `{` or
+steps. Each sleeve reaches its wrist at maximum length, and the longest hem
+ends near the base of the seat. Press `T` to cycle colors, `[` or `]` for the left sleeve, `{` or
 `}` for the right sleeve, and `-` or `=` to raise or lower the hem. Press
-`Space` to roll a random pastel top with matching sleeves and a separately
-chosen hem length. The next press removes the top, and the one after rolls
-again. The neckline, sleeve openings, and hem follow rounded contours with
+`Space` to roll a random pastel top and matching socks. Each roll picks a
+shared sleeve length, a hem length, and a shared sock height. The next press
+removes the outfit, and the one after rolls again. The neckline, sleeve
+openings, hem, and sock cuffs follow rounded contours with
 dark edges and two staggered rows of gray stitch dashes. The neckline trim is
 half as wide as the sleeve and hem trim. A shallow procedural bump makes the
 ribbons catch the light as the avatar moves.
@@ -96,8 +97,9 @@ the `bfly` outline and both inner wing strokes in the former heart's drawing
 plane. The sketch spans 0.87 meters in model space. The top-row `3` plays the
 gesture in the current camera view. After the drawing is complete, one live
 butterfly appears in the second-largest `bfly` size tier. It uses either Key 5
-wing design and keeps its rolled inset color. The transparent avatar surface
-reveals a matching contrast gradient on the window's background layer.
+wing design and keeps its rolled inset color. When it appears, EmoModel sets
+the opaque display background to one swatch from Bfly's palette. The
+transparent avatar surface reveals that solid color.
 
 `greeting` opens the locally retargeted `AvatarSample_B_Greeting.glb` under
 `/apps/emomodel`, or under `--root` when supplied. With the local clip, the avatar

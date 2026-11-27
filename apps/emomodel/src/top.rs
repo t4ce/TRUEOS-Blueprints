@@ -119,6 +119,7 @@ pub(super) struct TopStyle {
     pub left_sleeve: f32,
     pub right_sleeve: f32,
     pub hem: f32,
+    pub socks: Option<f32>,
 }
 
 pub(super) struct Fit {
@@ -131,6 +132,7 @@ enum Opening {
     Hem,
     LeftCuff,
     RightCuff,
+    Sock(f32),
 }
 
 impl Fit {
@@ -163,18 +165,29 @@ impl Fit {
         };
         let across = round_limit(x / (0.085 + 0.050 * style.hem));
         let depth = ((z + 0.012) / 0.10).clamp(-1.0, 1.0);
+        // Even the lowest part of the curved hem stays above the leg split.
         let hem =
-            1.04 + (0.755 - 1.04) * style.hem + 0.018 * (across * across - 0.5) - 0.004 * depth;
+            1.04 + (0.835 - 1.04) * style.hem + 0.018 * (across * across - 0.5) - 0.004 * depth;
         let left = cuff(style.left_sleeve) + x;
         let right = cuff(style.right_sleeve) - x;
         let hem = y - hem;
-        if hem <= left.min(right) {
+        let shirt = if hem <= left.min(right) {
             (hem, Opening::Hem)
         } else if left <= right {
             (left, Opening::LeftCuff)
         } else {
             (right, Opening::RightCuff)
+        };
+        if let Some(length) = style.socks {
+            // The highest cuff stays below the point where the legs join.
+            let height = 0.115 + (0.780 - 0.115) * length;
+            let depth = round_limit((z - 0.020) / 0.060);
+            let sock = height - y + 0.003 * depth;
+            if sock > shirt.0 {
+                return (sock, Opening::Sock(height));
+            }
         }
+        shirt
     }
 
     fn collar_row(&self) -> f32 {
@@ -206,6 +219,17 @@ impl Fit {
                     let vertical = y - (1.207 + 0.009 * length);
                     let depth = z - (0.017 + 0.004 * length);
                     (vertical.atan2(depth), 0.30 - 0.15 * length)
+                }
+                Opening::Sock(height) => {
+                    let below_knee = 1.0 - smooth((height - 0.350) / 0.220);
+                    let calf = smooth((height - 0.170) / 0.180) * below_knee;
+                    let thigh = smooth((height - 0.450) / 0.330);
+                    let center_z = 0.030 * below_knee + 0.010 * calf;
+                    let across = (x.abs() - 0.070) / 0.8;
+                    (
+                        across.atan2(z - center_z),
+                        0.180 + 0.075 * calf + 0.210 * thigh,
+                    )
                 }
             };
             (opening_row(distance), angle, circumference)
@@ -273,14 +297,14 @@ mod tests {
             assert!(painted(forearm, matching));
             assert!(!painted([side * 0.55, 1.21, -0.02], matching));
         }
-        for height in [0.99, 0.80, 0.76] {
+        for height in [0.99, 0.90, 0.84] {
             let front = [0.06, height, -0.09];
             assert!(!painted(front, short));
             assert!(!painted(front, long_left));
             assert!(!painted(front, long_right));
             assert!(painted(front, low_hem));
         }
-        assert!(!painted([0.06, 0.74, -0.09], low_hem));
+        assert!(!painted([0.06, 0.82, -0.09], low_hem));
     }
 
     #[test]
