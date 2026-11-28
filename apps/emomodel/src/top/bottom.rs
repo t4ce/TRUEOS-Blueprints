@@ -1,5 +1,6 @@
 use super::{
-    BottomStyle, JOIN_GAP_METERS, PANT_TRIM_FADE_METERS, SOCK_CONTOUR_METERS, smooth, sock_height,
+    BottomStyle, JOIN_GAP_METERS, PANT_TRIM_FADE_METERS, SOCK_CONTOUR_METERS, shirt_hem_height,
+    smooth, sock_height,
 };
 use glam::Vec3;
 
@@ -8,6 +9,7 @@ const HIGHEST_BRIEF_CUFF: f32 = 0.886;
 const LOWEST_KNEE_CUFF: f32 = 0.499;
 const HIGHEST_KNEE_CUFF: f32 = 0.503;
 const SPACE_CUFF_MARGIN: f32 = 0.20;
+const SHIRT_WAIST_CLEARANCE_METERS: f32 = 0.008;
 
 /// Signed distances from the waist and leg edges. Positive is inside the fabric.
 pub(super) fn edges(Vec3 { x, y, z }: Vec3, left_leg: f32, right_leg: f32, waist: f32) -> [f32; 2] {
@@ -19,27 +21,53 @@ pub(super) fn edges(Vec3 { x, y, z }: Vec3, left_leg: f32, right_leg: f32, waist
     let back_arch = smooth((across - 0.026) / 0.098);
     let crotch = mix(0.782, LOWEST_BRIEF_CUFF, back);
     let brief_opening = mix(crotch, HIGHEST_BRIEF_CUFF, mix(front_arch, back_arch, back));
-    let hip = smooth((across - 0.015) / 0.105);
-    let low_waist = 0.885 + 0.017 * hip + 0.006 * back;
-    let high_waist = 1.040 + 0.006 * hip;
-    let waist_edge = mix(low_waist, high_waist, waist.clamp(0.0, 1.0));
+    let waist_edge = waist_height(across, back, waist);
 
     // Left is negative X. Blend only across the joined crotch so the leg
     // openings can move independently without introducing a center seam.
     let right = smooth((x + 0.014) / 0.028);
     let length = mix(left_leg.clamp(0.0, 1.0), right_leg.clamp(0.0, 1.0), right);
     let knee_opening = mix(LOWEST_KNEE_CUFF, HIGHEST_KNEE_CUFF, back);
-    let leg_edge = mix(brief_opening, knee_opening, length);
+    let leg_edge = cuff_height(brief_opening, knee_opening, length);
 
     [waist_edge - y, y - leg_edge]
+}
+
+fn waist_height(across: f32, back: f32, waist: f32) -> f32 {
+    let hip = smooth((across - 0.015) / 0.105);
+    let low_waist = 0.885 + 0.017 * hip + 0.006 * back;
+    let high_waist = 1.040 + 0.006 * hip;
+    mix(low_waist, high_waist, waist.clamp(0.0, 1.0))
+}
+
+/// Select one join mode for the whole waistband if any part of the hem is close.
+pub(super) fn shirt_joins_waist(hem: f32, waist: f32) -> bool {
+    shirt_waist_min_gap(hem, waist) < SHIRT_WAIST_CLEARANCE_METERS
+}
+
+/// Lower bound on the shirt hem height minus the pants waist height.
+fn shirt_waist_min_gap(hem: f32, waist: f32) -> f32 {
+    const INTERVALS: usize = 64;
+    const INTERVAL_WIDTH: f32 = 0.14 / INTERVALS as f32;
+    let hem = hem.clamp(0.0, 1.0);
+    // The gap tightens toward the back and both curves reach their depth
+    // limits by z = .12. Both heights rise with |x| and flatten by .14 m.
+    (0..INTERVALS)
+        .map(|interval| {
+            let low_x = interval as f32 * INTERVAL_WIDTH;
+            let high_x = (interval + 1) as f32 * INTERVAL_WIDTH;
+            // Use each interval's lowest hem and highest waist to bound its gap.
+            shirt_hem_height(Vec3::new(low_x, 0.0, 0.12), hem) - waist_height(high_x, 1.0, waist)
+        })
+        .fold(f32::INFINITY, f32::min)
 }
 
 pub(crate) fn space_sock_length(preferred: f32, bottoms: BottomStyle) -> f32 {
     // Bound both pants cuffs, including the blend between opposing leg lengths.
     let left = bottoms.left_leg.clamp(0.0, 1.0);
     let right = bottoms.right_leg.clamp(0.0, 1.0);
-    let lowest_cuff = mix(LOWEST_BRIEF_CUFF, LOWEST_KNEE_CUFF, left.max(right));
-    let highest_cuff = mix(HIGHEST_BRIEF_CUFF, HIGHEST_KNEE_CUFF, left.min(right));
+    let lowest_cuff = cuff_height(LOWEST_BRIEF_CUFF, LOWEST_KNEE_CUFF, left.max(right));
+    let highest_cuff = cuff_height(HIGHEST_BRIEF_CUFF, HIGHEST_KNEE_CUFF, left.min(right));
     let gap_limit = lowest_cuff - SOCK_CONTOUR_METERS;
     let overlap_limit = highest_cuff + SOCK_CONTOUR_METERS;
 
@@ -58,6 +86,13 @@ pub(crate) fn space_sock_length(preferred: f32, bottoms: BottomStyle) -> f32 {
         / 10.0
 }
 
+pub(super) fn cuff_height(brief: f32, knee: f32, length: f32) -> f32 {
+    // Ease out the high side of the brief arch in the first step. Keeping its
+    // lowest point as the anchor lets every part of the cuff move downward.
+    let rounding = 0.8 * smooth(length / 0.1);
+    mix(mix(brief, LOWEST_BRIEF_CUFF, rounding), knee, length)
+}
+
 fn mix(start: f32, end: f32, amount: f32) -> f32 {
     start + (end - start) * amount
 }
@@ -70,6 +105,23 @@ mod tests {
     fn distance(point: Vec3, left_leg: f32, right_leg: f32, waist: f32) -> f32 {
         let [waist, leg] = edges(point, left_leg, right_leg, waist);
         waist.min(leg)
+    }
+
+    #[test]
+    fn first_leg_step_rounds_the_brief_opening_without_raising_it() {
+        let height = |x, length| -edges(Vec3::new(x, 0.0, 0.044), length, length, 0.0)[1];
+        let span = |length| height(0.13, length) - height(0.0, length);
+        assert_eq!(height(0.0, 0.0), LOWEST_BRIEF_CUFF);
+        assert_eq!(height(0.13, 0.0), HIGHEST_BRIEF_CUFF);
+        assert!((span(0.1) / span(0.0) - 0.18).abs() < 0.001);
+
+        for step in 1..=100 {
+            let before = (step - 1) as f32 / 100.0;
+            let after = step as f32 / 100.0;
+            for x in [0.0, 0.04, 0.08, 0.13] {
+                assert!(height(x, after) < height(x, before));
+            }
+        }
     }
 
     #[test]
@@ -90,6 +142,41 @@ mod tests {
             assert_eq!(distance(p, 2.0, -1.0, 2.0), distance(p, 1.0, 0.0, 1.0));
             assert!(distance(p, 1.0, 1.0, 1.0) >= distance(p, 0.0, 0.0, 0.0));
         }
+    }
+
+    #[test]
+    fn shirt_waist_bound_is_below_the_rendered_gap() {
+        for waist_step in 0..=10 {
+            let waist = waist_step as f32 / 10.0;
+            for hem_step in 0..=10 {
+                let hem = hem_step as f32 / 10.0;
+                let min_gap = shirt_waist_min_gap(hem, waist);
+                for x in [-0.16, -0.095, -0.045, 0.0, 0.045, 0.095, 0.16] {
+                    for z in [-0.14, -0.036, 0.02, 0.044, 0.14] {
+                        let point = Vec3::new(x, 0.0, z);
+                        let gap = shirt_hem_height(point, hem) - edges(point, 0.0, 0.0, waist)[0];
+                        assert!(
+                            gap >= min_gap - 1e-6,
+                            "hem={hem}, waist={waist}, point={point}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shirt_joins_waist_for_overlap_and_gaps_under_eight_millimeters() {
+        assert!(shirt_waist_min_gap(0.8, 0.0) < -0.01);
+        assert!(shirt_joins_waist(0.8, 0.0));
+
+        let narrow_gap = shirt_waist_min_gap(0.2, 0.6);
+        assert!(narrow_gap > 0.0 && narrow_gap < 0.008);
+        assert!(shirt_joins_waist(0.2, 0.6));
+
+        let clear_gap = shirt_waist_min_gap(0.4, 0.3);
+        assert!(clear_gap > 0.008 && clear_gap < 0.01);
+        assert!(!shirt_joins_waist(0.4, 0.3));
     }
 
     #[test]

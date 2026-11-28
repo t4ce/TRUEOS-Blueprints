@@ -658,10 +658,15 @@ impl<'a> Preview<'a> {
         if style == self.top_style {
             return Ok(());
         }
-        let fit = |style| TopStyle {
-            color: None,
-            sock_color: None,
-            ..style
+        let fit = |style: TopStyle| {
+            (
+                style.color.is_some(),
+                style.left_sleeve,
+                style.right_sleeve,
+                style.hem,
+                style.socks,
+                style.bottoms,
+            )
         };
         let fabric = style.fabric();
         let previous_fabric = self.top_style.fabric();
@@ -686,11 +691,18 @@ impl<'a> Preview<'a> {
             self.top_finish = finish;
             self.top_rows.clear();
             if fabric.is_some() {
-                self.top_rows
-                    .extend(self.top_fit.iter().map(|fit| fit.coverage_row(style)));
+                let lower = style.lower_style();
+                self.top_rows.extend(
+                    self.top_fit
+                        .iter()
+                        .map(|fit| fit.coverage_row(style, lower)),
+                );
             }
         }
-        if fabric != previous_fabric || style.sock_color != self.top_style.sock_color {
+        if fabric != previous_fabric
+            || style.color != self.top_style.color
+            || style.sock_color != self.top_style.sock_color
+        {
             self.top_pixels.clear();
             if fabric.is_some() {
                 let lighting_ramp = if self.skin_materials.is_some() {
@@ -995,7 +1007,7 @@ impl<'a> Preview<'a> {
             .retain(|butterfly| !butterfly.has_departed(now_ns));
         let view_projection = Mat4::from_cols_array(&camera.view_projection);
         for butterfly in &mut self.live_butterflies {
-            butterfly.reproject_birth(view_projection, viewport, now_ns);
+            butterfly.update_projection(view_projection, viewport, now_ns);
         }
         let back = super::camera_view_back(camera);
         let fire = if sky.firefly {

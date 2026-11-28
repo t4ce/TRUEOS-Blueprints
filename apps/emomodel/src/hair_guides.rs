@@ -240,11 +240,11 @@ mod tests {
             .find(|primitive| primitive.material().name() == Some(crate::mesh::HAIR_MATERIAL))
             .unwrap();
         let guides = prepare(&primitive, asset.blob.as_deref().unwrap()).unwrap();
-        assert_eq!(guides.replaced.len(), 11_590);
+        assert_eq!(guides.replaced.len(), 10_634);
         for (triangle, replaced) in guides.replaced.into_iter().enumerate() {
             assert_eq!(
                 replaced,
-                (1749..4173).contains(&triangle) || triangle >= 5934
+                (1501..3925).contains(&triangle) || triangle >= 4978
             );
         }
         assert_eq!(guides.strands.len(), STRAND_BUDGET);

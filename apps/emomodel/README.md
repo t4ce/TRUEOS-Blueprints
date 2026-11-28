@@ -54,21 +54,23 @@ Turn **Dress** on in the Shell3 controls to show AvatarSample_B's original
 pink skirt. It follows the avatar's current pose and shades a solid pink
 with the authored vertex normals. The source normal texture is flat.
 
-Press `Space` in `skin` or `butterfly` to start with a minimal black slip.
-Each press extends both legs and raises the waist by 10%, up to the knees and
-belly at 100%. The next press returns to 0%. Use `[` and `]` for the left leg,
-`{` and `}` for the right leg, and `-` and `=` to lower or raise the waist.
-Space keeps the sock color and adjusts the sock height when needed to keep the
-cuffs fully separated or fully overlapped. It adds a 20% margin on each side
-of the partial-overlap range. The sock ribbon follows the visible join where
-the black fabric covers the socks. A single off-white waistband follows the
-waist height, and separated pant cuffs use the same half-width ribbon with
-dark edges and two staggered rows of gray stitches.
+Press `Space` in `skin`, `butterfly`, or `reel` to roll black pants with a
+matching pastel shirt and socks. The roll picks one length for both sleeves,
+one for both pant legs, and a separate waist height. Above a gap of at least
+8 mm, both ribbons stay visible. For a closer join, the black pants extend
+under the rolled shirt hem and the shirt ribbon is the only visible seam.
+
+The sock roll adds a 20% margin on each side of the partial-overlap range.
+The sock ribbon follows the visible join where the black fabric covers the
+socks. Separated pant cuffs and the waistband use half-width off-white
+ribbons with dark edges and staggered gray stitches. Use `[` and `]` for the
+left leg, `{` and `}` for the right leg, and `-` and `=` to lower or raise the
+waist.
 
 Right-click to choose a pastel top, roll a random top and matching socks, or
-restore the original appearance. The clothing controls also work in `reel` when
-its motion files are installed. With a top active, the same keys adjust the
-sleeves and hem, and `T` cycles colors. Each sleeve reaches its wrist at maximum
+restore the original appearance. In `reel`, the clothing controls use the
+installed motion files. For a standalone top, the same keys adjust the sleeves
+and hem, and `T` cycles colors. Each sleeve reaches its wrist at maximum
 length, and the longest hem ends near the base of the seat. The neckline,
 sleeve openings, hem, and sock cuffs follow rounded contours with
 dark edges and two staggered rows of gray stitch dashes. The neckline trim is
@@ -191,7 +193,9 @@ through the unlit retained shader. Both atlases are decoded once and occupy
 In the animated preview, 28 procedural guides take the place of the long
 back hair. The source surface provides the roots, segment lengths, the direction
 each guide leaves the scalp, and its side-to-side spread. The scalp, bangs, and
-shorter locks still use the GLB mesh. Each guide has eight fixed-length segments.
+remaining short hair use the GLB mesh. The eight side locks split out for future
+procedural hair have been removed from the embedded asset. Each guide has eight
+fixed-length segments.
 The roots follow the head, and the free lengths settle into a straighter hang
 under gravity. The idle wind pushes mostly sideways and toward the avatar's
 front, with softer breezes from other directions. The guides slide over the
@@ -235,8 +239,8 @@ mesh` installs it from the executable without network access. `setup` also
 installs it before preparing the expression model. Both use `--root` when
 provided. The default path is `/apps/emomodel/AvatarSample_B.glb`.
 
-The 1,666,020-byte GLB preserves all 32,847 triangles in three meshes and
-seven material sections. It retains the skinning data and the 54 humanoid
+The 1,612,156-byte GLB contains 31,812 triangles in three meshes and seven
+material sections. It retains the skinning data and the 54 humanoid
 node mappings in `extras.humanoidBones`. It uses plain materials and contains
 zero textures, facial morph targets, or animation clips. The source VRM
 contains a joint hierarchy and bind data for posing but no glTF animation

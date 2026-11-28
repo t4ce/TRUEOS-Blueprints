@@ -20,10 +20,10 @@ ATLAS_SIZE = (BAND_SIZE[0] + (CLIP_CROP[2] - CLIP_CROP[0]) // 2, BAND_SIZE[1])
 # The band and the 47 faces of the Blender accessory split share the Hair image.
 # Each half-resolution patch records its source crop and packed atlas origin.
 PATCHES = (
-    (range(4000, 4168), (754, 1514), (0, 0)),
-    (range(4903, 4911), (0, 1672), (158, 0)),
+    (range(3259, 3427), (754, 1514), (0, 0)),
+    (range(4162, 4170), (0, 1672), (158, 0)),
     (range(526, 559), CLIP_CROP[:2], CLIP_ORIGIN),
-    (range(3427, 3451), CLIP_CROP[:2], CLIP_ORIGIN),
+    (range(3235, 3259), CLIP_CROP[:2], CLIP_ORIGIN),
 )
 
 

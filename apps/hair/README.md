@@ -1,8 +1,8 @@
 # Hair
 
 Standalone Blueprint for studying procedural back hair and airflow around
-AvatarSample_B. The bending-rod preview sweeps a shaded hull along each
-simulated guide. The cape-like source mesh supplies the resting length and
+AvatarSample_B. The bending-rod preview sweeps two thin crossed strips along
+each simulated guide. The cape-like source mesh supplies the resting length and
 appears with its original texture in the airflow study. The white,
 half-opacity sphere shows the head obstacle. The translucent blue
 ellipsoids show five torso and neck obstacles and three per arm, including
@@ -54,14 +54,12 @@ The length falls off sharply at the outer sides, where guides are up to 20%
 shorter for the same root-height layer. The upper root layers get a shorter
 cut to stagger the tips.
 
-Each guide gets a flattened six-sided lock. The default Locks look uses five
-colors sampled from the source back-hair atlas, blended along the length with
-smoothstep. The hull starts slightly inside the scalp, follows a smoothed
-guide, and tapers to a point. The guide solver still runs with the hair layer
-hidden.
-Press `3` to select hull width or `4` for hull depth. `Tab` reduces the selected
-cross-section dimension in five-point steps from 100% to 70% and wraps.
-`Shift+Tab` steps back. The scales apply to each lock along its full length.
+The two crossed strips start slightly inside the scalp and taper to a shared
+tip. They use the same broad and narrow widths as the previous lock hull.
+The fill uses five colors sampled from the back-hair atlas, projected by
+avatar-local height across the whole haircut. A thin dark edge is built into
+the fill texture and draws in the same pass.
+The guide solver still runs with the hair layer hidden.
 
 Guide lines are disabled by default in rod mode. Set `DRAW_ROD_GUIDES` in
 `src/main.rs` to enable them in code, or use `--hide hair --show guides` to
@@ -70,7 +68,7 @@ inspect the lines alone.
 `--motion 1`, `--motion 2`, and `--motion 3` select the loose rope, elastic
 springs, and bending rod at launch.
 `--motion flow` opens the original field-tracing study.
-Use `--yaw 180 --hide body-obstacles` for a clear view of the hulls behind the
+Use `--yaw 180 --hide body-obstacles` for a clear view of the strips behind the
 avatar.
 
 A headless run can write a PNG.

@@ -495,15 +495,15 @@ impl Butterfly {
         let midpoint = (min + max) * 0.5;
         Some(Birth {
             center: midpoint.truncate() * 0.5 + Vec2::splat(0.5),
-            span: (max.x - min.x) * 0.5 * width as f32 / width.min(height) as f32,
+            width_pixels: (max.x - min.x) * 0.5 * width as f32,
             depth: midpoint.z,
             draw_to_clip: view_projection * self.draw_to_world,
             stroke_width: 2.0 * STROKE_HALF_WIDTH / self.draw_to_world.x_axis.truncate().length(),
-            anchor: Some(BirthAnchor {
+            anchor: BirthAnchor {
                 draw_to_world: self.draw_to_world,
                 center: view_projection.inverse().transform_point3(midpoint),
                 width: Vec3::X * (max_world_x - min_world_x),
-            }),
+            },
         })
     }
 
@@ -712,13 +712,13 @@ mod tests {
                 );
                 let birth = butterfly.birth(complete, projection, viewport).unwrap();
                 let expected_center = birth.center * pixels;
-                let expected_width = birth.span * pixels.min_element();
+                let expected_width = birth.width_pixels;
                 let clip_to_birth = birth.draw_to_clip.inverse();
                 let original = butterfly
                     .birth(complete, initial_projection, viewport)
                     .unwrap();
                 let mut live = LiveButterfly::new(artwork as u32, 0, original, 0);
-                live.reproject_birth(projection, viewport, 750_000_000);
+                live.update_projection(projection, viewport, 750_000_000);
                 let mut min = Vec2::splat(f32::INFINITY);
                 let mut max = Vec2::splat(f32::NEG_INFINITY);
                 let mut live_outline = Vec::new();

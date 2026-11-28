@@ -17,10 +17,14 @@ const COLLAR_TRIM_START: usize = COLLAR_ROW - Surface::TRIM.len();
 const FABRIC_ROW: f32 = 68.5;
 const COLLAR_FABRIC_ROW: f32 = 66.5;
 const OPENING_ROWS_PER_METER: f32 = 500.0;
+const OPENING_WIDTH_METERS: f32 = (OPENING_TRIM_END - OPENING_ROW) as f32 / OPENING_ROWS_PER_METER;
+const HALF_WIDTH_METERS: f32 = OPENING_WIDTH_METERS * 0.5;
 const BLACK_FABRIC_SRGB: [u8; 3] = [22, 22, 22];
 const WHITE_RIBBON_SRGB: [u8; 3] = [241, 239, 233];
 const PANTS_VERTEX_ROW: usize = 52;
+const SHIRT_VERTEX_ROW: usize = 68;
 const SOCK_VERTEX_ROW: usize = 80;
+const SHIRT_UNDERLAP_METERS: f32 = 0.004;
 const JOIN_GAP_METERS: f32 = 0.002;
 const PANT_TRIM_FADE_METERS: f32 = 0.008;
 const SOCK_CONTOUR_METERS: f32 = 0.003;
@@ -34,6 +38,8 @@ pub(super) enum Surface {
     Outline,
     Sock,
     SockBand,
+    Shirt,
+    ShirtBand,
 }
 
 impl Surface {
@@ -50,7 +56,7 @@ impl Surface {
         Self::Outline,
     ];
 
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::Skin,
         Self::Fabric,
         Self::Band,
@@ -58,6 +64,8 @@ impl Surface {
         Self::Outline,
         Self::Sock,
         Self::SockBand,
+        Self::Shirt,
+        Self::ShirtBand,
     ];
 
     pub(super) fn at_row(row: usize) -> Self {
@@ -72,8 +80,8 @@ impl Surface {
     pub(super) fn albedo(self, fabric: [u8; 3]) -> [u8; 3] {
         match self {
             Self::Skin => crate::light::SKIN_SRGB,
-            Self::Fabric | Self::Sock => fabric,
-            Self::Band | Self::SockBand => {
+            Self::Fabric | Self::Sock | Self::Shirt => fabric,
+            Self::Band | Self::SockBand | Self::ShirtBand => {
                 fabric.map(|channel| (f32::from(channel) * 0.75).round() as u8)
             }
             Self::Thread => [178, 175, 181],
@@ -140,6 +148,17 @@ pub(super) struct TopStyle {
 }
 
 impl TopStyle {
+    pub(super) fn lower_style(self) -> Option<LowerStyle> {
+        let pants = self.bottoms?;
+        let joined_hem = (self.color.is_some() && bottom::shirt_joins_waist(self.hem, pants.waist))
+            .then_some(self.hem);
+        Some(LowerStyle {
+            pants,
+            socks: self.socks,
+            joined_hem,
+        })
+    }
+
     pub(crate) fn fabric(self) -> Option<[u8; 3]> {
         if self.bottoms.is_some() {
             Some(BLACK_FABRIC_SRGB)
@@ -152,6 +171,7 @@ impl TopStyle {
         if self.bottoms.is_some() {
             return match row {
                 ..OPENING_ROW => Surface::Skin,
+                SHIRT_VERTEX_ROW..SOCK_VERTEX_ROW if self.color.is_some() => Surface::Shirt,
                 SOCK_VERTEX_ROW..COLLAR_ROW => Surface::Sock,
                 COLLAR_ROW.. => Surface::Skin,
                 _ => Surface::Fabric,
@@ -165,7 +185,10 @@ impl TopStyle {
         match surface {
             Surface::Band if self.bottoms.is_some() => WHITE_RIBBON_SRGB,
             Surface::Sock | Surface::SockBand => {
-                surface.albedo(self.sock_color.map_or(fabric, Pastel::rgb))
+                surface.albedo(self.sock_color.or(self.color).map_or(fabric, Pastel::rgb))
+            }
+            Surface::Shirt | Surface::ShirtBand => {
+                surface.albedo(self.color.map_or(fabric, Pastel::rgb))
             }
             _ => surface.albedo(fabric),
         }
@@ -177,6 +200,24 @@ pub(super) struct BottomStyle {
     pub left_leg: f32,
     pub right_leg: f32,
     pub waist: f32,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct LowerStyle {
+    pants: BottomStyle,
+    socks: Option<f32>,
+    joined_hem: Option<f32>,
+}
+
+impl LowerStyle {
+    fn fit_at(self, position: Vec3) -> LowerFit {
+        let mut fit = LowerFit::at(position, self.pants, self.socks);
+        if let Some(hem) = self.joined_hem {
+            let under_shirt = shirt_hem_height(position, hem) + SHIRT_UNDERLAP_METERS;
+            fit.waist = fit.waist.max(under_shirt - position.y);
+        }
+        fit
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -257,14 +298,9 @@ impl Fit {
                 ((z - (0.017 + 0.004 * length)) / (0.036 - 0.011 * length)).clamp(-1.0, 1.0);
             0.145 + (0.535 - 0.145) * length + 0.006 * (1.0 - vertical * vertical) - 0.003 * depth
         };
-        let across = round_limit(x / (0.085 + 0.050 * style.hem));
-        let depth = ((z + 0.012) / 0.10).clamp(-1.0, 1.0);
-        // Even the lowest part of the curved hem stays above the leg split.
-        let hem =
-            1.04 + (0.835 - 1.04) * style.hem + 0.018 * (across * across - 0.5) - 0.004 * depth;
         let left = cuff(style.left_sleeve) + x;
         let right = cuff(style.right_sleeve) - x;
-        let hem = y - hem;
+        let hem = y - shirt_hem_height(self.position, style.hem);
         let shirt = if hem <= left.min(right) {
             (hem, Opening::Hem)
         } else if left <= right {
@@ -272,7 +308,9 @@ impl Fit {
         } else {
             (right, Opening::RightCuff)
         };
-        if let Some(length) = style.socks {
+        if style.bottoms.is_none()
+            && let Some(length) = style.socks
+        {
             let (sock, height) = sock_opening(self.position, length);
             if sock > shirt.0 {
                 return (sock, Opening::Sock(height));
@@ -286,10 +324,21 @@ impl Fit {
             .clamp(COLLAR_FABRIC_ROW, COVERAGE_ROWS as f32 - 0.5)
     }
 
-    pub(super) fn coverage_row(&self, style: TopStyle) -> f32 {
-        if let Some(bottoms) = style.bottoms {
-            LowerFit::at(self.position, bottoms, style.socks).vertex_row()
-        } else if self.near_collar() {
+    pub(super) fn coverage_row(&self, style: TopStyle, lower: Option<LowerStyle>) -> f32 {
+        if let Some(lower) = lower {
+            if style.color.is_some()
+                && Surface::at_row(self.shirt_row(style) as usize) != Surface::Skin
+            {
+                return SHIRT_VERTEX_ROW as f32 + 0.5;
+            }
+            lower.fit_at(self.position).vertex_row()
+        } else {
+            self.shirt_row(style)
+        }
+    }
+
+    fn shirt_row(&self, style: TopStyle) -> f32 {
+        if self.near_collar() {
             self.collar_row()
         } else {
             opening_row(self.opening(style).0)
@@ -319,6 +368,13 @@ impl Fit {
         };
         (row, stitch_along(angle, circumference))
     }
+}
+
+fn shirt_hem_height(Vec3 { x, z, .. }: Vec3, hem: f32) -> f32 {
+    let across = round_limit(x / (0.085 + 0.050 * hem));
+    let depth = ((z + 0.012) / 0.10).clamp(-1.0, 1.0);
+    // Even the lowest part of the curved hem stays above the leg split.
+    1.04 + (0.835 - 1.04) * hem + 0.018 * (across * across - 0.5) - 0.004 * depth
 }
 
 fn sock_opening(position: Vec3, length: f32) -> (f32, f32) {
@@ -386,7 +442,7 @@ mod tests {
         };
         let low_hem = TopStyle { hem: 1.0, ..short };
         let painted = |position, style| {
-            let row = Fit::at(Vec3::from_array(position)).coverage_row(style);
+            let row = Fit::at(Vec3::from_array(position)).coverage_row(style, None);
             Surface::at_row(row as usize) != Surface::Skin
         };
 
@@ -419,7 +475,7 @@ mod tests {
     #[test]
     fn the_oval_endings_sample_outline_band_and_two_threads() {
         let style = TopStyle::default();
-        let row = |position| Fit::at(Vec3::from_array(position)).coverage_row(style);
+        let row = |position| Fit::at(Vec3::from_array(position)).coverage_row(style, None);
         for side in [-1.0, 1.0] {
             let bowed = row([side * 0.148, 1.207, 0.017]);
             let upper = row([side * 0.148, 1.241, 0.017]);
@@ -449,11 +505,11 @@ mod tests {
             let distance = (offset as f32 + 0.5) / OPENING_ROWS_PER_METER;
             let cuff = Fit::at(Vec3::new(0.151 - distance, 1.207, 0.017));
             let collar = Fit::at(Vec3::new(0.0, 1.204 - distance * 0.5, -0.045));
-            let collar_row = collar.coverage_row(shortest);
-            assert_eq!(collar.coverage_row(longest), collar_row);
+            let collar_row = collar.coverage_row(shortest, None);
+            assert_eq!(collar.coverage_row(longest, None), collar_row);
             assert_eq!(
                 Surface::at_row(collar_row as usize),
-                Surface::at_row(cuff.coverage_row(shortest) as usize)
+                Surface::at_row(cuff.coverage_row(shortest, None) as usize)
             );
         }
     }
@@ -482,7 +538,7 @@ mod tests {
                 crossing += 1;
                 for fit in triangle {
                     assert_eq!(
-                        Surface::at_row(fit.coverage_row(shortest) as usize),
+                        Surface::at_row(fit.coverage_row(shortest, None) as usize),
                         Surface::Fabric
                     );
                 }

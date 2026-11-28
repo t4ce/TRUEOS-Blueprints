@@ -174,18 +174,48 @@ impl<'a> Surface<'a> {
         material: &Material,
         texture: Option<&Texture>,
     ) {
+        self.mesh_with_lighting::<true>(camera, vertices, indices, material, texture);
+    }
+
+    pub(crate) fn flat_mesh(
+        &mut self,
+        camera: Camera,
+        vertices: &[Vertex],
+        indices: &[[u32; 3]],
+        material: &Material,
+        texture: Option<&Texture>,
+    ) {
+        self.mesh_with_lighting::<false>(camera, vertices, indices, material, texture);
+    }
+
+    fn mesh_with_lighting<const LIGHTING: bool>(
+        &mut self,
+        camera: Camera,
+        vertices: &[Vertex],
+        indices: &[[u32; 3]],
+        material: &Material,
+        texture: Option<&Texture>,
+    ) {
         let projected: Vec<_> = vertices
             .iter()
             .map(|vertex| Projected {
                 position: camera.project(vertex.position),
                 normal: vertex.normal,
-                shade: 0.71 + 0.29 * vertex.normal.dot(camera.light).max(0.0),
+                shade: if LIGHTING {
+                    0.71 + 0.29 * vertex.normal.dot(camera.light).max(0.0)
+                } else {
+                    1.0
+                },
                 uv: vertex.uv,
             })
             .collect();
-        let halfway = (camera.light + camera.toward).normalize_or_zero();
+        let halfway = if LIGHTING {
+            (camera.light + camera.toward).normalize_or_zero()
+        } else {
+            Vec3::ZERO
+        };
         for triangle in indices {
-            self.triangle(
+            self.triangle::<LIGHTING>(
                 triangle.map(|index| projected[index as usize]),
                 material,
                 texture,
@@ -194,7 +224,7 @@ impl<'a> Surface<'a> {
         }
     }
 
-    fn triangle(
+    fn triangle<const LIGHTING: bool>(
         &mut self,
         [a, b, c]: [Projected; 3],
         material: &Material,
@@ -235,14 +265,18 @@ impl<'a> Surface<'a> {
                     Alpha::Blend if color.w == 0.0 => continue,
                     Alpha::Blend => color.w,
                 };
-                let shade = wa * a.shade + wb * b.shade + wc * c.shade;
                 let base = color.truncate();
-                let color = if let Some(finish) = material.finish {
-                    let normal =
-                        (wa * a.normal + wb * b.normal + wc * c.normal).normalize_or_zero();
-                    finish.shade(base, shade, normal, halfway)
+                let color = if LIGHTING {
+                    let shade = wa * a.shade + wb * b.shade + wc * c.shade;
+                    if let Some(finish) = material.finish {
+                        let normal =
+                            (wa * a.normal + wb * b.normal + wc * c.normal).normalize_or_zero();
+                        finish.shade(base, shade, normal, halfway)
+                    } else {
+                        base * shade
+                    }
                 } else {
-                    base * shade
+                    base
                 };
                 self.blend(index, color, alpha);
                 if alpha >= 0.98 {
@@ -525,6 +559,53 @@ fn rainbow(value: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flat_mesh_preserves_texture_color_on_both_faces() {
+        let camera = Camera {
+            right: Vec3::X,
+            up: Vec3::Y,
+            toward: Vec3::Z,
+            light: Vec3::Z,
+            center: Vec3::ZERO,
+            offset: Vec2::ONE,
+            scale: 1.0,
+        };
+        let vertices = [
+            Vec3::new(-2.0, -2.0, 0.0),
+            Vec3::new(2.0, -2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ]
+        .map(|position| Vertex {
+            position,
+            normal: Vec3::NEG_Z,
+            uv: Vec2::ZERO,
+        });
+        let material = Material {
+            texture: None,
+            factor: Vec4::ONE,
+            alpha: Alpha::Opaque,
+            double_sided: true,
+            finish: None,
+        };
+        let color = [79, 62, 101, 255];
+        let texture = Texture {
+            width: 1,
+            height: 1,
+            pixels: vec![color],
+        };
+        let mut pixels = [0; 16];
+        let mut depth = [0.0; 4];
+        let mut surface = Surface::new(2, 2, &mut pixels, &mut depth);
+        for triangle in [[0, 1, 2], [0, 2, 1]] {
+            surface.clear();
+            surface.flat_mesh(camera, &vertices, &[triangle], &material, Some(&texture));
+            assert_eq!(surface.pixels[..4], color);
+        }
+        surface.clear();
+        surface.mesh(camera, &vertices, &[[0, 1, 2]], &material, Some(&texture));
+        assert_eq!(surface.pixels[..4], [56, 44, 72, 255]);
+    }
 
     #[test]
     fn camera_fits_the_avatar_and_sphere_in_wide_and_tall_views() {

@@ -17,6 +17,8 @@ const AVATAR: &[u8] = include_bytes!("../assets/avatar.glb");
 const BACK_HAIR_ANCHOR: &[u8] = include_bytes!("../assets/back-hair-anchor-surface.glb");
 const WORLD_FLOW_DOWN: Vec3 = Vec3::NEG_Y;
 const ROOT_INSET: f32 = 0.006;
+const LOCK_HALF_WIDTH: f32 = 0.008 * 0.70;
+const LOCK_HALF_DEPTH: f32 = 0.004 * 0.70;
 // Opaque sRGB samples from the authored Back Hair surface, in root-to-tip order.
 const BACK_HAIR_PALETTE: [(f32, [u8; 3]); 5] = [
     (0.0, [42, 32, 61]),
@@ -29,7 +31,7 @@ const LOCK_MATERIAL: Material = Material {
     texture: None,
     factor: Vec4::ONE,
     alpha: Alpha::Opaque,
-    double_sided: false,
+    double_sided: true,
     finish: None,
 };
 
@@ -49,32 +51,34 @@ pub(crate) struct DrawCounts {
 struct ProceduralHair {
     mesh: HairHull,
     lock_texture: Texture,
+    color_top: f32,
+    color_span: f32,
 }
 
 impl ProceduralHair {
-    fn new() -> Self {
+    fn new(color_top: f32, color_span: f32) -> Self {
         Self {
             mesh: HairHull::default(),
             lock_texture: lock_texture(&BACK_HAIR_PALETTE),
+            color_top,
+            color_span,
         }
     }
 
-    fn rebuild(&mut self, ropes: &RopeGuides, width_percent: u8, depth_percent: u8) {
+    fn rebuild(&mut self, ropes: &RopeGuides) {
         self.mesh.clear();
-        let half_width = 0.008 * (f32::from(width_percent) / 100.0);
-        let half_depth = 0.004 * (f32::from(depth_percent) / 100.0);
         ropes.for_each_curve(|index, points| {
             let scalp_normal = (points[0] - HEAD_CENTER).normalize_or(Vec3::Z);
             points[0] -= ROOT_INSET * scalp_normal;
             let width_scale = 0.9 + 0.2 * (index % 7) as f32 / 6.0;
-            let stagger = (index * 17 % 37) as f32 / 36.0 - 0.5;
             self.mesh.append_lock(
                 points,
                 scalp_normal,
                 LockProfile {
-                    half_width: half_width * width_scale,
-                    half_depth,
-                    color_shift: 0.07 * stagger,
+                    half_width: LOCK_HALF_WIDTH * width_scale,
+                    half_depth: LOCK_HALF_DEPTH,
+                    color_top: self.color_top,
+                    color_span: self.color_span,
                 },
             );
         });
@@ -123,6 +127,7 @@ impl Scene {
             .collect::<Result<Vec<_>>>()?;
         // Masked/opaque surfaces establish the depth used by eye overlays.
         parts.sort_by_key(|part| matches!(part.material.alpha, Alpha::Blend));
+        let hair_bounds = back_hair_bounds(&parts);
         let rods = controls.hair_motion == Some(HairMotion::Rod) && !controls.water;
         let (mut roots, base_count) = back_hair_roots(rods)?;
         let pose = world_to_avatar(controls);
@@ -130,20 +135,20 @@ impl Scene {
             .hair_motion
             .filter(|_| !controls.water)
             .map(|motion| {
-                let tip_y = parts
-                    .iter()
-                    .filter(|part| part.back_hair)
-                    .flat_map(|part| &part.vertices)
-                    .map(|vertex| vertex.position.y)
-                    .reduce(f32::min)
-                    .unwrap_or(0.75);
+                let tip_y = hair_bounds.map_or(0.75, |(low, _)| low.y);
                 if rods {
                     RopeGuides::with_extra_roots(&roots, base_count, tip_y, pose, motion)
                 } else {
                     RopeGuides::new(&roots, tip_y, pose, motion)
                 }
             });
-        let hull = rods.then(ProceduralHair::new);
+        let hull = rods.then(|| {
+            let (color_top, color_span) = hair_bounds
+                .map(|(low, high)| (high.y, high.y - low.y))
+                .filter(|(_, span)| *span > 0.0)
+                .unwrap_or((1.49, 0.74));
+            ProceduralHair::new(color_top, color_span)
+        });
         let solver = (ropes.is_none() || controls.layers.field).then(|| {
             roots.truncate(base_count);
             Solver::new(WORLD_FLOW_DOWN, pose, roots)
@@ -156,9 +161,9 @@ impl Scene {
         );
         let viewport = Vec2::new(width as f32, height as f32);
         let (camera_scale, camera_center) = if cfg!(target_os = "linux") {
-            let (scale, center) = rods
-                .then(|| rest_hair_frame(viewport, &parts))
-                .flatten()
+            let (scale, center) = hair_bounds
+                .filter(|_| rods)
+                .and_then(|bounds| rest_hair_frame(viewport, bounds))
                 .unwrap_or_else(|| {
                     let unrolled_camera = |yaw| {
                         Camera::new(
@@ -300,12 +305,8 @@ impl Scene {
             if layers.hair
                 && let (Some(hull), Some(ropes)) = (&mut self.hull, &self.ropes)
             {
-                hull.rebuild(
-                    ropes,
-                    controls.hull_width_percent,
-                    controls.hull_depth_percent,
-                );
-                target.mesh(
+                hull.rebuild(ropes);
+                target.flat_mesh(
                     camera,
                     &hull.mesh.vertices,
                     &hull.mesh.triangles,
@@ -353,16 +354,19 @@ impl Scene {
     }
 }
 
-fn rest_hair_frame(viewport: Vec2, parts: &[Part]) -> Option<(f32, Vec3)> {
+fn back_hair_bounds(parts: &[Part]) -> Option<(Vec3, Vec3)> {
     let mut positions = parts
         .iter()
         .filter(|part| part.back_hair)
         .flat_map(|part| &part.vertices)
         .map(|vertex| vertex.position);
     let first = positions.next()?;
-    let (low, high) = positions.fold((first, first), |(low, high), point| {
+    Some(positions.fold((first, first), |(low, high), point| {
         (low.min(point), high.max(point))
-    });
+    }))
+}
+
+fn rest_hair_frame(viewport: Vec2, (low, high): (Vec3, Vec3)) -> Option<(f32, Vec3)> {
     let span = high - low;
     if span.y <= 0.0 {
         return None;
@@ -559,7 +563,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_guide_budget_draws_at_start_and_survives_cross_section_changes() {
+    fn each_guide_draws_two_tapered_strips() {
         let (roots, base) = back_hair_roots(true).unwrap();
         assert_eq!(base, 150);
         assert_eq!(&roots[..base], reference_roots());
@@ -575,18 +579,14 @@ mod tests {
         controls.layers.field = false;
         let mut scene = Scene::new(240, 180, controls).unwrap();
         let mut pixels = vec![0; 240 * 180 * 4];
-        let baseline = scene.draw(controls, &mut pixels);
-        assert_eq!(scene.guide_count(), roots.len());
-        assert!(baseline.triangles > 0);
-        assert_eq!(baseline.segments, 0);
-        let original = pixels.clone();
-        controls.hull_width_percent = 70;
-        controls.hull_depth_percent = 70;
-        assert_eq!(
-            scene.draw(controls, &mut pixels).triangles,
-            baseline.triangles
-        );
-        assert_ne!(pixels, original);
+        let drawn = scene.draw(controls, &mut pixels);
+        let mut links = 0;
+        scene.ropes.as_ref().unwrap().for_each_curve(|_, points| {
+            links += points.len() - 1;
+        });
+        // Two strips use four triangles per link and two on the tapered last link.
+        assert_eq!(drawn.triangles, 4 * links - 2 * roots.len());
+        assert_eq!(drawn.segments, 0);
         assert_eq!(scene.guide_count(), roots.len());
     }
 

@@ -66,8 +66,6 @@ pub(crate) struct Controls {
     pub(crate) roll: f32,
     pub(crate) tilt: f32,
     pub(crate) hair_motion: Option<HairMotion>,
-    pub(crate) hull_width_percent: u8,
-    pub(crate) hull_depth_percent: u8,
     pub(crate) rod_tuning: hair_rope::RodTuning,
     #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
@@ -101,8 +99,6 @@ impl Default for Controls {
             roll: 0.0,
             tilt: 0.0,
             hair_motion,
-            hull_width_percent: 100,
-            hull_depth_percent: 100,
             rod_tuning: hair_rope::RodTuning::default(),
             #[cfg(target_os = "trueos")]
             paused: false,
@@ -182,6 +178,12 @@ fn main() -> Result<()> {
                     "available hull is locks"
                 );
             }
+            "--hull-sampling" => {
+                ensure!(
+                    matches!(args.next().as_deref(), Some("100" | "minimum")),
+                    "hull sampling is fixed at 100"
+                );
+            }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
             "--hide" | "--show" => {
@@ -191,7 +193,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin and up or down to tilt. In bending-rod mode, 1 and 2 cycle wind strength and direction. Press 3 for hull width or 4 for hull depth, then Tab to change the selected dimension. Hold Shift to step backward. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin and up or down to tilt. In bending-rod mode, 1 and 2 cycle wind strength and direction. Hold Shift to step backward. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");
@@ -224,7 +226,7 @@ fn main() -> Result<()> {
             println!("hair: medium water surface, {} triangles", drawn.triangles);
         } else if let Some(motion) = controls.hair_motion {
             println!(
-                "hair: {}, {} roots, {} hull triangles, {} debug line segments",
+                "hair: {}, {} roots, {} strip triangles, {} debug line segments",
                 motion.label(),
                 scene.guide_count(),
                 drawn.triangles,

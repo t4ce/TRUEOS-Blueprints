@@ -88,28 +88,28 @@ const PIECES: [PieceLayout; 6] = [
         target: PINS,
     },
     PieceLayout {
-        vertices: 3427..3439,
+        vertices: 3235..3247,
         finish: PLASTIC,
         source: PINS,
         size: PIN_SIZE,
         target: [271, 145],
     },
     PieceLayout {
-        vertices: 3439..3451,
+        vertices: 3247..3259,
         finish: PLASTIC,
         source: PINS,
         size: PIN_SIZE,
         target: [312, 145],
     },
     PieceLayout {
-        vertices: 4903..4911,
+        vertices: 4162..4170,
         finish: METAL,
         source: [160, 25],
         size: [53, 63],
         target: [160, 25],
     },
 ];
-const CLASP_VERTICES: [usize; 5] = [4095, 4097, 4104, 4109, 4116];
+const CLASP_VERTICES: [usize; 5] = [3354, 3356, 3363, 3368, 3375];
 
 struct Piece {
     vertices: Vec<usize>,

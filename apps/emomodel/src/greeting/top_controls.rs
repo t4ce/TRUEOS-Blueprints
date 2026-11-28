@@ -6,7 +6,6 @@ use crate::top::{BottomStyle, Pastel, TopStyle, space_sock_length};
 pub(super) struct TopControls {
     pub(super) style: TopStyle,
     invocation: Option<(u64, TopStyle)>,
-    bottoms_sock_roll: Option<f32>,
 }
 
 impl TopControls {
@@ -29,35 +28,25 @@ impl TopControls {
                 self.invocation = None;
                 if style.bottoms.is_some() == self.style.bottoms.is_some() {
                     with_entries(style, |entries| event.dispatch(entries, &mut self.style));
-                    if self.style.bottoms.is_none() {
-                        self.bottoms_sock_roll = None;
-                    }
                 }
             }
         }
         Ok(())
     }
 
-    pub(super) fn step_bottoms(&mut self) {
-        if let Some(bottoms) = &mut self.style.bottoms {
-            if [bottoms.left_leg, bottoms.right_leg, bottoms.waist]
-                .into_iter()
-                .all(|length| length >= 1.0)
-            {
-                *bottoms = BottomStyle::default();
-            } else {
-                adjust(&mut bottoms.left_leg, 10);
-                adjust(&mut bottoms.right_leg, 10);
-                adjust(&mut bottoms.waist, 10);
-            }
-        } else {
-            select_bottoms(&mut self.style);
-        }
-
-        if let (Some(bottoms), Some(socks)) = (self.style.bottoms, self.style.socks) {
-            let roll = *self.bottoms_sock_roll.get_or_insert(socks);
-            self.style.socks = Some(space_sock_length(roll, bottoms));
-        }
+    pub(super) fn roll_full_outfit(&mut self) {
+        let mut roll = trueos::rng::u64();
+        let mut style = rolled_top(&mut roll);
+        let leg = roll_length(&mut roll);
+        let bottoms = BottomStyle {
+            left_leg: leg,
+            right_leg: leg,
+            waist: roll_length(&mut roll),
+        };
+        style.socks = style.socks.map(|length| space_sock_length(length, bottoms));
+        style.sock_color = style.color;
+        style.bottoms = Some(bottoms);
+        self.style = style;
     }
 
     pub(super) fn key(&mut self, key: char) {
@@ -72,7 +61,6 @@ impl TopControls {
             } else {
                 clear_outfit(&mut self.style);
             }
-            self.bottoms_sock_roll = None;
             return;
         }
         if self.style.bottoms.is_some() || self.style.color.is_some() {
@@ -95,6 +83,20 @@ impl TopControls {
             _ => "",
         };
         if let Some(bottoms) = self.style.bottoms {
+            if let Some(color) = self.style.color {
+                let socks = self.style.socks.map_or_else(String::new, |length| {
+                    format!(" · Socks {}%", percentage(length))
+                });
+                return format!(
+                    "{base}{sampling} · {} · Sleeves {}%, hem {}% · Legs {}/{}%, waist {}%{socks}",
+                    color.name(),
+                    percentage(self.style.left_sleeve),
+                    percentage(self.style.hem),
+                    percentage(bottoms.left_leg),
+                    percentage(bottoms.right_leg),
+                    percentage(bottoms.waist),
+                );
+            }
             let socks = self
                 .style
                 .socks
@@ -103,7 +105,7 @@ impl TopControls {
                     format!(" · {} socks {}%", color.name(), percentage(length))
                 });
             return format!(
-                "{base}{sampling} · Black bottoms · Left leg {}% · Right leg {}% · Waist {}%{socks}",
+                "{base}{sampling} · Black pants · Legs {}/{}% · Waist {}%{socks}",
                 percentage(bottoms.left_leg),
                 percentage(bottoms.right_leg),
                 percentage(bottoms.waist),
@@ -123,9 +125,7 @@ impl TopControls {
                 )
             }
             None => {
-                format!(
-                    "{base}{sampling} · Space for black bottoms and socks · Right-click for clothing"
-                )
+                format!("{base}{sampling} · Space rolls an outfit · Right-click for clothing")
             }
         }
     }
@@ -136,12 +136,18 @@ fn with_entries<T>(
     use_entries: impl FnOnce(&[MenuEntry<'_, TopStyle>]) -> T,
 ) -> T {
     let heading = match (style.bottoms, style.color) {
-        (Some(bottoms), _) => format!(
-            "Black  L{} R{} W{}",
-            percentage(bottoms.left_leg),
-            percentage(bottoms.right_leg),
-            percentage(bottoms.waist),
-        ),
+        (Some(bottoms), color) => {
+            let label = color.map_or_else(
+                || "Black".to_owned(),
+                |color| format!("{} · Black", color.name()),
+            );
+            format!(
+                "{label}  L{} R{} W{}",
+                percentage(bottoms.left_leg),
+                percentage(bottoms.right_leg),
+                percentage(bottoms.waist),
+            )
+        }
         (None, Some(color)) => format!(
             "{}  L{} R{} H{}",
             color.name(),
@@ -156,9 +162,12 @@ fn with_entries<T>(
         MenuEntry::new("Original", clear_outfit),
     ]);
     if style.bottoms.is_none() {
-        entries.push(MenuEntry::new("Random pastel outfit", roll_outfit));
+        entries.push(MenuEntry::new("Random pastel outfit", roll_pastel_outfit));
     }
-    if style.bottoms.is_none() && style.color.is_none() {
+    if matches!(
+        (style.bottoms, style.color),
+        (None, None) | (Some(_), Some(_))
+    ) {
         entries.push(MenuEntry::new("Black bottoms and socks", select_bottoms));
     }
     let choices: [fn(&mut TopStyle); Pastel::ALL.len()] = [
@@ -172,7 +181,7 @@ fn with_entries<T>(
         select_color::<7>,
     ];
     for (color, select) in Pastel::ALL.into_iter().zip(choices) {
-        if style.color != Some(color) {
+        if style.bottoms.is_some() || style.color != Some(color) {
             entries.push(MenuEntry::new(color.name(), select));
         }
     }
@@ -264,20 +273,30 @@ fn select_bottoms(style: &mut TopStyle) {
     style.bottoms = Some(BottomStyle::default());
 }
 
-fn roll_outfit(style: &mut TopStyle) {
-    let roll = trueos::rng::u64();
+fn roll_pastel_outfit(style: &mut TopStyle) {
+    *style = rolled_top(&mut trueos::rng::u64());
+}
+
+fn rolled_top(roll: &mut u64) -> TopStyle {
     let colors = Pastel::ALL.len() as u64;
-    let lengths = roll / colors;
-    let sleeves = (lengths % 11) as f32 / 10.0;
-    *style = TopStyle {
-        color: Some(Pastel::ALL[(roll % colors) as usize]),
+    let color = Pastel::ALL[(*roll % colors) as usize];
+    *roll /= colors;
+    let sleeves = roll_length(roll);
+    TopStyle {
+        color: Some(color),
         left_sleeve: sleeves,
         right_sleeve: sleeves,
-        hem: (lengths / 11 % 11) as f32 / 10.0,
-        socks: Some((lengths / 121 % 11) as f32 / 10.0),
+        hem: roll_length(roll),
+        socks: Some(roll_length(roll)),
         sock_color: None,
         bottoms: None,
-    };
+    }
+}
+
+fn roll_length(roll: &mut u64) -> f32 {
+    let length = (*roll % 11) as f32 / 10.0;
+    *roll /= 11;
+    length
 }
 
 fn clear_outfit(style: &mut TopStyle) {

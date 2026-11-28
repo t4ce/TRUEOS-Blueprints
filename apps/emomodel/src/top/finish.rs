@@ -3,17 +3,15 @@ use std::ops::Range;
 use glam::{Vec2, Vec3};
 
 use super::{
-    BottomStyle, COLLAR_ROW, COLLAR_TRIM_START, Fit, JOIN_GAP_METERS, LowerFit, OPENING_ROW,
-    OPENING_ROWS_PER_METER, OPENING_TRIM_END, PANT_TRIM_FADE_METERS, Surface, TopStyle, chart,
-    leg_phase, smooth, stitch_along, trim,
+    COLLAR_ROW, COLLAR_TRIM_START, Fit, HALF_WIDTH_METERS, JOIN_GAP_METERS, LowerFit, LowerStyle,
+    OPENING_ROW, OPENING_ROWS_PER_METER, OPENING_TRIM_END, OPENING_WIDTH_METERS,
+    PANT_TRIM_FADE_METERS, Surface, TopStyle, bottom, chart, leg_phase, smooth, stitch_along, trim,
 };
 
 pub(crate) const ATLAS_WIDTH: usize = 512;
 pub(crate) const MAX_ROWS: usize = 768;
 const OPENING_TEXEL_METERS: f32 = 0.0011;
 const COLLAR_TEXEL_METERS: f32 = 0.0007;
-const OPENING_WIDTH_METERS: f32 = (OPENING_TRIM_END - OPENING_ROW) as f32 / OPENING_ROWS_PER_METER;
-const HALF_WIDTH_METERS: f32 = OPENING_WIDTH_METERS * 0.5;
 
 type IndexBytes = [[u8; 4]; 3];
 
@@ -50,25 +48,26 @@ impl Finish {
     where
         F: Fn(Vec3) -> Vec3,
     {
+        let lower = style.lower_style();
         let positions = |id: usize| triangles[id].map(|i| fits[i as usize - body_start].position);
         let pack = |scale: f32| {
             chart::pack(
                 ATLAS_WIDTH,
                 body_triangles.clone().filter_map(|id| {
                     let points = positions(id);
-                    texel_size(points, style).map(|texel_meters| (id, points, texel_meters * scale))
+                    texel_size(points, style, lower)
+                        .map(|texel_meters| (id, points, texel_meters * scale))
                 }),
             )
         };
-        let (rows, charts) = pack(1.0)?;
-        let (rows, charts) = if rows > MAX_ROWS && style.bottoms.is_some() {
-            pack(1.25)?
-        } else {
-            (rows, charts)
+        let scales: &[f32] = match (style.bottoms.is_some(), style.color.is_some()) {
+            (true, true) => &[1.0, 1.25, 1.5, 1.75, 2.0],
+            (true, false) => &[1.0, 1.25],
+            _ => &[1.0],
         };
-        if rows > MAX_ROWS {
-            return None;
-        }
+        let (rows, charts) = scales
+            .iter()
+            .find_map(|&scale| pack(scale).filter(|(rows, _)| *rows <= MAX_ROWS))?;
         let patches = charts
             .into_iter()
             .map(|chart| {
@@ -80,7 +79,7 @@ impl Finish {
                     .texels()
                     .map(|(_, weights)| {
                         let point = interpolate(points, weights);
-                        let (sample, tilt) = sample_at(point, steps, style);
+                        let (sample, tilt) = sample_at(point, steps, style, lower);
                         let tint = if sample.weights[Surface::Skin as usize] > 0.0 {
                             tint_at(weights)
                         } else {
@@ -176,11 +175,18 @@ impl Finish {
                     let skin = texel.material[Surface::Skin as usize];
                     let fabric = texel.material[Surface::Fabric as usize];
                     let sock = texel.material[Surface::Sock as usize];
-                    if fabric == 1.0 || sock == 1.0 || (skin == 1.0 && texel.tint == Vec3::ONE) {
+                    let shirt = texel.material[Surface::Shirt as usize];
+                    if fabric == 1.0
+                        || sock == 1.0
+                        || shirt == 1.0
+                        || (skin == 1.0 && texel.tint == Vec3::ONE)
+                    {
                         let surface = if fabric == 1.0 {
                             Surface::Fabric
                         } else if sock == 1.0 {
                             Surface::Sock
+                        } else if shirt == 1.0 {
+                            Surface::Shirt
                         } else {
                             Surface::Skin
                         };
@@ -202,6 +208,7 @@ impl Finish {
                             rgb += pixel_rgb(ramp, flat) * (texel.tint * weight);
                         } else if surface == Surface::Fabric as usize
                             || surface == Surface::Sock as usize
+                            || surface == Surface::Shirt as usize
                         {
                             rgb += pixel_rgb(ramp, flat) * weight;
                         } else {
@@ -254,7 +261,7 @@ fn trim_overlap(min: f32, max: f32, start: usize, end: usize) -> bool {
     min < end as f32 + 2.0 && max > start as f32 - 2.0
 }
 
-fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle) -> Option<f32> {
+fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle, lower: Option<LowerStyle>) -> Option<f32> {
     let probes = [
         a,
         b,
@@ -271,26 +278,36 @@ fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle) -> Option<f32> {
                 (min.min(value), max.max(value))
             })
     };
-    if let Some(bottoms) = style.bottoms {
-        let fits = probes.map(|point| LowerFit::at(point, bottoms, style.socks));
+    let shirt_texel = if style.bottoms.is_none() || style.color.is_some() {
+        let (min, max) = bounds(probes.map(|point| Fit::at(point).shirt_row(style)));
+        if trim_overlap(min, max, COLLAR_TRIM_START, COLLAR_ROW) {
+            return Some(COLLAR_TEXEL_METERS);
+        }
+        trim_overlap(min, max, OPENING_ROW, OPENING_TRIM_END).then_some(OPENING_TEXEL_METERS)
+    } else {
+        None
+    };
+    if let Some(lower) = lower {
+        let fits = probes.map(|point| lower.fit_at(point));
         let crosses = |distances, size: f32| {
             let (min, max) = bounds(distances);
             min <= size + 0.003 && max >= -0.003
         };
         let (waist_min, waist_max) = bounds(fits.map(|fit| fit.waist));
         let (leg_min, leg_max) = bounds(fits.map(|fit| fit.leg));
-        let pant_width = if style.socks.is_some() {
+        let pant_width = if lower.socks.is_some() {
             HALF_WIDTH_METERS
         } else {
             0.0
         };
+        let near_waistband = lower.joined_hem.is_none() && waist_min <= HALF_WIDTH_METERS + 0.003;
         if waist_max >= -0.003
             && leg_max >= -0.003
-            && (waist_min <= HALF_WIDTH_METERS + 0.003 || leg_min <= pant_width + 0.003)
+            && (near_waistband || leg_min <= pant_width + 0.003)
         {
             return Some(COLLAR_TEXEL_METERS);
         }
-        return (leg_min < 0.003
+        let sock_texel = (leg_min < 0.003
             && crosses(
                 fits.map(|fit| {
                     fit.sock.map_or(f32::NEG_INFINITY, |(distance, _)| {
@@ -304,22 +321,45 @@ fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle) -> Option<f32> {
                 OPENING_WIDTH_METERS,
             ))
         .then_some(OPENING_TEXEL_METERS);
+        return shirt_texel.or(sock_texel);
     }
-    let (min, max) = bounds(probes.map(|point| Fit::at(point).coverage_row(style)));
-    if trim_overlap(min, max, COLLAR_TRIM_START, COLLAR_ROW) {
-        Some(COLLAR_TEXEL_METERS)
-    } else if trim_overlap(min, max, OPENING_ROW, OPENING_TRIM_END) {
-        Some(OPENING_TEXEL_METERS)
-    } else {
-        None
-    }
+    shirt_texel
 }
 
-fn sample_at(point: Vec3, steps: [Vec3; 2], style: TopStyle) -> (trim::Sample, Vec2) {
-    if let Some(bottoms) = style.bottoms {
-        return lower_sample(point, steps, bottoms, style.socks);
+fn sample_at(
+    point: Vec3,
+    steps: [Vec3; 2],
+    style: TopStyle,
+    lower: Option<LowerStyle>,
+) -> (trim::Sample, Vec2) {
+    let Some(lower) = lower else {
+        return shirt_sample(point, steps, style);
+    };
+    if style.color.is_none() {
+        return lower_sample(point, steps, lower);
     }
-    let row = Fit::at(point).coverage_row(style);
+
+    let (mut shirt, mut tilt) = shirt_sample(point, steps, style);
+    let below_shirt = std::mem::take(&mut shirt.weights[Surface::Skin as usize]);
+    if below_shirt == 1.0 {
+        return lower_sample(point, steps, lower);
+    }
+    shirt.weights[Surface::Shirt as usize] =
+        std::mem::take(&mut shirt.weights[Surface::Fabric as usize]);
+    shirt.weights[Surface::ShirtBand as usize] =
+        std::mem::take(&mut shirt.weights[Surface::Band as usize]);
+    if below_shirt > 0.0 {
+        let (lower, lower_tilt) = lower_sample(point, steps, lower);
+        for (weight, under) in shirt.weights.iter_mut().zip(lower.weights) {
+            *weight += under * below_shirt;
+        }
+        tilt += lower_tilt * below_shirt;
+    }
+    (shirt, tilt)
+}
+
+fn shirt_sample(point: Vec3, steps: [Vec3; 2], style: TopStyle) -> (trim::Sample, Vec2) {
+    let row = Fit::at(point).shirt_row(style);
     if near_trim(row, row) {
         trim_at(point, steps, style)
     } else {
@@ -327,13 +367,9 @@ fn sample_at(point: Vec3, steps: [Vec3; 2], style: TopStyle) -> (trim::Sample, V
     }
 }
 
-fn lower_sample(
-    point: Vec3,
-    steps: [Vec3; 2],
-    pants: BottomStyle,
-    socks: Option<f32>,
-) -> (trim::Sample, Vec2) {
-    let fit_at = |point| LowerFit::at(point, pants, socks);
+fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Sample, Vec2) {
+    let pants = lower.pants;
+    let fit_at = |point| lower.fit_at(point);
     let fit = fit_at(point);
     let samples = steps.map(|step| [fit_at(point - 0.5 * step), fit_at(point + 0.5 * step)]);
     let gradient =
@@ -407,16 +443,18 @@ fn lower_sample(
         tilt += ribbon.slope * gradient.normalize_or_zero() * scale;
     };
 
-    let waist_circumference = 0.72 - 0.15 * pants.waist.clamp(0.0, 1.0);
-    draw_ribbon(
-        fit.waist,
-        waist_gradient,
-        Surface::Fabric,
-        Surface::Band,
-        2.0,
-        1.0,
-        &|point| ((point.x / 1.3).atan2(point.z - 0.015), waist_circumference),
-    );
+    if lower.joined_hem.is_none() {
+        let waist_circumference = 0.72 - 0.15 * pants.waist.clamp(0.0, 1.0);
+        draw_ribbon(
+            fit.waist,
+            waist_gradient,
+            Surface::Fabric,
+            Surface::Band,
+            2.0,
+            1.0,
+            &|point| ((point.x / 1.3).atan2(point.z - 0.015), waist_circumference),
+        );
+    }
 
     if let Some((sock_distance, sock_height)) = fit.sock {
         // A cuff can touch at its inner arc and still leave a gap on the
@@ -432,7 +470,7 @@ fn lower_sample(
         } else {
             pants.right_leg
         };
-        let pant_height = 0.84 + (0.501 - 0.84) * leg_length.clamp(0.0, 1.0);
+        let pant_height = bottom::cuff_height(0.84, 0.501, leg_length.clamp(0.0, 1.0));
         draw_ribbon(
             fit.leg,
             leg_gradient,
@@ -488,7 +526,82 @@ fn trim_at(point: Vec3, steps: [Vec3; 2], style: TopStyle) -> (trim::Sample, Vec
 
 #[cfg(test)]
 mod tests {
+    use super::super::{BottomStyle, Pastel, shirt_hem_height};
     use super::*;
+
+    #[test]
+    fn combined_outfit_preserves_a_clear_gap_or_joins_black_pants_to_the_shirt() {
+        let bottoms = BottomStyle {
+            left_leg: 0.6,
+            right_leg: 0.6,
+            waist: 0.5,
+        };
+        let separated = TopStyle {
+            bottoms: Some(bottoms),
+            color: Some(Pastel::Mint),
+            sock_color: Some(Pastel::Mint),
+            hem: 0.1,
+            socks: Some(0.3),
+            ..TopStyle::default()
+        };
+        let close = TopStyle {
+            hem: 0.28,
+            ..separated
+        };
+        let covered = TopStyle {
+            hem: 0.65,
+            ..separated
+        };
+        let point = Vec3::new(0.07, 0.0, -0.06);
+        let waist = LowerFit::at(point, bottoms, separated.socks).waist;
+        let steps = [Vec3::X * 0.0007, Vec3::Y * 0.0007];
+        let at = |y, style: TopStyle| {
+            sample_at(
+                Vec3::new(point.x, y, point.z),
+                steps,
+                style,
+                style.lower_style(),
+            )
+            .0
+            .weights
+        };
+
+        let waistband = waist - HALF_WIDTH_METERS * 0.55;
+        assert!(at(waistband, separated)[Surface::Band as usize] > 0.9);
+        let short_hem = shirt_hem_height(point, separated.hem);
+        assert_eq!(
+            at((waist + short_hem) * 0.5, separated)[Surface::Skin as usize],
+            1.0
+        );
+        assert!(at(short_hem + 0.011, separated)[Surface::ShirtBand as usize] > 0.9);
+
+        let close_hem = shirt_hem_height(point, close.hem);
+        assert!(close_hem - waist > 0.01);
+        let joined_pants = close.lower_style();
+        assert_eq!(joined_pants.unwrap().joined_hem, Some(close.hem));
+        for y in [waistband, (waist + close_hem) * 0.5, close_hem - 0.003] {
+            assert_eq!(at(y, close)[Surface::Fabric as usize], 1.0);
+            let row = Fit::at(point + Vec3::Y * y).coverage_row(close, joined_pants) as usize;
+            assert_eq!(close.surface_at_row(row), Surface::Fabric);
+        }
+        assert!(at(close_hem + 0.011, close)[Surface::ShirtBand as usize] > 0.9);
+
+        let long_hem = shirt_hem_height(point, covered.hem);
+        assert_eq!(at(waistband, covered)[Surface::Shirt as usize], 1.0);
+        assert!(at(long_hem + 0.011, covered)[Surface::ShirtBand as usize] > 0.9);
+        assert_eq!(at(long_hem - 0.003, covered)[Surface::Fabric as usize], 1.0);
+        let row = Fit::at(point + Vec3::Y * waistband).coverage_row(covered, covered.lower_style())
+            as usize;
+        assert_eq!(covered.surface_at_row(row), Surface::Shirt);
+        assert_eq!(
+            covered.albedo(Surface::Shirt),
+            covered.albedo(Surface::Sock)
+        );
+        assert_ne!(
+            covered.albedo(Surface::ShirtBand),
+            covered.albedo(Surface::Band)
+        );
+    }
 
     #[test]
     fn pant_waistband_follows_the_hips_and_belly_with_or_without_socks() {
@@ -505,20 +618,24 @@ mod tests {
                     socks,
                     ..TopStyle::default()
                 };
+                let lower = style.lower_style();
                 for (x, z) in [(0.0, -0.08), (0.1, 0.015), (0.0, 0.08), (-0.1, 0.015)] {
                     let point = Vec3::new(x, 1.0, z);
                     let edge = point + Vec3::Y * LowerFit::at(point, pants, socks).waist;
                     let in_band = edge - Vec3::Y * (HALF_WIDTH_METERS * 0.55);
-                    let (ribbon, tilt) = sample_at(in_band, steps, style);
+                    let (ribbon, tilt) = sample_at(in_band, steps, style, lower);
                     assert!(ribbon.weights[Surface::Band as usize] > 0.9);
                     assert_ne!(tilt, Vec2::ZERO);
-                    let (outside, _) = sample_at(edge + Vec3::Y * 0.002, steps, style);
+                    let (outside, _) = sample_at(edge + Vec3::Y * 0.002, steps, style, lower);
                     assert_eq!(outside.weights[Surface::Skin as usize], 1.0);
-                    let (inside, _) = sample_at(edge - Vec3::Y * 0.014, steps, style);
+                    let (inside, _) = sample_at(edge - Vec3::Y * 0.014, steps, style, lower);
                     assert_eq!(inside.weights[Surface::Fabric as usize], 1.0);
 
                     let triangle = [in_band, in_band + Vec3::X * 0.001, in_band - steps[1]];
-                    assert_eq!(texel_size(triangle, style), Some(COLLAR_TEXEL_METERS));
+                    assert_eq!(
+                        texel_size(triangle, style, lower),
+                        Some(COLLAR_TEXEL_METERS)
+                    );
                 }
             }
         }
@@ -537,7 +654,14 @@ mod tests {
         };
         let left = at_leg_edge(-0.09);
         let right = at_leg_edge(0.09);
-        let sample = |point, length| lower_sample(point, steps, pants, Some(length)).0.weights;
+        let sample = |point, length| {
+            let lower = LowerStyle {
+                pants,
+                socks: Some(length),
+                joined_hem: None,
+            };
+            lower_sample(point, steps, lower).0.weights
+        };
         let left_band = left + Vec3::Y * (HALF_WIDTH_METERS * 0.55);
         let right_band = right + Vec3::Y * (HALF_WIDTH_METERS * 0.55);
 
@@ -570,7 +694,7 @@ mod tests {
             socks: Some(0.8),
             ..TopStyle::default()
         };
-        assert!(texel_size(triangle, joined_style).is_some());
+        assert!(texel_size(triangle, joined_style, joined_style.lower_style()).is_some());
 
         // An exact join splits a pixel between pants and the outer sock
         // outline. The shared coverage keeps the skin fully covered.

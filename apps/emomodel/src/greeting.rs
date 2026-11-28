@@ -1160,7 +1160,7 @@ async fn play(
                     {
                         match event.key_code {
                             TOP_ROW_3 => butterfly_requested = true,
-                            SPACE => tops.step_bottoms(),
+                            SPACE => tops.roll_full_outfit(),
                             _ => (),
                         }
                     }

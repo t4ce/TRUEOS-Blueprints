@@ -1,11 +1,15 @@
 use anyhow::{Context, Result, ensure};
 use glam::{Mat4, Quat, Vec3};
 use gltf::animation::{Interpolation, Property, util::ReadOutputs};
+use std::ops::Range;
 
 const NOD_SECONDS: f32 = 1.40;
 const NOD_KEY_COUNT: u32 = 85;
 pub(super) const ARM_RECOVERY_SECONDS: f32 = 1.0;
 pub(super) const SAMPLE_HZ: u32 = 45;
+const HAIR_VERTICES: usize = 8_522;
+const LEGACY_HAIR_VERTICES: usize = 9_263;
+const RETIRED_HAIR_VERTICES: [Range<usize>; 2] = [1310..1502, 3451..4000];
 
 pub(super) struct Animation {
     duration: f32,
@@ -120,7 +124,8 @@ impl Animation {
         );
         let avatar = gltf::Gltf::from_slice(avatar_glb).context("parse embedded humanoid GLB")?;
         let mut animation = Self::load_rig(&avatar, materials)?;
-        let clip_rig = Self::load_rig(&asset, materials)?;
+        let mut clip_rig = Self::load_rig(&asset, materials)?;
+        animation.trim_legacy_clip_hair(&mut clip_rig, materials);
         // Retargeted files can carry older positions and normals for the same skin.
         ensure!(
             animation.matches_rig(&clip_rig, |a, b| a.joints == b.joints
@@ -467,6 +472,27 @@ impl Animation {
 
     pub(super) fn compatible_rig(&self, other: &Self) -> bool {
         self.matches_rig(other, Vertex::eq)
+    }
+
+    fn trim_legacy_clip_hair(&self, clip: &mut Self, materials: &[&str]) {
+        let Some(hair) = materials
+            .iter()
+            .position(|&name| name == crate::mesh::HAIR_MATERIAL)
+        else {
+            return;
+        };
+        let old_hair = &mut clip.sections[hair].vertices;
+        if self.sections[hair].vertices.len() != HAIR_VERTICES
+            || old_hair.len() != LEGACY_HAIR_VERTICES
+        {
+            return;
+        }
+
+        // Older motion files carry the full hair skin in the original vertex
+        // order. Compare the surviving vertices against the embedded rig.
+        for range in RETIRED_HAIR_VERTICES.into_iter().rev() {
+            drop(old_hair.drain(range));
+        }
     }
 
     fn matches_rig(&self, other: &Self, vertices_match: impl Fn(&Vertex, &Vertex) -> bool) -> bool {
@@ -837,6 +863,30 @@ mod tests {
     }
 
     #[test]
+    fn full_hair_motion_files_keep_their_compatible_rig() {
+        let asset = gltf::Gltf::from_slice(crate::HUMANOID_GLB).unwrap();
+        let canonical = Animation::load_rig(&asset, &PREVIEW_MATERIALS).unwrap();
+        let mut legacy = Animation::load_rig(&asset, &PREVIEW_MATERIALS).unwrap();
+        for range in RETIRED_HAIR_VERTICES {
+            legacy.sections[2].vertices.splice(
+                range.start..range.start,
+                std::iter::repeat_with(|| Vertex {
+                    position: Vec3::ZERO,
+                    normal: Vec3::Y,
+                    joints: [0; 4],
+                    weights: [1.0, 0.0, 0.0, 0.0],
+                })
+                .take(range.len()),
+            );
+        }
+        assert_eq!(legacy.sections[2].vertices.len(), LEGACY_HAIR_VERTICES);
+        canonical.trim_legacy_clip_hair(&mut legacy, &PREVIEW_MATERIALS);
+        assert!(canonical.compatible_rig(&legacy));
+        legacy.sections[2].vertices[1502].joints[0] ^= 1;
+        assert!(!canonical.compatible_rig(&legacy));
+    }
+
+    #[test]
     fn greeting_uses_canonical_geometry_and_rejects_a_changed_bind() {
         use gltf::{Semantic, binary::Glb};
         use serde_json::{Value, json};
@@ -932,7 +982,7 @@ mod tests {
 
         let body_start = 4_171;
         let hair_start = body_start + 8_535;
-        assert_eq!(neutral.len(), hair_start + 9_263);
+        assert_eq!(neutral.len(), hair_start + HAIR_VERTICES);
         let dip = animation.sample_with_normals(0.64);
         assert!(
             dip.positions

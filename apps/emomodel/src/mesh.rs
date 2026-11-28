@@ -16,7 +16,7 @@ const FRAME_FILL: f32 = 0.86;
 
 pub(super) fn is_hair_accessory_triangle(index: usize) -> bool {
     // These source triangles match the separated Blender clips and hairband by position.
-    matches!(index, 643..=669 | 4173..=4192 | 4901..=5107 | 5928..=5933)
+    matches!(index, 643..=669 | 3925..=4151 | 4972..=4977)
 }
 
 pub(super) struct Mesh {
@@ -262,15 +262,14 @@ mod tests {
         let reference = prepare(glb, 640, 560).unwrap();
         let procedural = prepare_materials(glb, 640, 560, &PREVIEW_MATERIALS, true).unwrap();
         assert_eq!(procedural.vertices, reference.vertices);
-        assert_eq!(procedural.hair_triangle_count, 3_250);
+        assert_eq!(procedural.hair_triangle_count, 2_294);
         assert_eq!(procedural.strand_guides.len(), 28);
         let hair_start = reference.triangle_count - reference.hair_triangle_count;
         let triangles = reference.indices.as_chunks::<3>().0;
         let expected = triangles[..hair_start + 643]
             .iter()
-            .chain(&triangles[hair_start + 670..hair_start + 1_749])
-            .chain(&triangles[hair_start + 4_193..hair_start + 4_901])
-            .chain(&triangles[hair_start + 5_108..hair_start + 5_928]);
+            .chain(&triangles[hair_start + 670..hair_start + 1_501])
+            .chain(&triangles[hair_start + 4_152..hair_start + 4_972]);
         assert!(procedural.indices.as_chunks::<3>().0.iter().eq(expected));
     }
 
@@ -299,9 +298,9 @@ mod tests {
         let source_triangles = source_indices.as_chunks::<3>().0;
         let (face, body_and_hair) = source_triangles.split_at(4_232);
         let (body, hair) = body_and_hair.split_at(10_022);
-        assert_eq!(hair.len(), 11_590);
+        assert_eq!(hair.len(), 10_634);
         let mesh = prepare(glb, 640, 560).unwrap();
-        assert_eq!(mesh.vertex_count(), 4_171 + 8_535 + 9_263);
+        assert_eq!(mesh.vertex_count(), 4_171 + 8_535 + 8_522);
         assert_eq!(mesh.triangle_count, face.len() + body.len() + hair.len());
         assert_eq!(mesh.hair_triangle_count, hair.len());
         assert_eq!(mesh.indices, source_indices);
