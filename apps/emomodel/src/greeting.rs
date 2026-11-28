@@ -42,6 +42,7 @@ mod belly_detail;
 mod body_tint;
 mod butterfly;
 mod dance;
+mod dress;
 mod ear_detail;
 mod eye_detail;
 mod eye_sprite;
@@ -117,7 +118,7 @@ pub(super) async fn show(
     msaa_samples: u8,
     eyes: EyeStyle,
 ) -> Result<()> {
-    let controls = if appearance == Appearance::BaseColor {
+    let mut controls = if appearance == Appearance::BaseColor {
         None
     } else {
         match SkyControls::open() {
@@ -194,6 +195,13 @@ pub(super) async fn show(
             let framing = renderer.framing;
             (Playback::Retained(renderer, skin), framing)
         };
+        if matches!(playback, Playback::Reel(_))
+            && let Some(terminal) = &mut controls
+            && let Err(error) = terminal.enable_dress()
+        {
+            report(format_args!("avatar dress controls unavailable: {error}"));
+            controls = None;
+        }
         let mut observer = Autobs::new((width, height), framing, mesh.pixels_per_unit);
         let mut frame = Frame::open_streaming(x, y, width, height).map_err(ui_error)?;
         let title = match appearance {
@@ -260,12 +268,9 @@ async fn apply_normal_maps(
             if section == 0 {
                 ear.tangent_offset(uv)
             } else {
-                local_body
-                    .as_ref()
-                    .map_or(Vec2::ZERO, |(belly, pelvis)| {
-                        belly.tangent_offset(uv) + pelvis.tangent_offset(uv)
-                    })
-                    + belly_detail::fold_offset(uv)
+                local_body.as_ref().map_or(Vec2::ZERO, |(belly, pelvis)| {
+                    belly.tangent_offset(uv) + pelvis.tangent_offset(uv)
+                }) + belly_detail::fold_offset(uv)
             }
         })?;
         if section == 1 && !full_maps {
@@ -279,7 +284,9 @@ async fn apply_normal_maps(
             SKIN_NORMAL_MAPS.len()
         ));
     } else {
-        report(format_args!("belly and pelvis normal crops sampling=bind-vertex"));
+        report(format_args!(
+            "belly and pelvis normal crops sampling=bind-vertex"
+        ));
     }
     report(format_args!(
         "shared mirrored ear relief sampling=bind-vertex"
@@ -512,10 +519,28 @@ impl AvatarRenderer {
         let iris_row = eye_row + eye_detail::HEIGHT;
         let texture_rows = iris_row + eye_sprite::SIZE.max(hairband::HEIGHT);
         let mut palette = contacts.bake_rows(&[512, 1024, 2048], 4096, texture_rows)?;
+        let mut accessories = hairband.rgba().to_vec();
+        if !color {
+            let view = crate::autobs::view_back(BASE_YAW);
+            let sky = SkyLight::new(view, Levels::default());
+            hairband.shade(
+                &mut accessories,
+                hairband::WIDTH * 4,
+                [0, 0],
+                sequence.apply(timeline.sample(0)).skin().normals,
+                view,
+                &sky,
+            );
+        }
         for (column, row, width, pixels) in [
             (0, eye_row, eye_detail::WIDTH, eye.rgba()),
             (0, iris_row, eye_sprite::SIZE, iris.rgba()),
-            (HAIRBAND_COLUMN, iris_row, hairband::WIDTH, hairband.rgba()),
+            (
+                HAIRBAND_COLUMN,
+                iris_row,
+                hairband::WIDTH,
+                accessories.as_slice(),
+            ),
         ] {
             for (i, pixel) in pixels.chunks_exact(4).enumerate() {
                 palette.set(
@@ -1102,8 +1127,14 @@ async fn play(
     loop {
         if let Some(terminal) = &mut controls {
             match terminal.poll() {
-                Ok(Some(selected)) => levels = selected,
-                Ok(None) => (),
+                Ok(selected) => {
+                    if let Some(selected) = selected {
+                        levels = selected;
+                    }
+                    if let Playback::Reel(preview) = playback {
+                        preview.set_dress(terminal.dress());
+                    }
+                }
                 Err(error) => {
                     report(format_args!("avatar lighting terminal closed: {error}"));
                     controls = None;
@@ -1129,7 +1160,7 @@ async fn play(
                     {
                         match event.key_code {
                             TOP_ROW_3 => butterfly_requested = true,
-                            SPACE => tops.toggle_random(),
+                            SPACE => tops.step_bottoms(),
                             _ => (),
                         }
                     }
@@ -1146,12 +1177,6 @@ async fn play(
                             continue;
                         };
                         let selected = match key {
-                            'p' | 'P' => {
-                                if let Playback::Reel(preview) = &mut *playback {
-                                    preview.toggle_pelvis_markers();
-                                }
-                                continue;
-                            }
                             'M' if msaa4_available => 4,
                             'm' | 'M' if msaa2_available => 2,
                             'm' if msaa4_available => 4,

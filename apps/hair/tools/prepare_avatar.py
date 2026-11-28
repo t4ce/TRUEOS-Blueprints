@@ -14,6 +14,15 @@ from PIL import Image
 
 SOURCE_SHA256 = "7fca4a77fdc60ab2c78a9907430744562626180125fa386eb74fb2ea15c2e518"
 BACK_HAIR_TRIANGLES = ((1770, 4194), (6013, 11669))
+# Matched by position against Blender's accessory split and dangling band star.
+STAR_TRIANGLES = frozenset((*range(643, 656), *range(6007, 6013)))
+PIN_TRIANGLES = frozenset((*range(656, 670), *range(4243, 4263)))
+STAR_MATERIAL = "Hair Accessory Stars"
+PIN_MATERIAL = "Hair Accessory Pins"
+ACCESSORY_FINISHES = {STAR_MATERIAL: (0.24, 0.90), PIN_MATERIAL: (0.65, 0.0)}
+HAIR_GROUP = 2
+BACK_HAIR_GROUP = 3
+ACCESSORY_GROUP = 4
 PADDING = 8
 
 
@@ -125,9 +134,25 @@ def extract_surfaces(document, blob):
                 (back_start, back_end), (last_start, last_end) = BACK_HAIR_TRIANGLES
                 if len(indices) != last_end * 3:
                     raise ValueError("unexpected AvatarSample_B hair topology")
+                hair = []
+                stars = []
+                pins = []
+                for start, end in ((0, back_start), (back_end, last_start)):
+                    for triangle in range(start, end):
+                        if triangle in STAR_TRIANGLES:
+                            partition = stars
+                        elif triangle in PIN_TRIANGLES:
+                            partition = pins
+                        else:
+                            partition = hair
+                        partition.extend(indices[triangle * 3 : (triangle + 1) * 3])
+                if len(stars) != len(STAR_TRIANGLES) * 3 or len(pins) != len(PIN_TRIANGLES) * 3:
+                    raise ValueError("hair accessory selection overlaps the back hair")
                 partitions = [
-                    ("Hair", 2, indices[: back_start * 3] + indices[back_end * 3 : last_start * 3]),
-                    ("Back Hair", 3, indices[back_start * 3 : back_end * 3] + indices[last_start * 3 :]),
+                    ("Hair", HAIR_GROUP, hair),
+                    ("Back Hair", BACK_HAIR_GROUP, indices[back_start * 3 : back_end * 3] + indices[last_start * 3 :]),
+                    (STAR_MATERIAL, ACCESSORY_GROUP, stars),
+                    (PIN_MATERIAL, ACCESSORY_GROUP, pins),
                 ]
             else:
                 group = 0 if material < 4 else 1
@@ -158,18 +183,24 @@ def prepare(source, output):
     fixture = Glb()
     images = []
     crops = []
-    texture_names = ["Face", "Body and shoes", "Hair", "Back Hair"]
+    texture_names = ["Face", "Body and shoes", "Hair", "Back Hair", "Hair Accessories"]
     for group, name in enumerate(texture_names):
-        uvs = [uv for surface in surfaces if surface["texture_group"] == group for uv in surface["uv"]]
+        # Keep the original Hair crop and UV transform for the remaining hair.
+        cropped_groups = (HAIR_GROUP, ACCESSORY_GROUP) if group == HAIR_GROUP else (group,)
+        uvs = [
+            uv for surface in surfaces if surface["texture_group"] in cropped_groups
+            for uv in surface["uv"]
+        ]
         encoding, crop = texture_crop(
-            original, blob, 0 if group == 0 else 3, uvs, preserve_resolution=group == 3
+            original, blob, 0 if group == 0 else 3, uvs,
+            preserve_resolution=group in (BACK_HAIR_GROUP, ACCESSORY_GROUP),
         )
         images.append({"name": name, "bufferView": fixture.view(encoding), "mimeType": "image/png"})
         crops.append(crop)
 
     materials = []
-    avatar = []
-    back_hair = []
+    meshes = {"Avatar": [], "Back Hair": [], "Hair Accessories": []}
+    separate = {BACK_HAIR_GROUP: "Back Hair", ACCESSORY_GROUP: "Hair Accessories"}
     for surface in surfaces:
         group = surface["texture_group"]
         original_material = original["materials"][surface["material"]]
@@ -179,13 +210,14 @@ def prepare(source, output):
             if key in original_material
         })
         material["name"] = surface["name"]
-        material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": group}
+        pbr = material["pbrMetallicRoughness"]
+        pbr["baseColorTexture"] = {"index": group}
+        if surface["name"] in ACCESSORY_FINISHES:
+            pbr["roughnessFactor"], pbr["metallicFactor"] = ACCESSORY_FINISHES[surface["name"]]
+            material.pop("extensions", None)
         part = fixture.primitive(surface, len(materials), crops[group])
         materials.append(material)
-        if group == 3:
-            back_hair.append(part)
-        else:
-            avatar.append(part)
+        meshes[separate.get(group, "Avatar")].append(part)
 
     metadata = original["extensions"]["VRM"]["meta"]
     fixture.save({
@@ -197,16 +229,19 @@ def prepare(source, output):
         },
         "extensionsUsed": ["KHR_materials_unlit"],
         "scene": 0,
-        "scenes": [{"nodes": [0, 1]}],
-        "nodes": [{"name": "Avatar", "mesh": 0}, {"name": "Back Hair", "mesh": 1}],
-        "meshes": [{"name": "Avatar", "primitives": avatar}, {"name": "Back Hair", "primitives": back_hair}],
+        "scenes": [{"nodes": list(range(len(meshes)))}],
+        "nodes": [{"name": name, "mesh": index} for index, name in enumerate(meshes)],
+        "meshes": [{"name": name, "primitives": parts} for name, parts in meshes.items()],
         "materials": materials,
         "images": images,
         "samplers": [{"magFilter": 9729, "minFilter": 9729, "wrapS": 33071, "wrapT": 33071}],
         "textures": [{"sampler": 0, "source": i} for i in range(len(images))],
     }, output)
     print(f"Wrote {output} ({output.stat().st_size:,} bytes)")
-    print(f"Back Hair atlas crop: {crops[3][2:]}; long triangles: {len(surfaces[-1]['indices']) // 3}")
+    for surface in surfaces:
+        group = surface["texture_group"]
+        if group in separate:
+            print(f"{surface['name']} atlas crop: {crops[group][2:]}; triangles: {len(surface['indices']) // 3}")
 
 
 def main():

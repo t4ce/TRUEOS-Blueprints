@@ -50,17 +50,26 @@ from the [offline sunlight study](studies/sky/emomodel-sunlight-study.html).
 Kelvin ranges from 9,000 K (cool) to 2,200 K (warm) and uses an equal-luminance
 blackbody color curve.
 
-Right-click in `skin` or `butterfly` to choose a pastel top or restore the original
-appearance. The controls are also available in `reel` when its motion files are
-installed. The shortest top ends above the navel and near the shoulders.
-Adjust the avatar's left sleeve, right sleeve, and hem independently in 10%
-steps. Each sleeve reaches its wrist at maximum length, and the longest hem
-ends near the base of the seat. Press `T` to cycle colors, `[` or `]` for the left sleeve, `{` or
-`}` for the right sleeve, and `-` or `=` to raise or lower the hem. Press
-`Space` to roll a random pastel top and matching socks. Each roll picks a
-shared sleeve length, a hem length, and a shared sock height. The next press
-removes the outfit, and the one after rolls again. The neckline, sleeve
-openings, hem, and sock cuffs follow rounded contours with
+Turn **Dress** on in the Shell3 controls to show AvatarSample_B's original
+pink skirt. It follows the avatar's current pose and shades a solid pink
+with the authored vertex normals. The source normal texture is flat.
+
+Press `Space` in `skin` or `butterfly` to start with a minimal black slip.
+Each press extends both legs and raises the waist by 10%, up to the knees and
+belly at 100%. The next press returns to 0%. Use `[` and `]` for the left leg,
+`{` and `}` for the right leg, and `-` and `=` to lower or raise the waist.
+The same socks stay on through the fit changes. The black fabric covers the
+socks wherever they overlap, and the sock ribbon follows the visible join.
+Where the pant legs and socks are separated,
+the pant cuffs have a half-width off-white ribbon with dark edges and two
+staggered rows of gray stitches.
+
+Right-click to choose a pastel top, roll a random top and matching socks, or
+restore the original appearance. The clothing controls also work in `reel` when
+its motion files are installed. With a top active, the same keys adjust the
+sleeves and hem, and `T` cycles colors. Each sleeve reaches its wrist at maximum
+length, and the longest hem ends near the base of the seat. The neckline,
+sleeve openings, hem, and sock cuffs follow rounded contours with
 dark edges and two staggered rows of gray stitch dashes. The neckline trim is
 half as wide as the sleeve and hem trim. A shallow procedural bump makes the
 ribbons catch the light as the avatar moves.
@@ -132,7 +141,9 @@ generated 64 × 64 lookup that refreshes with the camera and sky levels. Two
 1024 × 1024 RGB normal atlases from AvatarSample_B add face and body detail.
 Startup decodes them to RGBA8 and samples them at the original skin UVs in
 bind space. Playback skins the adjusted vertex normals through the existing
-diffuse pass. The hair and mouth geometry sample solid palette colors.
+diffuse pass. The hair strands and mouth geometry sample solid palette colors.
+The headband, star clips, and crossed pins sample the packed accessory atlas.
+Their cutouts follow the skinned hair vertices during animation.
 
 The animated previews use the irises from [the Lily sprite atlas](assets/lily-eyes.png)
 with AvatarSample_B's sclera and eye decorations. The crossed and uncrossed
@@ -161,8 +172,7 @@ the opposite side.
 The default skin preview also samples a [32 × 32 belly normal crop](assets/AvatarSample_B-belly-normal.png)
 from the authored body atlas. It adds the original navel relief to the nearby
 vertex normals with two short folds and fades into the surrounding skin.
-In the local Skin trial, two blue markers locate the [pelvis normal crop](assets/AvatarSample_B-pelvis-normal.png).
-Press `P` to toggle them in Skin or Butterfly.
+Skin and Butterfly sample a [24 × 24 pelvis normal crop](assets/AvatarSample_B-pelvis-normal.png).
 The lit preview samples [body tint masks](assets/AvatarSample_B-body-tint.png)
 on the original body UVs. One mask shades the navel, and a mirrored grayscale
 reference crop shades the two chest details on exposed skin. The lighting

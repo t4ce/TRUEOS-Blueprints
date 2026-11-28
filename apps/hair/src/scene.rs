@@ -4,9 +4,11 @@ use std::io::Cursor;
 
 use crate::{
     Controls,
-    hair_rope::RopeGuides,
+    hair_hull::{HairHull, LockProfile, ribbon_texture},
+    hair_look::{DepthBlend, HairLook},
+    hair_rope::{HairMotion, RopeGuides},
     obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER},
-    raster::{Alpha, Camera, Material, Surface, Texture, Vertex},
+    raster::{Alpha, Camera, Finish, Material, Surface, Texture, Vertex},
     solver::{HAIR_REACH_RADIUS, Solver},
     water::WaterPass,
 };
@@ -14,12 +16,82 @@ use crate::{
 const AVATAR: &[u8] = include_bytes!("../assets/avatar.glb");
 const BACK_HAIR_ANCHOR: &[u8] = include_bytes!("../assets/back-hair-anchor-surface.glb");
 const WORLD_FLOW_DOWN: Vec3 = Vec3::NEG_Y;
+const ROOT_INSET: f32 = 0.006;
+// EmoModel's flat hair swatch.
+const HAIR_MATERIAL: Material = Material {
+    texture: None,
+    factor: Vec4::new(135.0 / 255.0, 83.0 / 255.0, 189.0 / 255.0, 1.0),
+    alpha: Alpha::Opaque,
+    double_sided: false,
+    finish: None,
+};
+const RIBBON_MATERIAL: Material = Material {
+    finish: Some(Finish {
+        roughness: 0.38,
+        metallic: 0.0,
+    }),
+    ..HAIR_MATERIAL
+};
 
 struct Part {
     vertices: Vec<Vertex>,
     triangles: Vec<[u32; 3]>,
     material: Material,
     back_hair: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct DrawCounts {
+    pub(crate) triangles: usize,
+    pub(crate) segments: usize,
+}
+
+struct ProceduralHair {
+    mesh: HairHull,
+    blend: DepthBlend,
+    ribbon_texture: Texture,
+}
+
+impl ProceduralHair {
+    fn new(roots: &[Vec3]) -> Self {
+        Self {
+            mesh: HairHull::default(),
+            blend: DepthBlend::new(roots),
+            ribbon_texture: ribbon_texture(),
+        }
+    }
+
+    fn rebuild(&mut self, ropes: &RopeGuides, look: HairLook) {
+        let mesh = &mut self.mesh;
+        mesh.clear();
+        let (half_width, half_depth, tail_hold) = match look {
+            HairLook::Locks => (0.0080, 0.0040, 0.0),
+            HairLook::Ribbon => (0.0096, 0.0028, 0.43),
+            HairLook::SoftMerge => (0.0108, 0.00245, 0.58),
+            HairLook::StrongMerge => (0.0124, 0.0021, 0.67),
+        };
+        let append = |index: usize, points: &mut [Vec3]| {
+            let scalp_normal = (points[0] - HEAD_CENTER).normalize_or(Vec3::Z);
+            points[0] -= ROOT_INSET * scalp_normal;
+            let width_scale = 0.9 + 0.2 * (index % 7) as f32 / 6.0;
+            mesh.append_lock(
+                points,
+                scalp_normal,
+                LockProfile {
+                    half_width: half_width * width_scale,
+                    half_depth,
+                    tail_hold,
+                },
+            );
+        };
+        if matches!(look, HairLook::SoftMerge | HairLook::StrongMerge) {
+            self.blend.clear();
+            ropes.for_each_curve(|_, points| self.blend.push(points));
+            self.blend.for_each_curve(look, append);
+        } else {
+            ropes.for_each_curve(append);
+        }
+    }
 }
 
 pub(crate) struct Scene {
@@ -30,10 +102,11 @@ pub(crate) struct Scene {
     textures: Vec<Texture>,
     solver: Option<Solver>,
     ropes: Option<RopeGuides>,
+    hull: Option<ProceduralHair>,
     water: Option<WaterPass>,
     camera_scale: Option<f32>,
     camera_center: Option<Vec3>,
-    base_key: Option<([f32; 3], bool, bool)>,
+    base_key: Option<([f32; 4], bool, bool)>,
     base_pixels: Vec<u8>,
     base_depth: Vec<f32>,
     depth: Vec<f32>,
@@ -78,6 +151,8 @@ impl Scene {
                     .unwrap_or(0.75);
                 RopeGuides::new(&roots, tip_y, pose, motion)
             });
+        let hull = (ropes.is_some() && controls.hair_motion == Some(HairMotion::Rod))
+            .then(|| ProceduralHair::new(&roots));
         let solver = (ropes.is_none() || controls.layers.field)
             .then(|| Solver::new(WORLD_FLOW_DOWN, pose, roots));
         let body_bounds = parts.iter().flat_map(|part| &part.vertices).fold(
@@ -112,6 +187,7 @@ impl Scene {
             textures,
             solver,
             ropes,
+            hull,
             water: controls.water.then(WaterPass::default),
             camera_scale,
             camera_center,
@@ -154,17 +230,23 @@ impl Scene {
         self.base_key = None;
     }
 
-    pub(crate) fn draw(&mut self, controls: Controls, pixels: &mut [u8]) -> usize {
+    pub(crate) fn draw(&mut self, controls: Controls, pixels: &mut [u8]) -> DrawCounts {
         let layers = controls.layers;
+        let reference_hair = layers.hair && self.hull.is_none();
         let key = (
-            [controls.yaw, controls.roll, controls.tilt],
+            [
+                controls.yaw,
+                controls.roll,
+                controls.tilt,
+                controls.view_orbit,
+            ],
             layers.avatar,
-            layers.hair,
+            reference_hair,
         );
         let mut camera = Camera::new(
             Vec2::new(self.width as f32, self.height as f32),
             controls.yaw,
-            world_to_avatar(controls),
+            camera_rotation(controls),
             self.body_bounds,
             HEAD_CENTER,
             HAIR_REACH_RADIUS,
@@ -183,7 +265,12 @@ impl Scene {
             );
             base.clear();
             for part in &self.parts {
-                if (part.back_hair && layers.hair) || (!part.back_hair && layers.avatar) {
+                let visible = if part.back_hair {
+                    reference_hair
+                } else {
+                    layers.avatar
+                };
+                if visible {
                     let texture = part.material.texture.map(|index| &self.textures[index]);
                     base.mesh(
                         camera,
@@ -202,23 +289,41 @@ impl Scene {
         if layers.reach {
             target.reach_sphere(camera, HEAD_CENTER, HAIR_REACH_RADIUS);
         }
-        let primitives = if let (Some(water), Some(solver)) = (&mut self.water, &self.solver) {
+        let mut drawn = DrawCounts::default();
+        if let (Some(water), Some(solver)) = (&mut self.water, &self.solver) {
             water.rebuild(solver, controls.water_volume);
             target.water_mesh(camera, &water.vertices, &water.triangles);
-            water.triangles.len()
+            drawn.triangles = water.triangles.len();
         } else {
-            let mut segments = 0;
+            if layers.hair
+                && let (Some(hull), Some(ropes)) = (&mut self.hull, &self.ropes)
+            {
+                hull.rebuild(ropes, controls.hair_look);
+                let (material, texture) = if controls.hair_look == HairLook::Locks {
+                    (&HAIR_MATERIAL, None)
+                } else {
+                    (&RIBBON_MATERIAL, Some(&hull.ribbon_texture))
+                };
+                target.mesh(
+                    camera,
+                    &hull.mesh.vertices,
+                    &hull.mesh.triangles,
+                    material,
+                    texture,
+                );
+                drawn.triangles = hull.mesh.triangles.len();
+            }
             if layers.field
                 && let Some(solver) = &self.solver
             {
-                segments += solver.for_each_field_line(|start, end, speed, change| {
+                drawn.segments += solver.for_each_field_line(|start, end, speed, change| {
                     let value = if controls.speed_color { speed } else { change };
                     target.flow_line(camera, start, end, value, 0.24);
                 });
             }
             if layers.guides {
                 if let Some(ropes) = &self.ropes {
-                    segments += ropes.for_each_line(|start, end, shade| {
+                    drawn.segments += ropes.for_each_line(|start, end, shade| {
                         target.hair_line(camera, start, end, shade);
                     });
                 } else if let Some(solver) = &self.solver {
@@ -227,14 +332,13 @@ impl Scene {
                     } else {
                         0.50
                     };
-                    segments += solver.for_each_guide_line(|_, start, end, speed, change| {
+                    drawn.segments += solver.for_each_guide_line(|_, start, end, speed, change| {
                         let value = if controls.speed_color { speed } else { change };
                         target.flow_line(camera, start, end, value, opacity);
                     });
                 }
             }
-            segments
-        };
+        }
         if layers.body_obstacles {
             let color = Vec3::new(0.45, 0.77, 0.94);
             for shape in BODY_OBSTACLES {
@@ -244,8 +348,18 @@ impl Scene {
         if layers.sphere {
             target.ellipsoid(camera, HEAD, Vec3::ONE);
         }
-        primitives
+        drawn
     }
+}
+
+fn camera_rotation(controls: Controls) -> Quat {
+    Quat::from_rotation_y(controls.view_orbit) * world_to_avatar(controls)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn headband_fixation_percent(controls: Controls) -> f32 {
+    let spawn_direction = world_to_avatar(controls).conjugate() * Vec3::NEG_Y;
+    crate::hair_rope::fixation_percent_for(spawn_direction)
 }
 
 fn world_to_avatar(controls: Controls) -> Quat {
@@ -331,6 +445,10 @@ fn load_part(primitive: gltf::Primitive<'_>, blob: &[u8]) -> Result<Part> {
             gltf::material::AlphaMode::Blend => Alpha::Blend,
         },
         double_sided: source.double_sided(),
+        finish: (!source.unlit()).then(|| Finish {
+            roughness: pbr.roughness_factor(),
+            metallic: pbr.metallic_factor(),
+        }),
     };
     Ok(Part {
         vertices,
@@ -398,6 +516,29 @@ pub(crate) fn reference_roots() -> Vec<Vec3> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn accessory_primitives_use_their_authored_finishes() {
+        let asset = gltf::Gltf::from_slice(AVATAR).unwrap();
+        let blob = asset.blob.as_deref().unwrap();
+        let accessory = asset
+            .meshes()
+            .find(|mesh| mesh.name() == Some("Hair Accessories"))
+            .unwrap();
+        let mut parts = accessory
+            .primitives()
+            .map(|part| load_part(part, blob).unwrap());
+        let stars = parts.next().unwrap();
+        let pins = parts.next().unwrap();
+        assert!(parts.next().is_none());
+        assert_eq!(stars.material.texture, pins.material.texture);
+        for (part, count, roughness, metallic) in [(stars, 19, 0.24, 0.90), (pins, 34, 0.65, 0.0)] {
+            let finish = part.material.finish.unwrap();
+            assert_eq!(part.triangles.len(), count);
+            assert_eq!((finish.roughness, finish.metallic), (roughness, metallic));
+            assert!(matches!(part.material.alpha, Alpha::Mask(0.5)));
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn mouse_roll_turns_clockwise_in_the_screen_plane() {
@@ -426,6 +567,50 @@ mod tests {
             assert!(avatar_up.y.abs() < 1e-6);
             assert!(direction * avatar_up.dot(toward) > 0.99);
         }
+    }
+
+    #[test]
+    fn camera_orbit_turns_around_avatar_up_without_changing_pose() {
+        let controls = Controls {
+            yaw: 0.31,
+            roll: 1.2,
+            tilt: 0.6,
+            ..Controls::default()
+        };
+        let side = Controls {
+            view_orbit: core::f32::consts::FRAC_PI_2,
+            ..controls
+        };
+        let toward = Camera::view_direction(controls.yaw);
+        let initial_view = camera_rotation(controls) * toward;
+        let side_view = camera_rotation(side) * toward;
+        assert_eq!(world_to_avatar(side), world_to_avatar(controls));
+        assert!((initial_view.y - side_view.y).abs() < 1e-6);
+        assert!(
+            Vec2::new(initial_view.x, initial_view.z)
+                .dot(Vec2::new(side_view.x, side_view.z))
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn viewing_an_inverted_avatar_from_the_side_keeps_the_inverted_cap() {
+        let upright = Controls::default();
+        let inverted = Controls {
+            roll: core::f32::consts::PI,
+            ..upright
+        };
+        assert_eq!(headband_fixation_percent(upright), 50.0);
+        assert_eq!(headband_fixation_percent(inverted), 0.0);
+        assert_eq!(
+            headband_fixation_percent(Controls {
+                view_orbit: core::f32::consts::FRAC_PI_2,
+                ..inverted
+            }),
+            0.0
+        );
     }
 
     #[test]

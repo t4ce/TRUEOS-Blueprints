@@ -14,7 +14,7 @@ rewrite-std-imports = false
 [dependencies]
 anyhow = "1"
 glam = "0.33.6"
-gltf = { version = "1.4.1", default-features = false, features = ["names", "utils"] }
+gltf = { version = "1.4.1", default-features = false, features = ["KHR_materials_unlit", "names", "utils"] }
 png = "0.18.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]

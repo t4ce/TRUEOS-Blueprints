@@ -731,6 +731,15 @@ impl Animation {
         }
     }
 
+    pub(super) fn skin_from_world(&mut self, world: &[Mat4]) -> Result<PoseSample<'_>> {
+        ensure!(
+            self.world.len() == world.len(),
+            "posed rig node count changed"
+        );
+        self.world.copy_from_slice(world);
+        Ok(self.skin())
+    }
+
     pub(super) fn skin(&mut self) -> PoseSample<'_> {
         let mut destination = self.positions.iter_mut().zip(&mut self.normals);
         for part in &mut self.sections {

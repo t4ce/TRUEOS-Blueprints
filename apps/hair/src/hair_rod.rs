@@ -14,12 +14,52 @@ const TIP_CONTACT_RETENTION: f32 = 0.63;
 const BEND_COSINE: f32 = 0.866_025_4;
 const BEND_SINE: f32 = 0.5;
 const CONTACT_PASSES: usize = 4;
+// Mobility at 50% and 100% fixation, followed by the cone angles in degrees.
+const HEADBAND_LINKS: [(f32, f32, f32, f32); 3] = [
+    (0.25, 0.10, 15.0, 7.5),
+    (0.50, 0.25, 22.5, 12.5),
+    (0.75, 0.50, 30.0, 20.0),
+];
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
+pub(crate) struct HeadbandFixation(Option<[(f32, f32, f32); 3]>);
+
+impl HeadbandFixation {
+    pub(crate) fn new(strength: f32) -> Self {
+        if strength == 0.0 {
+            return Self(None);
+        }
+        let baseline = (2.0 * strength).min(1.0);
+        let extra = (2.0 * strength - 1.0).max(0.0);
+        let limits = HEADBAND_LINKS.map(|(mobility, tight_mobility, angle, tight_angle)| {
+            let mobility = 1.0 + (mobility - 1.0) * baseline + (tight_mobility - mobility) * extra;
+            let angle = 180.0 + (angle - 180.0) * baseline + (tight_angle - angle) * extra;
+            let (sine, cosine) = angle.to_radians().sin_cos();
+            (mobility, cosine, sine)
+        });
+        Self(Some(limits))
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct RodEffects {
     pub(crate) tip_weight: f32,
-    pub(crate) spread_acceleration: Vec3,
-    pub(crate) spread_shape: f32,
+    pub(crate) spawn_direction: Vec3,
+    pub(crate) spread_acceleration: [Vec3; MAX_POINTS],
+    pub(crate) wind_acceleration: Vec3,
+    pub(crate) fixation: HeadbandFixation,
+}
+
+impl Default for RodEffects {
+    fn default() -> Self {
+        Self {
+            tip_weight: 0.0,
+            spawn_direction: Vec3::NEG_Y,
+            spread_acceleration: [Vec3::ZERO; MAX_POINTS],
+            wind_acceleration: Vec3::ZERO,
+            fixation: HeadbandFixation::new(0.5),
+        }
+    }
 }
 
 pub(crate) struct Rod {
@@ -67,20 +107,26 @@ impl Rod {
         let contact_retention = CONTACT_RETENTION.powf(reference_steps);
         let tip_contact_gain = TIP_CONTACT_RETENTION.powf(reference_steps) - contact_retention;
         let tip_lag_gain = TIP_LAG_GAIN * reference_steps;
-        let spread_start = 0.5 + 0.25 * effects.spread_shape;
+        let headband_links = effects.fixation.0.as_ref();
         let segment_count = self.point_count - 1;
         for i in 1..self.point_count {
             let progress = i as f32 / segment_count as f32;
             let tip_weight = effects.tip_weight * smooth_ramp(progress, 0.5);
-            let spread = smooth_ramp(progress, spread_start);
+            let headband = headband_links.and_then(|links| links.get(i - 1));
+            let mobility = headband.map_or(1.0, |&(mobility, _, _)| mobility);
             let direction = (before[i] - before[i - 1])
                 .try_normalize()
                 .unwrap_or(Vec3::NEG_Y);
             let trailing_length = length * (self.point_count - i) as f32;
-            let mut torque = (GRAVITY + effects.spread_acceleration * spread) / trailing_length;
+            let wind_exposure = 0.35 + 0.65 * progress;
+            let acceleration = GRAVITY
+                + effects.spread_acceleration[i]
+                + effects.wind_acceleration * wind_exposure;
+            let mut torque = acceleration / trailing_length;
             if let Some(previous) = parent_direction {
                 torque += previous * STRAIGHTENING;
             }
+            torque += effects.spawn_direction * (STRAIGHTENING * (1.0 - mobility));
             let velocity = (tangent(self.direction_velocity[i], direction) * damping
                 + tangent(torque, direction) * dt)
                 .clamp_length_max(MAX_ANGULAR_SPEED);
@@ -89,12 +135,15 @@ impl Rod {
             // direction around that joint and rebuild the link at its rest length.
             // Weighted ends follow the moving parent more slowly.
             let held_tip = (before[i] - parent).try_normalize().unwrap_or(direction);
-            let lag = joint_lag + tip_lag_gain * tip_weight;
-            let mut next_direction = (direction.lerp(held_tip, lag) + velocity * dt)
+            let lag = (joint_lag + tip_lag_gain * tip_weight) * mobility;
+            let mut next_direction = (direction.lerp(held_tip, lag) + velocity * (dt * mobility))
                 .try_normalize()
                 .unwrap_or(direction);
             if let Some(previous) = parent_direction {
-                next_direction = limit_bend(previous, next_direction);
+                next_direction = limit_cone(previous, next_direction, BEND_COSINE, BEND_SINE);
+            }
+            if let Some(&(_, cosine, sine)) = headband {
+                next_direction = limit_cone(effects.spawn_direction, next_direction, cosine, sine);
             }
 
             let (point, contacted) =
@@ -122,14 +171,14 @@ fn tangent(vector: Vec3, direction: Vec3) -> Vec3 {
     vector - direction * vector.dot(direction)
 }
 
-fn limit_bend(parent: Vec3, direction: Vec3) -> Vec3 {
-    if direction.dot(parent) >= BEND_COSINE {
+fn limit_cone(axis: Vec3, direction: Vec3, cosine: f32, sine: f32) -> Vec3 {
+    if direction.dot(axis) >= cosine {
         return direction;
     }
-    let sideways = tangent(direction, parent)
+    let sideways = tangent(direction, axis)
         .try_normalize()
-        .unwrap_or_else(|| parent.any_orthonormal_vector());
-    parent * BEND_COSINE + sideways * BEND_SINE
+        .unwrap_or_else(|| axis.any_orthonormal_vector());
+    axis * cosine + sideways * sine
 }
 
 fn place_link(
@@ -171,6 +220,38 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_wind_deflects_the_tip_without_moving_the_anchor() {
+        let heading = (Vec3::X + Vec3::Z).normalize();
+        let settled_tip = |rod: &mut Rod, acceleration| {
+            let effects = RodEffects {
+                wind_acceleration: heading * acceleration,
+                ..RodEffects::default()
+            };
+            for _ in 0..720 {
+                rod.step(Vec3::ZERO, LINK_LENGTH, DT, effects, |_, point| point);
+                assert!(rod.points().iter().all(|point| point.is_finite()));
+            }
+            let tip = *rod.points().last().unwrap();
+            rod.step(Vec3::ZERO, LINK_LENGTH, DT, effects, |_, point| point);
+            assert_eq!(rod.points()[0], Vec3::ZERO);
+            assert!(tip.distance(*rod.points().last().unwrap()) < 1e-5);
+            tip
+        };
+
+        let mut rod = hanging_rod();
+        let still = settled_tip(&mut rod, 0.0);
+        let mild = settled_tip(&mut rod, 7.5);
+        let downwind = settled_tip(&mut rod, 37.5);
+        let upwind = settled_tip(&mut rod, -37.5);
+        let recovered = settled_tip(&mut rod, 0.0);
+        assert!(still.distance(Vec3::NEG_Y * (8.0 * LINK_LENGTH)) < 1e-6);
+        assert!((mild - still).dot(heading) > 0.05);
+        assert!((downwind - mild).dot(heading) > 0.05);
+        assert!(downwind.distance(Vec3::new(-upwind.x, upwind.y, -upwind.z)) < 1e-5);
+        assert!(recovered.distance(still) < 1e-5);
+    }
+
+    #[test]
     fn added_tip_weight_lags_a_moving_anchor_in_the_lower_half() {
         let mut baseline = hanging_rod();
         let mut weighted = hanging_rod();
@@ -197,43 +278,92 @@ mod tests {
     }
 
     #[test]
-    fn spread_shape_delays_the_fan_and_width_controls_its_reach() {
-        let mut broad = hanging_rod();
-        let mut narrow = hanging_rod();
-        let mut off = hanging_rod();
-        let spread = RodEffects {
-            spread_acceleration: 13.0 * Vec3::X,
-            ..RodEffects::default()
-        };
-        for _ in 0..90 {
-            broad.step(Vec3::ZERO, LINK_LENGTH, DT, spread, |_, point| point);
-            narrow.step(
+    fn headband_cones_follow_the_avatar_spawn_direction() {
+        for spawn_direction in [Vec3::X, Vec3::Y] {
+            let mut rod = hanging_rod();
+            rod.step(
                 Vec3::ZERO,
                 LINK_LENGTH,
                 DT,
                 RodEffects {
-                    spread_shape: 1.0,
-                    ..spread
-                },
-                |_, point| point,
-            );
-            off.step(
-                Vec3::ZERO,
-                LINK_LENGTH,
-                DT,
-                RodEffects {
-                    spread_shape: 1.0,
+                    spawn_direction,
                     ..RodEffects::default()
                 },
                 |_, point| point,
             );
+            let directions = rod.points().windows(2).map(|points| {
+                let offset = points[1] - points[0];
+                assert!((offset.length() - LINK_LENGTH).abs() < 1e-6);
+                offset.normalize()
+            });
+            for (direction, angle) in directions.clone().zip([15.0_f32, 22.5, 30.0]) {
+                assert!(direction.dot(spawn_direction) >= angle.to_radians().cos() - 1e-6);
+            }
+            assert!(
+                directions
+                    .skip(3)
+                    .any(|axis| axis.dot(spawn_direction) < BEND_COSINE)
+            );
         }
-        let baseline = hanging_rod();
-        assert_eq!(broad.points()[..=4], off.points()[..=4]);
-        assert!(broad.points()[6].x > narrow.points()[6].x + 1e-3);
-        assert!(narrow.points()[8].x > off.points()[8].x + 1e-3);
-        for (point, rest) in off.points().iter().zip(baseline.points()) {
-            assert!(point.distance(*rest) < 1e-6);
+    }
+
+    #[test]
+    fn angular_mobility_increases_after_each_headband_link() {
+        let response = |link: usize, fixation| {
+            let mut rod = hanging_rod();
+            rod.direction_velocity[link] = Vec3::X;
+            rod.step(
+                Vec3::ZERO,
+                LINK_LENGTH,
+                DT,
+                RodEffects {
+                    fixation: HeadbandFixation::new(fixation),
+                    ..RodEffects::default()
+                },
+                |_, point| point,
+            );
+            (rod.points()[link] - rod.points()[link - 1]).normalize().x
+        };
+        let free = response(4, 0.5);
+        for (link, expected_fraction) in [0.25, 0.5, 0.75].into_iter().enumerate() {
+            assert!((response(link + 1, 0.5) / free - expected_fraction).abs() < 1e-3);
+        }
+        for (link, expected_fraction) in [0.10, 0.25, 0.50].into_iter().enumerate() {
+            assert!((response(link + 1, 0.0) / free - 1.0).abs() < 1e-6);
+            assert!((response(link + 1, 1.0) / free - expected_fraction).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn headband_fixation_tightens_cones_from_the_free_rope_to_the_upper_limit() {
+        let response = |fixation| {
+            let mut rod = hanging_rod();
+            rod.step(
+                Vec3::ZERO,
+                LINK_LENGTH,
+                DT,
+                RodEffects {
+                    fixation: HeadbandFixation::new(fixation),
+                    spawn_direction: Vec3::X,
+                    ..RodEffects::default()
+                },
+                |_, point| point,
+            );
+            (rod.points()[1] - rod.points()[0]).normalize().x
+        };
+        assert_eq!(response(0.0), 0.0);
+        assert!(response(0.5) < response(1.0));
+        assert!(response(1.0) >= 7.5_f32.to_radians().cos() - 1e-6);
+        assert!(HeadbandFixation::new(0.0).0.is_none());
+        for i in 2..=10 {
+            let previous = HeadbandFixation::new((i - 1) as f32 / 10.0).0.unwrap();
+            let next = HeadbandFixation::new(i as f32 / 10.0).0.unwrap();
+            for ((prev_mobility, prev_cosine, _), (mobility, cosine, _)) in
+                previous.into_iter().zip(next)
+            {
+                assert!(mobility < prev_mobility);
+                assert!(cosine > prev_cosine);
+            }
         }
     }
 }

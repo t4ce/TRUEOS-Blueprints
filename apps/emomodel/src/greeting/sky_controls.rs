@@ -31,6 +31,13 @@ const FIREFLY_CHOICES: &[(u16, &str, bool)] = &[
 ];
 const INLINE_FIREFLY_COLUMN: u16 = 26;
 const INLINE_FIREFLY_LABEL: &str = "fly";
+const DRESS_LABEL: &str = "Dress ";
+const DRESS_CHOICES: &[(u16, &str, bool)] = &[
+    (DRESS_LABEL.len() as u16, "off", false),
+    (DRESS_LABEL.len() as u16 + 4, "on", true),
+];
+const INLINE_DRESS_LABEL: &str = "Dress";
+const INLINE_DRESS_COLUMN: u16 = FIRST_COLUMN + 2 * LEVEL_COUNT;
 const KELVIN_VALUE_WIDTH: u16 = 5;
 const MAX_TRACK_WIDTH: u16 = 16;
 const EVENTS_PER_FRAME: usize = 8;
@@ -40,6 +47,7 @@ pub(super) struct SkyControls {
     lease: Option<TerminalLease>,
     levels: Levels,
     kelvin: u16,
+    dress: Option<bool>,
 }
 
 impl SkyControls {
@@ -55,13 +63,27 @@ impl SkyControls {
             lease: Some(lease),
             levels: Levels::default(),
             kelvin: DEFAULT_KELVIN,
+            dress: None,
         };
         controls.draw(true)?;
         Ok(controls)
     }
 
+    pub(super) fn enable_dress(&mut self) -> io::Result<()> {
+        if self.dress.is_none() {
+            self.dress = Some(false);
+            self.draw(false)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn dress(&self) -> bool {
+        self.dress.unwrap_or(false)
+    }
+
     pub(super) fn poll(&mut self) -> io::Result<Option<Levels>> {
         let before = self.levels;
+        let before_dress = self.dress;
         let mut redraw = false;
         let mut reentered = false;
         let mut context = Context::from_waker(Waker::noop());
@@ -88,14 +110,14 @@ impl SkyControls {
             }
         }
         let changed = self.levels != before;
-        if changed || redraw {
+        if changed || self.dress != before_dress || redraw {
             self.draw(reentered)?;
         }
         Ok(changed.then_some(self.levels))
     }
 
     fn select(&mut self, row: u16, column: u16) {
-        if row < KEY_ROW {
+        if row < KEY_ROW && column < INLINE_DRESS_COLUMN {
             if let Some(level) = level_at(column) {
                 match row {
                     0 => self.levels.sky = level,
@@ -108,8 +130,17 @@ impl SkyControls {
         let Ok((columns, rows)) = terminal::size() else {
             return;
         };
-        if let Some(control) = FireflyControl::layout(self.levels.key, columns, rows)
-            && let Some(enabled) = control.selection(row, column, self.levels.firefly)
+        let firefly = firefly_control(self.levels.key, columns, rows);
+        if let Some(enabled) = self.dress
+            && let Some(control) = dress_control(self.levels.key, columns, rows, firefly)
+            && let Some(enabled) = control.selection(row, column, enabled, DRESS_CHOICES)
+        {
+            self.dress = Some(enabled);
+            return;
+        }
+        if let Some(control) = firefly
+            && let Some(enabled) =
+                control.selection(row, column, self.levels.firefly, FIREFLY_CHOICES)
         {
             self.levels.firefly = enabled;
             return;
@@ -162,7 +193,10 @@ impl SkyControls {
             Err(error) if !setup && error.kind() == io::ErrorKind::NotConnected => return Ok(()),
             Err(error) => return Err(error),
         };
-        let firefly = FireflyControl::layout(self.levels.key, columns, rows);
+        let firefly = firefly_control(self.levels.key, columns, rows);
+        let dress = self.dress.and_then(|enabled| {
+            dress_control(self.levels.key, columns, rows, firefly).map(|control| (control, enabled))
+        });
         let digits = columns
             .saturating_sub(FIRST_COLUMN)
             .div_ceil(2)
@@ -189,18 +223,29 @@ impl SkyControls {
                     draw_choice(&mut output, label, self.levels.key == key)?;
                 }
             }
-            if matches!(firefly, Some(FireflyControl::Inline)) {
-                queue!(output, MoveTo(INLINE_FIREFLY_COLUMN, KEY_ROW))?;
-                draw_choice(&mut output, INLINE_FIREFLY_LABEL, self.levels.firefly)?;
-            }
         }
-        for row in KELVIN_ROW..(KELVIN_ROW + 2).min(rows) {
-            if matches!(firefly, Some(FireflyControl::Row(at)) if at == row) {
-                draw_label(&mut output, row, columns, FIREFLY_LABEL)?;
-                for &(column, choice, enabled) in FIREFLY_CHOICES {
-                    queue!(output, MoveTo(column, row))?;
-                    draw_choice(&mut output, choice, self.levels.firefly == enabled)?;
-                }
+        let control_rows = 2 + u16::from(self.dress.is_some());
+        for row in KELVIN_ROW..(KELVIN_ROW + control_rows).min(rows) {
+            if matches!(firefly, Some(ToggleControl::Row(at)) if at == row) {
+                draw_toggle_row(
+                    &mut output,
+                    row,
+                    columns,
+                    FIREFLY_LABEL,
+                    FIREFLY_CHOICES,
+                    self.levels.firefly,
+                )?;
+            } else if let Some((ToggleControl::Row(at), enabled)) = dress
+                && at == row
+            {
+                draw_toggle_row(
+                    &mut output,
+                    row,
+                    columns,
+                    DRESS_LABEL,
+                    DRESS_CHOICES,
+                    enabled,
+                )?;
             } else {
                 draw_label(&mut output, row, columns, "")?;
                 if row == KELVIN_ROW
@@ -209,6 +254,12 @@ impl SkyControls {
                     draw_kelvin_track(&mut output, columns, kelvin)?;
                 }
             }
+        }
+        if let Some(control) = firefly {
+            control.draw_inline(&mut output, self.levels.firefly)?;
+        }
+        if let Some((control, enabled)) = dress {
+            control.draw_inline(&mut output, enabled)?;
         }
         write_terminal(&output)?;
         if setup && let Some(lease) = &self.lease {
@@ -221,42 +272,102 @@ impl SkyControls {
 }
 
 #[derive(Clone, Copy)]
-enum FireflyControl {
+enum ToggleControl {
     Row(u16),
-    Inline,
+    Inline {
+        row: u16,
+        column: u16,
+        label: &'static str,
+    },
 }
 
-impl FireflyControl {
-    fn layout(key: Key, columns: u16, rows: u16) -> Option<Self> {
-        let row = KELVIN_ROW + u16::from(matches!(key, Key::Kelvin(_)));
-        let (column, label, _) = FIREFLY_CHOICES[1];
-        if rows > row && columns >= column + label.len() as u16 {
-            Some(Self::Row(row))
-        } else if rows > KEY_ROW
-            && columns >= INLINE_FIREFLY_COLUMN + INLINE_FIREFLY_LABEL.len() as u16
-        {
-            Some(Self::Inline)
-        } else {
-            None
-        }
-    }
-
-    fn selection(self, row: u16, column: u16, enabled: bool) -> Option<bool> {
+impl ToggleControl {
+    fn selection(
+        self,
+        row: u16,
+        column: u16,
+        enabled: bool,
+        choices: &[(u16, &str, bool)],
+    ) -> Option<bool> {
         match self {
-            Self::Row(at) if row == at => {
-                FIREFLY_CHOICES.iter().find_map(|&(start, label, value)| {
-                    (start..start + label.len() as u16)
-                        .contains(&column)
-                        .then_some(value)
-                })
-            }
-            Self::Inline if row == KEY_ROW => (INLINE_FIREFLY_COLUMN
-                ..INLINE_FIREFLY_COLUMN + INLINE_FIREFLY_LABEL.len() as u16)
+            Self::Row(at) if row == at => choices.iter().find_map(|&(start, label, value)| {
+                (start..start + label.len() as u16)
+                    .contains(&column)
+                    .then_some(value)
+            }),
+            Self::Inline {
+                row: at,
+                column: start,
+                label,
+            } if row == at => (start..start + label.len() as u16)
                 .contains(&column)
                 .then_some(!enabled),
             _ => None,
         }
     }
+
+    fn draw_inline(self, output: &mut Vec<u8>, enabled: bool) -> io::Result<()> {
+        if let Self::Inline { row, column, label } = self {
+            queue!(output, MoveTo(column, row))?;
+            draw_choice(output, label, enabled)?;
+        }
+        Ok(())
+    }
+}
+
+fn firefly_control(key: Key, columns: u16, rows: u16) -> Option<ToggleControl> {
+    let row = KELVIN_ROW + u16::from(matches!(key, Key::Kelvin(_)));
+    let (column, label, _) = FIREFLY_CHOICES[1];
+    if rows > row && columns >= column + label.len() as u16 {
+        Some(ToggleControl::Row(row))
+    } else {
+        inline_control(
+            KEY_ROW,
+            INLINE_FIREFLY_COLUMN,
+            INLINE_FIREFLY_LABEL,
+            columns,
+            rows,
+        )
+    }
+}
+
+fn dress_control(
+    key: Key,
+    columns: u16,
+    rows: u16,
+    firefly: Option<ToggleControl>,
+) -> Option<ToggleControl> {
+    let (column, label, _) = DRESS_CHOICES[1];
+    let row = KELVIN_ROW + u16::from(matches!(key, Key::Kelvin(_)));
+    let row = row + u16::from(matches!(firefly, Some(ToggleControl::Row(at)) if at == row));
+    if rows > row && columns >= column + label.len() as u16 {
+        Some(ToggleControl::Row(row))
+    } else if let Some(ToggleControl::Row(firefly_row)) = firefly {
+        let (column, label, _) = FIREFLY_CHOICES[1];
+        inline_control(
+            firefly_row,
+            column + label.len() as u16 + 2,
+            INLINE_DRESS_LABEL,
+            columns,
+            rows,
+        )
+    } else {
+        inline_control(1, INLINE_DRESS_COLUMN, INLINE_DRESS_LABEL, columns, rows)
+    }
+}
+
+fn inline_control(
+    row: u16,
+    column: u16,
+    label: &'static str,
+    columns: u16,
+    rows: u16,
+) -> Option<ToggleControl> {
+    (rows > row && columns >= column + label.len() as u16).then_some(ToggleControl::Inline {
+        row,
+        column,
+        label,
+    })
 }
 
 impl Drop for SkyControls {
@@ -286,6 +397,22 @@ fn draw_label(output: &mut Vec<u8>, row: u16, columns: u16, label: &str) -> io::
         Clear(ClearType::CurrentLine),
         Print(label)
     )
+}
+
+fn draw_toggle_row(
+    output: &mut Vec<u8>,
+    row: u16,
+    columns: u16,
+    label: &str,
+    choices: &[(u16, &str, bool)],
+    enabled: bool,
+) -> io::Result<()> {
+    draw_label(output, row, columns, label)?;
+    for &(column, choice, value) in choices {
+        queue!(output, MoveTo(column, row))?;
+        draw_choice(output, choice, enabled == value)?;
+    }
+    Ok(())
 }
 
 fn draw_choice(output: &mut Vec<u8>, choice: impl Display, selected: bool) -> io::Result<()> {

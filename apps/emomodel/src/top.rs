@@ -1,6 +1,7 @@
 use glam::Vec3;
 use std::f32::consts::TAU;
 
+mod bottom;
 pub(super) mod chart;
 pub(super) mod finish;
 pub(super) mod trim;
@@ -13,6 +14,11 @@ const COLLAR_TRIM_START: usize = COLLAR_ROW - Surface::TRIM.len();
 const FABRIC_ROW: f32 = 68.5;
 const COLLAR_FABRIC_ROW: f32 = 66.5;
 const OPENING_ROWS_PER_METER: f32 = 500.0;
+const BLACK_FABRIC_SRGB: [u8; 3] = [22, 22, 22];
+const WHITE_RIBBON_SRGB: [u8; 3] = [241, 239, 233];
+const PANTS_VERTEX_ROW: usize = 52;
+const SOCK_VERTEX_ROW: usize = 80;
+const JOIN_GAP_METERS: f32 = 0.002;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Surface {
@@ -21,6 +27,8 @@ pub(super) enum Surface {
     Band,
     Thread,
     Outline,
+    Sock,
+    SockBand,
 }
 
 impl Surface {
@@ -37,12 +45,14 @@ impl Surface {
         Self::Outline,
     ];
 
-    pub(super) const ALL: [Self; 5] = [
+    pub(super) const ALL: [Self; 7] = [
         Self::Skin,
         Self::Fabric,
         Self::Band,
         Self::Thread,
         Self::Outline,
+        Self::Sock,
+        Self::SockBand,
     ];
 
     pub(super) fn at_row(row: usize) -> Self {
@@ -54,13 +64,13 @@ impl Surface {
         }
     }
 
-    pub(super) fn albedo(self, color: Pastel) -> [u8; 3] {
+    pub(super) fn albedo(self, fabric: [u8; 3]) -> [u8; 3] {
         match self {
             Self::Skin => crate::light::SKIN_SRGB,
-            Self::Fabric => color.rgb(),
-            Self::Band => color
-                .rgb()
-                .map(|channel| (f32::from(channel) * 0.75).round() as u8),
+            Self::Fabric | Self::Sock => fabric,
+            Self::Band | Self::SockBand => {
+                fabric.map(|channel| (f32::from(channel) * 0.75).round() as u8)
+            }
             Self::Thread => [178, 175, 181],
             Self::Outline => [53, 50, 58],
         }
@@ -120,6 +130,85 @@ pub(super) struct TopStyle {
     pub right_sleeve: f32,
     pub hem: f32,
     pub socks: Option<f32>,
+    pub sock_color: Option<Pastel>,
+    pub bottoms: Option<BottomStyle>,
+}
+
+impl TopStyle {
+    pub(crate) fn fabric(self) -> Option<[u8; 3]> {
+        if self.bottoms.is_some() {
+            Some(BLACK_FABRIC_SRGB)
+        } else {
+            self.color.map(Pastel::rgb)
+        }
+    }
+
+    pub(crate) fn surface_at_row(self, row: usize) -> Surface {
+        if self.bottoms.is_some() {
+            return match row {
+                ..OPENING_ROW => Surface::Skin,
+                SOCK_VERTEX_ROW..COLLAR_ROW => Surface::Sock,
+                COLLAR_ROW.. => Surface::Skin,
+                _ => Surface::Fabric,
+            };
+        }
+        Surface::at_row(row)
+    }
+
+    pub(crate) fn albedo(self, surface: Surface) -> [u8; 3] {
+        let fabric = self.fabric().unwrap_or(BLACK_FABRIC_SRGB);
+        match surface {
+            Surface::Band if self.bottoms.is_some() => WHITE_RIBBON_SRGB,
+            Surface::Sock | Surface::SockBand => {
+                surface.albedo(self.sock_color.map_or(fabric, Pastel::rgb))
+            }
+            _ => surface.albedo(fabric),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(super) struct BottomStyle {
+    pub left_leg: f32,
+    pub right_leg: f32,
+    pub waist: f32,
+}
+
+#[derive(Clone, Copy)]
+struct LowerFit {
+    waist: f32,
+    leg: f32,
+    sock: Option<(f32, f32)>,
+}
+
+impl LowerFit {
+    fn at(position: Vec3, bottoms: BottomStyle, socks: Option<f32>) -> Self {
+        let [waist, leg] =
+            bottom::edges(position, bottoms.left_leg, bottoms.right_leg, bottoms.waist);
+        Self {
+            waist,
+            leg,
+            sock: socks.map(|length| sock_opening(position, length)),
+        }
+    }
+
+    fn gap(self) -> f32 {
+        self.sock
+            .map_or(f32::INFINITY, |(sock, _)| -(self.leg + sock))
+    }
+
+    fn vertex_row(self) -> f32 {
+        let row = if self.waist >= 0.0 && self.leg >= 0.0 {
+            PANTS_VERTEX_ROW
+        } else if self.sock.is_some_and(|(distance, _)| distance >= 0.0)
+            || (self.leg < 0.0 && self.gap() <= JOIN_GAP_METERS)
+        {
+            SOCK_VERTEX_ROW
+        } else {
+            0
+        };
+        row as f32 + 0.5
+    }
 }
 
 pub(super) struct Fit {
@@ -179,10 +268,7 @@ impl Fit {
             (right, Opening::RightCuff)
         };
         if let Some(length) = style.socks {
-            // The highest cuff stays below the point where the legs join.
-            let height = 0.115 + (0.780 - 0.115) * length;
-            let depth = round_limit((z - 0.020) / 0.060);
-            let sock = height - y + 0.003 * depth;
+            let (sock, height) = sock_opening(self.position, length);
             if sock > shirt.0 {
                 return (sock, Opening::Sock(height));
             }
@@ -196,7 +282,9 @@ impl Fit {
     }
 
     pub(super) fn coverage_row(&self, style: TopStyle) -> f32 {
-        if self.near_collar() {
+        if let Some(bottoms) = style.bottoms {
+            LowerFit::at(self.position, bottoms, style.socks).vertex_row()
+        } else if self.near_collar() {
             self.collar_row()
         } else {
             opening_row(self.opening(style).0)
@@ -220,26 +308,38 @@ impl Fit {
                     let depth = z - (0.017 + 0.004 * length);
                     (vertical.atan2(depth), 0.30 - 0.15 * length)
                 }
-                Opening::Sock(height) => {
-                    let below_knee = 1.0 - smooth((height - 0.350) / 0.220);
-                    let calf = smooth((height - 0.170) / 0.180) * below_knee;
-                    let thigh = smooth((height - 0.450) / 0.330);
-                    let center_z = 0.030 * below_knee + 0.010 * calf;
-                    let across = (x.abs() - 0.070) / 0.8;
-                    (
-                        across.atan2(z - center_z),
-                        0.180 + 0.075 * calf + 0.210 * thigh,
-                    )
-                }
+                Opening::Sock(height) => leg_phase(self.position, height),
             };
             (opening_row(distance), angle, circumference)
         };
-        // A whole number of stitches around each opening keeps the pattern
-        // continuous across the angle wrap.
-        let pitch = trim::STITCH_PERIOD_METERS;
-        let perimeter = (circumference / pitch).round() * pitch;
-        (row, angle * (perimeter / TAU))
+        (row, stitch_along(angle, circumference))
     }
+}
+
+fn sock_opening(position: Vec3, length: f32) -> (f32, f32) {
+    // The highest cuff stays below the point where the legs join.
+    let height = 0.115 + (0.780 - 0.115) * length.clamp(0.0, 1.0);
+    let depth = round_limit((position.z - 0.020) / 0.060);
+    (height - position.y + 0.003 * depth, height)
+}
+
+fn leg_phase(position: Vec3, height: f32) -> (f32, f32) {
+    let below_knee = 1.0 - smooth((height - 0.350) / 0.220);
+    let calf = smooth((height - 0.170) / 0.180) * below_knee;
+    let thigh = smooth((height - 0.450) / 0.330);
+    let center_z = 0.030 * below_knee + 0.010 * calf;
+    let across = (position.x.abs() - 0.070) / 0.8;
+    (
+        across.atan2(position.z - center_z),
+        0.180 + 0.075 * calf + 0.210 * thigh,
+    )
+}
+
+fn stitch_along(angle: f32, circumference: f32) -> f32 {
+    // A whole number of stitches keeps the pattern continuous at the angle wrap.
+    let pitch = trim::STITCH_PERIOD_METERS;
+    let perimeter = (circumference / pitch).round() * pitch;
+    angle * (perimeter / TAU)
 }
 
 fn opening_row(distance: f32) -> f32 {
@@ -390,8 +490,13 @@ mod tests {
                 assert_ne!(color.name(), earlier.name());
                 assert_ne!(color.rgb(), earlier.rgb());
             }
-            let [_, fabric, band, thread, outline] =
-                Surface::ALL.map(|surface| surface.albedo(color));
+            let [fabric, band, thread, outline] = [
+                Surface::Fabric,
+                Surface::Band,
+                Surface::Thread,
+                Surface::Outline,
+            ]
+            .map(|surface| surface.albedo(color.rgb()));
             assert!(band.into_iter().zip(fabric).all(|(trim, body)| trim < body));
             assert!(
                 outline

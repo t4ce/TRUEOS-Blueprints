@@ -10,6 +10,7 @@ use super::{
     butterfly::Butterfly,
     compact_mesh,
     dance::Dance,
+    dress::{self, Dress},
     eye_detail::{self, EyeDetail},
     eye_sprite::{self, EyeSprite},
     fire_light::FireLight,
@@ -64,6 +65,7 @@ const SPARK_INDICES: usize = 3 * SPARK_EDGE.len();
 const HAIRBAND_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
 const BODY_MARKS_COLUMN: usize = hairband::WIDTH + 1;
 const CONTACT_ROW: usize = HAIRBAND_ROW + hairband::HEIGHT;
+const DRESS_COLUMN: usize = (LIVE_OUTLINE_SLOT + MAX_LIVE_BUTTERFLIES) * 4;
 const ATLAS_HEIGHT: usize = 512 + hairband::HEIGHT;
 const MAX_ATLAS_WIDTH: usize = 1024;
 const ATLAS_WIDTHS: [usize; 2] = [512, MAX_ATLAS_WIDTH];
@@ -75,21 +77,11 @@ const MAX_LIVE_BUTTERFLIES: usize = 9 * BUTTERFLIES_PER_SKETCH;
 const SKETCH_OUTLINE_SLOT: usize = 3;
 const LIVE_FILL_SLOT: usize = SKETCH_OUTLINE_SLOT + 1;
 const LIVE_OUTLINE_SLOT: usize = LIVE_FILL_SLOT + MAX_LIVE_BUTTERFLIES;
-const PELVIS_MARKER_SLOT: usize = LIVE_OUTLINE_SLOT + MAX_LIVE_BUTTERFLIES;
-const PELVIS_MARKER_POINTS: [Vec2; 6] = [
-    Vec2::new(-15.0, -4.0),
-    Vec2::new(-9.0, 0.0),
-    Vec2::new(-15.0, 4.0),
-    Vec2::new(15.0, 4.0),
-    Vec2::new(9.0, 0.0),
-    Vec2::new(15.0, -4.0),
-];
-// The centerline vertices bracketing the normal crop in the embedded body.
-const PELVIS_ANCHORS: [usize; 2] = [1063, 1071];
 const LIVE_VERTICES: usize = MAX_LIVE_BUTTERFLIES * 3 * live_butterfly::MAX_TRIANGLES;
 const FIREFLY_DEPTH_TRAVEL: f32 = 1.6;
 
 const _: () = assert!(TOP_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
+const _: () = assert!(DRESS_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + top::COVERAGE_ROWS <= EYE_ROW);
 const _: () = assert!(BODY_TINT_COLUMN + body_tint::WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + body_tint::HEIGHT <= EYE_ROW);
@@ -100,7 +92,7 @@ const _: () = assert!(EYE_ROW + SPARK_SIZE <= HAIRBAND_ROW);
 const _: () = assert!(EYE_ROW + sky_palette::HEIGHT <= HAIRBAND_ROW);
 const _: () = assert!(hairband::WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(finish::ATLAS_WIDTH <= ATLAS_WIDTHS[0]);
-const _: () = assert!((PELVIS_MARKER_SLOT + 1) * 4 <= ATLAS_WIDTHS[0]);
+const _: () = assert!((LIVE_OUTLINE_SLOT + MAX_LIVE_BUTTERFLIES) * 4 <= ATLAS_WIDTHS[0]);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FireflyPhase {
@@ -419,8 +411,10 @@ pub(super) struct Preview<'a> {
     hands: HandProbe,
     contacts: floor::Atlas,
     skin_materials: Option<Vec<Material>>,
-    pelvis_markers: bool,
     sky_palette: sky_palette::Palette,
+    dress: Dress,
+    dress_ramp: Vec<u8>,
+    dress_visible: bool,
     top_style: TopStyle,
     top_fit: Vec<Fit>,
     top_rows: Vec<f32>,
@@ -483,6 +477,7 @@ impl<'a> Preview<'a> {
         )
         .await?;
         let hairband = Hairband::load(glb, mesh).await?;
+        let dress = Dress::load()?;
         let (source_vertices, mut compact_indices) = compact_mesh(mesh);
         body_tint.remap_indices(&mut compact_indices, u32::try_from(source_vertices.len())?);
         let eye_base = source_vertices.len() + body_tint.vertex_count();
@@ -506,16 +501,16 @@ impl<'a> Preview<'a> {
         let trim_vertices = mesh.material_triangles[1].len() * 3;
         let vertex_count = geometry_vertices as usize
             + trim_vertices
+            + dress.vertex_count()
             + 4 * floor::CONTACTS
             + 2 * stroke_pairs
             + SPARK_VERTICES
-            + LIVE_VERTICES
-            + PELVIS_MARKER_POINTS.len();
+            + LIVE_VERTICES;
         let transient_indices = floor::CONTACTS * 6
             + stroke_indices
             + SPARK_INDICES
             + LIVE_VERTICES
-            + PELVIS_MARKER_POINTS.len();
+            + dress.indices().len();
         let mut indices = Vec::with_capacity(
             (compact_indices.len()
                 + eye_sprite::INDEX_COUNT
@@ -634,8 +629,10 @@ impl<'a> Preview<'a> {
             hands,
             contacts: floor::Atlas::new(1),
             skin_materials,
-            pelvis_markers: studying_skin && !is_butterfly,
             sky_palette: sky_palette::Palette::new(Key::Neutral),
+            dress,
+            dress_ramp: light::diffuse_lookup_rgba(dress::PINK),
+            dress_visible: false,
             top_style: TopStyle::default(),
             top_fit,
             top_rows: Vec::new(),
@@ -650,9 +647,10 @@ impl<'a> Preview<'a> {
         })
     }
 
-    pub(super) fn toggle_pelvis_markers(&mut self) {
-        if self.skin_materials.is_some() {
-            self.pelvis_markers = !self.pelvis_markers;
+    pub(super) fn set_dress(&mut self, visible: bool) {
+        if self.dress_visible != visible {
+            self.dress_visible = visible;
+            report(format_args!("avatar dress visible={visible}"));
         }
     }
 
@@ -662,12 +660,15 @@ impl<'a> Preview<'a> {
         }
         let fit = |style| TopStyle {
             color: None,
+            sock_color: None,
             ..style
         };
-        let fit_changed = self.top_style.color.is_some() != style.color.is_some()
-            || fit(self.top_style) != fit(style);
+        let fabric = style.fabric();
+        let previous_fabric = self.top_style.fabric();
+        let fit_changed =
+            previous_fabric.is_some() != fabric.is_some() || fit(self.top_style) != fit(style);
         if fit_changed {
-            let mut trim = if style.color.is_some() {
+            let mut finish = if fabric.is_some() {
                 finish::Finish::build(
                     style,
                     &self.top_fit,
@@ -676,31 +677,31 @@ impl<'a> Preview<'a> {
                     self.mesh.indices.as_chunks::<3>().0,
                     |triangle| self.body_tint.triangle_tint(triangle),
                 )
-                .context("shirt trim atlas exceeds its extent")?
+                .context("clothing atlas exceeds its extent")?
             } else {
                 finish::Finish::default()
             };
             self.top_finish.restore_indices(&mut self.indices);
-            trim.replace_indices(&mut self.indices, self.geometry_vertices);
-            self.top_finish = trim;
+            finish.replace_indices(&mut self.indices, self.geometry_vertices);
+            self.top_finish = finish;
             self.top_rows.clear();
-            if style.color.is_some() {
+            if fabric.is_some() {
                 self.top_rows
                     .extend(self.top_fit.iter().map(|fit| fit.coverage_row(style)));
             }
         }
-        if style.color != self.top_style.color {
+        if fabric != previous_fabric || style.sock_color != self.top_style.sock_color {
             self.top_pixels.clear();
-            if let Some(color) = style.color {
+            if fabric.is_some() {
                 let lighting_ramp = if self.skin_materials.is_some() {
                     skin_study::color_lookup_rgba
                 } else {
                     light::diffuse_lookup_rgba
                 };
-                self.top_ramps = Surface::ALL.map(|surface| lighting_ramp(surface.albedo(color)));
+                self.top_ramps = Surface::ALL.map(|surface| lighting_ramp(style.albedo(surface)));
                 for row in 0..top::COVERAGE_ROWS {
                     self.top_pixels
-                        .extend_from_slice(&self.top_ramps[Surface::at_row(row) as usize]);
+                        .extend_from_slice(&self.top_ramps[style.surface_at_row(row) as usize]);
                 }
             }
         }
@@ -997,15 +998,6 @@ impl<'a> Preview<'a> {
             butterfly.reproject_birth(view_projection, viewport, now_ns);
         }
         let back = super::camera_view_back(camera);
-        let pelvis_marker = if self.pelvis_markers {
-            let [upper, lower] = PELVIS_ANCHORS.map(|index| self.body_start + index);
-            (Vec3::from_array(pose.normals[upper]).dot(back) > 0.0).then(|| {
-                (Vec3::from_array(pose.positions[upper]) + Vec3::from_array(pose.positions[lower]))
-                    * 0.5
-            })
-        } else {
-            None
-        };
         let fire = if sky.firefly {
             let avatar_center =
                 (left_heel.0 + left_toe.0 + right_heel.0 + right_toe.0) * 0.25 + 0.85 * Vec3::Y;
@@ -1061,16 +1053,16 @@ impl<'a> Preview<'a> {
                 self.texture[start..start + colors.len()].copy_from_slice(colors);
             }
         }
+        self.hairband.shade(
+            &mut self.texture,
+            stride,
+            [0, HAIRBAND_ROW],
+            pose.normals,
+            back,
+            sky,
+        );
         if let Some(color) = ink_color {
             set_swatch(&mut self.texture, stride, SKETCH_OUTLINE_SLOT, color);
-        }
-        if pelvis_marker.is_some() {
-            set_swatch(
-                &mut self.texture,
-                stride,
-                PELVIS_MARKER_SLOT,
-                [21, 79, 166, 255],
-            );
         }
         if let Some((_, color)) = spark {
             paint_spark_tile(&mut self.texture, stride, color);
@@ -1088,6 +1080,10 @@ impl<'a> Preview<'a> {
                 LIVE_OUTLINE_SLOT + index,
                 butterfly.outline(),
             );
+        }
+        if self.dress_visible {
+            let start = DRESS_COLUMN * 4;
+            self.texture[start..start + self.dress_ramp.len()].copy_from_slice(&self.dress_ramp);
         }
         let swatches = [palette.swatch(0), palette.swatch(1)];
         let diffuse_direction = sky.key_direction();
@@ -1246,6 +1242,30 @@ impl<'a> Preview<'a> {
         }
         let mut next_vertex = self.geometry_vertices + self.top_finish.vertex_count() as u32;
         self.indices.truncate(self.geometry_index_bytes);
+        if self.dress_visible {
+            let skirt = self.dress.pose(pose.joint_world)?;
+            for (&position, &normal) in skirt.positions.iter().zip(skirt.normals) {
+                let position = Vec3::from_array(position) + pose.world_offset;
+                let normal = Vec3::from_array(normal);
+                let diffuse = normal.dot(diffuse_direction).clamp(-1.0, 1.0);
+                let column = (diffuse + 1.0) * (light::DIFFUSE_WIDTH / 2) as f32 + 0.5;
+                append(
+                    position,
+                    [
+                        (DRESS_COLUMN as f32 + column) / width as f32,
+                        0.5 / height as f32,
+                    ],
+                );
+            }
+            let dress_vertices = skirt.positions.len() as u32;
+            self.indices.extend(
+                self.dress
+                    .indices()
+                    .iter()
+                    .flat_map(|&index| (next_vertex + index).to_le_bytes()),
+            );
+            next_vertex += dress_vertices;
+        }
         for (points, uv) in self.contacts.quads(0, GROUND_Y, &palette) {
             for (point, uv) in points.into_iter().zip(uv) {
                 append(Vec3::from_array(point), uv);
@@ -1283,17 +1303,6 @@ impl<'a> Preview<'a> {
                     next_vertex += 1;
                 }
             });
-        }
-        if let Some(center) = pelvis_marker {
-            let mut clip = view_projection.transform_point3(center);
-            clip.z = (clip.z - 0.008).max(0.0);
-            let pixel_to_clip = Vec2::new(2.0 / viewport.0 as f32, 2.0 / viewport.1 as f32);
-            let uv = palette.swatch(PELVIS_MARKER_SLOT);
-            for point in PELVIS_MARKER_POINTS {
-                append_clip_vertex(output, clip + (point * pixel_to_clip).extend(0.0), uv);
-                self.indices.extend_from_slice(&next_vertex.to_le_bytes());
-                next_vertex += 1;
-            }
         }
         if let Some((tip, _)) = spark {
             let mut center = view_projection.transform_point3(tip);

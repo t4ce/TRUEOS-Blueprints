@@ -89,6 +89,12 @@ impl Cutout {
         &self.indices
     }
 
+    pub(super) fn source_uvs(&self) -> impl Iterator<Item = (usize, [f32; 2])> + '_ {
+        self.vertices
+            .iter()
+            .map(|vertex| (vertex.sources[0], vertex.uv))
+    }
+
     pub(super) fn vertices<'a>(
         &'a self,
         positions: &'a [[f32; 3]],

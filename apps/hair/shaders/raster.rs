@@ -109,11 +109,30 @@ pub(crate) struct Material {
     pub(crate) factor: Vec4,
     pub(crate) alpha: Alpha,
     pub(crate) double_sided: bool,
+    pub(crate) finish: Option<Finish>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Finish {
+    pub(crate) roughness: f32,
+    pub(crate) metallic: f32,
+}
+
+impl Finish {
+    fn shade(self, base: Vec3, diffuse: f32, normal: Vec3, halfway: Vec3) -> Vec3 {
+        let roughness = self.roughness.clamp(0.12, 1.0);
+        let exponent = 2.0 / roughness.powi(2) - 2.0;
+        let highlight = normal.dot(halfway).clamp(0.0, 1.0).powf(exponent);
+        let reflectance = Vec3::splat(0.04).lerp(base, self.metallic);
+        let diffuse_color = base * (diffuse * (1.0 - 0.22 * self.metallic));
+        (diffuse_color + reflectance * (0.38 * (1.0 - roughness) * highlight)).min(Vec3::ONE)
+    }
 }
 
 #[derive(Clone, Copy)]
 struct Projected {
     position: Vec3,
+    normal: Vec3,
     shade: f32,
     uv: Vec2,
 }
@@ -159,15 +178,18 @@ impl<'a> Surface<'a> {
             .iter()
             .map(|vertex| Projected {
                 position: camera.project(vertex.position),
+                normal: vertex.normal,
                 shade: 0.71 + 0.29 * vertex.normal.dot(camera.light).max(0.0),
                 uv: vertex.uv,
             })
             .collect();
+        let halfway = (camera.light + camera.toward).normalize_or_zero();
         for triangle in indices {
             self.triangle(
                 triangle.map(|index| projected[index as usize]),
                 material,
                 texture,
+                halfway,
             );
         }
     }
@@ -177,6 +199,7 @@ impl<'a> Surface<'a> {
         [a, b, c]: [Projected; 3],
         material: &Material,
         texture: Option<&Texture>,
+        halfway: Vec3,
     ) {
         let ab = (b.position - a.position).truncate();
         let ac = (c.position - a.position).truncate();
@@ -213,7 +236,15 @@ impl<'a> Surface<'a> {
                     Alpha::Blend => color.w,
                 };
                 let shade = wa * a.shade + wb * b.shade + wc * c.shade;
-                self.blend(index, color.truncate() * shade, alpha);
+                let base = color.truncate();
+                let color = if let Some(finish) = material.finish {
+                    let normal =
+                        (wa * a.normal + wb * b.normal + wc * c.normal).normalize_or_zero();
+                    finish.shade(base, shade, normal, halfway)
+                } else {
+                    base * shade
+                };
+                self.blend(index, color, alpha);
                 if alpha >= 0.98 {
                     self.depth[index] = depth;
                 }

@@ -1,6 +1,13 @@
 use anyhow::{Context, Result, bail, ensure};
 use std::{fs::File, path::PathBuf};
 
+use hair_look::HairLook;
+use hair_rope::HairMotion;
+
+#[path = "../shaders/hair_hull.rs"]
+mod hair_hull;
+#[path = "../shaders/hair_look.rs"]
+mod hair_look;
 mod hair_rod;
 mod hair_rope;
 mod hair_spring;
@@ -19,6 +26,7 @@ mod water_iso;
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 720;
 const WATER_PREVIEW: bool = false;
+const DRAW_ROD_GUIDES: bool = false;
 const TILT_LIMIT: f32 = std::f32::consts::FRAC_PI_2;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,9 +64,11 @@ impl Layers {
 pub(crate) struct Controls {
     pub(crate) layers: Layers,
     pub(crate) yaw: f32,
+    pub(crate) view_orbit: f32,
     pub(crate) roll: f32,
     pub(crate) tilt: f32,
-    pub(crate) hair_motion: Option<hair_rope::HairMotion>,
+    pub(crate) hair_motion: Option<HairMotion>,
+    pub(crate) hair_look: HairLook,
     pub(crate) rod_tuning: hair_rope::RodTuning,
     #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
@@ -72,12 +82,13 @@ pub(crate) struct Controls {
 impl Default for Controls {
     fn default() -> Self {
         let field_debug = cfg!(target_os = "trueos");
+        let hair_motion = cfg!(target_os = "linux").then_some(HairMotion::Rod);
         Self {
             layers: Layers {
                 avatar: true,
                 hair: true,
                 sphere: field_debug,
-                guides: true,
+                guides: default_guides(hair_motion),
                 field: field_debug,
                 reach: field_debug,
                 body_obstacles: true,
@@ -87,9 +98,11 @@ impl Default for Controls {
             } else {
                 0.0
             },
+            view_orbit: 0.0,
             roll: 0.0,
             tilt: 0.0,
-            hair_motion: cfg!(target_os = "linux").then_some(hair_rope::HairMotion::Rod),
+            hair_motion,
+            hair_look: HairLook::default(),
             rod_tuning: hair_rope::RodTuning::default(),
             #[cfg(target_os = "trueos")]
             paused: false,
@@ -100,6 +113,10 @@ impl Default for Controls {
             flow: solver::FlowSettings::DEFAULT,
         }
     }
+}
+
+fn default_guides(hair_motion: Option<HairMotion>) -> bool {
+    DRAW_ROD_GUIDES || hair_motion != Some(HairMotion::Rod)
 }
 
 #[cfg(target_os = "trueos")]
@@ -117,6 +134,7 @@ fn main() -> Result<()> {
     let mut controls = Controls::default();
     let mut snapshot = None;
     let mut frames = None;
+    let mut guides_overridden = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -147,7 +165,6 @@ fn main() -> Result<()> {
                 controls.tilt = degrees.to_radians().clamp(-TILT_LIMIT, TILT_LIMIT);
             }
             "--motion" => {
-                use hair_rope::HairMotion;
                 controls.hair_motion = match args.next().as_deref() {
                     Some("1") => Some(HairMotion::Rope),
                     Some("2") => Some(HairMotion::Spring),
@@ -155,16 +172,29 @@ fn main() -> Result<()> {
                     Some("flow") => None,
                     _ => bail!("expected 1, 2, 3, or flow after --motion"),
                 };
+                if !guides_overridden {
+                    controls.layers.guides = default_guides(controls.hair_motion);
+                }
+            }
+            "--hull" => {
+                controls.hair_look = match args.next().as_deref() {
+                    Some("locks") => HairLook::Locks,
+                    Some("ribbon") => HairLook::Ribbon,
+                    Some("soft") => HairLook::SoftMerge,
+                    Some("strong") => HairLook::StrongMerge,
+                    _ => bail!("expected locks, ribbon, soft, or strong after --hull"),
+                };
             }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
             "--hide" | "--show" => {
                 let name = args.next().context("missing layer name")?;
                 controls.layers.set_visible(&name, arg == "--show")?;
+                guides_overridden |= matches!(name.as_str(), "guides" | "flow");
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu bending rod: 1 selects tip weight, 2 spread shape, and 3 spread width. Tab and Shift+Tab cycle the selected value from 0% to 100% in steps of 10. Set spread width above zero to see the spread shape. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--hull locks|ribbon|soft|strong] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. In bending-rod mode, Tab cycles hull looks, 1 cycles wind strength, and 2 cycles the horizontal wind direction. Hold Shift to step backward. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");
@@ -183,7 +213,7 @@ fn main() -> Result<()> {
             scene.advance(controls);
         }
         let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
-        let primitives = scene.draw(controls, &mut pixels);
+        let drawn = scene.draw(controls, &mut pixels);
         let mut encoder = png::Encoder::new(File::create(&path)?, WIDTH, HEIGHT);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
@@ -194,16 +224,18 @@ fn main() -> Result<()> {
             started.elapsed().as_secs_f64()
         );
         if controls.water {
-            println!("hair: medium water surface, {primitives} triangles");
+            println!("hair: medium water surface, {} triangles", drawn.triangles);
         } else if let Some(motion) = controls.hair_motion {
             println!(
-                "hair: {}, {} roots, {primitives} drawn segments",
+                "hair: {}, {} roots, {} hull triangles, {} debug line segments",
                 motion.label(),
-                scene.guide_count()
+                scene.guide_count(),
+                drawn.triangles,
+                drawn.segments,
             );
         } else if controls.layers.field || controls.layers.guides {
             println!(
-                "hair: {} field seeds, {} hair-root seeds, {primitives} traced segments",
+                "hair: {} field seeds, {} hair-root seeds, {} traced segments",
                 if controls.layers.field {
                     solver::FIELD_STREAMLINE_SEEDS
                 } else {
@@ -214,6 +246,7 @@ fn main() -> Result<()> {
                 } else {
                     0
                 },
+                drawn.segments,
             );
         }
         return Ok(());
@@ -221,6 +254,9 @@ fn main() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
+        if controls.hair_motion == Some(HairMotion::Rod) {
+            controls.rod_tuning.wind_strength_percent = 10;
+        }
         let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls)?;
         host::run(WIDTH, HEIGHT, controls, frames, |controls, pixels| {
             scene.advance(controls);
