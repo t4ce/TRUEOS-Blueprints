@@ -1160,7 +1160,7 @@ async fn play(
                     {
                         match event.key_code {
                             TOP_ROW_3 => butterfly_requested = true,
-                            SPACE => tops.roll_full_outfit(),
+                            SPACE => tops.roll_full_outfit(clock::monotonic_nanos()),
                             _ => (),
                         }
                     }
@@ -1255,18 +1255,20 @@ async fn play(
         } else {
             1
         };
-        if let Some(tops) = &tops
-            && (samples != previous_samples || Some(tops.style) != previous_top)
-        {
-            match frame.set_title(&tops.title(title, samples)) {
-                Ok(()) => (),
-                Err(Error::NotFound) => return Ok(()),
-                Err(error) => return Err(ui_error(error)),
+        if let Some(tops) = &tops {
+            if samples != previous_samples || Some(tops.style) != previous_top {
+                match frame.set_title(&tops.title(title, samples)) {
+                    Ok(()) => (),
+                    Err(Error::NotFound) => return Ok(()),
+                    Err(error) => return Err(ui_error(error)),
+                }
+                previous_top = Some(tops.style);
             }
             if let Playback::Reel(preview) = &mut *playback {
-                preview.set_top(tops.style)?;
+                let now = clock::monotonic_nanos();
+                let (appearance, moving) = tops.appearance(now);
+                preview.set_top(appearance, moving, now)?;
             }
-            previous_top = Some(tops.style);
         }
         if samples != previous_samples {
             stats = Timing::default();

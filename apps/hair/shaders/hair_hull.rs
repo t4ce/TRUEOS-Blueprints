@@ -6,6 +6,7 @@ const SECTION_VERTICES: u32 = 4;
 const STRIP_OFFSETS: [u32; 2] = [0, 2];
 const MIN_LINK_LENGTH: f32 = 1e-5;
 const MAX_TIP_MIDPOINT_OFFSET: f32 = 0.003;
+const TIP_THREAD_SPLAY: f32 = 0.12;
 const OUTLINE_COLOR: [f32; 3] = [9.0, 7.0, 12.0];
 const OUTLINE_STRENGTH: f32 = 0.42;
 const OUTLINE_WIDTH: f32 = 0.045;
@@ -78,23 +79,32 @@ pub(crate) struct HairHull {
 
 pub(crate) struct HairTip {
     pub(crate) points: [Vec3; 5],
+    pub(crate) threads: [[Vec3; 2]; 2],
 }
 
 impl HairTip {
-    fn new(previous: Option<Vec3>, start: Vec3, split: Vec3, tip: Vec3) -> Self {
+    fn new(previous: Option<Vec3>, start: Vec3, split: Vec3, tip: Vec3, root_normal: Vec3) -> Self {
         let wide = usable_direction(split - start);
         let thin = usable_direction(tip - split);
         let incoming = previous.map_or(wide, |point| usable_direction(start - point));
         let start_tangent = (incoming + wide).try_normalize().unwrap_or(wide);
         let split_tangent = (wide + thin).try_normalize().unwrap_or(wide);
+        let wide_middle = tip_midpoint(start, split, start_tangent, split_tangent);
+        let thin_middle = tip_midpoint(split, tip, split_tangent, thin);
+        // Sample the drawn strokes so the roots stay on the wide line and the
+        // ends follow the solved tip. The lateral offset grows with their reach.
+        let threads = [
+            (wide_middle, 0.6, 1.0),
+            (wide_middle.lerp(split, 1.0 / 3.0), 0.8, -1.0),
+        ]
+        .map(|(root, tip_progress, side)| {
+            let target = thin_middle.lerp(tip, tip_progress);
+            let offset = (target - root).cross(root_normal) * (side * TIP_THREAD_SPLAY);
+            [root, target + offset]
+        });
         Self {
-            points: [
-                start,
-                tip_midpoint(start, split, start_tangent, split_tangent),
-                split,
-                tip_midpoint(split, tip, split_tangent, thin),
-                tip,
-            ],
+            points: [start, wide_middle, split, thin_middle, tip],
+            threads,
         }
     }
 }
@@ -143,8 +153,13 @@ impl HairHull {
         let tip = points[points.len() - 1];
         if link_count == 1 {
             let start = points[last_links[2]];
-            self.tips
-                .push(HairTip::new(None, start, start.lerp(tip, 2.0 / 3.0), tip));
+            self.tips.push(HairTip::new(
+                None,
+                start,
+                start.lerp(tip, 2.0 / 3.0),
+                tip,
+                root_normal,
+            ));
             return;
         }
         let [previous, stroke_start, split] = last_links;
@@ -153,6 +168,7 @@ impl HairHull {
             points[stroke_start],
             points[split],
             tip,
+            root_normal,
         ));
         if link_count == 2 {
             return;
