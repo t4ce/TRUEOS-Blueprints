@@ -1,7 +1,7 @@
 # Hair
 
 Standalone Blueprint for studying procedural back hair and airflow around
-AvatarSample_B. The bending-rod preview sweeps a shaded pink hull along each
+AvatarSample_B. The bending-rod preview sweeps a shaded hull along each
 simulated guide. The cape-like source mesh supplies the resting length and
 appears with its original texture in the airflow study. The white,
 half-opacity sphere shows the head obstacle. The translucent blue
@@ -48,10 +48,21 @@ Rod motion runs at 90% of the original speed.
   calm. `2` cycles eight horizontal world directions, 45° apart. Hold
   `Shift` to step backward. The interactive rod preview starts with 10% wind
   toward +X. Headless snapshots start at 0%.
+- `5` cycles tip settling through Off, Light, and Medium. The filter eases in
+  near the ends as the guides slow down in weak wind.
+- `6` cycles the guide budget from 100% to 150% in 10-point steps, then back
+  to 100%. The 150 authored roots stay attached and the extra guides fill
+  gaps on the same anchor surface. Hold `Shift` to step backward.
 
-Each guide gets a flattened six-sided lock using EmoModel's flat hair swatch.
-The hull starts slightly inside the scalp, follows a smoothed guide, and
-tapers to a point. The guide solver still runs with the hair layer hidden.
+The length falls off sharply at the outer sides, where guides are up to 20%
+shorter for the same root-height layer. The upper root layers get a shorter
+cut to stagger the tips.
+
+Each guide gets a flattened six-sided lock. The default Locks look uses five
+colors sampled from the source back-hair atlas, blended along the length with
+smoothstep. The hull starts slightly inside the scalp, follows a smoothed
+guide, and tapers to a point. The guide solver still runs with the hair layer
+hidden.
 Use `Tab` to cycle Locks, Flat ribbons, Soft depth merge, and Strong depth
 merge. `Shift+Tab` steps back. The ribbon looks hold their taper longer and
 use procedural shading inspired by the original atlas. The merge looks

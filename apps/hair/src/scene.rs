@@ -4,8 +4,9 @@ use std::io::Cursor;
 
 use crate::{
     Controls,
-    hair_hull::{HairHull, LockProfile, ribbon_texture},
+    hair_hull::{HairHull, LockProfile, lock_texture, ribbon_texture},
     hair_look::{DepthBlend, HairLook},
+    hair_roots::extend_roots,
     hair_rope::{HairMotion, RopeGuides},
     obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER},
     raster::{Alpha, Camera, Finish, Material, Surface, Texture, Vertex},
@@ -17,20 +18,29 @@ const AVATAR: &[u8] = include_bytes!("../assets/avatar.glb");
 const BACK_HAIR_ANCHOR: &[u8] = include_bytes!("../assets/back-hair-anchor-surface.glb");
 const WORLD_FLOW_DOWN: Vec3 = Vec3::NEG_Y;
 const ROOT_INSET: f32 = 0.006;
-// EmoModel's flat hair swatch.
-const HAIR_MATERIAL: Material = Material {
+// Opaque sRGB samples from the authored Back Hair surface, in root-to-tip order.
+const BACK_HAIR_PALETTE: [(f32, [u8; 3]); 5] = [
+    (0.0, [42, 32, 61]),
+    (0.28, [46, 36, 64]),
+    (0.48, [98, 80, 117]),
+    (0.73, [109, 93, 130]),
+    (1.0, [52, 40, 68]),
+];
+const LOCK_MATERIAL: Material = Material {
     texture: None,
-    factor: Vec4::new(135.0 / 255.0, 83.0 / 255.0, 189.0 / 255.0, 1.0),
+    factor: Vec4::ONE,
     alpha: Alpha::Opaque,
     double_sided: false,
     finish: None,
 };
 const RIBBON_MATERIAL: Material = Material {
+    // EmoModel's flat hair swatch for the experimental ribbon looks.
+    factor: Vec4::new(135.0 / 255.0, 83.0 / 255.0, 189.0 / 255.0, 1.0),
     finish: Some(Finish {
         roughness: 0.38,
         metallic: 0.0,
     }),
-    ..HAIR_MATERIAL
+    ..LOCK_MATERIAL
 };
 
 struct Part {
@@ -49,6 +59,7 @@ pub(crate) struct DrawCounts {
 struct ProceduralHair {
     mesh: HairHull,
     blend: DepthBlend,
+    lock_texture: Texture,
     ribbon_texture: Texture,
 }
 
@@ -57,6 +68,7 @@ impl ProceduralHair {
         Self {
             mesh: HairHull::default(),
             blend: DepthBlend::new(roots),
+            lock_texture: lock_texture(&BACK_HAIR_PALETTE),
             ribbon_texture: ribbon_texture(),
         }
     }
@@ -74,6 +86,12 @@ impl ProceduralHair {
             let scalp_normal = (points[0] - HEAD_CENTER).normalize_or(Vec3::Z);
             points[0] -= ROOT_INSET * scalp_normal;
             let width_scale = 0.9 + 0.2 * (index % 7) as f32 / 6.0;
+            let color_shift = if look == HairLook::Locks {
+                let stagger = (index * 17 % 37) as f32 / 36.0 - 0.5;
+                0.07 * stagger
+            } else {
+                0.0
+            };
             mesh.append_lock(
                 points,
                 scalp_normal,
@@ -81,6 +99,7 @@ impl ProceduralHair {
                     half_width: half_width * width_scale,
                     half_depth,
                     tail_hold,
+                    color_shift,
                 },
             );
         };
@@ -136,7 +155,8 @@ impl Scene {
             .collect::<Result<Vec<_>>>()?;
         // Masked/opaque surfaces establish the depth used by eye overlays.
         parts.sort_by_key(|part| matches!(part.material.alpha, Alpha::Blend));
-        let roots = back_hair_roots()?;
+        let rods = controls.hair_motion == Some(HairMotion::Rod) && !controls.water;
+        let (mut roots, base_count) = back_hair_roots(rods)?;
         let pose = world_to_avatar(controls);
         let ropes = controls
             .hair_motion
@@ -149,12 +169,17 @@ impl Scene {
                     .map(|vertex| vertex.position.y)
                     .reduce(f32::min)
                     .unwrap_or(0.75);
-                RopeGuides::new(&roots, tip_y, pose, motion)
+                if rods {
+                    RopeGuides::with_extra_roots(&roots, base_count, tip_y, pose, motion)
+                } else {
+                    RopeGuides::new(&roots, tip_y, pose, motion)
+                }
             });
-        let hull = (ropes.is_some() && controls.hair_motion == Some(HairMotion::Rod))
-            .then(|| ProceduralHair::new(&roots));
-        let solver = (ropes.is_none() || controls.layers.field)
-            .then(|| Solver::new(WORLD_FLOW_DOWN, pose, roots));
+        let hull = rods.then(|| ProceduralHair::new(&roots));
+        let solver = (ropes.is_none() || controls.layers.field).then(|| {
+            roots.truncate(base_count);
+            Solver::new(WORLD_FLOW_DOWN, pose, roots)
+        });
         let body_bounds = parts.iter().flat_map(|part| &part.vertices).fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(minimum, maximum), vertex| {
@@ -300,7 +325,7 @@ impl Scene {
             {
                 hull.rebuild(ropes, controls.hair_look);
                 let (material, texture) = if controls.hair_look == HairLook::Locks {
-                    (&HAIR_MATERIAL, None)
+                    (&LOCK_MATERIAL, Some(&hull.lock_texture))
                 } else {
                     (&RIBBON_MATERIAL, Some(&hull.ribbon_texture))
                 };
@@ -374,7 +399,7 @@ fn world_to_avatar(controls: Controls) -> Quat {
     Quat::from_axis_angle(right, -controls.tilt) * spin
 }
 
-fn back_hair_roots() -> Result<Vec<Vec3>> {
+fn back_hair_roots(include_extra: bool) -> Result<(Vec<Vec3>, usize)> {
     let asset =
         gltf::Gltf::from_slice(BACK_HAIR_ANCHOR).context("parse back-hair anchor surface")?;
     let blob = asset
@@ -387,7 +412,7 @@ fn back_hair_roots() -> Result<Vec<Vec3>> {
         .and_then(|mesh| mesh.primitives().next())
         .context("missing Back Hair AnkorSurf mesh")?;
     let reader = primitive.reader(|_| Some(blob));
-    let positions: Vec<_> = reader
+    let mut positions: Vec<_> = reader
         .read_positions()
         .context("back-hair anchor is missing positions")?
         .map(Vec3::from_array)
@@ -396,7 +421,26 @@ fn back_hair_roots() -> Result<Vec<Vec3>> {
         !positions.is_empty() && positions.iter().all(|position| position.is_finite()),
         "invalid back-hair anchor vertices"
     );
-    Ok(positions)
+    let base_count = positions.len();
+    if include_extra {
+        ensure!(
+            primitive.mode() == gltf::mesh::Mode::Triangles,
+            "expected triangles in the back-hair anchor surface"
+        );
+        let indices: Vec<_> = reader
+            .read_indices()
+            .context("back-hair anchor is missing triangle indices")?
+            .into_u32()
+            .collect();
+        let triangles =
+            checked_triangles(&indices, base_count).context("back-hair anchor surface")?;
+        extend_roots(&mut positions, triangles, base_count / 2);
+        ensure!(
+            positions.len() == base_count + base_count / 2,
+            "back-hair anchor surface could not fit the extra guides"
+        );
+    }
+    Ok((positions, base_count))
 }
 
 fn load_part(primitive: gltf::Primitive<'_>, blob: &[u8]) -> Result<Part> {
@@ -509,12 +553,44 @@ fn reference_back_hair() -> Part {
 
 #[cfg(test)]
 pub(crate) fn reference_roots() -> Vec<Vec3> {
-    back_hair_roots().unwrap()
+    back_hair_roots(false).unwrap().0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guide_budget_reaches_the_hull_from_the_authored_surface() {
+        let (roots, base) = back_hair_roots(true).unwrap();
+        assert_eq!(base, 150);
+        assert_eq!(&roots[..base], reference_roots());
+        assert_eq!(roots.len(), 225);
+
+        let mut controls = Controls {
+            hair_motion: Some(HairMotion::Rod),
+            ..Controls::default()
+        };
+        controls.layers.body_obstacles = false;
+        controls.layers.guides = false;
+        controls.layers.field = false;
+        let mut scene = Scene::new(240, 180, controls).unwrap();
+        let mut pixels = vec![0; 240 * 180 * 4];
+        scene.advance(controls);
+        let baseline = scene.draw(controls, &mut pixels).triangles;
+        for step in 1..=5 {
+            controls.rod_tuning.budget_step = step;
+            scene.advance(controls);
+            assert_eq!(scene.guide_count(), base + 15 * usize::from(step));
+        }
+        let grown = scene.draw(controls, &mut pixels);
+        assert!(grown.triangles > baseline);
+        assert_eq!(grown.segments, 0);
+        controls.rod_tuning.budget_step = 0;
+        scene.advance(controls);
+        assert_eq!(scene.guide_count(), base);
+        assert_eq!(scene.draw(controls, &mut pixels).triangles, baseline);
+    }
 
     #[test]
     fn accessory_primitives_use_their_authored_finishes() {

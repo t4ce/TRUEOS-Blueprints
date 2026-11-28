@@ -9,6 +9,7 @@ mod hair_hull;
 #[path = "../shaders/hair_look.rs"]
 mod hair_look;
 mod hair_rod;
+mod hair_roots;
 mod hair_rope;
 mod hair_spring;
 #[cfg(target_os = "linux")]
@@ -194,7 +195,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--hull locks|ribbon|soft|strong] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. In bending-rod mode, Tab cycles hull looks, 1 cycles wind strength, and 2 cycles the horizontal wind direction. Hold Shift to step backward. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--hull locks|ribbon|soft|strong] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. In bending-rod mode, Tab cycles hull looks, 1 and 2 cycle wind strength and direction, 5 cycles tip settling, and 6 cycles the guide budget. Hold Shift to step backward. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");

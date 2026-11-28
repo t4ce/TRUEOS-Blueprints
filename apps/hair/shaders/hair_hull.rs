@@ -20,6 +20,42 @@ pub(crate) struct LockProfile {
     pub(crate) half_width: f32,
     pub(crate) half_depth: f32,
     pub(crate) tail_hold: f32,
+    pub(crate) color_shift: f32,
+}
+
+pub(crate) fn lock_texture(stops: &[(f32, [u8; 3]); 5]) -> Texture {
+    const WIDTH: u32 = 17;
+    const HEIGHT: u32 = 129;
+    let mut pixels = Vec::with_capacity((WIDTH * HEIGHT) as usize);
+    for row in 0..HEIGHT {
+        let progress = row as f32 / (HEIGHT - 1) as f32;
+        let color = lock_color(stops, progress);
+        for column in 0..WIDTH {
+            let across = 2.0 * column as f32 / (WIDTH - 1) as f32 - 1.0;
+            let shade = 1.0 - 0.07 * across * across;
+            let [red, green, blue] = color.map(|channel| (channel * shade).round() as u8);
+            pixels.push([red, green, blue, 255]);
+        }
+    }
+    Texture {
+        width: WIDTH,
+        height: HEIGHT,
+        pixels,
+    }
+}
+
+fn lock_color(stops: &[(f32, [u8; 3]); 5], progress: f32) -> [f32; 3] {
+    let upper = stops
+        .partition_point(|&(position, _)| position <= progress)
+        .clamp(1, stops.len() - 1);
+    let (start, lower_color) = stops[upper - 1];
+    let (end, upper_color) = stops[upper];
+    let blend = smooth_ramp((progress - start) / (end - start));
+    std::array::from_fn(|channel| {
+        let lower = f32::from(lower_color[channel]);
+        let upper = f32::from(upper_color[channel]);
+        lower + (upper - lower) * blend
+    })
 }
 
 pub(crate) fn ribbon_texture() -> Texture {
@@ -140,6 +176,8 @@ impl HairHull {
         let tail = width + (width.sqrt() - width) * profile.tail_hold;
         let half_width = profile.half_width * tail * (1.0 + 0.30 * progress);
         let half_depth = profile.half_depth * taper * (1.0 - 0.55 * progress);
+        let color_progress =
+            (progress + 4.0 * progress * taper * profile.color_shift).clamp(0.0, 1.0);
         let depth_axis = frame.tangent.cross(frame.width_axis);
         let ring = self.vertices.len() as u32;
         for point in SECTION {
@@ -148,7 +186,7 @@ impl HairHull {
             self.vertices.push(Vertex {
                 position: center + half_width * side + half_depth * depth,
                 normal: (half_depth * side + half_width * depth).normalize(),
-                uv: Vec2::new(0.5 * (point.x + 1.0), progress),
+                uv: Vec2::new(0.5 * (point.x + 1.0), color_progress),
             });
         }
 
@@ -225,6 +263,7 @@ mod tests {
         half_width: 0.012,
         half_depth: 0.006,
         tail_hold: 0.0,
+        color_shift: 0.0,
     };
 
     #[test]
@@ -312,5 +351,57 @@ mod tests {
                 .iter()
                 .all(|pixel| pixel[0] >= 191 && pixel[3] == 255)
         );
+    }
+
+    #[test]
+    fn lock_ramp_blends_the_palette_smoothly_and_darkens_the_edges() {
+        let stops = [
+            (0.0, [40, 32, 55]),
+            (0.25, [72, 64, 87]),
+            (0.5, [96, 84, 117]),
+            (0.75, [80, 72, 96]),
+            (1.0, [48, 40, 63]),
+        ];
+        assert_eq!(lock_color(&stops, 0.0625), [45.0, 37.0, 60.0]);
+        let texture = lock_texture(&stops);
+        for (progress, [red, green, blue]) in stops {
+            let row = (progress * (texture.height - 1) as f32) as usize;
+            let start = row * texture.width as usize;
+            let center = texture.pixels[start + texture.width as usize / 2];
+            assert_eq!(center, [red, green, blue, 255]);
+            assert!(texture.pixels[start][0] < center[0]);
+            assert_eq!(
+                texture.pixels[start],
+                texture.pixels[start + texture.width as usize - 1]
+            );
+        }
+        assert!(texture.pixels.iter().all(|pixel| pixel[3] == 255));
+    }
+
+    #[test]
+    fn color_shift_preserves_the_hull_and_anchors_both_ends_of_the_ramp() {
+        let points = [Vec3::ZERO, Vec3::NEG_Y * 0.4];
+        let mut original = HairHull::default();
+        original.append_lock(&points, Vec3::Z, BASE_PROFILE);
+        let mut tinted = HairHull::default();
+        tinted.append_lock(
+            &points,
+            Vec3::Z,
+            LockProfile {
+                color_shift: 0.08,
+                ..BASE_PROFILE
+            },
+        );
+
+        assert_eq!(original.triangles, tinted.triangles);
+        assert_eq!(original.vertices.len(), tinted.vertices.len());
+        for (before, after) in original.vertices.iter().zip(&tinted.vertices) {
+            assert_eq!(before.position, after.position);
+            assert_eq!(before.normal, after.normal);
+            assert_eq!(before.uv.x, after.uv.x);
+        }
+        assert_eq!(tinted.vertices[0].uv.y, 0.0);
+        assert!((tinted.vertices[SIDES as usize].uv.y - 0.58).abs() < 1e-6);
+        assert_eq!(tinted.vertices.last().unwrap().uv.y, 1.0);
     }
 }

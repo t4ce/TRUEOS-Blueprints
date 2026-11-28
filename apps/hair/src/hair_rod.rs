@@ -4,6 +4,8 @@ use crate::hair_rope::{GRAVITY, MAX_SEGMENTS};
 
 const MAX_POINTS: usize = MAX_SEGMENTS + 1;
 const ANGULAR_DAMPING: f32 = 9.0;
+const SETTLE_ANGULAR_DAMPING: f32 = 18.0;
+const SETTLE_STEP_REDUCTION: f32 = 0.35;
 const STRAIGHTENING: f32 = 95.0;
 const MAX_ANGULAR_SPEED: f32 = 9.0;
 const REFERENCE_HZ: f32 = 180.0;
@@ -48,6 +50,7 @@ pub(crate) struct RodEffects {
     pub(crate) spread_acceleration: [Vec3; MAX_POINTS],
     pub(crate) wind_acceleration: Vec3,
     pub(crate) fixation: HeadbandFixation,
+    pub(crate) settle_damping: f32,
 }
 
 impl Default for RodEffects {
@@ -58,6 +61,7 @@ impl Default for RodEffects {
             spread_acceleration: [Vec3::ZERO; MAX_POINTS],
             wind_acceleration: Vec3::ZERO,
             fixation: HeadbandFixation::new(0.5),
+            settle_damping: 0.0,
         }
     }
 }
@@ -108,10 +112,18 @@ impl Rod {
         let tip_contact_gain = TIP_CONTACT_RETENTION.powf(reference_steps) - contact_retention;
         let tip_lag_gain = TIP_LAG_GAIN * reference_steps;
         let headband_links = effects.fixation.0.as_ref();
+        let mut calm_settle = 0.0;
+        if effects.settle_damping > 0.0 {
+            let wind = effects.wind_acceleration.length();
+            let anchor_speed = anchor.distance(before[0]) / dt;
+            calm_settle = effects.settle_damping
+                * (1.0 - smoothstep(1.0, 7.5, wind))
+                * (1.0 - smoothstep(0.025, 0.25, anchor_speed));
+        }
         let segment_count = self.point_count - 1;
         for i in 1..self.point_count {
             let progress = i as f32 / segment_count as f32;
-            let tip_weight = effects.tip_weight * smooth_ramp(progress, 0.5);
+            let tip_weight = effects.tip_weight * smoothstep(0.5, 1.0, progress);
             let headband = headband_links.and_then(|links| links.get(i - 1));
             let mobility = headband.map_or(1.0, |&(mobility, _, _)| mobility);
             let direction = (before[i] - before[i - 1])
@@ -127,16 +139,25 @@ impl Rod {
                 torque += previous * STRAIGHTENING;
             }
             torque += effects.spawn_direction * (STRAIGHTENING * (1.0 - mobility));
-            let velocity = (tangent(self.direction_velocity[i], direction) * damping
-                + tangent(torque, direction) * dt)
+            let incoming = tangent(self.direction_velocity[i], direction);
+            let mut settle = 0.0;
+            if calm_settle > 0.0 && progress > 0.55 {
+                settle = calm_settle
+                    * smoothstep(0.55, 1.0, progress)
+                    * (1.0 - smoothstep(0.2, 1.25, incoming.length()));
+            }
+            // Resist small residual swings at the tips while the strand settles.
+            let link_damping = damping / (1.0 + SETTLE_ANGULAR_DAMPING * settle * dt);
+            let velocity = (incoming * link_damping + tangent(torque, direction) * dt)
                 .clamp_length_max(MAX_ANGULAR_SPEED);
 
             // A moved joint leaves its tip behind in world space. Integrate
             // direction around that joint and rebuild the link at its rest length.
             // Weighted ends follow the moving parent more slowly.
             let held_tip = (before[i] - parent).try_normalize().unwrap_or(direction);
-            let lag = (joint_lag + tip_lag_gain * tip_weight) * mobility;
-            let mut next_direction = (direction.lerp(held_tip, lag) + velocity * (dt * mobility))
+            let response = mobility * (1.0 - SETTLE_STEP_REDUCTION * settle);
+            let lag = (joint_lag + tip_lag_gain * tip_weight) * response;
+            let mut next_direction = (direction.lerp(held_tip, lag) + velocity * (dt * response))
                 .try_normalize()
                 .unwrap_or(direction);
             if let Some(previous) = parent_direction {
@@ -162,8 +183,8 @@ impl Rod {
     }
 }
 
-fn smooth_ramp(progress: f32, start: f32) -> f32 {
-    let amount = ((progress - start) / (1.0 - start)).clamp(0.0, 1.0);
+fn smoothstep(start: f32, end: f32, value: f32) -> f32 {
+    let amount = ((value - start) / (end - start)).clamp(0.0, 1.0);
     amount * amount * (3.0 - 2.0 * amount)
 }
 
@@ -217,6 +238,46 @@ mod tests {
     fn hanging_rod() -> Rod {
         let points: [Vec3; 9] = std::array::from_fn(|i| Vec3::NEG_Y * LINK_LENGTH * i as f32);
         Rod::new(&points)
+    }
+
+    #[test]
+    fn the_settle_filter_damps_small_tip_motion_and_releases_when_driven() {
+        let step =
+            |settle_damping, wind_acceleration, anchor, [upper_speed, tip_speed]: [f32; 2]| {
+                let mut rod = hanging_rod();
+                rod.direction_velocity[4] = Vec3::X * upper_speed;
+                rod.direction_velocity[8] = Vec3::X * tip_speed;
+                rod.step(
+                    anchor,
+                    LINK_LENGTH,
+                    DT,
+                    RodEffects {
+                        settle_damping,
+                        wind_acceleration,
+                        ..RodEffects::default()
+                    },
+                    |_, point| point,
+                );
+                rod
+            };
+        let small_sway = [0.12, 0.12];
+        let off = step(0.0, Vec3::ZERO, Vec3::ZERO, small_sway);
+        let light = step(0.5, Vec3::ZERO, Vec3::ZERO, small_sway);
+        let medium = step(1.0, Vec3::ZERO, Vec3::ZERO, small_sway);
+        assert_eq!(off.points()[..=4], medium.points()[..=4]);
+        let tip_delta = |rod: &Rod| (rod.points()[8] - rod.points()[7]).x;
+        assert!(tip_delta(&medium) < 0.8 * tip_delta(&off));
+        assert!(tip_delta(&medium) < tip_delta(&light));
+        assert!(tip_delta(&light) < tip_delta(&off));
+        for (wind, anchor) in [(Vec3::X * 10.0, Vec3::ZERO), (Vec3::ZERO, Vec3::X * 0.05)] {
+            let off = step(0.0, wind, anchor, small_sway);
+            let medium = step(1.0, wind, anchor, small_sway);
+            assert_eq!(off.points(), medium.points());
+        }
+        let fast_tip = [0.0, 2.0];
+        let off = step(0.0, Vec3::ZERO, Vec3::ZERO, fast_tip);
+        let medium = step(1.0, Vec3::ZERO, Vec3::ZERO, fast_tip);
+        assert_eq!(off.points(), medium.points());
     }
 
     #[test]
