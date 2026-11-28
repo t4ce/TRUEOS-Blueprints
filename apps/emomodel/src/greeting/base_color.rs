@@ -1,3 +1,5 @@
+use std::{fs, path::Path};
+
 use anyhow::{Context, Result, ensure};
 use trueos::{
     vgpu::Device,
@@ -8,8 +10,8 @@ use super::{MATERIALS, gpu_error, report};
 use crate::mesh::Mesh;
 
 const SIZE: u32 = 4096;
-const FACE: &[u8] = include_bytes!("../../assets/AvatarSample_B-face-base-color-4096.png");
-const BODY: &[u8] = include_bytes!("../../assets/AvatarSample_B-body-base-color-4096.png");
+const FACE: &str = "AvatarSample_B-face-base-color-4096.png";
+const BODY: &str = "AvatarSample_B-body-base-color-4096.png";
 
 pub(super) fn apply_coordinates(
     glb: &[u8],
@@ -45,9 +47,9 @@ pub(super) fn apply_coordinates(
     Ok(())
 }
 
-pub(super) async fn retain(device: Device) -> Result<[RetainedTexture; 2]> {
-    let face = retain_atlas(device, FACE).await.context("face atlas #0")?;
-    let body = retain_atlas(device, BODY).await.context("body atlas #3")?;
+pub(super) async fn retain(device: Device, root: &Path) -> Result<[RetainedTexture; 2]> {
+    let face = retain_atlas(device, &root.join(FACE)).await?;
+    let body = retain_atlas(device, &root.join(BODY)).await?;
     report(format_args!(
         "skin base color atlases=2 extent={SIZE}x{SIZE} sampling=fragment rgba_bytes={}",
         u64::from(SIZE) * u64::from(SIZE) * 8,
@@ -55,15 +57,18 @@ pub(super) async fn retain(device: Device) -> Result<[RetainedTexture; 2]> {
     Ok([face, body])
 }
 
-async fn retain_atlas(device: Device, png: &[u8]) -> Result<RetainedTexture> {
-    let texture = vmedia::decode_retained(device, ImageFormat::Png, png)
+async fn retain_atlas(device: Device, path: &Path) -> Result<RetainedTexture> {
+    let png =
+        fs::read(path).with_context(|| format!("read local base-color PNG {}", path.display()))?;
+    let texture = vmedia::decode_retained(device, ImageFormat::Png, &png)
         .await
         .map_err(gpu_error)
-        .context("retain the original base-color PNG")?;
+        .with_context(|| format!("decode base-color PNG {}", path.display()))?;
     let info = texture.info();
     ensure!(
         info.width == SIZE && info.height == SIZE && info.stride_bytes == SIZE * 4,
-        "unexpected base-color atlas extent"
+        "expected a {SIZE} × {SIZE} base-color atlas at {}",
+        path.display()
     );
     Ok(texture)
 }

@@ -5,7 +5,7 @@ use trueos::vmedia::{self, ImageFormat};
 
 use crate::animation::{Animation, PoseSample};
 
-use super::normal_detail;
+use super::{normal_detail, skirt_heart::SkirtHeart};
 
 const GLB: &[u8] = include_bytes!("../../assets/AvatarSample_B-pink-skirt.glb");
 const NORMAL_PNG: &[u8] = include_bytes!("../../assets/AvatarSample_B-pink-skirt-normal.png");
@@ -16,6 +16,7 @@ pub(super) const PINK: [u8; 3] = [226, 172, 187];
 pub(super) struct Dress {
     rig: Animation,
     indices: Vec<u32>,
+    heart: SkirtHeart,
 }
 
 impl Dress {
@@ -55,6 +56,11 @@ impl Dress {
                 && indices.iter().all(|&index| (index as usize) < vertices),
             "invalid skirt topology"
         );
+        let positions: Vec<_> = rig
+            .bind_positions(0)
+            .map(|point| point.to_array())
+            .collect();
+        let heart = SkirtHeart::new(&positions, &indices)?;
         if primitive.material().double_sided() {
             let front_count = indices.len();
             indices.reserve(front_count);
@@ -67,7 +73,11 @@ impl Dress {
             Vec2::ZERO
         })?;
         rig.apply_bind_normals(0, &normals)?;
-        Ok(Self { rig, indices })
+        Ok(Self {
+            rig,
+            indices,
+            heart,
+        })
     }
 
     pub(super) fn vertex_count(&self) -> usize {
@@ -78,8 +88,12 @@ impl Dress {
         &self.indices
     }
 
-    pub(super) fn pose(&mut self, joints: &[Mat4]) -> Result<PoseSample<'_>> {
-        self.rig.skin_from_world(joints)
+    pub(super) fn heart(&self) -> &SkirtHeart {
+        &self.heart
+    }
+
+    pub(super) fn pose(&mut self, joints: &[Mat4]) -> Result<(PoseSample<'_>, &SkirtHeart)> {
+        Ok((self.rig.skin_from_world(joints)?, &self.heart))
     }
 }
 
@@ -135,7 +149,7 @@ mod tests {
         let world = body.skin().joint_world;
         let mut original = Animation::procedural(GLB, &[MATERIAL]).unwrap();
         let original = original.skin_from_world(world).unwrap();
-        let textured = dress.pose(world).unwrap();
+        let (textured, _) = dress.pose(world).unwrap();
         assert_eq!(textured.positions, original.positions);
         let detailed = textured
             .normals
@@ -157,7 +171,7 @@ mod tests {
 
         let shift = Vec3::new(0.12, 0.09, -0.08);
         body.apply_procedural(0, shift, &[]);
-        let posed = dress.pose(body.skin().joint_world).unwrap();
+        let (posed, _) = dress.pose(body.skin().joint_world).unwrap();
         for (&position, &original) in posed.positions.iter().zip(&rest) {
             assert!(
                 (Vec3::from_array(position) - Vec3::from_array(original) - shift).length() < 0.0001

@@ -63,6 +63,7 @@ mod reel;
 mod reel_draw;
 mod reel_preview;
 mod skin_study;
+mod skirt_heart;
 mod sky_controls;
 mod sky_light;
 mod sky_palette;
@@ -103,9 +104,9 @@ static RETAINED_SHADERS: [u8; SHADER_BYTES.len()] =
     *include_bytes!("../shaders/retained-unlit.bundle");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Appearance {
+pub(super) enum Appearance<'a> {
     Lighting,
-    BaseColor,
+    BaseColor(&'a Path),
     SkinStudy,
     Butterfly,
 }
@@ -114,11 +115,11 @@ pub(super) async fn show(
     glb: &[u8],
     greeting_glb: Option<&[u8]>,
     motions: Option<&Path>,
-    appearance: Appearance,
+    appearance: Appearance<'_>,
     msaa_samples: u8,
     eyes: EyeStyle,
 ) -> Result<()> {
-    let mut controls = if appearance == Appearance::BaseColor {
+    let mut controls = if matches!(appearance, Appearance::BaseColor(_)) {
         None
     } else {
         match SkyControls::open() {
@@ -158,13 +159,17 @@ pub(super) async fn show(
         } else {
             None
         };
-        let color = appearance == Appearance::BaseColor;
         let (mut playback, framing) = if let Some(motion) = motion {
             let preview =
                 reel_preview::Preview::new(device, &mesh, motion, glb, studying_skin, eyes).await?;
             let framing = preview.framing();
             (Playback::Reel(preview), framing)
         } else {
+            let color_atlases = match appearance {
+                Appearance::BaseColor(root) => Some(base_color::retain(device, root).await?),
+                _ => None,
+            };
+            let color = color_atlases.is_some();
             let mut greeting = greeting_glb
                 .map(|clip| Animation::prepare(clip, glb, &MATERIALS))
                 .transpose()?;
@@ -185,8 +190,8 @@ pub(super) async fn show(
             }
             let renderer =
                 AvatarRenderer::prepare(device, &mesh, &mut sequence, glb, color, eyes).await?;
-            let skin = if color {
-                Skin::BaseColor(base_color::retain(device).await?)
+            let skin = if let Some(atlases) = color_atlases {
+                Skin::BaseColor(atlases)
             } else {
                 let view = crate::autobs::view_back(BASE_YAW);
                 let light = SkyLight::new(view, levels);
@@ -207,7 +212,7 @@ pub(super) async fn show(
         let title = match appearance {
             Appearance::SkinStudy => "EmoModel · Skin",
             Appearance::Butterfly => "EmoModel · Butterfly",
-            Appearance::BaseColor => "EmoModel · 4K Base Color",
+            Appearance::BaseColor(_) => "EmoModel · 4K Base Color",
             Appearance::Lighting => "EmoModel",
         };
         frame.set_title(title).map_err(ui_error)?;

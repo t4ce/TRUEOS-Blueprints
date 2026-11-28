@@ -70,6 +70,10 @@ half-width off-white ribbons with dark edges and staggered gray stitches.
 Use `[` and `]` for the left leg, `{` and `}` for the right leg, and `-` and
 `=` to lower or raise the waist.
 
+Press `B` to add low ballet flats and cycle their pastel color. The same
+toe cap, heel wrap, and open instep follow the foot mesh in every color.
+The flats keep their color as Space rolls the other garments.
+
 Right-click to choose a pastel top, roll a random top and matching socks, or
 restore the original appearance. In `reel`, the clothing controls use the
 installed motion files. For a standalone top, the same keys adjust the sleeves
@@ -191,9 +195,10 @@ pale marks at two sizes each. The marks follow the body UVs and show on
 exposed skin as the outfit changes.
 
 `base-color` previews the original 4096 × 4096 RGBA face and body atlases
-on the animated avatar. It samples the painted skin and mouth per fragment
-through the unlit retained shader. Both atlases are decoded once and occupy
-128 MiB of texture residency together.
+on the animated avatar. It reads `AvatarSample_B-face-base-color-4096.png` and
+`AvatarSample_B-body-base-color-4096.png` from `--root`, which defaults to
+`/apps/emomodel`. This optional preview samples the painted skin and mouth per
+fragment through the unlit retained shader and uses 128 MiB of texture residency.
 
 In the animated preview, 28 procedural guides take the place of the long
 back hair. The source surface provides the roots, segment lengths, the direction

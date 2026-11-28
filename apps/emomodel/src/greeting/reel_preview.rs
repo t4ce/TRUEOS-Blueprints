@@ -25,6 +25,7 @@ use super::{
     reel_draw::{ReelDraw, VERTEX_BYTES},
     report,
     skin_study::{self, Lighting, Material},
+    skirt_heart,
     sky_light::{Key, SkyLight},
     sky_palette,
 };
@@ -36,7 +37,7 @@ use crate::{
     hair_body::BodyBack,
     hair_ribbon, light,
     mesh::Mesh,
-    top::{self, Fit, OutfitAppearance, Surface, TopStyle, finish},
+    top::{self, Fit, OutfitAppearance, SHOE_VERTEX_ROW, Surface, TopStyle, finish},
 };
 
 const LIGHT_SIZE: usize = skin_study::SIZE;
@@ -66,6 +67,7 @@ const HAIRBAND_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
 const BODY_MARKS_COLUMN: usize = hairband::WIDTH + 1;
 const CONTACT_ROW: usize = HAIRBAND_ROW + hairband::HEIGHT;
 const DRESS_COLUMN: usize = (LIVE_OUTLINE_SLOT + MAX_LIVE_BUTTERFLIES) * 4;
+const HEART_METAL_ROW: usize = 1;
 const DRESS_ROUGHNESS: f32 = 0.55;
 const DRESS_PROJECTION_PEAK: f32 = 1.12;
 const ATLAS_HEIGHT: usize = 512 + hairband::HEIGHT;
@@ -84,6 +86,8 @@ const OUTFIT_FIT_PERIOD_NS: u64 = SECOND_NS / 24;
 
 const _: () = assert!(TOP_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(DRESS_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
+const _: () = assert!(DRESS_COLUMN + skirt_heart::GOLD_RAMP_WIDTH <= ATLAS_WIDTHS[0]);
+const _: () = assert!(HEART_METAL_ROW < LIGHT_ROW);
 const _: () = assert!(LIGHT_ROW + top::COVERAGE_ROWS <= EYE_ROW);
 const _: () = assert!(BODY_TINT_COLUMN + body_tint::WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(LIGHT_ROW + body_tint::HEIGHT <= EYE_ROW);
@@ -416,6 +420,7 @@ pub(super) struct Preview<'a> {
     sky_palette: sky_palette::Palette,
     dress: Dress,
     dress_ramp: Vec<u8>,
+    heart_metal_ramp: [[u8; 4]; skirt_heart::GOLD_RAMP_WIDTH],
     dress_visible: bool,
     top_appearance: OutfitAppearance,
     top_moving: bool,
@@ -506,6 +511,7 @@ impl<'a> Preview<'a> {
         let vertex_count = geometry_vertices as usize
             + trim_vertices
             + dress.vertex_count()
+            + dress.heart().vertex_count()
             + 4 * floor::CONTACTS
             + 2 * stroke_pairs
             + SPARK_VERTICES
@@ -514,7 +520,8 @@ impl<'a> Preview<'a> {
             + stroke_indices
             + SPARK_INDICES
             + LIVE_VERTICES
-            + dress.indices().len();
+            + dress.indices().len()
+            + dress.heart().indices().len();
         let mut indices = Vec::with_capacity(
             (compact_indices.len()
                 + eye_sprite::INDEX_COUNT
@@ -636,6 +643,7 @@ impl<'a> Preview<'a> {
             sky_palette: sky_palette::Palette::new(Key::Neutral),
             dress,
             dress_ramp: light::diffuse_lookup_with_peak(dress::PINK, DRESS_PROJECTION_PEAK),
+            heart_metal_ramp: skirt_heart::gold_ramp(),
             dress_visible: false,
             top_appearance: OutfitAppearance::from_style(TopStyle::default()),
             top_moving: false,
@@ -675,7 +683,10 @@ impl<'a> Preview<'a> {
         // The palette advances on each frame even when the fit is waiting
         // for its next atlas update.
         if moving && !motion_changed && now_ns < self.next_outfit_fit_ns {
-            appearance.style = previous.style;
+            appearance.style = TopStyle {
+                shoe_color: appearance.style.shoe_color,
+                ..previous.style
+            };
         }
         if appearance == previous && !motion_changed {
             return Ok(());
@@ -689,14 +700,16 @@ impl<'a> Preview<'a> {
                 style.hem,
                 style.socks,
                 style.bottoms,
+                style.shoe_color.is_some(),
             )
         };
-        let has_fabric = style.fabric().is_some();
-        let had_fabric = previous.style.fabric().is_some();
+        let paints_body = |style: TopStyle| style.fabric().is_some() || style.shoe_color.is_some();
+        let has_paint = paints_body(style);
+        let had_paint = paints_body(previous.style);
         let fit_changed =
-            motion_changed || has_fabric != had_fabric || fit(previous.style) != fit(style);
+            motion_changed || has_paint != had_paint || fit(previous.style) != fit(style);
         if fit_changed {
-            let mut finish = if has_fabric {
+            let mut finish = if has_paint {
                 let build = if moving {
                     finish::Finish::build_motion
                 } else {
@@ -718,7 +731,7 @@ impl<'a> Preview<'a> {
             finish.replace_indices(&mut self.indices, self.geometry_vertices);
             self.top_finish = finish;
             self.top_rows.clear();
-            if has_fabric {
+            if has_paint {
                 let lower = style.lower_style();
                 self.top_rows.extend(
                     self.top_fit
@@ -728,14 +741,15 @@ impl<'a> Preview<'a> {
             }
             self.next_outfit_fit_ns = now_ns.saturating_add(OUTFIT_FIT_PERIOD_NS);
         }
-        if has_fabric != had_fabric
+        if has_paint != had_paint
             || style.bottoms.is_some() != previous.style.bottoms.is_some()
             || style.color.is_some() != previous.style.color.is_some()
+            || style.shoe_color.is_some() != previous.style.shoe_color.is_some()
             || appearance.colors != previous.colors
             || appearance.opacity != previous.opacity
         {
             self.top_pixels.clear();
-            if has_fabric {
+            if has_paint {
                 let lighting_ramp = if self.skin_materials.is_some() {
                     skin_study::color_lookup_rgba
                 } else {
@@ -743,7 +757,7 @@ impl<'a> Preview<'a> {
                 };
                 self.top_ramps = appearance.colors.map(lighting_ramp);
                 if appearance.opacity < 1.0 {
-                    let [skin, cloth @ ..] = &mut self.top_ramps;
+                    let [skin, cloth @ .., _shoe] = &mut self.top_ramps;
                     for ramp in cloth {
                         for (pixel, skin) in ramp.chunks_exact_mut(4).zip(skin.chunks_exact(4)) {
                             for (channel, &base) in pixel[..3].iter_mut().zip(&skin[..3]) {
@@ -1141,6 +1155,9 @@ impl<'a> Preview<'a> {
         if self.dress_visible {
             let start = DRESS_COLUMN * 4;
             self.texture[start..start + self.dress_ramp.len()].copy_from_slice(&self.dress_ramp);
+            let start = HEART_METAL_ROW * stride + DRESS_COLUMN * 4;
+            let gold = self.heart_metal_ramp.as_flattened();
+            self.texture[start..start + gold.len()].copy_from_slice(gold);
         }
         let swatches = [palette.swatch(0), palette.swatch(1)];
         let diffuse_direction = sky.key_direction();
@@ -1185,6 +1202,7 @@ impl<'a> Preview<'a> {
         let mut append = |position: Vec3, uv: [f32; 2]| {
             append_clip_vertex(output, view_projection.transform_point3(position), uv);
         };
+        let paints_outfit = self.top_appearance.style.fabric().is_some();
         let shade_uv = |index: usize| {
             if let Some(slot) = self.material_slots[index] {
                 swatches[slot]
@@ -1192,7 +1210,8 @@ impl<'a> Preview<'a> {
                 let normal = Vec3::from_array(pose.normals[index]);
                 let top_row = index
                     .checked_sub(self.body_start)
-                    .and_then(|body_index| self.top_rows.get(body_index));
+                    .and_then(|body_index| self.top_rows.get(body_index))
+                    .filter(|&&row| paints_outfit || row as usize == SHOE_VERTEX_ROW);
                 let (column, row) = if let Some(&row) = top_row {
                     (
                         TOP_COLUMN as f32 + top_light(index, normal),
@@ -1239,7 +1258,7 @@ impl<'a> Preview<'a> {
         self.body_tint.write_tiles(
             &mut self.texture,
             [width as usize, height as usize],
-            (!self.top_rows.is_empty()).then_some(LIGHT_ROW),
+            paints_outfit.then_some(LIGHT_ROW),
             shade_uv,
         );
         let dimensions = Vec2::new(width as f32, height as f32);
@@ -1301,7 +1320,13 @@ impl<'a> Preview<'a> {
         self.indices.truncate(self.geometry_index_bytes);
         if self.dress_visible {
             let lighting = Lighting::with_key(diffuse_direction, back);
-            let skirt = self.dress.pose(pose.joint_world)?;
+            self.indices.extend(
+                self.dress
+                    .indices()
+                    .iter()
+                    .flat_map(|&index| (next_vertex + index).to_le_bytes()),
+            );
+            let (skirt, heart) = self.dress.pose(pose.joint_world)?;
             for (&position, &normal) in skirt.positions.iter().zip(skirt.normals) {
                 let position = Vec3::from_array(position) + pose.world_offset;
                 let normal = Vec3::from_array(normal);
@@ -1315,14 +1340,25 @@ impl<'a> Preview<'a> {
                     ],
                 );
             }
-            let dress_vertices = skirt.positions.len() as u32;
+            next_vertex += skirt.positions.len() as u32;
+            let half = (diffuse_direction + back).normalize_or_zero();
+            for (position, normal) in heart.vertices(skirt.positions)? {
+                let column = skirt_heart::gold_column(normal, diffuse_direction, half, back);
+                append(
+                    position + pose.world_offset,
+                    [
+                        (DRESS_COLUMN as f32 + column) / width as f32,
+                        (HEART_METAL_ROW as f32 + 0.5) / height as f32,
+                    ],
+                );
+            }
             self.indices.extend(
-                self.dress
+                heart
                     .indices()
                     .iter()
                     .flat_map(|&index| (next_vertex + index).to_le_bytes()),
             );
-            next_vertex += dress_vertices;
+            next_vertex += heart.vertex_count() as u32;
         }
         for (points, uv) in self.contacts.quads(0, GROUND_Y, &palette) {
             for (point, uv) in points.into_iter().zip(uv) {

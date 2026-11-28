@@ -137,6 +137,7 @@ mod tests {
             color: Some(color),
             sock_color: Some(color),
             pants_color: Some(color),
+            shoe_color: None,
             left_sleeve: 0.8,
             right_sleeve: 0.8,
             hem: 0.6,

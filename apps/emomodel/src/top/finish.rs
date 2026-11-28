@@ -5,13 +5,14 @@ use glam::{Vec2, Vec3};
 use super::{
     COLLAR_ROW, COLLAR_TRIM_START, Fit, HALF_WIDTH_METERS, LowerFit, LowerStyle, OPENING_ROW,
     OPENING_ROWS_PER_METER, OPENING_TRIM_END, OPENING_WIDTH_METERS, Surface, TopStyle, bottom,
-    chart, leg_phase, shirt_hem_height, stitch_along, trim,
+    chart, leg_phase, shirt_hem_height, shoe, stitch_along, trim,
 };
 
 pub(crate) const ATLAS_WIDTH: usize = 512;
 pub(crate) const MAX_ROWS: usize = 768;
 const OPENING_TEXEL_METERS: f32 = 0.0011;
 const COLLAR_TEXEL_METERS: f32 = 0.0007;
+const SHOE_TEXEL_METERS: f32 = 0.0016;
 const MAX_FOOTPRINT_METERS: f32 = 0.004;
 
 type IndexBytes = [[u8; 4]; 3];
@@ -49,9 +50,13 @@ impl Finish {
     where
         F: Fn(Vec3) -> Vec3,
     {
-        let scales: &[f32] = match (style.bottoms.is_some(), style.color.is_some()) {
-            (true, true) => &[1.0, 1.25, 1.5, 1.75, 2.0],
-            (true, false) => &[1.0, 1.25],
+        let scales: &[f32] = match (
+            style.bottoms.is_some(),
+            style.color.is_some(),
+            style.shoe_color.is_some(),
+        ) {
+            (true, true, _) | (_, _, true) => &[1.0, 1.25, 1.5, 1.75, 2.0],
+            (true, false, false) => &[1.0, 1.25],
             _ => &[1.0],
         };
         Self::build_at_scales(
@@ -326,7 +331,13 @@ fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle, lower: Option<LowerStyle>) 
                 (min.min(value), max.max(value))
             })
     };
-    let shirt_texel = if style.bottoms.is_none() || style.color.is_some() {
+    if style.shoe_color.is_some() && a.y.min(b.y).min(c.y) <= shoe::MAX_HEIGHT_METERS + 0.003 {
+        let (min, max) = bounds(probes.map(shoe::edge));
+        if min <= shoe::RELIEF_WIDTH_METERS + 0.003 && max >= -0.003 {
+            return Some(SHOE_TEXEL_METERS);
+        }
+    }
+    let shirt_texel = if style.color.is_some() || (lower.is_none() && style.shoe_color.is_none()) {
         let (min, max) = bounds(probes.map(|point| Fit::at(point).shirt_row(style)));
         if trim_overlap(min, max, COLLAR_TRIM_START, COLLAR_ROW) {
             return Some(COLLAR_TEXEL_METERS);
@@ -375,8 +386,50 @@ fn sample_at(
     style: TopStyle,
     lower: Option<LowerStyle>,
 ) -> (trim::Sample, Vec2) {
+    let margin = MAX_FOOTPRINT_METERS * 0.5;
+    if style.shoe_color.is_some() && point.y <= shoe::MAX_HEIGHT_METERS + margin {
+        let edge = shoe::edge(point);
+        if edge >= shoe::RELIEF_WIDTH_METERS + margin {
+            return solid_sample(Surface::Shoe);
+        }
+        if edge > -margin {
+            let gradient = Vec2::from_array(
+                steps.map(|step| shoe::edge(point + 0.5 * step) - shoe::edge(point - 0.5 * step)),
+            );
+            let footprint = gradient.length().clamp(0.0002, MAX_FOOTPRINT_METERS);
+            let coverage = (0.5 + edge / footprint).clamp(0.0, 1.0);
+            let (mut sample, tilt) = if coverage == 1.0 {
+                solid_sample(Surface::Shoe)
+            } else {
+                let (mut under, tilt) = outfit_sample(point, steps, style, lower);
+                for weight in &mut under.weights {
+                    *weight *= 1.0 - coverage;
+                }
+                (under, tilt * (1.0 - coverage))
+            };
+            sample.weights[Surface::Shoe as usize] = coverage;
+            let slope = 0.65 * trim::relief_slope(edge, shoe::RELIEF_WIDTH_METERS, footprint);
+            return (
+                sample,
+                tilt + slope * coverage * gradient.normalize_or_zero(),
+            );
+        }
+    }
+    outfit_sample(point, steps, style, lower)
+}
+
+fn outfit_sample(
+    point: Vec3,
+    steps: [Vec3; 2],
+    style: TopStyle,
+    lower: Option<LowerStyle>,
+) -> (trim::Sample, Vec2) {
     let Some(lower) = lower else {
-        return shirt_sample(point, steps, style);
+        return if style.shoe_color.is_some() && style.color.is_none() {
+            solid_sample(Surface::Skin)
+        } else {
+            shirt_sample(point, steps, style)
+        };
     };
     if style.color.is_none() || point.y < shirt_hem_height(point, style.hem) - MAX_FOOTPRINT_METERS
     {
@@ -588,6 +641,49 @@ fn trim_at(point: Vec3, steps: [Vec3; 2], style: TopStyle) -> (trim::Sample, Vec
 mod tests {
     use super::super::{BottomStyle, Pastel, shirt_hem_height};
     use super::*;
+
+    #[test]
+    fn flats_cover_the_toes_and_sole_with_relief_at_the_opening() {
+        let flats = TopStyle {
+            shoe_color: Some(Pastel::Rose),
+            ..TopStyle::default()
+        };
+        let covered_socks = TopStyle {
+            bottoms: Some(BottomStyle::default()),
+            socks: Some(0.0),
+            sock_color: Some(Pastel::Mint),
+            ..flats
+        };
+        let steps = [Vec3::X * 0.001, Vec3::Y * 0.001];
+        for side in [-1.0, 1.0] {
+            for style in [flats, covered_socks] {
+                let lower = style.lower_style();
+                for point in [
+                    Vec3::new(side * 0.059, 0.047, -0.121),
+                    Vec3::new(side * 0.073, 0.034, -0.025),
+                    Vec3::new(side * 0.063, 0.065, 0.071),
+                ] {
+                    let (sample, tilt) = sample_at(point, steps, style, lower);
+                    assert_eq!(sample.weights[Surface::Shoe as usize], 1.0);
+                    assert_eq!(sample.weights[Surface::Band as usize], 0.0);
+                    assert_eq!(sample.weights[Surface::Thread as usize], 0.0);
+                    assert_eq!(sample.weights[Surface::Outline as usize], 0.0);
+                    assert_eq!(tilt, Vec2::ZERO);
+                    let row = Fit::at(point).coverage_row(style, lower) as usize;
+                    assert_eq!(style.surface_at_row(row), Surface::Shoe);
+                }
+                let instep = Vec3::new(side * 0.07, 0.070, -0.04);
+                let (sample, _) = sample_at(instep, steps, style, lower);
+                assert_eq!(sample.weights[Surface::Shoe as usize], 0.0);
+                let opening = instep + Vec3::Y * (shoe::edge(instep) - 0.001);
+                let triangle = [opening, opening + steps[0], opening + steps[1] * 2.0];
+                assert_eq!(texel_size(triangle, style, lower), Some(SHOE_TEXEL_METERS));
+                let (sample, tilt) = sample_at(opening, steps, style, lower);
+                assert_eq!(sample.weights[Surface::Shoe as usize], 1.0);
+                assert_ne!(tilt, Vec2::ZERO);
+            }
+        }
+    }
 
     #[test]
     fn combined_outfit_preserves_a_clear_gap_or_joins_black_pants_to_the_shirt() {

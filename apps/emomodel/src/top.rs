@@ -386,10 +386,10 @@ impl Fit {
                 return SHIRT_VERTEX_ROW as f32 + 0.5;
             }
             lower.fit_at(self.position).vertex_row()
-        } else if style.color.is_some() {
-            self.shirt_row(style)
-        } else {
+        } else if style.shoe_color.is_some() && style.color.is_none() {
             0.5
+        } else {
+            self.shirt_row(style)
         }
     }
 
