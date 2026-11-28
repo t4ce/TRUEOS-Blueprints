@@ -208,5 +208,13 @@ mod tests {
         assert!(end.style == target.style);
         assert_eq!(end.colors, target.colors);
         assert_eq!(end.opacity, 1.0);
+
+        let moving_time = (FADE_NS + FINISH_NS) / 2;
+        let moving = rose.sample(moving_time);
+        let motion = OutfitMotion::new(moving, target.style, moving_time);
+        let shrinking = motion.sample(moving_time + SHRINK_NS / 2);
+        assert_eq!(shrinking.style.left_sleeve, 0.2);
+        assert_eq!(shrinking.style.right_sleeve, 0.2);
+        assert_eq!(shrinking.colors, moving.colors);
     }
 }

@@ -7,6 +7,8 @@ const STRIP_OFFSETS: [u32; 2] = [0, 2];
 const MIN_LINK_LENGTH: f32 = 1e-5;
 const MAX_TIP_MIDPOINT_OFFSET: f32 = 0.003;
 const TIP_THREAD_SPLAY: f32 = 0.12;
+const THREAD_ROOT_FRACTION: f32 = 2.0 / 3.0;
+const HIGH_THREAD_OFFSET: f32 = 3.25;
 const OUTLINE_COLOR: [f32; 3] = [9.0, 7.0, 12.0];
 const OUTLINE_STRENGTH: f32 = 0.42;
 const OUTLINE_WIDTH: f32 = 0.045;
@@ -18,6 +20,9 @@ pub(crate) struct LockProfile {
     pub(crate) tip_half_width: f32,
     pub(crate) color_top: f32,
     pub(crate) color_span: f32,
+    pub(crate) thread_starts_earlier: bool,
+    pub(crate) trim_main_tip: bool,
+    pub(crate) high_offshoot: bool,
 }
 
 impl LockProfile {
@@ -78,12 +83,30 @@ pub(crate) struct HairHull {
 }
 
 pub(crate) struct HairTip {
-    pub(crate) points: [Vec3; 5],
-    pub(crate) threads: [[Vec3; 2]; 2],
+    points: [Vec3; 5],
+    point_count: usize,
+    threads: [[Vec3; 2]; 2],
+    thread_count: usize,
 }
 
 impl HairTip {
-    fn new(previous: Option<Vec3>, start: Vec3, split: Vec3, tip: Vec3, root_normal: Vec3) -> Self {
+    pub(crate) fn stroke_points(&self) -> &[Vec3] {
+        &self.points[..self.point_count]
+    }
+
+    pub(crate) fn threads(&self) -> &[[Vec3; 2]] {
+        &self.threads[..self.thread_count]
+    }
+
+    fn new(
+        previous: Option<Vec3>,
+        start: Vec3,
+        split: Vec3,
+        tip: Vec3,
+        root_normal: Vec3,
+        profile: LockProfile,
+        high_root: Option<Vec3>,
+    ) -> Self {
         let wide = usable_direction(split - start);
         let thin = usable_direction(tip - split);
         let incoming = previous.map_or(wide, |point| usable_direction(start - point));
@@ -91,22 +114,53 @@ impl HairTip {
         let split_tangent = (wide + thin).try_normalize().unwrap_or(wide);
         let wide_middle = tip_midpoint(start, split, start_tangent, split_tangent);
         let thin_middle = tip_midpoint(split, tip, split_tangent, thin);
-        // Sample the drawn strokes so the roots stay on the wide line and the
-        // ends follow the solved tip. The lateral offset grows with their reach.
-        let threads = [
-            (wide_middle, 0.6, 1.0),
-            (wide_middle.lerp(split, 1.0 / 3.0), 0.8, -1.0),
-        ]
-        .map(|(root, tip_progress, side)| {
-            let target = thin_middle.lerp(tip, tip_progress);
-            let offset = (target - root).cross(root_normal) * (side * TIP_THREAD_SPLAY);
-            [root, target + offset]
-        });
+        let wide_root = wide_middle.lerp(split, 1.0 / 3.0);
+        let target = thin_middle.lerp(tip, 0.8);
+        // Keep the same endpoint and splay when the attachment moves up a link.
+        let offset = (target - wide_root).cross(root_normal) * TIP_THREAD_SPLAY;
+        let root = previous
+            .filter(|_| profile.thread_starts_earlier)
+            .map_or(wide_root, |point| point.lerp(start, THREAD_ROOT_FRACTION));
+        let thread_end = target - offset;
+        // The midpoint halves the thin stroke. The straight offshoot trims
+        // back by half the length of the same solved link.
+        let (point_count, thread_end) = if profile.trim_main_tip {
+            (4, thread_end)
+        } else {
+            (5, thread_end.move_towards(root, split.distance(tip) * 0.5))
+        };
+        let high_thread = high_root.map(|root| [root, target + offset]);
         Self {
             points: [start, wide_middle, split, thin_middle, tip],
-            threads,
+            point_count,
+            threads: [[root, thread_end], high_thread.unwrap_or_default()],
+            thread_count: 1 + usize::from(high_thread.is_some()),
         }
     }
+}
+
+fn high_thread_root(points: &[Vec3], tip_links: [usize; 3], staggered: bool) -> Vec3 {
+    let [previous, start, split] = tip_links.map(|index| points[index]);
+    let tip = points[points.len() - 1];
+    let wide_length = start.distance(split);
+    let thin_length = split.distance(tip);
+    let lower_reach = thin_length + wide_length * (1.0 - THREAD_ROOT_FRACTION);
+    let reach = if staggered {
+        thin_length + wide_length + previous.distance(start) * (1.0 - THREAD_ROOT_FRACTION)
+    } else {
+        lower_reach
+    };
+    // Use the unstaggered reach as the scale for both attachment patterns.
+    let mut distance = reach + HIGH_THREAD_OFFSET * lower_reach;
+    for pair in points.windows(2).rev() {
+        let [upper, lower] = [pair[0], pair[1]];
+        let length = upper.distance(lower);
+        if length >= MIN_LINK_LENGTH && distance <= length {
+            return lower.lerp(upper, distance / length);
+        }
+        distance -= length;
+    }
+    points[0]
 }
 
 fn tip_midpoint(start: Vec3, end: Vec3, start_tangent: Vec3, end_tangent: Vec3) -> Vec3 {
@@ -159,6 +213,8 @@ impl HairHull {
                 start.lerp(tip, 2.0 / 3.0),
                 tip,
                 root_normal,
+                profile,
+                None,
             ));
             return;
         }
@@ -169,6 +225,9 @@ impl HairHull {
             points[split],
             tip,
             root_normal,
+            profile,
+            (profile.high_offshoot && link_count > 2)
+                .then(|| high_thread_root(points, last_links, profile.thread_starts_earlier)),
         ));
         if link_count == 2 {
             return;
@@ -302,6 +361,9 @@ mod tests {
         tip_half_width: f32::INFINITY,
         color_top: 0.0,
         color_span: 0.8,
+        thread_starts_earlier: false,
+        trim_main_tip: false,
+        high_offshoot: false,
     };
 
     #[test]
@@ -336,6 +398,139 @@ mod tests {
         assert!(hull.vertices.is_empty() && hull.triangles.is_empty());
         assert!(hull.tips.is_empty());
         assert_eq!(hull.vertices.capacity(), capacity);
+    }
+
+    #[test]
+    fn tip_thread_branches_from_the_drawn_wide_stroke_and_follows_the_tip() {
+        let previous = Vec3::ZERO;
+        let start = Vec3::NEG_Y * 0.2;
+        let split = Vec3::new(0.03, -0.27, 0.01);
+        let tip = Vec3::new(0.013, -0.306, 0.009);
+        let normal = Vec3::Z;
+        let full_thread = LockProfile {
+            trim_main_tip: true,
+            ..BASE_PROFILE
+        };
+        let hair = HairTip::new(Some(previous), start, split, tip, normal, full_thread, None);
+        let [_, wide_middle, _, thin_middle, _] = hair.points;
+        let [root, end] = hair.threads()[0];
+        assert_eq!(root, wide_middle.lerp(split, 1.0 / 3.0));
+        let target = thin_middle.lerp(tip, 0.8);
+        let reach = target - root;
+        let splay = end - target;
+        assert!(splay.dot(reach).abs() < 1e-6);
+        assert!(splay.length() <= reach.length() * TIP_THREAD_SPLAY + 1e-6);
+        assert!(splay.dot(reach.cross(normal)) < 0.0);
+
+        let staggered_profile = LockProfile {
+            thread_starts_earlier: true,
+            ..full_thread
+        };
+        let staggered = HairTip::new(
+            Some(previous),
+            start,
+            split,
+            tip,
+            normal,
+            staggered_profile,
+            None,
+        );
+        assert_eq!(
+            staggered.threads()[0],
+            [previous.lerp(start, 2.0 / 3.0), end]
+        );
+        assert_eq!(staggered.points, hair.points);
+        let regular_short = HairTip::new(None, start, split, tip, normal, full_thread, None);
+        let staggered_short =
+            HairTip::new(None, start, split, tip, normal, staggered_profile, None);
+        assert_eq!(staggered_short.threads(), regular_short.threads());
+
+        let rotation = Quat::from_rotation_z(0.8);
+        let moved = HairTip::new(
+            Some(rotation * previous),
+            rotation * start,
+            rotation * split,
+            rotation * tip,
+            rotation * normal,
+            full_thread,
+            None,
+        );
+        for (before, after) in [root, end].into_iter().zip(moved.threads()[0]) {
+            assert!((rotation * before).distance(after) < 1e-6);
+        }
+    }
+
+    #[test]
+    fn only_the_selected_end_is_shortened_by_half_the_final_link() {
+        let previous = Vec3::ZERO;
+        let start = Vec3::NEG_Y * 0.2;
+        let split = Vec3::new(0.03, -0.27, 0.01);
+        let tip = Vec3::new(0.013, -0.306, 0.009);
+        for thread_starts_earlier in [false, true] {
+            let profile = LockProfile {
+                thread_starts_earlier,
+                ..BASE_PROFILE
+            };
+            let make_tip = |trim_main_tip| {
+                HairTip::new(
+                    Some(previous),
+                    start,
+                    split,
+                    tip,
+                    Vec3::Z,
+                    LockProfile {
+                        trim_main_tip,
+                        ..profile
+                    },
+                    None,
+                )
+            };
+            let short_main = make_tip(true);
+            let short_thread = make_tip(false);
+            let [.., thin_middle, _] = short_main.points;
+            assert_eq!(
+                short_main.stroke_points(),
+                &short_thread.stroke_points()[..4]
+            );
+            assert_eq!(short_main.stroke_points().last(), Some(&thin_middle));
+            assert_eq!(short_thread.stroke_points().last(), Some(&tip));
+            assert!((split.distance(thin_middle) - tip.distance(thin_middle)).abs() < 1e-6);
+
+            let [root, full_end] = short_main.threads()[0];
+            let [short_root, short_end] = short_thread.threads()[0];
+            assert_eq!(short_root, root);
+            assert!((full_end.distance(short_end) - split.distance(tip) * 0.5).abs() < 1e-6);
+            assert!(
+                (root.distance(full_end) - root.distance(short_end) - full_end.distance(short_end))
+                    .abs()
+                    < 1e-6
+            );
+        }
+    }
+
+    #[test]
+    fn high_offshoot_starts_farther_up_both_attachment_patterns() {
+        let points =
+            [0.0, 1.0, 2.0, 3.0, 4.0, 4.0 + 2.0 / 3.0, 5.0].map(|distance| Vec3::NEG_Y * distance);
+        for (thread_starts_earlier, expected_root_y) in [(false, -2.638889), (true, -1.861111)] {
+            let mut hull = HairHull::default();
+            hull.append_lock(
+                &points,
+                Vec3::Z,
+                LockProfile {
+                    thread_starts_earlier,
+                    high_offshoot: true,
+                    ..BASE_PROFILE
+                },
+            );
+            let [low, high] = hull.tips[0].threads() else {
+                panic!("expected two offshoots");
+            };
+            assert!((high[0].y - expected_root_y).abs() < 1e-5);
+            assert!(high[0].y > low[0].y);
+            assert!((high[1].y + 4.966667).abs() < 1e-5);
+            assert!(high[1].x < 0.0 && low[1].x > 0.0);
+        }
     }
 
     #[test]

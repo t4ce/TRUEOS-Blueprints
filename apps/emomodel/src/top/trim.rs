@@ -57,15 +57,21 @@ pub(crate) fn sample(
             }
         }
 
-        // The rounded ribbon rises and falls as sin² across its width. Average
-        // the derivative over the visible ribbon portion of a texel.
-        let start = low.max(0.0);
-        let end = high.min(width);
-        let frequency = TAU / width;
-        slope = direction * MAX_SLOPE * ((start * frequency).cos() - (end * frequency).cos())
-            / ((end - start) * frequency);
+        slope = direction * relief_slope(across, width, footprint);
     }
     Sample { weights, slope }
+}
+
+pub(super) fn relief_slope(distance: f32, width: f32, footprint: f32) -> f32 {
+    // The relief rises and falls as sin² across its width. Average the
+    // derivative over the part of the texel that samples the relief.
+    let start = (distance - 0.5 * footprint).max(0.0);
+    let end = (distance + 0.5 * footprint).min(width);
+    if start >= end {
+        return 0.0;
+    }
+    let frequency = TAU / width;
+    MAX_SLOPE * ((start * frequency).cos() - (end * frequency).cos()) / ((end - start) * frequency)
 }
 
 fn stitch_coverage(along_meters: f32, phase: f32, footprint_meters: f32) -> f32 {

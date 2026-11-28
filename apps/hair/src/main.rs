@@ -71,6 +71,7 @@ pub(crate) struct Controls {
     pub(crate) paused: bool,
     pub(crate) speed_color: bool,
     pub(crate) tip_spread: bool,
+    pub(crate) high_offshoot: bool,
     pub(crate) water: bool,
     pub(crate) water_volume: f32,
     pub(crate) flow: solver::FlowSettings,
@@ -104,6 +105,7 @@ impl Default for Controls {
             paused: false,
             speed_color: false,
             tip_spread: true,
+            high_offshoot: false,
             water: cfg!(target_os = "linux") && WATER_PREVIEW,
             water_volume: 1.0,
             flow: solver::FlowSettings::DEFAULT,
@@ -186,6 +188,7 @@ fn main() -> Result<()> {
             }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
+            "--high-offshoot" => controls.high_offshoot = true,
             "--hide" | "--show" => {
                 let name = args.next().context("missing layer name")?;
                 controls.layers.set_visible(&name, arg == "--show")?;
@@ -193,7 +196,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin and up or down to tilt. In bending-rod mode, 1 and 2 cycle wind strength and direction. Hold Shift to step backward. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--high-offshoot] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin and up or down to tilt. In bending-rod mode, 1 and 2 cycle wind strength and direction. Hold Shift to step backward. Press 3 to toggle the high offshoot. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");

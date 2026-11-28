@@ -16,7 +16,8 @@ const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
 const HELP: &str =
     "Hold A/D to orbit · Mouse left/right spins · down tilts forward · up tilts back";
-const ROD_KEYS: &str = "1 wind strength · 2 wind direction · Shift steps backward";
+const ROD_KEYS: &str =
+    "1 wind strength · 2 wind direction · Shift steps wind backward · 3 high offshoot";
 const WATER_KEYS: &str = "I/K volume  J/L flow speed  U/O viscosity";
 const RADIANS_PER_PIXEL: f32 = 0.008;
 const ORBIT_RADIANS_PER_SECOND: f32 = std::f32::consts::FRAC_PI_4;
@@ -84,6 +85,7 @@ pub(crate) fn run(
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
         let previous_tuning = controls.rod_tuning;
+        let previous_high_offshoot = controls.high_offshoot;
         if !video.poll(&mut controls, &mut orbit) {
             break;
         }
@@ -101,7 +103,10 @@ pub(crate) fn run(
             report_start = Instant::now();
             report_count = 0;
         }
-        if report_due || previous_tuning != controls.rod_tuning {
+        if report_due
+            || previous_tuning != controls.rod_tuning
+            || previous_high_offshoot != controls.high_offshoot
+        {
             video.set_title(&window_title(&controls, fps));
         }
         thread::sleep(FRAME_TIME.saturating_sub(now.elapsed()));
@@ -121,9 +126,10 @@ fn window_title(controls: &Controls, fps: Option<f32>) -> String {
         )
     } else if rod_controls_active(controls) {
         format!(
-            "Hair{fps} · A/D orbit · Wind {}% toward {} (1/2)",
+            "Hair{fps} · A/D orbit · Wind {}% toward {} (1/2) · High offshoot {} (3)",
             controls.rod_tuning.wind_strength_percent,
             controls.rod_tuning.wind_heading_label(),
+            if controls.high_offshoot { "on" } else { "off" },
         )
     } else if let Some(motion) = controls.hair_motion {
         format!("Hair · {}{fps} · {HELP}", motion.label())
@@ -162,6 +168,7 @@ fn rod_key(controls: &mut Controls, scancode: i32, repeat: bool, modifiers: u16)
             let heading = &mut controls.rod_tuning.wind_heading;
             *heading = cycle_index(*heading, WIND_HEADING_COUNT, backward);
         }
+        KEY_3 => controls.high_offshoot = !controls.high_offshoot,
         _ => (),
     }
 }
@@ -188,6 +195,7 @@ const KEY_A: i32 = 4;
 const KEY_D: i32 = 7;
 const KEY_1: i32 = 30;
 const KEY_2: i32 = 31;
+const KEY_3: i32 = 32;
 const KEY_I: i32 = 12;
 const KEY_J: i32 = 13;
 const KEY_K: i32 = 14;
@@ -515,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn title_reports_wind_and_orbit() {
+    fn title_reports_wind_orbit_and_high_offshoot() {
         let mut controls = Controls {
             hair_motion: Some(HairMotion::Rod),
             water: false,
@@ -523,13 +531,17 @@ mod tests {
         };
         assert_eq!(
             window_title(&controls, None),
-            "Hair · A/D orbit · Wind 0% toward +X/+Z (1/2)"
+            "Hair · A/D orbit · Wind 0% toward +X/+Z (1/2) · High offshoot off (3)"
         );
         rod_key(&mut controls, KEY_1, false, 0);
+        rod_key(&mut controls, KEY_3, false, 0);
+        rod_key(&mut controls, KEY_3, true, 0);
         assert_eq!(
             window_title(&controls, Some(45.0)),
-            "Hair · 45.0 FPS · A/D orbit · Wind 10% toward +X/+Z (1/2)"
+            "Hair · 45.0 FPS · A/D orbit · Wind 10% toward +X/+Z (1/2) · High offshoot on (3)"
         );
+        rod_key(&mut controls, KEY_3, false, 0);
+        assert!(!controls.high_offshoot);
     }
 
     #[test]
@@ -540,24 +552,26 @@ mod tests {
             ..Controls::default()
         };
         let initial_tuning = controls.rod_tuning;
-        // The retired hull budget binding used SDL scancode 32 for 3.
-        for scancode in [KEY_A, KEY_D, KEY_I, KEY_J, KEY_K, KEY_L, 32, 33, 34, 35, 43] {
+        for scancode in [KEY_A, KEY_D, KEY_I, KEY_J, KEY_K, KEY_L, 33, 34, 35, 43] {
             rod_key(&mut controls, scancode, false, 0);
         }
         assert!(controls.rod_tuning == initial_tuning);
+        assert!(!controls.high_offshoot);
 
         controls.water = true;
-        for scancode in [KEY_1, KEY_2] {
+        for scancode in [KEY_1, KEY_2, KEY_3] {
             rod_key(&mut controls, scancode, false, 0);
         }
         assert!(controls.rod_tuning == initial_tuning);
+        assert!(!controls.high_offshoot);
         controls.water = false;
         for motion in [Some(HairMotion::Spring), Some(HairMotion::Rope), None] {
             controls.hair_motion = motion;
-            for scancode in [KEY_1, KEY_2] {
+            for scancode in [KEY_1, KEY_2, KEY_3] {
                 rod_key(&mut controls, scancode, false, 0);
             }
             assert!(controls.rod_tuning == initial_tuning);
+            assert!(!controls.high_offshoot);
         }
     }
 }

@@ -5,6 +5,7 @@ mod bottom;
 pub(super) mod chart;
 pub(super) mod finish;
 pub(super) mod outfit_motion;
+mod shoe;
 pub(super) mod trim;
 
 #[cfg(target_os = "trueos")]
@@ -25,6 +26,7 @@ const WHITE_RIBBON_SRGB: [u8; 3] = [241, 239, 233];
 const PANTS_VERTEX_ROW: usize = 52;
 const SHIRT_VERTEX_ROW: usize = 68;
 const SOCK_VERTEX_ROW: usize = 80;
+pub(super) const SHOE_VERTEX_ROW: usize = COVERAGE_ROWS - 1;
 const SHIRT_UNDERLAP_METERS: f32 = 0.004;
 const JOIN_GAP_METERS: f32 = 0.002;
 const PANT_TRIM_FADE_METERS: f32 = 0.008;
@@ -41,6 +43,7 @@ pub(super) enum Surface {
     SockBand,
     Shirt,
     ShirtBand,
+    Shoe,
 }
 
 impl Surface {
@@ -57,7 +60,7 @@ impl Surface {
         Self::Outline,
     ];
 
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
         Self::Skin,
         Self::Fabric,
         Self::Band,
@@ -67,6 +70,7 @@ impl Surface {
         Self::SockBand,
         Self::Shirt,
         Self::ShirtBand,
+        Self::Shoe,
     ];
 
     pub(super) fn at_row(row: usize) -> Self {
@@ -81,7 +85,7 @@ impl Surface {
     pub(super) fn albedo(self, fabric: [u8; 3]) -> [u8; 3] {
         match self {
             Self::Skin => crate::light::SKIN_SRGB,
-            Self::Fabric | Self::Sock | Self::Shirt => fabric,
+            Self::Fabric | Self::Sock | Self::Shirt | Self::Shoe => fabric,
             Self::Band | Self::SockBand | Self::ShirtBand => {
                 fabric.map(|channel| (f32::from(channel) * 0.75).round() as u8)
             }
@@ -147,6 +151,7 @@ pub(super) struct TopStyle {
     pub sock_color: Option<Pastel>,
     pub bottoms: Option<BottomStyle>,
     pub pants_color: Option<Pastel>,
+    pub shoe_color: Option<Pastel>,
 }
 
 impl TopStyle {
@@ -165,7 +170,9 @@ impl TopStyle {
     pub(crate) fn fabric(self) -> Option<[u8; 3]> {
         if self.bottoms.is_some() {
             Some(self.pants_color.map_or(BLACK_FABRIC_SRGB, |color| {
-                color.rgb().map(|channel| (f32::from(channel) * 0.82).round() as u8)
+                color
+                    .rgb()
+                    .map(|channel| (f32::from(channel) * 0.82).round() as u8)
             }))
         } else {
             self.color.map(Pastel::rgb)
@@ -173,6 +180,9 @@ impl TopStyle {
     }
 
     pub(crate) fn surface_at_row(self, row: usize) -> Surface {
+        if row == SHOE_VERTEX_ROW && self.shoe_color.is_some() {
+            return Surface::Shoe;
+        }
         if self.bottoms.is_some() {
             return match row {
                 ..OPENING_ROW => Surface::Skin,
@@ -195,6 +205,7 @@ impl TopStyle {
             Surface::Shirt | Surface::ShirtBand => {
                 surface.albedo(self.color.map_or(fabric, Pastel::rgb))
             }
+            Surface::Shoe => self.shoe_color.map_or(BLACK_FABRIC_SRGB, Pastel::rgb),
             _ => surface.albedo(fabric),
         }
     }
@@ -282,7 +293,10 @@ impl LowerFit {
     fn vertex_row(self) -> f32 {
         let row = if self.waist >= 0.0 && self.leg >= 0.0 {
             PANTS_VERTEX_ROW
-        } else if self.sock_edge().is_some_and(|(distance, _)| distance >= 0.0) {
+        } else if self
+            .sock_edge()
+            .is_some_and(|(distance, _)| distance >= 0.0)
+        {
             SOCK_VERTEX_ROW
         } else {
             0
@@ -355,10 +369,16 @@ impl Fit {
 
     fn collar_row(&self) -> f32 {
         (COLLAR_ROW as f32 - 2.0 * OPENING_ROWS_PER_METER * self.neckline)
-            .clamp(COLLAR_FABRIC_ROW, COVERAGE_ROWS as f32 - 0.5)
+            .clamp(COLLAR_FABRIC_ROW, SHOE_VERTEX_ROW as f32 - 0.5)
     }
 
     pub(super) fn coverage_row(&self, style: TopStyle, lower: Option<LowerStyle>) -> f32 {
+        if style.shoe_color.is_some()
+            && self.position.y <= shoe::MAX_HEIGHT_METERS
+            && shoe::edge(self.position) >= 0.0
+        {
+            return SHOE_VERTEX_ROW as f32 + 0.5;
+        }
         if let Some(lower) = lower {
             if style.color.is_some()
                 && Surface::at_row(self.shirt_row(style) as usize) != Surface::Skin
@@ -366,8 +386,10 @@ impl Fit {
                 return SHIRT_VERTEX_ROW as f32 + 0.5;
             }
             lower.fit_at(self.position).vertex_row()
-        } else {
+        } else if style.color.is_some() {
             self.shirt_row(style)
+        } else {
+            0.5
         }
     }
 

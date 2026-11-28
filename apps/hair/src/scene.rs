@@ -66,13 +66,16 @@ impl ProceduralHair {
         }
     }
 
-    fn rebuild(&mut self, ropes: &RopeGuides, camera_scale: f32) {
+    fn rebuild(&mut self, ropes: &RopeGuides, camera_scale: f32, high_offshoot: bool) {
         self.mesh.clear();
         let tip_half_width = camera_scale.recip();
         ropes.for_each_curve(|index, points| {
             let scalp_normal = (points[0] - HEAD_CENTER).normalize_or(Vec3::Z);
             points[0] -= ROOT_INSET * scalp_normal;
             let width_scale = 0.9 + 0.2 * (index % 7) as f32 / 6.0;
+            // Hash the stable guide index so the cut stays fixed as the hair moves.
+            let guide = index as u32;
+            let trim_main_tip = (guide ^ (guide >> 4)).wrapping_mul(0x9e37_79b9) >> 31 != 0;
             self.mesh.append_lock(
                 points,
                 scalp_normal,
@@ -82,6 +85,9 @@ impl ProceduralHair {
                     tip_half_width,
                     color_top: self.color_top,
                     color_span: self.color_span,
+                    thread_starts_earlier: index % 2 == 1,
+                    trim_main_tip,
+                    high_offshoot,
                 },
             );
         });
@@ -308,7 +314,7 @@ impl Scene {
             if layers.hair
                 && let (Some(hull), Some(ropes)) = (&mut self.hull, &self.ropes)
             {
-                hull.rebuild(ropes, camera.scale);
+                hull.rebuild(ropes, camera.scale, controls.high_offshoot);
                 target.flat_mesh(
                     camera,
                     &hull.mesh.vertices,
@@ -317,15 +323,17 @@ impl Scene {
                     Some(&hull.lock_texture),
                 );
                 for tip in &hull.mesh.tips {
+                    let points = tip.stroke_points();
+                    let threads = tip.threads();
                     target.hair_tip(
                         camera,
-                        tip.points,
-                        &tip.threads,
+                        points,
+                        threads,
                         &hull.lock_texture,
                         hull.color_top,
                         hull.color_span,
                     );
-                    drawn.tip_strokes += 4 + tip.threads.len();
+                    drawn.tip_strokes += points.len() - 1 + threads.len();
                 }
                 drawn.triangles = hull.mesh.triangles.len();
             }
@@ -577,7 +585,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_guide_draws_two_strips_and_a_tip_with_two_threads() {
+    fn each_guide_draws_two_strips_and_a_tip_with_one_thread() {
         let (roots, base) = back_hair_roots(true).unwrap();
         assert_eq!(base, 150);
         assert_eq!(&roots[..base], reference_roots());
@@ -598,11 +606,33 @@ mod tests {
         scene.ropes.as_ref().unwrap().for_each_curve(|_, points| {
             links += points.len() - 1;
         });
-        // The two tip links use four strokes and the offshoots use one each.
+        let tips = &scene.hull.as_ref().unwrap().mesh.tips;
+        let short_main_tips = tips
+            .iter()
+            .filter(|tip| tip.stroke_points().len() == 4)
+            .count();
+        assert!((roots.len() / 2).abs_diff(short_main_tips) <= 1);
+        // A shortened main tip skips its final stroke.
         assert_eq!(drawn.triangles, 4 * (links - 2 * roots.len()));
-        assert_eq!(drawn.tip_strokes, 6 * roots.len());
+        assert_eq!(drawn.tip_strokes, 5 * roots.len() - short_main_tips);
         assert_eq!(drawn.segments, 0);
         assert_eq!(scene.guide_count(), roots.len());
+
+        let baseline_tips: Vec<_> = tips.iter().map(|tip| tip.threads()[0]).collect();
+        controls.high_offshoot = true;
+        let more = scene.draw(controls, &mut pixels);
+        let tips = &scene.hull.as_ref().unwrap().mesh.tips;
+        assert_eq!(more.tip_strokes, drawn.tip_strokes + roots.len());
+        assert_eq!(more.triangles, drawn.triangles);
+        for (tip, baseline) in tips.iter().zip(baseline_tips) {
+            assert_eq!(tip.threads().len(), 2);
+            assert_eq!(tip.threads()[0], baseline);
+        }
+        controls.high_offshoot = false;
+        assert_eq!(
+            scene.draw(controls, &mut pixels).tip_strokes,
+            drawn.tip_strokes
+        );
     }
 
     #[test]

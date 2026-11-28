@@ -66,6 +66,8 @@ const HAIRBAND_ROW: usize = EYE_ROW + eye_detail::HEIGHT;
 const BODY_MARKS_COLUMN: usize = hairband::WIDTH + 1;
 const CONTACT_ROW: usize = HAIRBAND_ROW + hairband::HEIGHT;
 const DRESS_COLUMN: usize = (LIVE_OUTLINE_SLOT + MAX_LIVE_BUTTERFLIES) * 4;
+const DRESS_ROUGHNESS: f32 = 0.55;
+const DRESS_PROJECTION_PEAK: f32 = 1.12;
 const ATLAS_HEIGHT: usize = 512 + hairband::HEIGHT;
 const MAX_ATLAS_WIDTH: usize = 1024;
 const ATLAS_WIDTHS: [usize; 2] = [512, MAX_ATLAS_WIDTH];
@@ -479,7 +481,7 @@ impl<'a> Preview<'a> {
         )
         .await?;
         let hairband = Hairband::load(glb, mesh).await?;
-        let dress = Dress::load()?;
+        let dress = Dress::load().await?;
         let (source_vertices, mut compact_indices) = compact_mesh(mesh);
         body_tint.remap_indices(&mut compact_indices, u32::try_from(source_vertices.len())?);
         let eye_base = source_vertices.len() + body_tint.vertex_count();
@@ -633,7 +635,7 @@ impl<'a> Preview<'a> {
             skin_materials,
             sky_palette: sky_palette::Palette::new(Key::Neutral),
             dress,
-            dress_ramp: light::diffuse_lookup_rgba(dress::PINK),
+            dress_ramp: light::diffuse_lookup_with_peak(dress::PINK, DRESS_PROJECTION_PEAK),
             dress_visible: false,
             top_appearance: OutfitAppearance::from_style(TopStyle::default()),
             top_moving: false,
@@ -656,6 +658,10 @@ impl<'a> Preview<'a> {
             self.dress_visible = visible;
             report(format_args!("avatar dress visible={visible}"));
         }
+    }
+
+    pub(super) fn outfit_appearance(&self) -> OutfitAppearance {
+        self.top_appearance
     }
 
     pub(super) fn set_top(
@@ -687,10 +693,15 @@ impl<'a> Preview<'a> {
         };
         let has_fabric = style.fabric().is_some();
         let had_fabric = previous.style.fabric().is_some();
-        let fit_changed = motion_changed || has_fabric != had_fabric || fit(previous.style) != fit(style);
+        let fit_changed =
+            motion_changed || has_fabric != had_fabric || fit(previous.style) != fit(style);
         if fit_changed {
             let mut finish = if has_fabric {
-                let build = if moving { finish::Finish::build_motion } else { finish::Finish::build };
+                let build = if moving {
+                    finish::Finish::build_motion
+                } else {
+                    finish::Finish::build
+                };
                 build(
                     style,
                     &self.top_fit,
@@ -737,7 +748,8 @@ impl<'a> Preview<'a> {
                         for (pixel, skin) in ramp.chunks_exact_mut(4).zip(skin.chunks_exact(4)) {
                             for (channel, &base) in pixel[..3].iter_mut().zip(&skin[..3]) {
                                 let base = f32::from(base);
-                                *channel = (base + (f32::from(*channel) - base) * appearance.opacity)
+                                *channel = (base
+                                    + (f32::from(*channel) - base) * appearance.opacity)
                                     .round() as u8;
                             }
                         }
@@ -1288,12 +1300,13 @@ impl<'a> Preview<'a> {
         let mut next_vertex = self.geometry_vertices + self.top_finish.vertex_count() as u32;
         self.indices.truncate(self.geometry_index_bytes);
         if self.dress_visible {
+            let lighting = Lighting::with_key(diffuse_direction, back);
             let skirt = self.dress.pose(pose.joint_world)?;
             for (&position, &normal) in skirt.positions.iter().zip(skirt.normals) {
                 let position = Vec3::from_array(position) + pose.world_offset;
                 let normal = Vec3::from_array(normal);
-                let diffuse = normal.dot(diffuse_direction).clamp(-1.0, 1.0);
-                let column = (diffuse + 1.0) * (light::DIFFUSE_WIDTH / 2) as f32 + 0.5;
+                let projection = lighting.dielectric_projection(normal, DRESS_ROUGHNESS);
+                let column = light::diffuse_column(projection, DRESS_PROJECTION_PEAK);
                 append(
                     position,
                     [

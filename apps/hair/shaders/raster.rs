@@ -445,7 +445,7 @@ impl<'a> Surface<'a> {
     pub(crate) fn hair_tip(
         &mut self,
         camera: Camera,
-        points: [Vec3; 5],
+        points: &[Vec3],
         threads: &[[Vec3; 2]],
         palette: &Texture,
         color_top: f32,
@@ -453,8 +453,6 @@ impl<'a> Surface<'a> {
     ) {
         let color_span = color_span.max(1e-5);
         let height = |point: Vec3| (color_top - point.y) / color_span;
-        let projected = points.map(|point| camera.project(point));
-        let heights = points.map(height);
         let shade = |start: f32, end: f32| {
             let span = end - start;
             move |progress| {
@@ -462,21 +460,20 @@ impl<'a> Surface<'a> {
                 palette.sample(Vec2::new(0.5, v)).truncate()
             }
         };
-        for index in 0..2 {
-            self.stroke::<true, true>(
-                projected[index],
-                projected[index + 1],
-                shade(heights[index], heights[index + 1]),
-                1.0,
-            );
+        let mut knots = points[1..]
+            .iter()
+            .map(|&point| (camera.project(point), height(point)));
+        let mut start = camera.project(points[0]);
+        let mut start_height = height(points[0]);
+        for (end, end_height) in knots.by_ref().take(2) {
+            self.stroke::<true, true>(start, end, shade(start_height, end_height), 1.0);
+            start = end;
+            start_height = end_height;
         }
-        for index in 2..4 {
-            self.stroke::<true, false>(
-                projected[index],
-                projected[index + 1],
-                shade(heights[index], heights[index + 1]),
-                1.0,
-            );
+        for (end, end_height) in knots {
+            self.stroke::<true, false>(start, end, shade(start_height, end_height), 1.0);
+            start = end;
+            start_height = end_height;
         }
         for &[root, end] in threads {
             self.stroke::<true, false>(
@@ -663,7 +660,7 @@ mod tests {
         surface.depth[5 * WIDTH + 2] = 1.0;
         surface.hair_tip(
             camera,
-            [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| Vec3::new(2.0, -y, 0.5)),
+            &[1.0, 5.0, 9.0, 11.0, 13.0].map(|y| Vec3::new(2.0, -y, 0.5)),
             &[],
             &palette,
             -1.0,
@@ -690,7 +687,7 @@ mod tests {
         surface.clear();
         surface.hair_tip(
             camera,
-            [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| {
+            &[1.0, 5.0, 9.0, 11.0, 13.0].map(|y| {
                 let x = if y == 5.0 || y == 11.0 { 4.0 } else { 2.0 };
                 Vec3::new(x, -y, 0.5)
             }),
@@ -708,23 +705,23 @@ mod tests {
         surface.depth[10 * WIDTH + 3] = 1.0;
         surface.hair_tip(
             camera,
-            [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| Vec3::new(2.0, -y, 0.5)),
-            &[
-                [Vec3::new(2.0, -5.0, 0.5), Vec3::new(0.0, -13.0, 0.5)],
-                [Vec3::new(2.0, -7.0, 0.5), Vec3::new(4.0, -13.0, 0.5)],
-            ],
+            &[1.0, 5.0, 9.0, 11.0].map(|y| Vec3::new(2.0, -y, 0.5)),
+            &[[Vec3::new(2.0, -7.0, 0.5), Vec3::new(4.0, -13.0, 0.5)]],
             &palette,
             -1.0,
             12.0,
         );
         for x in 0..WIDTH {
             let offset = (13 * WIDTH + x) * 4;
-            let expected = if x % 2 == 0 { tip_color } else { BACKGROUND };
+            let expected = if x == 4 { tip_color } else { BACKGROUND };
             assert_eq!(surface.pixels[offset..offset + 4], expected);
         }
         let blocked = (10 * WIDTH + 3) * 4;
         assert_eq!(surface.pixels[blocked..blocked + 4], BACKGROUND);
         assert_eq!(surface.depth[10 * WIDTH + 3], 1.0);
+        assert_eq!(surface.depth[11 * WIDTH + 2], 0.5);
+        let removed_tail = (12 * WIDTH + 2) * 4;
+        assert_eq!(surface.pixels[removed_tail..removed_tail + 4], BACKGROUND);
     }
 
     #[test]

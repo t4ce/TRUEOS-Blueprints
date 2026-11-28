@@ -174,12 +174,12 @@ mod tests {
         assert_eq!(shirt_waist_join_strength(0.8, 0.0), 1.0);
 
         let strength = |hem| shirt_waist_join_strength(hem, 0.5);
-        assert_eq!(strength(0.265), 0.0);
+        assert_eq!(strength(0.26), 0.0);
         assert_eq!(strength(0.30), 1.0);
-        assert!(0.0 < strength(0.275));
-        assert!(strength(0.275) < strength(0.282));
-        assert!(strength(0.282) < strength(0.289));
-        assert!(strength(0.289) < 1.0);
+        assert!(0.0 < strength(0.266));
+        assert!(strength(0.266) < strength(0.271));
+        assert!(strength(0.271) < strength(0.277));
+        assert!(strength(0.277) < 1.0);
 
         let clear_gap = shirt_waist_min_gap(0.4, 0.3);
         assert!(clear_gap > 0.008 && clear_gap < 0.01);

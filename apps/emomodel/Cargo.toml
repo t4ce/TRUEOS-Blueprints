@@ -34,3 +34,4 @@ trueos = { path = "../../api", features = ["ui4-scene"] }
 
 [dev-dependencies]
 glam = "0.33.6"
+png = "0.18.1"

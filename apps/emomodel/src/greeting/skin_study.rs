@@ -56,18 +56,24 @@ impl Lighting {
         let direct = key.clamp(0.0, 1.0);
         let wrap = ((key + 0.21) / 1.21).clamp(0.0, 1.0);
         let diffuse = AMBIENT + 0.73 * (0.56 * direct + 0.44 * wrap);
+        // A scalar energy retains the moving sheen in the single-row lookup.
+        diffuse + self.highlight(normal, material.roughness, key) * (1.15 + 0.65 * direct)
+    }
 
+    pub(super) fn dielectric_projection(&self, normal: Vec3, roughness: f32) -> f32 {
+        let key = normal.dot(self.key);
+        // Preserve the existing diffuse projection and add a restrained highlight.
+        key.clamp(-1.0, 1.0) + 0.50 * self.highlight(normal, roughness, key)
+    }
+
+    fn highlight(&self, normal: Vec3, roughness: f32, key: f32) -> f32 {
         let h = normal.dot(self.half).clamp(0.0, 1.0);
         let h2 = h * h;
         let h4 = h2 * h2;
         let h8 = h4 * h4;
         let h16 = h8 * h8;
-        let rough = smooth((material.roughness - 0.28) / 0.44);
-        let highlight =
-            (0.28 * h16 * h16 * (1.0 - rough) + 0.10 * h8 * rough) * smooth((key + 0.015) / 0.315);
-        // A scalar energy is enough to retain the moving narrow/broad sheen
-        // in the texture lookup used by the existing single-sample renderer.
-        diffuse + highlight * (1.15 + 0.65 * direct)
+        let rough = smooth((roughness - 0.28) / 0.44);
+        (0.28 * h16 * h16 * (1.0 - rough) + 0.10 * h8 * rough) * smooth((key + 0.015) / 0.315)
     }
 }
 
@@ -169,6 +175,17 @@ mod tests {
                 assert!((texel_center(0.0)..=texel_center(1.0)).contains(&u));
             }
         }
+    }
+
+    #[test]
+    fn medium_plastic_adds_a_muted_view_dependent_highlight() {
+        let aligned = Lighting::with_key(Vec3::Z, Vec3::Z);
+        let turned = Lighting::with_key(Vec3::Z, Vec3::X);
+        let front = aligned.dielectric_projection(Vec3::Z, 0.55);
+        let off_axis = turned.dielectric_projection(Vec3::Z, 0.55);
+        assert!(front > off_axis + 0.04 && front < 1.12);
+        assert!(off_axis >= 1.0);
+        assert_eq!(aligned.dielectric_projection(-Vec3::Z, 0.55), -1.0);
     }
 
     #[test]

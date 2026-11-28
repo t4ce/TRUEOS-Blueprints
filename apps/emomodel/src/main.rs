@@ -35,6 +35,7 @@ mod greeting {
     mod hand_contact;
     mod heart_arm;
     mod live_butterfly;
+    mod normal_detail;
     mod pupil;
     mod reel;
     mod sky_light;

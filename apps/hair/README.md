@@ -48,6 +48,9 @@ Rod motion runs at 90% of the original speed.
   peaking at 70% above the baseline before settling back. At 0%, the air is
   calm. `2` cycles eight horizontal world directions, 45° apart. Hold
   `Shift` to step backward. Wind starts at 0% with its heading toward +X/+Z.
+- `3` toggles an extra one-pixel strand per guide. It starts roughly two guide
+  segments higher than the existing offshoot and follows the same solved tip.
+  Use `--high-offshoot` to start with it enabled.
 - The rod preview uses Medium tip settling and 225 guides. The extra guides
   fill gaps on the authored anchor surface.
 
@@ -60,7 +63,10 @@ depth-tested strokes on the final two guide links. The longer link takes
 two-thirds of the original final length and uses two-pixel strokes. The
 shorter link uses one-pixel strokes. Each link uses two line segments to
 approximate a slight curve through the simulated joints. They share the
-strip fill palette.
+strip fill palette. A one-pixel strand starts two-thirds along the wider stroke
+or, on alternating guides, two-thirds along the preceding segment. Each guide
+shortens one of its two visible ends by half the final link. The choice is
+randomized by guide index and stays fixed through motion.
 The fill uses five colors sampled from the back-hair atlas, projected by
 avatar-local height across the whole haircut. A thin dark edge is built into
 the fill texture and draws in the same pass.

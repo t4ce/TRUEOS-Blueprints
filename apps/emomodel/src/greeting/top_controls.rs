@@ -1,7 +1,7 @@
 use trueos::ui4_scene::{Error, Frame, MenuEntry};
 
 use crate::top::outfit_motion::OutfitMotion;
-use crate::top::{BottomStyle, OutfitAppearance, Pastel, TopStyle, space_sock_length};
+use crate::top::{BottomStyle, OutfitAppearance, Pastel, Surface, TopStyle, space_sock_length};
 
 #[derive(Default)]
 pub(super) struct TopControls {
@@ -40,8 +40,7 @@ impl TopControls {
         Ok(())
     }
 
-    pub(super) fn roll_full_outfit(&mut self, now_ns: u64) {
-        let (current, _) = self.appearance(now_ns);
+    pub(super) fn roll_full_outfit(&mut self, current: OutfitAppearance, now_ns: u64) {
         let mut roll = trueos::rng::u64();
         let mut style = rolled_top(&mut roll);
         let leg = roll_length(&mut roll);
@@ -56,6 +55,7 @@ impl TopControls {
             style.pants_color = style.color;
         }
         style.bottoms = Some(bottoms);
+        style.shoe_color = self.style.shoe_color;
         self.style = style;
         self.motion = Some(OutfitMotion::new(current, style, now_ns));
     }
@@ -64,21 +64,24 @@ impl TopControls {
         if let Some(motion) = &self.motion
             && motion.is_active(now_ns)
         {
-            (motion.sample(now_ns), true)
+            let mut appearance = motion.sample(now_ns);
+            appearance.style.shoe_color = self.style.shoe_color;
+            appearance.colors[Surface::Shoe as usize] = appearance.style.albedo(Surface::Shoe);
+            (appearance, true)
         } else {
             (OutfitAppearance::from_style(self.style), false)
         }
     }
 
     pub(super) fn key(&mut self, key: char) {
+        if matches!(key, 'b' | 'B') {
+            self.style.shoe_color =
+                Some(next_pastel(self.style.shoe_color).unwrap_or(Pastel::ALL[0]));
+            return;
+        }
         let prior = self.style;
         if matches!(key, 't' | 'T') {
-            let index = self
-                .style
-                .color
-                .and_then(|color| Pastel::ALL.iter().position(|&entry| entry == color))
-                .map_or(0, |index| index + 1);
-            if let Some(&color) = Pastel::ALL.get(index) {
+            if let Some(color) = next_pastel(self.style.color) {
                 choose_pastel(&mut self.style, color);
             } else {
                 clear_outfit(&mut self.style);
@@ -281,6 +284,13 @@ fn select_color<const INDEX: usize>(style: &mut TopStyle) {
     choose_pastel(style, Pastel::ALL[INDEX]);
 }
 
+fn next_pastel(current: Option<Pastel>) -> Option<Pastel> {
+    let index = current
+        .and_then(|color| Pastel::ALL.iter().position(|&entry| entry == color))
+        .map_or(0, |index| index + 1);
+    Pastel::ALL.get(index).copied()
+}
+
 fn choose_pastel(style: &mut TopStyle, color: Pastel) {
     if style.bottoms.take().is_some() {
         style.socks = None;
@@ -306,7 +316,10 @@ fn select_bottoms(style: &mut TopStyle) {
 }
 
 fn roll_pastel_outfit(style: &mut TopStyle) {
-    *style = rolled_top(&mut trueos::rng::u64());
+    *style = TopStyle {
+        shoe_color: style.shoe_color,
+        ..rolled_top(&mut trueos::rng::u64())
+    };
 }
 
 fn rolled_top(roll: &mut u64) -> TopStyle {
@@ -320,9 +333,7 @@ fn rolled_top(roll: &mut u64) -> TopStyle {
         right_sleeve: sleeves,
         hem: roll_length(roll),
         socks: Some(roll_length(roll)),
-        sock_color: None,
-        pants_color: None,
-        bottoms: None,
+        ..TopStyle::default()
     }
 }
 

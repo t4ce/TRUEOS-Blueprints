@@ -1160,7 +1160,14 @@ async fn play(
                     {
                         match event.key_code {
                             TOP_ROW_3 => butterfly_requested = true,
-                            SPACE => tops.roll_full_outfit(clock::monotonic_nanos()),
+                            SPACE => {
+                                if let Playback::Reel(preview) = &*playback {
+                                    tops.roll_full_outfit(
+                                        preview.outfit_appearance(),
+                                        clock::monotonic_nanos(),
+                                    );
+                                }
+                            }
                             _ => (),
                         }
                     }

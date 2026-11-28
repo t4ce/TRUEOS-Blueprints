@@ -1,9 +1,15 @@
 use anyhow::{Context, Result, ensure};
-use glam::Mat4;
+use glam::{Mat4, Vec2};
+#[cfg(target_os = "trueos")]
+use trueos::vmedia::{self, ImageFormat};
 
 use crate::animation::{Animation, PoseSample};
 
+use super::normal_detail;
+
 const GLB: &[u8] = include_bytes!("../../assets/AvatarSample_B-pink-skirt.glb");
+const NORMAL_PNG: &[u8] = include_bytes!("../../assets/AvatarSample_B-pink-skirt-normal.png");
+const NORMAL_SIZE: usize = 128;
 const MATERIAL: &str = "N00_001_03_Bottoms_01_CLOTH (Instance)";
 pub(super) const PINK: [u8; 3] = [226, 172, 187];
 
@@ -13,7 +19,21 @@ pub(super) struct Dress {
 }
 
 impl Dress {
-    pub(super) fn load() -> Result<Self> {
+    #[cfg(target_os = "trueos")]
+    pub(super) async fn load() -> Result<Self> {
+        let image = vmedia::decode(ImageFormat::Png, NORMAL_PNG)
+            .await
+            .map_err(super::gpu_error)
+            .context("decode the skirt normal map")?;
+        ensure!(
+            [image.info.width, image.info.height] == [NORMAL_SIZE as u32; 2]
+                && image.info.stride_bytes == (NORMAL_SIZE * 4) as u32,
+            "unexpected skirt normal map extent"
+        );
+        Self::from_normal_map(&image.rgba)
+    }
+
+    fn from_normal_map(normal_map: &[u8]) -> Result<Self> {
         let glb = gltf::Gltf::from_slice(GLB).context("parse the original AvatarSample_B skirt")?;
         let primitive = glb
             .meshes()
@@ -26,7 +46,7 @@ impl Dress {
             .context("missing skirt triangle indices")?
             .into_u32()
             .collect();
-        let rig = Animation::procedural(GLB, &[MATERIAL])?;
+        let mut rig = Animation::procedural(GLB, &[MATERIAL])?;
         let vertices = rig.bind_positions(0).len();
         ensure!(
             primitive.mode() == gltf::mesh::Mode::Triangles
@@ -43,6 +63,10 @@ impl Dress {
                 indices.extend([a, c, b]);
             }
         }
+        let normals = normal_detail::bake(GLB, MATERIAL, Some((normal_map, NORMAL_SIZE)), |_| {
+            Vec2::ZERO
+        })?;
+        rig.apply_bind_normals(0, &normals)?;
         Ok(Self { rig, indices })
     }
 
@@ -60,6 +84,38 @@ impl Dress {
 }
 
 #[cfg(test)]
+fn read_normal_map() -> Result<Vec<u8>> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(NORMAL_PNG))
+        .read_info()
+        .context("read the skirt normal map")?;
+    let mut pixels = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .context("invalid skirt normal map size")?
+    ];
+    let info = reader
+        .next_frame(&mut pixels)
+        .context("decode the skirt normal map")?;
+    ensure!(
+        [info.width, info.height] == [NORMAL_SIZE as u32; 2]
+            && info.bit_depth == png::BitDepth::Eight,
+        "unexpected skirt normal map extent"
+    );
+    pixels.truncate(info.buffer_size());
+    match info.color_type {
+        png::ColorType::Rgba => Ok(pixels),
+        png::ColorType::Rgb => Ok(pixels
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 255])
+            .collect()),
+        _ => anyhow::bail!("expected RGB skirt normal map"),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use glam::Vec3;
 
@@ -73,14 +129,25 @@ mod tests {
         assert_eq!(asset.meshes().flat_map(|mesh| mesh.primitives()).count(), 1);
         assert!(PINK[0] > PINK[2] && PINK[2] > PINK[1]);
 
-        let mut dress = Dress::load().unwrap();
+        let mut dress = Dress::from_normal_map(&read_normal_map().unwrap()).unwrap();
         let mut body = Animation::procedural(HUMANOID_GLB, &[BODY_MATERIAL]).unwrap();
         body.apply_procedural(0, Vec3::ZERO, &[]);
-        let rest = dress
-            .pose(body.skin().joint_world)
-            .unwrap()
-            .positions
-            .to_vec();
+        let world = body.skin().joint_world;
+        let mut original = Animation::procedural(GLB, &[MATERIAL]).unwrap();
+        let original = original.skin_from_world(world).unwrap();
+        let textured = dress.pose(world).unwrap();
+        assert_eq!(textured.positions, original.positions);
+        let detailed = textured
+            .normals
+            .iter()
+            .zip(original.normals)
+            .filter(|&(&a, &b)| Vec3::from_array(a).dot(Vec3::from_array(b)) < 0.9998)
+            .count();
+        assert!(
+            detailed > textured.normals.len() / 20,
+            "normal detail sampled at {detailed} vertices"
+        );
+        let rest = textured.positions.to_vec();
         assert_eq!(rest.len(), dress.vertex_count());
         assert!(dress.indices().len() >= 1_500);
         assert!(

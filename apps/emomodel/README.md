@@ -51,21 +51,24 @@ Kelvin ranges from 9,000 K (cool) to 2,200 K (warm) and uses an equal-luminance
 blackbody color curve.
 
 Turn **Dress** on in the Shell3 controls to show AvatarSample_B's original
-pink skirt. It follows the avatar's current pose and shades a solid pink
-with the authored vertex normals. The source normal texture is flat.
+pink skirt. A 128 × 128 normal map derived from the original skirt texture
+adds fold detail to the bind normals. The skirt follows the avatar's pose and
+uses a pink plastic finish with 0.55 roughness in the existing atlas draw.
 
-Press `Space` in `skin`, `butterfly`, or `reel` to roll black pants with a
-matching pastel shirt and socks. The roll picks one length for both sleeves,
-one for both pant legs, and a separate waist height. Above a gap of at least
-8 mm, both ribbons stay visible. For a closer join, the black pants extend
-under the rolled shirt hem and the shirt ribbon is the only visible seam.
+Press `Space` in `skin`, `butterfly`, or `reel` to roll a matching pastel shirt
+and socks with black pants. One in four rolls uses a darker shade of the same
+pastel for the pants. The roll picks one sleeve length, one pant leg length,
+and a separate waist height. The first roll fades in the smallest outfit using
+skin-tone fabric and the rolled ribbon colors, then grows and colors the
+fabric over the rest of the 1.75-second transition. Later rolls shrink the
+current outfit before growing into the next fit and palette.
 
 The sock roll adds a 20% margin on each side of the partial-overlap range.
-The sock ribbon follows the visible join where the black fabric covers the
-socks. Separated pant cuffs and the waistband use half-width off-white
-ribbons with dark edges and staggered gray stitches. Use `[` and `]` for the
-left leg, `{` and `}` for the right leg, and `-` and `=` to lower or raise the
-waist.
+The cuffs slide together as they meet. The waistband fades as the pants
+extend under the shirt hem. Separated pant cuffs and the waistband use
+half-width off-white ribbons with dark edges and staggered gray stitches.
+Use `[` and `]` for the left leg, `{` and `}` for the right leg, and `-` and
+`=` to lower or raise the waist.
 
 Right-click to choose a pastel top, roll a random top and matching socks, or
 restore the original appearance. In `reel`, the clothing controls use the

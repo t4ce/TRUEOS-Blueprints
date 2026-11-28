@@ -4,14 +4,15 @@ use glam::{Vec2, Vec3};
 
 use super::{
     COLLAR_ROW, COLLAR_TRIM_START, Fit, HALF_WIDTH_METERS, LowerFit, LowerStyle, OPENING_ROW,
-    OPENING_ROWS_PER_METER, OPENING_TRIM_END, OPENING_WIDTH_METERS, Surface, TopStyle, bottom, chart,
-    leg_phase, stitch_along, trim,
+    OPENING_ROWS_PER_METER, OPENING_TRIM_END, OPENING_WIDTH_METERS, Surface, TopStyle, bottom,
+    chart, leg_phase, shirt_hem_height, stitch_along, trim,
 };
 
 pub(crate) const ATLAS_WIDTH: usize = 512;
 pub(crate) const MAX_ROWS: usize = 768;
 const OPENING_TEXEL_METERS: f32 = 0.0011;
 const COLLAR_TEXEL_METERS: f32 = 0.0007;
+const MAX_FOOTPRINT_METERS: f32 = 0.004;
 
 type IndexBytes = [[u8; 4]; 3];
 
@@ -53,7 +54,15 @@ impl Finish {
             (true, false) => &[1.0, 1.25],
             _ => &[1.0],
         };
-        Self::build_at_scales(style, fits, body_start, body_triangles, triangles, tint_for, scales)
+        Self::build_at_scales(
+            style,
+            fits,
+            body_start,
+            body_triangles,
+            triangles,
+            tint_for,
+            scales,
+        )
     }
 
     pub(crate) fn build_motion<F>(
@@ -70,7 +79,13 @@ impl Finish {
         // Use fewer texels while the openings move, then restore the regular
         // atlas once the rolled fit has settled.
         Self::build_at_scales(
-            style, fits, body_start, body_triangles, triangles, tint_for, &[2.5, 3.0, 3.5],
+            style,
+            fits,
+            body_start,
+            body_triangles,
+            triangles,
+            tint_for,
+            &[2.5, 3.0, 3.5],
         )
     }
 
@@ -363,7 +378,8 @@ fn sample_at(
     let Some(lower) = lower else {
         return shirt_sample(point, steps, style);
     };
-    if style.color.is_none() {
+    if style.color.is_none() || point.y < shirt_hem_height(point, style.hem) - MAX_FOOTPRINT_METERS
+    {
         return lower_sample(point, steps, lower);
     }
 
@@ -399,14 +415,33 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
     let pants = lower.pants;
     let fit_at = |point| lower.fit_at(point);
     let fit = fit_at(point);
+    let sock_edge = fit.sock_edge();
+    let separation = fit.cuff_separation();
+    let half_footprint = MAX_FOOTPRINT_METERS * 0.5;
+    let clear_waist = lower.waist_join == 1.0 || fit.waist >= HALF_WIDTH_METERS + half_footprint;
+    let clear_cuff =
+        sock_edge.is_none() || separation == 0.0 || fit.leg >= HALF_WIDTH_METERS + half_footprint;
+    // Padded charts include interior fabric and skin. Skip the gradient
+    // probes once coverage and trim are outside the largest sampling window.
+    if fit.waist >= half_footprint && fit.leg >= half_footprint && clear_waist && clear_cuff {
+        return solid_sample(Surface::Fabric);
+    }
+    if fit.waist <= -half_footprint || fit.leg <= -half_footprint {
+        let distance = sock_edge.map_or(f32::NEG_INFINITY, |(distance, _)| distance);
+        if distance <= -half_footprint {
+            return solid_sample(Surface::Skin);
+        }
+        if distance >= OPENING_WIDTH_METERS + MAX_FOOTPRINT_METERS {
+            return solid_sample(Surface::Sock);
+        }
+    }
     let samples = steps.map(|step| [fit_at(point - 0.5 * step), fit_at(point + 0.5 * step)]);
     let gradient =
         |axis: fn(LowerFit) -> f32| Vec2::from_array(samples.map(|[a, b]| axis(b) - axis(a)));
     let waist_gradient = gradient(|fit| fit.waist);
     let leg_gradient = gradient(|fit| fit.leg);
-    let sock_edge = fit.sock_edge();
     let sock_gradient = gradient(|fit| fit.sock_edge().map_or(0.0, |(distance, _)| distance));
-    let footprint = |gradient: Vec2| gradient.length().clamp(0.0002, 0.004);
+    let footprint = |gradient: Vec2| gradient.length().clamp(0.0002, MAX_FOOTPRINT_METERS);
     let cover =
         |distance: f32, gradient: Vec2| (0.5 + distance / footprint(gradient)).clamp(0.0, 1.0);
     let leg = cover(fit.leg, leg_gradient);
@@ -490,7 +525,7 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
             Surface::Fabric,
             Surface::Band,
             2.0,
-            fit.cuff_separation(),
+            separation,
             &|point| leg_phase(point, pant_height),
         );
         draw_ribbon(
@@ -509,6 +544,18 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
             slope: 0.0,
         },
         tilt,
+    )
+}
+
+fn solid_sample(surface: Surface) -> (trim::Sample, Vec2) {
+    let mut weights = [0.0; Surface::ALL.len()];
+    weights[surface as usize] = 1.0;
+    (
+        trim::Sample {
+            weights,
+            slope: 0.0,
+        },
+        Vec2::ZERO,
     )
 }
 
@@ -600,7 +647,7 @@ mod tests {
         assert!(at(close_hem + 0.011, close)[Surface::ShirtBand as usize] > 0.9);
 
         let transitioning = TopStyle {
-            hem: 0.282,
+            hem: 0.271,
             ..separated
         };
         let lower = transitioning.lower_style().unwrap();
@@ -742,8 +789,14 @@ mod tests {
         assert!((fit.sock_edge().unwrap().0 + 0.003).abs() < 1e-5);
         let below_pants = left - 0.0015 * Vec3::Y;
         let on_sock = left - 0.0045 * Vec3::Y;
-        assert_eq!(sample(below_pants, transitional_length)[Surface::Skin as usize], 1.0);
-        assert_eq!(sample(on_sock, transitional_length)[Surface::Skin as usize], 0.0);
+        assert_eq!(
+            sample(below_pants, transitional_length)[Surface::Skin as usize],
+            1.0
+        );
+        assert_eq!(
+            sample(on_sock, transitional_length)[Surface::Skin as usize],
+            0.0
+        );
         let style = TopStyle {
             socks: Some(transitional_length),
             ..joined_style
