@@ -320,13 +320,14 @@ impl Scene {
                     target.hair_tip(
                         camera,
                         tip.points,
+                        &tip.threads,
                         &hull.lock_texture,
                         hull.color_top,
                         hull.color_span,
                     );
+                    drawn.tip_strokes += 4 + tip.threads.len();
                 }
                 drawn.triangles = hull.mesh.triangles.len();
-                drawn.tip_strokes = 4 * hull.mesh.tips.len();
             }
             if layers.field
                 && let Some(solver) = &self.solver
@@ -576,7 +577,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_guide_draws_two_strips_and_a_two_part_tip() {
+    fn each_guide_draws_two_strips_and_a_tip_with_two_threads() {
         let (roots, base) = back_hair_roots(true).unwrap();
         assert_eq!(base, 150);
         assert_eq!(&roots[..base], reference_roots());
@@ -597,9 +598,9 @@ mod tests {
         scene.ropes.as_ref().unwrap().for_each_curve(|_, points| {
             links += points.len() - 1;
         });
-        // Two tip links each use two strokes, with four strip triangles per body link.
+        // The two tip links use four strokes and the offshoots use one each.
         assert_eq!(drawn.triangles, 4 * (links - 2 * roots.len()));
-        assert_eq!(drawn.tip_strokes, 4 * roots.len());
+        assert_eq!(drawn.tip_strokes, 6 * roots.len());
         assert_eq!(drawn.segments, 0);
         assert_eq!(scene.guide_count(), roots.len());
     }

@@ -446,25 +446,45 @@ impl<'a> Surface<'a> {
         &mut self,
         camera: Camera,
         points: [Vec3; 5],
+        threads: &[[Vec3; 2]],
         palette: &Texture,
         color_top: f32,
         color_span: f32,
     ) {
+        let color_span = color_span.max(1e-5);
+        let height = |point: Vec3| (color_top - point.y) / color_span;
         let projected = points.map(|point| camera.project(point));
-        let heights = points.map(|point| (color_top - point.y) / color_span.max(1e-5));
-        let shade = |index: usize| {
-            let start = heights[index];
-            let span = heights[index + 1] - start;
+        let heights = points.map(height);
+        let shade = |start: f32, end: f32| {
+            let span = end - start;
             move |progress| {
                 let v = start + span * progress;
                 palette.sample(Vec2::new(0.5, v)).truncate()
             }
         };
         for index in 0..2 {
-            self.stroke::<true, true>(projected[index], projected[index + 1], shade(index), 1.0);
+            self.stroke::<true, true>(
+                projected[index],
+                projected[index + 1],
+                shade(heights[index], heights[index + 1]),
+                1.0,
+            );
         }
         for index in 2..4 {
-            self.stroke::<true, false>(projected[index], projected[index + 1], shade(index), 1.0);
+            self.stroke::<true, false>(
+                projected[index],
+                projected[index + 1],
+                shade(heights[index], heights[index + 1]),
+                1.0,
+            );
+        }
+        for &[root, end] in threads {
+            self.stroke::<true, false>(
+                camera.project(root),
+                camera.project(end),
+                shade(height(root), height(end)),
+                1.0,
+            );
         }
     }
 
@@ -644,6 +664,7 @@ mod tests {
         surface.hair_tip(
             camera,
             [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| Vec3::new(2.0, -y, 0.5)),
+            &[],
             &palette,
             -1.0,
             12.0,
@@ -673,6 +694,7 @@ mod tests {
                 let x = if y == 5.0 || y == 11.0 { 4.0 } else { 2.0 };
                 Vec3::new(x, -y, 0.5)
             }),
+            &[],
             &palette,
             -1.0,
             12.0,
@@ -681,6 +703,28 @@ mod tests {
             let offset = (y * WIDTH + 4) * 4;
             assert_ne!(surface.pixels[offset..offset + 4], BACKGROUND);
         }
+
+        surface.clear();
+        surface.depth[10 * WIDTH + 3] = 1.0;
+        surface.hair_tip(
+            camera,
+            [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| Vec3::new(2.0, -y, 0.5)),
+            &[
+                [Vec3::new(2.0, -5.0, 0.5), Vec3::new(0.0, -13.0, 0.5)],
+                [Vec3::new(2.0, -7.0, 0.5), Vec3::new(4.0, -13.0, 0.5)],
+            ],
+            &palette,
+            -1.0,
+            12.0,
+        );
+        for x in 0..WIDTH {
+            let offset = (13 * WIDTH + x) * 4;
+            let expected = if x % 2 == 0 { tip_color } else { BACKGROUND };
+            assert_eq!(surface.pixels[offset..offset + 4], expected);
+        }
+        let blocked = (10 * WIDTH + 3) * 4;
+        assert_eq!(surface.pixels[blocked..blocked + 4], BACKGROUND);
+        assert_eq!(surface.depth[10 * WIDTH + 3], 1.0);
     }
 
     #[test]
