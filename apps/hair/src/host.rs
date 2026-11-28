@@ -9,22 +9,29 @@ use libloading::Library;
 
 use crate::{
     Controls, TILT_LIMIT,
-    hair_rope::{HairMotion, MAX_BUDGET_STEP, WIND_HEADING_COUNT},
-    scene::headband_fixation_percent,
+    hair_rope::{HairMotion, WIND_HEADING_COUNT},
 };
 
 const TARGET_HZ: u64 = 45;
 const FRAME_TIME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_HZ);
 const HELP: &str =
     "Hold A/D to orbit · Mouse left/right spins · down tilts forward · up tilts back";
-const ROD_KEYS: &str = "Tab hull look · 1 wind strength · 2 wind direction · 5 tip settling · 6 guide budget · Shift steps backward";
+const ROD_KEYS: &str = "1 wind strength · 2 wind direction · 3 hull width · 4 hull depth · Tab flatten · Shift steps backward";
 const WATER_KEYS: &str = "I/K volume  J/L flow speed  U/O viscosity";
 const RADIANS_PER_PIXEL: f32 = 0.008;
 const ORBIT_RADIANS_PER_SECOND: f32 = std::f32::consts::FRAC_PI_4;
 const WIND_STRENGTH_MAX: u8 = 100;
 const WIND_STRENGTH_STEP: u8 = 10;
-const SETTLE_LEVELS: [&str; 3] = ["Off", "Light", "Medium"];
-const GUIDE_BUDGET_STEP_PERCENT: u8 = 10;
+const HULL_SCALE_MIN: u8 = 70;
+const HULL_SCALE_MAX: u8 = 100;
+const HULL_SCALE_STEP: u8 = 5;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum HullAxis {
+    #[default]
+    Width,
+    Depth,
+}
 
 #[derive(Default)]
 struct OrbitKeys {
@@ -78,8 +85,8 @@ pub(crate) fn run(
     }
     let mut fps = None;
     let mut orbit = OrbitKeys::default();
-    let mut fixation = displayed_fixation(&controls);
-    video.set_title(&window_title(&controls, fixation, fps));
+    let mut hull_axis = HullAxis::default();
+    video.set_title(&window_title(&controls, hull_axis, fps));
     let mut pixels = vec![0; size];
     let mut shown = 0;
     let mut report_count = 0;
@@ -87,8 +94,13 @@ pub(crate) fn run(
     let mut previous_frame = report_start;
     while frames.is_none_or(|limit| shown < limit) {
         let now = Instant::now();
-        let previous_settings = (controls.hair_look, controls.rod_tuning);
-        if !video.poll(&mut controls, &mut orbit) {
+        let previous_settings = (
+            controls.rod_tuning,
+            controls.hull_width_percent,
+            controls.hull_depth_percent,
+            hull_axis,
+        );
+        if !video.poll(&mut controls, &mut orbit, &mut hull_axis) {
             break;
         }
         orbit.advance(&mut controls.view_orbit, now.duration_since(previous_frame));
@@ -105,13 +117,16 @@ pub(crate) fn run(
             report_start = Instant::now();
             report_count = 0;
         }
-        let current_fixation = displayed_fixation(&controls);
         if report_due
-            || fixation != current_fixation
-            || previous_settings != (controls.hair_look, controls.rod_tuning)
+            || previous_settings
+                != (
+                    controls.rod_tuning,
+                    controls.hull_width_percent,
+                    controls.hull_depth_percent,
+                    hull_axis,
+                )
         {
-            fixation = current_fixation;
-            video.set_title(&window_title(&controls, fixation, fps));
+            video.set_title(&window_title(&controls, hull_axis, fps));
         }
         thread::sleep(FRAME_TIME.saturating_sub(now.elapsed()));
     }
@@ -121,27 +136,24 @@ pub(crate) fn run(
     Ok(())
 }
 
-fn displayed_fixation(controls: &Controls) -> Option<u16> {
-    rod_controls_active(controls)
-        .then(|| (10.0 * headband_fixation_percent(*controls)).round() as u16)
-}
-
-fn window_title(controls: &Controls, fixation: Option<u16>, fps: Option<f32>) -> String {
+fn window_title(controls: &Controls, hull_axis: HullAxis, fps: Option<f32>) -> String {
     let fps = fps.map_or_else(String::new, |fps| format!(" · {fps:.1} FPS"));
     if controls.water {
         format!(
             "Hair · Water{fps} · A/D orbit · Volume {:.2}× · Flow {:.2}× · Viscosity {:.3} · {WATER_KEYS}",
             controls.water_volume, controls.flow.speed, controls.flow.viscosity,
         )
-    } else if let Some(fixation) = fixation {
+    } else if rod_controls_active(controls) {
+        let width = controls.hull_width_percent;
+        let depth = controls.hull_depth_percent;
+        let hull = match hull_axis {
+            HullAxis::Width => format!("3 Width [{width}%] · 4 Depth {depth}%"),
+            HullAxis::Depth => format!("3 Width {width}% · 4 Depth [{depth}%]"),
+        };
         format!(
-            "Hair{fps} · {} (Tab) · Settle {} (5) · Guides {}% (6) · A/D orbit · Wind {}% toward {} · Fixation {:.1}% · 1 strength / 2 direction",
-            controls.hair_look.label(),
-            SETTLE_LEVELS[controls.rod_tuning.settle_level as usize],
-            100 + controls.rod_tuning.budget_step * GUIDE_BUDGET_STEP_PERCENT,
+            "Hair{fps} · A/D orbit · Wind {}% toward {} (1/2) · {hull} · Tab flatten",
             controls.rod_tuning.wind_strength_percent,
             controls.rod_tuning.wind_heading_label(),
-            f32::from(fixation) / 10.0,
         )
     } else if let Some(motion) = controls.hair_motion {
         format!("Hair · {}{fps} · {HELP}", motion.label())
@@ -159,13 +171,32 @@ fn cycle_index(value: u8, count: u8, backward: bool) -> u8 {
     (value + step) % count
 }
 
-fn rod_key(controls: &mut Controls, scancode: i32, repeat: bool, modifiers: u16) {
+fn rod_key(
+    controls: &mut Controls,
+    hull_axis: &mut HullAxis,
+    scancode: i32,
+    repeat: bool,
+    modifiers: u16,
+) {
     if repeat || !rod_controls_active(controls) {
         return;
     }
     let backward = modifiers & MOD_SHIFT != 0;
     match scancode {
-        KEY_TAB => controls.hair_look = controls.hair_look.cycle(backward),
+        KEY_3 => *hull_axis = HullAxis::Width,
+        KEY_4 => *hull_axis = HullAxis::Depth,
+        KEY_TAB => {
+            let scale = match hull_axis {
+                HullAxis::Width => &mut controls.hull_width_percent,
+                HullAxis::Depth => &mut controls.hull_depth_percent,
+            };
+            *scale = match (backward, *scale) {
+                (true, HULL_SCALE_MAX) => HULL_SCALE_MIN,
+                (true, value) => value + HULL_SCALE_STEP,
+                (false, HULL_SCALE_MIN) => HULL_SCALE_MAX,
+                (false, value) => value - HULL_SCALE_STEP,
+            };
+        }
         KEY_1 => {
             let strength = &mut controls.rod_tuning.wind_strength_percent;
             *strength = match (backward, *strength) {
@@ -180,14 +211,6 @@ fn rod_key(controls: &mut Controls, scancode: i32, repeat: bool, modifiers: u16)
         KEY_2 => {
             let heading = &mut controls.rod_tuning.wind_heading;
             *heading = cycle_index(*heading, WIND_HEADING_COUNT, backward);
-        }
-        KEY_5 => {
-            let level = &mut controls.rod_tuning.settle_level;
-            *level = cycle_index(*level, SETTLE_LEVELS.len() as u8, backward);
-        }
-        KEY_6 => {
-            let step = &mut controls.rod_tuning.budget_step;
-            *step = cycle_index(*step, MAX_BUDGET_STEP + 1, backward);
         }
         _ => (),
     }
@@ -215,8 +238,8 @@ const KEY_A: i32 = 4;
 const KEY_D: i32 = 7;
 const KEY_1: i32 = 30;
 const KEY_2: i32 = 31;
-const KEY_5: i32 = 34;
-const KEY_6: i32 = 35;
+const KEY_3: i32 = 32;
+const KEY_4: i32 = 33;
 const KEY_TAB: i32 = 43;
 const KEY_I: i32 = 12;
 const KEY_J: i32 = 13;
@@ -398,7 +421,12 @@ impl Video {
         (!driver.is_null()).then(|| unsafe { CStr::from_ptr(driver) }.to_bytes())
     }
 
-    fn poll(&self, controls: &mut Controls, orbit: &mut OrbitKeys) -> bool {
+    fn poll(
+        &self,
+        controls: &mut Controls,
+        orbit: &mut OrbitKeys,
+        hull_axis: &mut HullAxis,
+    ) -> bool {
         let mut event = Event { storage: [0; 7] };
         while unsafe { (self.sdl.poll_event)(&mut event) } == 1 {
             match unsafe { event.kind } {
@@ -434,7 +462,13 @@ impl Video {
                 },
                 KEY_DOWN => {
                     let key = unsafe { event.key };
-                    rod_key(controls, key.scancode, key.repeat != 0, key.modifiers);
+                    rod_key(
+                        controls,
+                        hull_axis,
+                        key.scancode,
+                        key.repeat != 0,
+                        key.modifiers,
+                    );
                 }
                 _ => (),
             }
@@ -473,7 +507,6 @@ impl Video {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hair_look::HairLook;
 
     #[test]
     fn held_orbit_keys_turn_at_elapsed_rate_and_cancel_each_other() {
@@ -515,118 +548,90 @@ mod tests {
             water: false,
             ..Controls::default()
         };
+        let mut axis = HullAxis::Width;
         assert_eq!(controls.rod_tuning.wind_strength_percent, 0);
-        assert_eq!(controls.rod_tuning.wind_heading, 0);
+        assert_eq!(controls.rod_tuning.wind_heading, 1);
         for strength in (10..=100).step_by(10) {
-            rod_key(&mut controls, KEY_1, false, 0);
+            rod_key(&mut controls, &mut axis, KEY_1, false, 0);
             assert_eq!(controls.rod_tuning.wind_strength_percent, strength);
-            rod_key(&mut controls, KEY_1, true, 0);
+            rod_key(&mut controls, &mut axis, KEY_1, true, 0);
             assert_eq!(controls.rod_tuning.wind_strength_percent, strength);
         }
-        rod_key(&mut controls, KEY_1, false, 0);
+        rod_key(&mut controls, &mut axis, KEY_1, false, 0);
         assert_eq!(controls.rod_tuning.wind_strength_percent, 0);
-        rod_key(&mut controls, KEY_1, false, MOD_SHIFT);
+        rod_key(&mut controls, &mut axis, KEY_1, false, MOD_SHIFT);
         assert_eq!(controls.rod_tuning.wind_strength_percent, 100);
-        rod_key(&mut controls, KEY_1, false, MOD_SHIFT);
+        rod_key(&mut controls, &mut axis, KEY_1, false, MOD_SHIFT);
         assert_eq!(controls.rod_tuning.wind_strength_percent, 90);
-        assert_eq!(controls.rod_tuning.wind_heading, 0);
-
-        for heading in 1..WIND_HEADING_COUNT {
-            rod_key(&mut controls, KEY_2, false, 0);
-            assert_eq!(controls.rod_tuning.wind_heading, heading);
-            rod_key(&mut controls, KEY_2, true, 0);
-            assert_eq!(controls.rod_tuning.wind_heading, heading);
-        }
-        rod_key(&mut controls, KEY_2, false, 0);
-        assert_eq!(controls.rod_tuning.wind_heading, 0);
-        rod_key(&mut controls, KEY_2, false, MOD_SHIFT);
-        assert_eq!(controls.rod_tuning.wind_heading, WIND_HEADING_COUNT - 1);
-        rod_key(&mut controls, KEY_2, false, MOD_SHIFT);
-        assert_eq!(controls.rod_tuning.wind_heading, WIND_HEADING_COUNT - 2);
-        assert_eq!(controls.rod_tuning.wind_strength_percent, 90);
-    }
-
-    #[test]
-    fn tab_cycles_hull_looks_independently_of_wind() {
-        let mut controls = Controls {
-            hair_look: HairLook::Locks,
-            hair_motion: Some(HairMotion::Rod),
-            water: false,
-            ..Controls::default()
-        };
-        rod_key(&mut controls, KEY_1, false, 0);
-        rod_key(&mut controls, KEY_2, false, 0);
-
-        for look in [
-            HairLook::Ribbon,
-            HairLook::SoftMerge,
-            HairLook::StrongMerge,
-            HairLook::Locks,
-        ] {
-            rod_key(&mut controls, KEY_TAB, false, 0);
-            assert_eq!(controls.hair_look, look);
-            rod_key(&mut controls, KEY_TAB, true, 0);
-            assert_eq!(controls.hair_look, look);
-        }
-
-        rod_key(&mut controls, KEY_TAB, false, MOD_SHIFT);
-        assert_eq!(controls.hair_look, HairLook::StrongMerge);
-        rod_key(&mut controls, KEY_TAB, false, MOD_SHIFT);
-        assert_eq!(controls.hair_look, HairLook::SoftMerge);
-        assert_eq!(controls.rod_tuning.wind_strength_percent, 10);
         assert_eq!(controls.rod_tuning.wind_heading, 1);
 
-        let title = window_title(&controls, displayed_fixation(&controls), None);
-        assert!(title.contains(&format!("{} (Tab)", controls.hair_look.label())));
+        for step in 1..=WIND_HEADING_COUNT {
+            let heading = (1 + step) % WIND_HEADING_COUNT;
+            rod_key(&mut controls, &mut axis, KEY_2, false, 0);
+            assert_eq!(controls.rod_tuning.wind_heading, heading);
+            rod_key(&mut controls, &mut axis, KEY_2, true, 0);
+            assert_eq!(controls.rod_tuning.wind_heading, heading);
+        }
+        rod_key(&mut controls, &mut axis, KEY_2, false, MOD_SHIFT);
+        assert_eq!(controls.rod_tuning.wind_heading, 0);
+        rod_key(&mut controls, &mut axis, KEY_2, false, MOD_SHIFT);
+        assert_eq!(controls.rod_tuning.wind_heading, WIND_HEADING_COUNT - 1);
+        assert_eq!(controls.rod_tuning.wind_strength_percent, 90);
+        assert_eq!(controls.hull_width_percent, 100);
+        assert_eq!(controls.hull_depth_percent, 100);
     }
 
     #[test]
-    fn title_reports_wind_and_live_fixation() {
+    fn tab_cycles_only_the_selected_hull_axis_independently_of_wind() {
         let mut controls = Controls {
             hair_motion: Some(HairMotion::Rod),
             water: false,
             ..Controls::default()
         };
-        rod_key(&mut controls, KEY_1, false, 0);
-        let title = window_title(&controls, displayed_fixation(&controls), None);
-        assert!(title.contains("A/D orbit · Wind 10% toward +X · Fixation 50.0%"));
-
-        rod_key(&mut controls, KEY_2, false, 0);
-        controls.roll = std::f32::consts::PI;
-        let title = window_title(&controls, displayed_fixation(&controls), None);
-        let heading = controls.rod_tuning.wind_heading_label();
-        assert!(title.contains(&format!("Wind 10% toward {heading} · Fixation 0.0%")));
+        let mut axis = HullAxis::default();
+        rod_key(&mut controls, &mut axis, KEY_1, false, 0);
+        rod_key(&mut controls, &mut axis, KEY_2, false, 0);
+        for scale in [95, 90, 85, 80, 75, 70, 100] {
+            rod_key(&mut controls, &mut axis, KEY_TAB, false, 0);
+            assert_eq!(controls.hull_width_percent, scale);
+            rod_key(&mut controls, &mut axis, KEY_TAB, true, 0);
+            assert_eq!(controls.hull_width_percent, scale);
+        }
+        rod_key(&mut controls, &mut axis, KEY_TAB, false, 0);
+        assert_eq!(controls.hull_width_percent, 95);
+        assert_eq!(controls.hull_depth_percent, 100);
+        rod_key(&mut controls, &mut axis, KEY_4, false, 0);
+        assert_eq!(axis, HullAxis::Depth);
+        assert_eq!(controls.hull_depth_percent, 100);
+        rod_key(&mut controls, &mut axis, KEY_3, true, 0);
+        assert_eq!(axis, HullAxis::Depth);
+        rod_key(&mut controls, &mut axis, KEY_TAB, false, MOD_SHIFT);
+        assert_eq!(controls.hull_depth_percent, 70);
+        rod_key(&mut controls, &mut axis, KEY_TAB, false, MOD_SHIFT);
+        assert_eq!(controls.hull_depth_percent, 75);
+        rod_key(&mut controls, &mut axis, KEY_3, false, 0);
+        assert_eq!(axis, HullAxis::Width);
+        assert_eq!(controls.hull_width_percent, 95);
+        assert_eq!(controls.hull_depth_percent, 75);
+        assert_eq!(controls.rod_tuning.wind_strength_percent, 10);
+        assert_eq!(controls.rod_tuning.wind_heading, 2);
     }
 
     #[test]
-    fn settling_and_guide_budget_cycle_independently() {
+    fn title_reports_wind_and_marks_the_selected_axis() {
         let mut controls = Controls {
             hair_motion: Some(HairMotion::Rod),
             water: false,
             ..Controls::default()
         };
-        assert_eq!(controls.rod_tuning.settle_level, 0);
-        assert_eq!(controls.rod_tuning.budget_step, 0);
-        for level in [1, 2, 0] {
-            rod_key(&mut controls, KEY_5, false, 0);
-            rod_key(&mut controls, KEY_5, true, 0);
-            assert_eq!(controls.rod_tuning.settle_level, level);
-        }
-        assert_eq!(controls.rod_tuning.budget_step, 0);
-        rod_key(&mut controls, KEY_5, false, MOD_SHIFT);
-        assert_eq!(controls.rod_tuning.settle_level, 2);
-
-        for step in [1, 2, 3, 4, 5, 0] {
-            rod_key(&mut controls, KEY_6, false, 0);
-            rod_key(&mut controls, KEY_6, true, 0);
-            assert_eq!(controls.rod_tuning.budget_step, step);
-        }
-        rod_key(&mut controls, KEY_6, false, MOD_SHIFT);
-        assert_eq!(controls.rod_tuning.budget_step, 5);
-        assert_eq!(controls.rod_tuning.settle_level, 2);
-        assert_eq!(controls.rod_tuning.wind_strength_percent, 0);
-        let title = window_title(&controls, displayed_fixation(&controls), None);
-        assert!(title.contains("Settle Medium (5) · Guides 150% (6)"));
+        let mut axis = HullAxis::default();
+        let title = window_title(&controls, axis, None);
+        assert!(title.contains("Wind 0% toward +X/+Z (1/2) · 3 Width [100%] · 4 Depth 100%"));
+        rod_key(&mut controls, &mut axis, KEY_1, false, 0);
+        rod_key(&mut controls, &mut axis, KEY_4, false, 0);
+        rod_key(&mut controls, &mut axis, KEY_TAB, false, 0);
+        let title = window_title(&controls, axis, None);
+        assert!(title.contains("Wind 10% toward +X/+Z (1/2) · 3 Width 100% · 4 Depth [95%]"));
     }
 
     #[test]
@@ -636,31 +641,31 @@ mod tests {
             water: false,
             ..Controls::default()
         };
-        let initial_look = controls.hair_look;
+        let mut axis = HullAxis::Width;
         let initial_tuning = controls.rod_tuning;
-        for scancode in [KEY_A, KEY_D, KEY_I, KEY_J, KEY_K, KEY_L, 32] {
-            rod_key(&mut controls, scancode, false, 0);
+        for scancode in [KEY_A, KEY_D, KEY_I, KEY_J, KEY_K, KEY_L, 34, 35] {
+            rod_key(&mut controls, &mut axis, scancode, false, 0);
         }
-        assert_eq!(controls.hair_look, initial_look);
-        assert_eq!(controls.rod_tuning.wind_heading, 0);
-        assert_eq!(controls.rod_tuning.wind_strength_percent, 0);
+        assert!(controls.rod_tuning == initial_tuning);
 
         controls.water = true;
-        for scancode in [KEY_1, KEY_2, KEY_5, KEY_6, KEY_TAB] {
-            rod_key(&mut controls, scancode, false, 0);
+        for scancode in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_TAB] {
+            rod_key(&mut controls, &mut axis, scancode, false, 0);
         }
-        assert_eq!(controls.hair_look, initial_look);
+        assert_eq!(axis, HullAxis::Width);
+        assert_eq!(controls.hull_width_percent, 100);
+        assert_eq!(controls.hull_depth_percent, 100);
         assert!(controls.rod_tuning == initial_tuning);
-        assert_eq!(displayed_fixation(&controls), None);
         controls.water = false;
         for motion in [Some(HairMotion::Spring), Some(HairMotion::Rope), None] {
             controls.hair_motion = motion;
-            for scancode in [KEY_1, KEY_2, KEY_5, KEY_6, KEY_TAB] {
-                rod_key(&mut controls, scancode, false, 0);
+            for scancode in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_TAB] {
+                rod_key(&mut controls, &mut axis, scancode, false, 0);
             }
-            assert_eq!(controls.hair_look, initial_look);
+            assert_eq!(axis, HullAxis::Width);
+            assert_eq!(controls.hull_width_percent, 100);
+            assert_eq!(controls.hull_depth_percent, 100);
             assert!(controls.rod_tuning == initial_tuning);
-            assert_eq!(displayed_fixation(&controls), None);
         }
     }
 }

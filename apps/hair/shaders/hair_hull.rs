@@ -19,7 +19,6 @@ const MAX_CURVE_OFFSET: f32 = 0.007;
 pub(crate) struct LockProfile {
     pub(crate) half_width: f32,
     pub(crate) half_depth: f32,
-    pub(crate) tail_hold: f32,
     pub(crate) color_shift: f32,
 }
 
@@ -56,32 +55,6 @@ fn lock_color(stops: &[(f32, [u8; 3]); 5], progress: f32) -> [f32; 3] {
         let upper = f32::from(upper_color[channel]);
         lower + (upper - lower) * blend
     })
-}
-
-pub(crate) fn ribbon_texture() -> Texture {
-    const WIDTH: u32 = 16;
-    const HEIGHT: u32 = 96;
-    let mut pixels = Vec::with_capacity((WIDTH * HEIGHT) as usize);
-    for row in 0..HEIGHT {
-        let progress = (row as f32 + 0.5) / HEIGHT as f32;
-        let root_shadow = 1.0 - smooth_ramp(progress / 0.22);
-        let tip_shadow = smooth_ramp((progress - 0.70) / 0.30);
-        for column in 0..WIDTH {
-            let across = 2.0 * (column as f32 + 0.5) / WIDTH as f32 - 1.0;
-            let edge = across * across;
-            let band_center = 0.38 + 0.03 * across;
-            let band = smooth_ramp(1.0 - (progress - band_center).abs() / 0.15);
-            let shade = 0.91 - 0.10 * root_shadow - 0.115 * edge - 0.035 * tip_shadow
-                + 0.085 * band * (1.0 - 0.5 * edge);
-            let value = (shade.clamp(0.75, 1.0) * 255.0).round() as u8;
-            pixels.push([value, value, value, 255]);
-        }
-    }
-    Texture {
-        width: WIDTH,
-        height: HEIGHT,
-        pixels,
-    }
 }
 
 fn smooth_ramp(position: f32) -> f32 {
@@ -172,9 +145,7 @@ impl HairHull {
         progress: f32,
     ) {
         let taper = (1.0 - progress).max(0.0);
-        let width = taper.sqrt();
-        let tail = width + (width.sqrt() - width) * profile.tail_hold;
-        let half_width = profile.half_width * tail * (1.0 + 0.30 * progress);
+        let half_width = profile.half_width * taper.sqrt() * (1.0 + 0.30 * progress);
         let half_depth = profile.half_depth * taper * (1.0 - 0.55 * progress);
         let color_progress =
             (progress + 4.0 * progress * taper * profile.color_shift).clamp(0.0, 1.0);
@@ -262,7 +233,6 @@ mod tests {
     const BASE_PROFILE: LockProfile = LockProfile {
         half_width: 0.012,
         half_depth: 0.006,
-        tail_hold: 0.0,
         color_shift: 0.0,
     };
 
@@ -314,43 +284,34 @@ mod tests {
     }
 
     #[test]
-    fn ribbon_holds_its_width_farther_down_and_keeps_the_exact_tip() {
+    fn width_and_depth_scale_their_own_cross_sections() {
         let tip = Vec3::NEG_Y * 0.4;
         let points = [Vec3::ZERO, tip];
         let mut locks = HairHull::default();
         locks.append_lock(&points, Vec3::Z, BASE_PROFILE);
-        let mut ribbon = HairHull::default();
-        ribbon.append_lock(
-            &points,
-            Vec3::Z,
-            LockProfile {
-                tail_hold: 1.0,
-                ..BASE_PROFILE
-            },
-        );
-        assert_eq!(locks.vertices[0].position, ribbon.vertices[0].position);
-        assert!(
-            ribbon.vertices[SIDES as usize].position.x > locks.vertices[SIDES as usize].position.x
-        );
-        assert_eq!(ribbon.vertices.last().unwrap().position, tip);
-        assert_eq!(ribbon.vertices[0].uv.x, 1.0);
-        assert_eq!(ribbon.vertices[3].uv.x, 0.0);
-    }
-
-    #[test]
-    fn ribbon_ramp_keeps_opaque_edges_and_a_soft_highlight() {
-        let texture = ribbon_texture();
-        let shade = |x: u32, y: u32| texture.pixels[(y * texture.width + x) as usize][0];
-        let center = texture.width / 2;
-        let band = texture.height * 38 / 100;
-        assert!(shade(center, band) > shade(0, band));
-        assert!(shade(center, band) > shade(center, 0));
-        assert!(
-            texture
-                .pixels
-                .iter()
-                .all(|pixel| pixel[0] >= 191 && pixel[3] == 255)
-        );
+        for (width, depth) in [(0.7, 1.0), (1.0, 0.7), (0.7, 0.7)] {
+            let mut scaled = HairHull::default();
+            scaled.append_lock(
+                &points,
+                Vec3::Z,
+                LockProfile {
+                    half_width: BASE_PROFILE.half_width * width,
+                    half_depth: BASE_PROFILE.half_depth * depth,
+                    ..BASE_PROFILE
+                },
+            );
+            assert_eq!(locks.triangles, scaled.triangles);
+            for (before, after) in locks.vertices.iter().zip(&scaled.vertices) {
+                assert!(
+                    after
+                        .position
+                        .distance(before.position * Vec3::new(width, 1.0, depth))
+                        < 1e-6
+                );
+                assert_eq!(before.uv, after.uv);
+            }
+            assert_eq!(scaled.vertices.last().unwrap().position, tip);
+        }
     }
 
     #[test]

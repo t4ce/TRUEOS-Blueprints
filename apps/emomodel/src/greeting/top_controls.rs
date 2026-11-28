@@ -1,11 +1,12 @@
 use trueos::ui4_scene::{Error, Frame, MenuEntry};
 
-use crate::top::{BottomStyle, Pastel, TopStyle};
+use crate::top::{BottomStyle, Pastel, TopStyle, space_sock_length};
 
 #[derive(Default)]
 pub(super) struct TopControls {
     pub(super) style: TopStyle,
     invocation: Option<(u64, TopStyle)>,
+    bottoms_sock_roll: Option<f32>,
 }
 
 impl TopControls {
@@ -28,6 +29,9 @@ impl TopControls {
                 self.invocation = None;
                 if style.bottoms.is_some() == self.style.bottoms.is_some() {
                     with_entries(style, |entries| event.dispatch(entries, &mut self.style));
+                    if self.style.bottoms.is_none() {
+                        self.bottoms_sock_roll = None;
+                    }
                 }
             }
         }
@@ -35,19 +39,24 @@ impl TopControls {
     }
 
     pub(super) fn step_bottoms(&mut self) {
-        let Some(bottoms) = &mut self.style.bottoms else {
-            select_bottoms(&mut self.style);
-            return;
-        };
-        if [bottoms.left_leg, bottoms.right_leg, bottoms.waist]
-            .into_iter()
-            .all(|length| length >= 1.0)
-        {
-            *bottoms = BottomStyle::default();
+        if let Some(bottoms) = &mut self.style.bottoms {
+            if [bottoms.left_leg, bottoms.right_leg, bottoms.waist]
+                .into_iter()
+                .all(|length| length >= 1.0)
+            {
+                *bottoms = BottomStyle::default();
+            } else {
+                adjust(&mut bottoms.left_leg, 10);
+                adjust(&mut bottoms.right_leg, 10);
+                adjust(&mut bottoms.waist, 10);
+            }
         } else {
-            adjust(&mut bottoms.left_leg, 10);
-            adjust(&mut bottoms.right_leg, 10);
-            adjust(&mut bottoms.waist, 10);
+            select_bottoms(&mut self.style);
+        }
+
+        if let (Some(bottoms), Some(socks)) = (self.style.bottoms, self.style.socks) {
+            let roll = *self.bottoms_sock_roll.get_or_insert(socks);
+            self.style.socks = Some(space_sock_length(roll, bottoms));
         }
     }
 
@@ -63,6 +72,7 @@ impl TopControls {
             } else {
                 clear_outfit(&mut self.style);
             }
+            self.bottoms_sock_roll = None;
             return;
         }
         if self.style.bottoms.is_some() || self.style.color.is_some() {

@@ -4,8 +4,7 @@ use std::io::Cursor;
 
 use crate::{
     Controls,
-    hair_hull::{HairHull, LockProfile, lock_texture, ribbon_texture},
-    hair_look::{DepthBlend, HairLook},
+    hair_hull::{HairHull, LockProfile, lock_texture},
     hair_roots::extend_roots,
     hair_rope::{HairMotion, RopeGuides},
     obstacle::{BODY_OBSTACLES, HEAD, HEAD_CENTER},
@@ -33,15 +32,6 @@ const LOCK_MATERIAL: Material = Material {
     double_sided: false,
     finish: None,
 };
-const RIBBON_MATERIAL: Material = Material {
-    // EmoModel's flat hair swatch for the experimental ribbon looks.
-    factor: Vec4::new(135.0 / 255.0, 83.0 / 255.0, 189.0 / 255.0, 1.0),
-    finish: Some(Finish {
-        roughness: 0.38,
-        metallic: 0.0,
-    }),
-    ..LOCK_MATERIAL
-};
 
 struct Part {
     vertices: Vec<Vertex>,
@@ -58,58 +48,36 @@ pub(crate) struct DrawCounts {
 
 struct ProceduralHair {
     mesh: HairHull,
-    blend: DepthBlend,
     lock_texture: Texture,
-    ribbon_texture: Texture,
 }
 
 impl ProceduralHair {
-    fn new(roots: &[Vec3]) -> Self {
+    fn new() -> Self {
         Self {
             mesh: HairHull::default(),
-            blend: DepthBlend::new(roots),
             lock_texture: lock_texture(&BACK_HAIR_PALETTE),
-            ribbon_texture: ribbon_texture(),
         }
     }
 
-    fn rebuild(&mut self, ropes: &RopeGuides, look: HairLook) {
-        let mesh = &mut self.mesh;
-        mesh.clear();
-        let (half_width, half_depth, tail_hold) = match look {
-            HairLook::Locks => (0.0080, 0.0040, 0.0),
-            HairLook::Ribbon => (0.0096, 0.0028, 0.43),
-            HairLook::SoftMerge => (0.0108, 0.00245, 0.58),
-            HairLook::StrongMerge => (0.0124, 0.0021, 0.67),
-        };
-        let append = |index: usize, points: &mut [Vec3]| {
+    fn rebuild(&mut self, ropes: &RopeGuides, width_percent: u8, depth_percent: u8) {
+        self.mesh.clear();
+        let half_width = 0.008 * (f32::from(width_percent) / 100.0);
+        let half_depth = 0.004 * (f32::from(depth_percent) / 100.0);
+        ropes.for_each_curve(|index, points| {
             let scalp_normal = (points[0] - HEAD_CENTER).normalize_or(Vec3::Z);
             points[0] -= ROOT_INSET * scalp_normal;
             let width_scale = 0.9 + 0.2 * (index % 7) as f32 / 6.0;
-            let color_shift = if look == HairLook::Locks {
-                let stagger = (index * 17 % 37) as f32 / 36.0 - 0.5;
-                0.07 * stagger
-            } else {
-                0.0
-            };
-            mesh.append_lock(
+            let stagger = (index * 17 % 37) as f32 / 36.0 - 0.5;
+            self.mesh.append_lock(
                 points,
                 scalp_normal,
                 LockProfile {
                     half_width: half_width * width_scale,
                     half_depth,
-                    tail_hold,
-                    color_shift,
+                    color_shift: 0.07 * stagger,
                 },
             );
-        };
-        if matches!(look, HairLook::SoftMerge | HairLook::StrongMerge) {
-            self.blend.clear();
-            ropes.for_each_curve(|_, points| self.blend.push(points));
-            self.blend.for_each_curve(look, append);
-        } else {
-            ropes.for_each_curve(append);
-        }
+        });
     }
 }
 
@@ -175,7 +143,7 @@ impl Scene {
                     RopeGuides::new(&roots, tip_y, pose, motion)
                 }
             });
-        let hull = rods.then(|| ProceduralHair::new(&roots));
+        let hull = rods.then(ProceduralHair::new);
         let solver = (ropes.is_none() || controls.layers.field).then(|| {
             roots.truncate(base_count);
             Solver::new(WORLD_FLOW_DOWN, pose, roots)
@@ -187,22 +155,31 @@ impl Scene {
             },
         );
         let viewport = Vec2::new(width as f32, height as f32);
-        let unrolled_camera = |yaw| {
-            Camera::new(
-                viewport,
-                yaw,
-                Quat::IDENTITY,
-                body_bounds,
-                HEAD_CENTER,
-                HAIR_REACH_RADIUS,
-                None,
-            )
+        let (camera_scale, camera_center) = if cfg!(target_os = "linux") {
+            let (scale, center) = rods
+                .then(|| rest_hair_frame(viewport, &parts))
+                .flatten()
+                .unwrap_or_else(|| {
+                    let unrolled_camera = |yaw| {
+                        Camera::new(
+                            viewport,
+                            yaw,
+                            Quat::IDENTITY,
+                            body_bounds,
+                            HEAD_CENTER,
+                            HAIR_REACH_RADIUS,
+                            None,
+                        )
+                    };
+                    (
+                        unrolled_camera(165.0_f32.to_radians()).scale,
+                        unrolled_camera(controls.yaw).center,
+                    )
+                });
+            (Some(scale), Some(center))
+        } else {
+            (None, None)
         };
-        // Keep the established Ubuntu magnification and spin around the center
-        // of the unrolled view.
-        let camera_scale =
-            cfg!(target_os = "linux").then(|| unrolled_camera(165.0_f32.to_radians()).scale);
-        let camera_center = cfg!(target_os = "linux").then(|| unrolled_camera(controls.yaw).center);
         let count = width as usize * height as usize;
         Ok(Self {
             width,
@@ -323,18 +300,17 @@ impl Scene {
             if layers.hair
                 && let (Some(hull), Some(ropes)) = (&mut self.hull, &self.ropes)
             {
-                hull.rebuild(ropes, controls.hair_look);
-                let (material, texture) = if controls.hair_look == HairLook::Locks {
-                    (&LOCK_MATERIAL, Some(&hull.lock_texture))
-                } else {
-                    (&RIBBON_MATERIAL, Some(&hull.ribbon_texture))
-                };
+                hull.rebuild(
+                    ropes,
+                    controls.hull_width_percent,
+                    controls.hull_depth_percent,
+                );
                 target.mesh(
                     camera,
                     &hull.mesh.vertices,
                     &hull.mesh.triangles,
-                    material,
-                    texture,
+                    &LOCK_MATERIAL,
+                    Some(&hull.lock_texture),
                 );
                 drawn.triangles = hull.mesh.triangles.len();
             }
@@ -377,12 +353,34 @@ impl Scene {
     }
 }
 
+fn rest_hair_frame(viewport: Vec2, parts: &[Part]) -> Option<(f32, Vec3)> {
+    let mut positions = parts
+        .iter()
+        .filter(|part| part.back_hair)
+        .flat_map(|part| &part.vertices)
+        .map(|vertex| vertex.position);
+    let first = positions.next()?;
+    let (low, high) = positions.fold((first, first), |(low, high), point| {
+        (low.min(point), high.max(point))
+    });
+    let span = high - low;
+    if span.y <= 0.0 {
+        return None;
+    }
+    // The laid-down locks occupy slightly less height than the source mesh.
+    // Frame the visible back hair at a fixed magnification for comparisons.
+    let horizontal_span = span.x.hypot(span.z).max(f32::EPSILON);
+    let scale = (0.97 * viewport.y / span.y).min(0.90 * viewport.x / horizontal_span);
+    let center = (low + high) * 0.5 - Vec3::Y * (0.025 * span.y);
+    Some((scale, center))
+}
+
 fn camera_rotation(controls: Controls) -> Quat {
     Quat::from_rotation_y(controls.view_orbit) * world_to_avatar(controls)
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn headband_fixation_percent(controls: Controls) -> f32 {
+#[cfg(all(test, target_os = "linux"))]
+fn headband_fixation_percent(controls: Controls) -> f32 {
     let spawn_direction = world_to_avatar(controls).conjugate() * Vec3::NEG_Y;
     crate::hair_rope::fixation_percent_for(spawn_direction)
 }
@@ -561,7 +559,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn guide_budget_reaches_the_hull_from_the_authored_surface() {
+    fn full_guide_budget_draws_at_start_and_survives_cross_section_changes() {
         let (roots, base) = back_hair_roots(true).unwrap();
         assert_eq!(base, 150);
         assert_eq!(&roots[..base], reference_roots());
@@ -569,6 +567,7 @@ mod tests {
 
         let mut controls = Controls {
             hair_motion: Some(HairMotion::Rod),
+            yaw: core::f32::consts::PI,
             ..Controls::default()
         };
         controls.layers.body_obstacles = false;
@@ -576,20 +575,19 @@ mod tests {
         controls.layers.field = false;
         let mut scene = Scene::new(240, 180, controls).unwrap();
         let mut pixels = vec![0; 240 * 180 * 4];
-        scene.advance(controls);
-        let baseline = scene.draw(controls, &mut pixels).triangles;
-        for step in 1..=5 {
-            controls.rod_tuning.budget_step = step;
-            scene.advance(controls);
-            assert_eq!(scene.guide_count(), base + 15 * usize::from(step));
-        }
-        let grown = scene.draw(controls, &mut pixels);
-        assert!(grown.triangles > baseline);
-        assert_eq!(grown.segments, 0);
-        controls.rod_tuning.budget_step = 0;
-        scene.advance(controls);
-        assert_eq!(scene.guide_count(), base);
-        assert_eq!(scene.draw(controls, &mut pixels).triangles, baseline);
+        let baseline = scene.draw(controls, &mut pixels);
+        assert_eq!(scene.guide_count(), roots.len());
+        assert!(baseline.triangles > 0);
+        assert_eq!(baseline.segments, 0);
+        let original = pixels.clone();
+        controls.hull_width_percent = 70;
+        controls.hull_depth_percent = 70;
+        assert_eq!(
+            scene.draw(controls, &mut pixels).triangles,
+            baseline.triangles
+        );
+        assert_ne!(pixels, original);
+        assert_eq!(scene.guide_count(), roots.len());
     }
 
     #[test]

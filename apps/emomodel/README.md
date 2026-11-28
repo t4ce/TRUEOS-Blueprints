@@ -58,11 +58,12 @@ Press `Space` in `skin` or `butterfly` to start with a minimal black slip.
 Each press extends both legs and raises the waist by 10%, up to the knees and
 belly at 100%. The next press returns to 0%. Use `[` and `]` for the left leg,
 `{` and `}` for the right leg, and `-` and `=` to lower or raise the waist.
-The same socks stay on through the fit changes. The black fabric covers the
-socks wherever they overlap, and the sock ribbon follows the visible join.
-Where the pant legs and socks are separated,
-the pant cuffs have a half-width off-white ribbon with dark edges and two
-staggered rows of gray stitches.
+Space keeps the sock color and adjusts the sock height when needed to keep the
+cuffs fully separated or fully overlapped. It adds a 20% margin on each side
+of the partial-overlap range. The sock ribbon follows the visible join where
+the black fabric covers the socks. A single off-white waistband follows the
+waist height, and separated pant cuffs use the same half-width ribbon with
+dark edges and two staggered rows of gray stitches.
 
 Right-click to choose a pastel top, roll a random top and matching socks, or
 restore the original appearance. The clothing controls also work in `reel` when

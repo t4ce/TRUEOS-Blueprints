@@ -1,13 +1,10 @@
 use anyhow::{Context, Result, bail, ensure};
 use std::{fs::File, path::PathBuf};
 
-use hair_look::HairLook;
 use hair_rope::HairMotion;
 
 #[path = "../shaders/hair_hull.rs"]
 mod hair_hull;
-#[path = "../shaders/hair_look.rs"]
-mod hair_look;
 mod hair_rod;
 mod hair_roots;
 mod hair_rope;
@@ -69,7 +66,8 @@ pub(crate) struct Controls {
     pub(crate) roll: f32,
     pub(crate) tilt: f32,
     pub(crate) hair_motion: Option<HairMotion>,
-    pub(crate) hair_look: HairLook,
+    pub(crate) hull_width_percent: u8,
+    pub(crate) hull_depth_percent: u8,
     pub(crate) rod_tuning: hair_rope::RodTuning,
     #[cfg(target_os = "trueos")]
     pub(crate) paused: bool,
@@ -103,7 +101,8 @@ impl Default for Controls {
             roll: 0.0,
             tilt: 0.0,
             hair_motion,
-            hair_look: HairLook::default(),
+            hull_width_percent: 100,
+            hull_depth_percent: 100,
             rod_tuning: hair_rope::RodTuning::default(),
             #[cfg(target_os = "trueos")]
             paused: false,
@@ -178,13 +177,10 @@ fn main() -> Result<()> {
                 }
             }
             "--hull" => {
-                controls.hair_look = match args.next().as_deref() {
-                    Some("locks") => HairLook::Locks,
-                    Some("ribbon") => HairLook::Ribbon,
-                    Some("soft") => HairLook::SoftMerge,
-                    Some("strong") => HairLook::StrongMerge,
-                    _ => bail!("expected locks, ribbon, soft, or strong after --hull"),
-                };
+                ensure!(
+                    args.next().as_deref() == Some("locks"),
+                    "available hull is locks"
+                );
             }
             "--speed" => controls.speed_color = true,
             "--no-tip-spread" => controls.tip_spread = false,
@@ -195,7 +191,7 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--hull locks|ribbon|soft|strong] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin. Move down to tilt forward or up to tilt back. In bending-rod mode, Tab cycles hull looks, 1 and 2 cycle wind strength and direction, 5 cycles tip settling, and 6 cycles the guide budget. Hold Shift to step backward. Close the window to exit."
+                    "hair [--snapshot PATH] [--frames COUNT] [--yaw DEGREES] [--roll DEGREES] [--tilt DEGREES] [--motion 1|2|3|flow] [--speed] [--no-tip-spread] [--hide LAYER] [--show LAYER]\n\nLayers: avatar, hair, sphere, guides, field, flow (both line layers), reach, body-obstacles\n\nUbuntu preview: Hold A or D to orbit the view around the avatar. Move the mouse left or right to spin and up or down to tilt. In bending-rod mode, 1 and 2 cycle wind strength and direction. Press 3 for hull width or 4 for hull depth, then Tab to change the selected dimension. Hold Shift to step backward. Close the window to exit."
                 );
                 if controls.water {
                     println!("Water preview keys: I/K volume, J/L flow speed, U/O viscosity.");
@@ -255,9 +251,6 @@ fn main() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        if controls.hair_motion == Some(HairMotion::Rod) {
-            controls.rod_tuning.wind_strength_percent = 10;
-        }
         let mut scene = scene::Scene::new(WIDTH, HEIGHT, controls)?;
         host::run(WIDTH, HEIGHT, controls, frames, |controls, pixels| {
             scene.advance(controls);

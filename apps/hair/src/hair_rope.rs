@@ -13,11 +13,11 @@ use crate::{
 
 pub(crate) const POINTS: usize = 13;
 pub(crate) const MAX_SEGMENTS: usize = 12;
-pub(crate) const MAX_BUDGET_STEP: u8 = 5;
 pub(crate) const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
 const FRAME_SECONDS: f32 = 1.0 / 45.0;
 const SUBSTEPS: u32 = 4;
 const ROD_SPEED: f32 = 0.9;
+const ROD_SETTLE_DAMPING: f32 = 1.0; // Medium
 const TIP_WEIGHT: f32 = 0.5;
 const MAX_WIND_ACCELERATION: f32 = 37.5;
 const WIND_RESPONSE_SECONDS: f32 = 0.35;
@@ -71,8 +71,6 @@ impl HairMotion {
 pub(crate) struct RodTuning {
     pub(crate) wind_strength_percent: u8,
     pub(crate) wind_heading: u8,
-    pub(crate) settle_level: u8,
-    pub(crate) budget_step: u8,
     spread_width_percent: u8,
 }
 
@@ -80,9 +78,7 @@ impl Default for RodTuning {
     fn default() -> Self {
         Self {
             wind_strength_percent: 0,
-            wind_heading: 0,
-            settle_level: 0,
-            budget_step: 0,
+            wind_heading: 1,
             spread_width_percent: 100,
         }
     }
@@ -108,8 +104,6 @@ pub(crate) fn fixation_percent_for(spawn_direction: Vec3) -> f32 {
 
 pub(crate) struct RopeGuides {
     strands: Vec<Strand>,
-    base_count: usize,
-    active_count: usize,
     motion: HairMotion,
     pose: Quat,
     step_seconds: f32,
@@ -271,8 +265,6 @@ impl RopeGuides {
         };
         Self {
             strands,
-            base_count,
-            active_count: base_count,
             motion,
             pose,
             step_seconds: FRAME_SECONDS * speed / SUBSTEPS as f32,
@@ -285,10 +277,8 @@ impl RopeGuides {
     pub(crate) fn advance(&mut self, pose: Quat, tuning: RodTuning) {
         let rod_motion = self.motion == HairMotion::Rod;
         if rod_motion {
-            self.set_budget(tuning.budget_step);
             self.update_wind(tuning.wind_target());
         }
-        let settle_damping = f32::from(tuning.settle_level) * 0.5;
         let spread = rod_motion && tuning.spread_width_percent != 0;
         if spread {
             self.update_spread(f32::from(tuning.spread_width_percent) / 100.0);
@@ -298,13 +288,13 @@ impl RopeGuides {
             let avatar_to_world = world_to_avatar.conjugate();
             let spawn_direction = avatar_to_world * Vec3::NEG_Y;
             let fixation = HeadbandFixation::new(fixation_percent_for(spawn_direction) / 100.0);
-            for strand in &mut self.strands[..self.active_count] {
+            for strand in &mut self.strands {
                 let anchor = rotate_about_head(strand.launch, avatar_to_world);
                 let effects = RodEffects {
                     tip_weight: TIP_WEIGHT,
                     fixation,
                     spawn_direction,
-                    settle_damping,
+                    settle_damping: ROD_SETTLE_DAMPING,
                     wind_acceleration: self.wind_baseline * strand.gust_gain,
                     spread_acceleration: if spread {
                         strand.spread_acceleration
@@ -324,42 +314,6 @@ impl RopeGuides {
         self.pose = pose;
     }
 
-    fn set_budget(&mut self, step: u8) {
-        let extra_count = self.base_count * usize::from(step.min(MAX_BUDGET_STEP)) / 10;
-        let count = (self.base_count + extra_count).min(self.strands.len());
-        if count > self.active_count {
-            let (base, extras) = self.strands.split_at_mut(self.base_count);
-            let pose = self.pose;
-            let avatar_to_world = pose.conjugate();
-            for strand in &mut extras[self.active_count - self.base_count..count - self.base_count]
-            {
-                // Start each new guide near the current shape of its closest authored guide.
-                let source = base
-                    .iter()
-                    .min_by(|a, b| {
-                        strand
-                            .origin
-                            .distance_squared(a.origin)
-                            .total_cmp(&strand.origin.distance_squared(b.origin))
-                    })
-                    .unwrap();
-                let source_points = source.chain.points();
-                let segments = strand.chain.points().len() - 1;
-                let length_ratio = (strand.link_length * segments as f32)
-                    / (source.link_length * (source_points.len() - 1) as f32);
-                let anchor = rotate_about_head(strand.launch, avatar_to_world);
-                let mut points = [anchor; MAX_SEGMENTS + 1];
-                for (index, point) in points[1..=segments].iter_mut().enumerate() {
-                    let progress = (index + 1) as f32 / segments as f32;
-                    let offset = sample_along(source_points, progress) - source_points[0];
-                    *point = contact(anchor + offset * length_ratio, pose, avatar_to_world);
-                }
-                strand.chain = Chain::new(HairMotion::Rod, &points[..=segments]);
-            }
-        }
-        self.active_count = count;
-    }
-
     fn update_wind(&mut self, target: Vec3) {
         let blend = 1.0 - (-FRAME_SECONDS / WIND_RESPONSE_SECONDS).exp();
         self.wind_baseline = self.wind_baseline.lerp(target, blend);
@@ -368,7 +322,7 @@ impl RopeGuides {
             return;
         };
         // Sample a traveling wave in world space once per guide per frame.
-        for strand in &mut self.strands[..self.active_count] {
+        for strand in &mut self.strands {
             let point = sample_along(strand.chain.points(), 0.65);
             strand.gust_gain = gust_gain(self.gust_phase, point, heading);
         }
@@ -380,7 +334,7 @@ impl RopeGuides {
         for (index, grid) in self.density.iter_mut().enumerate() {
             grid.clear();
             let progress = (index + 1) as f32 / SPREAD_STATIONS as f32;
-            for strand in &self.strands[..self.active_count] {
+            for strand in &self.strands {
                 let point = sample_along(strand.chain.points(), progress);
                 let cell = grid.entry(density_cell(point)).or_default();
                 cell.sum += point;
@@ -388,7 +342,7 @@ impl RopeGuides {
             }
         }
         // All rods see the same positions from the start of the frame.
-        for strand in &mut self.strands[..self.active_count] {
+        for strand in &mut self.strands {
             let points = strand.chain.points();
             let mut stations = [Vec3::ZERO; SPREAD_STATIONS + 1];
             for (index, (grid, acceleration)) in
@@ -410,7 +364,7 @@ impl RopeGuides {
     }
 
     pub(crate) fn for_each_curve(&self, mut emit: impl FnMut(usize, &mut [Vec3])) {
-        for (index, strand) in self.strands[..self.active_count].iter().enumerate() {
+        for (index, strand) in self.strands.iter().enumerate() {
             let points = strand.chain.points();
             let mut local = [strand.origin; MAX_SEGMENTS + 2];
             let local = &mut local[..=points.len()];
@@ -434,7 +388,7 @@ impl RopeGuides {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.active_count
+        self.strands.len()
     }
 }
 
@@ -568,6 +522,10 @@ mod tests {
     #[test]
     fn wind_headings_are_horizontal_and_converge_in_world_space_as_the_avatar_turns() {
         assert_eq!(RodTuning::default().wind_target(), Vec3::ZERO);
+        assert_eq!(
+            WIND_HEADINGS[RodTuning::default().wind_heading as usize].1,
+            "+X/+Z"
+        );
         for (index, (heading, _)) in WIND_HEADINGS.iter().enumerate() {
             let tuning = RodTuning {
                 wind_strength_percent: 100,
@@ -670,45 +628,32 @@ mod tests {
     }
 
     #[test]
-    fn budget_activates_an_ordered_prefix_and_preserves_live_authored_guides() {
+    fn full_guide_budget_keeps_the_authored_cut_and_anchor_order() {
         let roots: [Vec3; 15] =
             std::array::from_fn(|index| Vec3::new(0.006 * index as f32, 1.45, -0.5));
-        let mut guides =
-            RopeGuides::with_extra_roots(&roots, 10, 0.74, Quat::IDENTITY, HairMotion::Rod);
+        let authored = &roots[..10];
+        let base = RopeGuides::new(authored, 0.74, Quat::IDENTITY, HairMotion::Rod);
+        let mut guides = RopeGuides::with_extra_roots(
+            &roots,
+            authored.len(),
+            0.74,
+            Quat::IDENTITY,
+            HairMotion::Rod,
+        );
+        assert_eq!(guides.len(), roots.len());
+        for (strand, base) in guides.strands.iter().zip(&base.strands) {
+            assert_eq!(strand.link_length, base.link_length);
+            assert_eq!(strand.chain.points(), base.chain.points());
+        }
         let pose = Quat::from_rotation_z(0.40);
         for _ in 0..20 {
             guides.advance(pose, RodTuning::default());
         }
-        let original: Vec<_> = guides.strands[..10]
-            .iter()
-            .map(|strand| strand.chain.points().to_vec())
-            .collect();
-
-        for step in (0..=MAX_BUDGET_STEP).chain([0, MAX_BUDGET_STEP]) {
-            guides.set_budget(step);
-            assert_eq!(guides.len(), 10 + usize::from(step));
-            guides.for_each_curve(|index, points| {
-                assert!(index < guides.len());
-                assert_eq!(points[0], roots[index]);
-                assert!(points.iter().all(|point| point.is_finite()));
-            });
-            for (strand, before) in guides.strands.iter().zip(&original) {
-                assert_eq!(strand.chain.points(), before);
-            }
-            for strand in &guides.strands[10..guides.len()] {
-                let anchor = rotate_about_head(strand.launch, pose.conjugate());
-                assert_eq!(strand.chain.points()[0], anchor);
-            }
-        }
-
-        guides.advance(
-            pose,
-            RodTuning {
-                budget_step: 2,
-                ..RodTuning::default()
-            },
-        );
-        assert_eq!(guides.len(), 12);
+        assert_eq!(guides.len(), roots.len());
+        guides.for_each_curve(|index, points| {
+            assert_eq!(points[0], roots[index]);
+            assert!(points.iter().all(|point| point.is_finite()));
+        });
     }
 
     #[test]

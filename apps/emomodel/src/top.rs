@@ -6,6 +6,9 @@ pub(super) mod chart;
 pub(super) mod finish;
 pub(super) mod trim;
 
+#[cfg(target_os = "trueos")]
+pub(super) use bottom::space_sock_length;
+
 pub(super) const COVERAGE_ROWS: usize = 128;
 const OPENING_ROW: usize = 32;
 const COLLAR_ROW: usize = 100;
@@ -19,6 +22,8 @@ const WHITE_RIBBON_SRGB: [u8; 3] = [241, 239, 233];
 const PANTS_VERTEX_ROW: usize = 52;
 const SOCK_VERTEX_ROW: usize = 80;
 const JOIN_GAP_METERS: f32 = 0.002;
+const PANT_TRIM_FADE_METERS: f32 = 0.008;
+const SOCK_CONTOUR_METERS: f32 = 0.003;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Surface {
@@ -318,9 +323,13 @@ impl Fit {
 
 fn sock_opening(position: Vec3, length: f32) -> (f32, f32) {
     // The highest cuff stays below the point where the legs join.
-    let height = 0.115 + (0.780 - 0.115) * length.clamp(0.0, 1.0);
+    let height = sock_height(length);
     let depth = round_limit((position.z - 0.020) / 0.060);
-    (height - position.y + 0.003 * depth, height)
+    (height - position.y + SOCK_CONTOUR_METERS * depth, height)
+}
+
+fn sock_height(length: f32) -> f32 {
+    0.115 + (0.780 - 0.115) * length.clamp(0.0, 1.0)
 }
 
 fn leg_phase(position: Vec3, height: f32) -> (f32, f32) {

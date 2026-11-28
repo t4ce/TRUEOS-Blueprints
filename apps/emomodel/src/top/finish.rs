@@ -4,8 +4,8 @@ use glam::{Vec2, Vec3};
 
 use super::{
     BottomStyle, COLLAR_ROW, COLLAR_TRIM_START, Fit, JOIN_GAP_METERS, LowerFit, OPENING_ROW,
-    OPENING_ROWS_PER_METER, OPENING_TRIM_END, Surface, TopStyle, chart, leg_phase, smooth,
-    stitch_along, trim,
+    OPENING_ROWS_PER_METER, OPENING_TRIM_END, PANT_TRIM_FADE_METERS, Surface, TopStyle, chart,
+    leg_phase, smooth, stitch_along, trim,
 };
 
 pub(crate) const ATLAS_WIDTH: usize = 512;
@@ -284,11 +284,11 @@ fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle) -> Option<f32> {
         } else {
             0.0
         };
-        if waist_max >= -0.003 && leg_max >= -0.003 && leg_min <= pant_width + 0.003 {
+        if waist_max >= -0.003
+            && leg_max >= -0.003
+            && (waist_min <= HALF_WIDTH_METERS + 0.003 || leg_min <= pant_width + 0.003)
+        {
             return Some(COLLAR_TEXEL_METERS);
-        }
-        if waist_max >= -0.003 && waist_min <= 0.003 && leg_max >= -0.003 {
-            return Some(OPENING_TEXEL_METERS);
         }
         return (leg_min < 0.003
             && crosses(
@@ -364,10 +364,64 @@ fn lower_sample(
     weights[Surface::Sock as usize] = sock_cover;
 
     let mut tilt = Vec2::ZERO;
+    let mut draw_ribbon = |distance: f32,
+                           gradient: Vec2,
+                           fabric: Surface,
+                           band: Surface,
+                           density: f32,
+                           strength: f32,
+                           phase: &dyn Fn(Vec3) -> (f32, f32)| {
+        let rows_per_meter = OPENING_ROWS_PER_METER * density;
+        let row = OPENING_ROW as f32 + distance * rows_per_meter;
+        if strength == 0.0
+            || !trim_overlap(row, row, OPENING_ROW, OPENING_TRIM_END)
+            || weights[fabric as usize] == 0.0
+        {
+            return;
+        }
+        let along = |point| {
+            let (angle, circumference) = phase(point);
+            stitch_along(angle, circumference)
+        };
+        let along_steps = Vec2::from_array(
+            steps.map(|step| stitch_step(along(point + 0.5 * step) - along(point - 0.5 * step))),
+        );
+        let ribbon = trim::sample(
+            row,
+            along(point),
+            footprint(gradient) * rows_per_meter,
+            along_steps.length(),
+        );
+        let covered = 1.0 - ribbon.weights[Surface::Skin as usize];
+        let scale = strength * (weights[fabric as usize] / covered.max(f32::EPSILON)).min(1.0);
+        for (source, target) in [
+            (Surface::Band, band),
+            (Surface::Thread, Surface::Thread),
+            (Surface::Outline, Surface::Outline),
+        ] {
+            let contribution = ribbon.weights[source as usize] * scale;
+            weights[fabric as usize] -= contribution;
+            weights[target as usize] += contribution;
+        }
+        weights[fabric as usize] = weights[fabric as usize].max(0.0);
+        tilt += ribbon.slope * gradient.normalize_or_zero() * scale;
+    };
+
+    let waist_circumference = 0.72 - 0.15 * pants.waist.clamp(0.0, 1.0);
+    draw_ribbon(
+        fit.waist,
+        waist_gradient,
+        Surface::Fabric,
+        Surface::Band,
+        2.0,
+        1.0,
+        &|point| ((point.x / 1.3).atan2(point.z - 0.015), waist_circumference),
+    );
+
     if let Some((sock_distance, sock_height)) = fit.sock {
         // A cuff can touch at its inner arc and still leave a gap on the
         // outside. Fade the pant trim there, while following the visible sock edge.
-        let pant_strength = smooth((gap - JOIN_GAP_METERS) / 0.008);
+        let pant_strength = smooth((gap - JOIN_GAP_METERS) / PANT_TRIM_FADE_METERS);
         let (sock_distance, sock_gradient) = if joined {
             (-fit.leg, -leg_gradient)
         } else {
@@ -379,63 +433,24 @@ fn lower_sample(
             pants.right_leg
         };
         let pant_height = 0.84 + (0.501 - 0.84) * leg_length.clamp(0.0, 1.0);
-        let ribbons = [
-            (
-                fit.leg,
-                leg_gradient,
-                pant_height,
-                Surface::Fabric,
-                Surface::Band,
-                2.0,
-                pant_strength,
-            ),
-            (
-                sock_distance,
-                sock_gradient,
-                sock_height,
-                Surface::Sock,
-                Surface::SockBand,
-                1.0,
-                1.0,
-            ),
-        ];
-        for (distance, gradient, height, fabric, band, density, strength) in ribbons {
-            let rows_per_meter = OPENING_ROWS_PER_METER * density;
-            let row = OPENING_ROW as f32 + distance * rows_per_meter;
-            if strength == 0.0
-                || !trim_overlap(row, row, OPENING_ROW, OPENING_TRIM_END)
-                || weights[fabric as usize] == 0.0
-            {
-                continue;
-            }
-            let along = |point| {
-                let (angle, circumference) = leg_phase(point, height);
-                stitch_along(angle, circumference)
-            };
-            let along_steps =
-                Vec2::from_array(steps.map(|step| {
-                    stitch_step(along(point + 0.5 * step) - along(point - 0.5 * step))
-                }));
-            let ribbon = trim::sample(
-                row,
-                along(point),
-                footprint(gradient) * rows_per_meter,
-                along_steps.length(),
-            );
-            let covered = 1.0 - ribbon.weights[Surface::Skin as usize];
-            let scale = strength * (weights[fabric as usize] / covered.max(f32::EPSILON)).min(1.0);
-            for (source, target) in [
-                (Surface::Band, band),
-                (Surface::Thread, Surface::Thread),
-                (Surface::Outline, Surface::Outline),
-            ] {
-                let contribution = ribbon.weights[source as usize] * scale;
-                weights[fabric as usize] -= contribution;
-                weights[target as usize] += contribution;
-            }
-            weights[fabric as usize] = weights[fabric as usize].max(0.0);
-            tilt += ribbon.slope * gradient.normalize_or_zero() * scale;
-        }
+        draw_ribbon(
+            fit.leg,
+            leg_gradient,
+            Surface::Fabric,
+            Surface::Band,
+            2.0,
+            pant_strength,
+            &|point| leg_phase(point, pant_height),
+        );
+        draw_ribbon(
+            sock_distance,
+            sock_gradient,
+            Surface::Sock,
+            Surface::SockBand,
+            1.0,
+            1.0,
+            &|point| leg_phase(point, sock_height),
+        );
     }
     (
         trim::Sample {
@@ -474,6 +489,40 @@ fn trim_at(point: Vec3, steps: [Vec3; 2], style: TopStyle) -> (trim::Sample, Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pant_waistband_follows_the_hips_and_belly_with_or_without_socks() {
+        let steps = [Vec3::X * 0.0007, Vec3::Y * 0.0007];
+        for waist in [0.0, 0.5, 1.0] {
+            let pants = BottomStyle {
+                left_leg: waist,
+                right_leg: waist,
+                waist,
+            };
+            for socks in [None, Some(0.0), Some(1.0)] {
+                let style = TopStyle {
+                    bottoms: Some(pants),
+                    socks,
+                    ..TopStyle::default()
+                };
+                for (x, z) in [(0.0, -0.08), (0.1, 0.015), (0.0, 0.08), (-0.1, 0.015)] {
+                    let point = Vec3::new(x, 1.0, z);
+                    let edge = point + Vec3::Y * LowerFit::at(point, pants, socks).waist;
+                    let in_band = edge - Vec3::Y * (HALF_WIDTH_METERS * 0.55);
+                    let (ribbon, tilt) = sample_at(in_band, steps, style);
+                    assert!(ribbon.weights[Surface::Band as usize] > 0.9);
+                    assert_ne!(tilt, Vec2::ZERO);
+                    let (outside, _) = sample_at(edge + Vec3::Y * 0.002, steps, style);
+                    assert_eq!(outside.weights[Surface::Skin as usize], 1.0);
+                    let (inside, _) = sample_at(edge - Vec3::Y * 0.014, steps, style);
+                    assert_eq!(inside.weights[Surface::Fabric as usize], 1.0);
+
+                    let triangle = [in_band, in_band + Vec3::X * 0.001, in_band - steps[1]];
+                    assert_eq!(texel_size(triangle, style), Some(COLLAR_TEXEL_METERS));
+                }
+            }
+        }
+    }
 
     #[test]
     fn pant_and_sock_cuffs_only_trim_the_exposed_edges() {

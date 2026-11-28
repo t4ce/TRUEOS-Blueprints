@@ -24,7 +24,8 @@ The viewer loads the system SDL2 runtime (`libSDL2-2.0.so.0`). The executable
 embeds the mesh and texture atlases. The solver and raster shaders are local
 and the demo makes no network requests.
 
-The preview opens facing the avatar. Move the mouse left or right to spin her
+The rod preview opens on a close-up of the hair, with room for the scalp
+and tips. Move the mouse left or right to spin the avatar
 in the plane of the screen. Move down to tilt her toward the camera or up to
 tilt her back to horizontal. Hold `A` or `D` to orbit the view around the
 avatar's own vertical axis while keeping her simulated pose. Use the window
@@ -35,9 +36,8 @@ Rod motion runs at 90% of the original speed.
 
 - Tip weight is fixed at 50%. The lower half retains more momentum when the hair
   brushes against the body.
-- Headband fixation automatically eases from 50% upright to 0% upside down, based on the
-  headband's direction relative to gravity. The window title shows the effective
-  value.
+- Headband fixation eases from 50% upright to 0% upside down, based on the
+  headband's direction relative to gravity.
 - Density spread is fixed at 100%. Nearby guides push away from crowded regions.
   The solver estimates density at four points along each guide once per frame.
   The spread weight tops out at 90% along each guide, stays at full weight
@@ -46,13 +46,9 @@ Rod motion runs at 90% of the original speed.
   A gust travels across the guides in world space about every 5.6 seconds,
   peaking at 70% above the baseline before settling back. At 0%, the air is
   calm. `2` cycles eight horizontal world directions, 45° apart. Hold
-  `Shift` to step backward. The interactive rod preview starts with 10% wind
-  toward +X. Headless snapshots start at 0%.
-- `5` cycles tip settling through Off, Light, and Medium. The filter eases in
-  near the ends as the guides slow down in weak wind.
-- `6` cycles the guide budget from 100% to 150% in 10-point steps, then back
-  to 100%. The 150 authored roots stay attached and the extra guides fill
-  gaps on the same anchor surface. Hold `Shift` to step backward.
+  `Shift` to step backward. Wind starts at 0% with its heading toward +X/+Z.
+- The rod preview uses Medium tip settling and 225 guides. The extra guides
+  fill gaps on the authored anchor surface.
 
 The length falls off sharply at the outer sides, where guides are up to 20%
 shorter for the same root-height layer. The upper root layers get a shorter
@@ -63,12 +59,9 @@ colors sampled from the source back-hair atlas, blended along the length with
 smoothstep. The hull starts slightly inside the scalp, follows a smoothed
 guide, and tapers to a point. The guide solver still runs with the hair layer
 hidden.
-Use `Tab` to cycle Locks, Flat ribbons, Soft depth merge, and Strong depth
-merge. `Shift+Tab` steps back. The ribbon looks hold their taper longer and
-use procedural shading inspired by the original atlas. The merge looks
-bring nearby, aligned ribbons together in avatar-local depth, with 20° and
-35° limits on the difference between guide directions. The solver keeps
-its original guide positions.
+Press `3` to select hull width or `4` for hull depth. `Tab` reduces the selected
+cross-section dimension in five-point steps from 100% to 70% and wraps.
+`Shift+Tab` steps back. The scales apply to each lock along its full length.
 
 Guide lines are disabled by default in rod mode. Set `DRAW_ROD_GUIDES` in
 `src/main.rs` to enable them in code, or use `--hide hair --show guides` to
@@ -77,9 +70,8 @@ inspect the lines alone.
 `--motion 1`, `--motion 2`, and `--motion 3` select the loose rope, elastic
 springs, and bending rod at launch.
 `--motion flow` opens the original field-tracing study.
-Use `--yaw 150 --hide body-obstacles` for a clear view of the hulls behind the
-avatar. Use `--hull locks|ribbon|soft|strong` to set the look at launch or
-in a snapshot.
+Use `--yaw 180 --hide body-obstacles` for a clear view of the hulls behind the
+avatar.
 
 A headless run can write a PNG.
 
