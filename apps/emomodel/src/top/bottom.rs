@@ -9,6 +9,7 @@ const HIGHEST_BRIEF_CUFF: f32 = 0.886;
 const LOWEST_KNEE_CUFF: f32 = 0.499;
 const HIGHEST_KNEE_CUFF: f32 = 0.503;
 const SPACE_CUFF_MARGIN: f32 = 0.20;
+const SHIRT_WAIST_JOIN_METERS: f32 = 0.004;
 const SHIRT_WAIST_CLEARANCE_METERS: f32 = 0.008;
 
 /// Signed distances from the waist and leg edges. Positive is inside the fabric.
@@ -40,9 +41,11 @@ fn waist_height(across: f32, back: f32, waist: f32) -> f32 {
     mix(low_waist, high_waist, waist.clamp(0.0, 1.0))
 }
 
-/// Select one join mode for the whole waistband if any part of the hem is close.
-pub(super) fn shirt_joins_waist(hem: f32, waist: f32) -> bool {
-    shirt_waist_min_gap(hem, waist) < SHIRT_WAIST_CLEARANCE_METERS
+/// Fade the whole waistband together as the closest part of the hem approaches.
+pub(super) fn shirt_waist_join_strength(hem: f32, waist: f32) -> f32 {
+    let gap = shirt_waist_min_gap(hem, waist);
+    let fade = SHIRT_WAIST_CLEARANCE_METERS - SHIRT_WAIST_JOIN_METERS;
+    smooth((SHIRT_WAIST_CLEARANCE_METERS - gap) / fade)
 }
 
 /// Lower bound on the shirt hem height minus the pants waist height.
@@ -166,17 +169,21 @@ mod tests {
     }
 
     #[test]
-    fn shirt_joins_waist_for_overlap_and_gaps_under_eight_millimeters() {
+    fn shirt_waist_join_fades_between_four_and_eight_millimeters() {
         assert!(shirt_waist_min_gap(0.8, 0.0) < -0.01);
-        assert!(shirt_joins_waist(0.8, 0.0));
+        assert_eq!(shirt_waist_join_strength(0.8, 0.0), 1.0);
 
-        let narrow_gap = shirt_waist_min_gap(0.2, 0.6);
-        assert!(narrow_gap > 0.0 && narrow_gap < 0.008);
-        assert!(shirt_joins_waist(0.2, 0.6));
+        let strength = |hem| shirt_waist_join_strength(hem, 0.5);
+        assert_eq!(strength(0.265), 0.0);
+        assert_eq!(strength(0.30), 1.0);
+        assert!(0.0 < strength(0.275));
+        assert!(strength(0.275) < strength(0.282));
+        assert!(strength(0.282) < strength(0.289));
+        assert!(strength(0.289) < 1.0);
 
         let clear_gap = shirt_waist_min_gap(0.4, 0.3);
         assert!(clear_gap > 0.008 && clear_gap < 0.01);
-        assert!(!shirt_joins_waist(0.4, 0.3));
+        assert_eq!(shirt_waist_join_strength(0.4, 0.3), 0.0);
     }
 
     #[test]

@@ -3,9 +3,9 @@ use std::ops::Range;
 use glam::{Vec2, Vec3};
 
 use super::{
-    COLLAR_ROW, COLLAR_TRIM_START, Fit, HALF_WIDTH_METERS, JOIN_GAP_METERS, LowerFit, LowerStyle,
-    OPENING_ROW, OPENING_ROWS_PER_METER, OPENING_TRIM_END, OPENING_WIDTH_METERS,
-    PANT_TRIM_FADE_METERS, Surface, TopStyle, bottom, chart, leg_phase, smooth, stitch_along, trim,
+    COLLAR_ROW, COLLAR_TRIM_START, Fit, HALF_WIDTH_METERS, LowerFit, LowerStyle, OPENING_ROW,
+    OPENING_ROWS_PER_METER, OPENING_TRIM_END, OPENING_WIDTH_METERS, Surface, TopStyle, bottom, chart,
+    leg_phase, stitch_along, trim,
 };
 
 pub(crate) const ATLAS_WIDTH: usize = 512;
@@ -48,6 +48,44 @@ impl Finish {
     where
         F: Fn(Vec3) -> Vec3,
     {
+        let scales: &[f32] = match (style.bottoms.is_some(), style.color.is_some()) {
+            (true, true) => &[1.0, 1.25, 1.5, 1.75, 2.0],
+            (true, false) => &[1.0, 1.25],
+            _ => &[1.0],
+        };
+        Self::build_at_scales(style, fits, body_start, body_triangles, triangles, tint_for, scales)
+    }
+
+    pub(crate) fn build_motion<F>(
+        style: TopStyle,
+        fits: &[Fit],
+        body_start: usize,
+        body_triangles: Range<usize>,
+        triangles: &[[u32; 3]],
+        tint_for: impl Fn(usize) -> F,
+    ) -> Option<Self>
+    where
+        F: Fn(Vec3) -> Vec3,
+    {
+        // Use fewer texels while the openings move, then restore the regular
+        // atlas once the rolled fit has settled.
+        Self::build_at_scales(
+            style, fits, body_start, body_triangles, triangles, tint_for, &[2.5, 3.0, 3.5],
+        )
+    }
+
+    fn build_at_scales<F>(
+        style: TopStyle,
+        fits: &[Fit],
+        body_start: usize,
+        body_triangles: Range<usize>,
+        triangles: &[[u32; 3]],
+        tint_for: impl Fn(usize) -> F,
+        scales: &[f32],
+    ) -> Option<Self>
+    where
+        F: Fn(Vec3) -> Vec3,
+    {
         let lower = style.lower_style();
         let positions = |id: usize| triangles[id].map(|i| fits[i as usize - body_start].position);
         let pack = |scale: f32| {
@@ -59,11 +97,6 @@ impl Finish {
                         .map(|texel_meters| (id, points, texel_meters * scale))
                 }),
             )
-        };
-        let scales: &[f32] = match (style.bottoms.is_some(), style.color.is_some()) {
-            (true, true) => &[1.0, 1.25, 1.5, 1.75, 2.0],
-            (true, false) => &[1.0, 1.25],
-            _ => &[1.0],
         };
         let (rows, charts) = scales
             .iter()
@@ -300,7 +333,7 @@ fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle, lower: Option<LowerStyle>) 
         } else {
             0.0
         };
-        let near_waistband = lower.joined_hem.is_none() && waist_min <= HALF_WIDTH_METERS + 0.003;
+        let near_waistband = lower.waist_join < 1.0 && waist_min <= HALF_WIDTH_METERS + 0.003;
         if waist_max >= -0.003
             && leg_max >= -0.003
             && (near_waistband || leg_min <= pant_width + 0.003)
@@ -310,13 +343,8 @@ fn texel_size([a, b, c]: [Vec3; 3], style: TopStyle, lower: Option<LowerStyle>) 
         let sock_texel = (leg_min < 0.003
             && crosses(
                 fits.map(|fit| {
-                    fit.sock.map_or(f32::NEG_INFINITY, |(distance, _)| {
-                        if fit.gap() <= JOIN_GAP_METERS {
-                            -fit.leg
-                        } else {
-                            distance
-                        }
-                    })
+                    fit.sock_edge()
+                        .map_or(f32::NEG_INFINITY, |(distance, _)| distance)
                 }),
                 OPENING_WIDTH_METERS,
             ))
@@ -376,24 +404,17 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
         |axis: fn(LowerFit) -> f32| Vec2::from_array(samples.map(|[a, b]| axis(b) - axis(a)));
     let waist_gradient = gradient(|fit| fit.waist);
     let leg_gradient = gradient(|fit| fit.leg);
-    let sock_gradient = gradient(|fit| fit.sock.map_or(0.0, |(distance, _)| distance));
+    let sock_edge = fit.sock_edge();
+    let sock_gradient = gradient(|fit| fit.sock_edge().map_or(0.0, |(distance, _)| distance));
     let footprint = |gradient: Vec2| gradient.length().clamp(0.0002, 0.004);
     let cover =
         |distance: f32, gradient: Vec2| (0.5 + distance / footprint(gradient)).clamp(0.0, 1.0);
     let leg = cover(fit.leg, leg_gradient);
     let pants_cover = leg.min(cover(fit.waist, waist_gradient));
 
-    let gap = fit.gap();
-    let joined = gap <= JOIN_GAP_METERS;
-    let sock_cover = if joined {
-        // Assign the entire shared edge once, using the same footprint on both
-        // sides. A sub-texel gap would otherwise leave a line of exposed skin.
-        1.0 - leg
-    } else {
-        fit.sock
-            .map_or(0.0, |(distance, _)| cover(distance, sock_gradient))
-    }
-    .min(1.0 - pants_cover);
+    let sock_cover = sock_edge
+        .map_or(0.0, |(distance, _)| cover(distance, sock_gradient))
+        .min(1.0 - pants_cover);
     let mut weights = [0.0; Surface::ALL.len()];
     weights[Surface::Skin as usize] = (1.0 - pants_cover - sock_cover).max(0.0);
     weights[Surface::Fabric as usize] = pants_cover;
@@ -443,7 +464,7 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
         tilt += ribbon.slope * gradient.normalize_or_zero() * scale;
     };
 
-    if lower.joined_hem.is_none() {
+    if lower.waist_join < 1.0 {
         let waist_circumference = 0.72 - 0.15 * pants.waist.clamp(0.0, 1.0);
         draw_ribbon(
             fit.waist,
@@ -451,20 +472,12 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
             Surface::Fabric,
             Surface::Band,
             2.0,
-            1.0,
+            1.0 - lower.waist_join,
             &|point| ((point.x / 1.3).atan2(point.z - 0.015), waist_circumference),
         );
     }
 
-    if let Some((sock_distance, sock_height)) = fit.sock {
-        // A cuff can touch at its inner arc and still leave a gap on the
-        // outside. Fade the pant trim there, while following the visible sock edge.
-        let pant_strength = smooth((gap - JOIN_GAP_METERS) / PANT_TRIM_FADE_METERS);
-        let (sock_distance, sock_gradient) = if joined {
-            (-fit.leg, -leg_gradient)
-        } else {
-            (sock_distance, sock_gradient)
-        };
+    if let Some((sock_distance, sock_height)) = sock_edge {
         let leg_length = if point.x < 0.0 {
             pants.left_leg
         } else {
@@ -477,7 +490,7 @@ fn lower_sample(point: Vec3, steps: [Vec3; 2], lower: LowerStyle) -> (trim::Samp
             Surface::Fabric,
             Surface::Band,
             2.0,
-            pant_strength,
+            fit.cuff_separation(),
             &|point| leg_phase(point, pant_height),
         );
         draw_ribbon(
@@ -545,7 +558,7 @@ mod tests {
             ..TopStyle::default()
         };
         let close = TopStyle {
-            hem: 0.28,
+            hem: 0.30,
             ..separated
         };
         let covered = TopStyle {
@@ -578,13 +591,26 @@ mod tests {
         let close_hem = shirt_hem_height(point, close.hem);
         assert!(close_hem - waist > 0.01);
         let joined_pants = close.lower_style();
-        assert_eq!(joined_pants.unwrap().joined_hem, Some(close.hem));
+        assert_eq!(joined_pants.unwrap().waist_join, 1.0);
         for y in [waistband, (waist + close_hem) * 0.5, close_hem - 0.003] {
             assert_eq!(at(y, close)[Surface::Fabric as usize], 1.0);
             let row = Fit::at(point + Vec3::Y * y).coverage_row(close, joined_pants) as usize;
             assert_eq!(close.surface_at_row(row), Surface::Fabric);
         }
         assert!(at(close_hem + 0.011, close)[Surface::ShirtBand as usize] > 0.9);
+
+        let transitioning = TopStyle {
+            hem: 0.282,
+            ..separated
+        };
+        let lower = transitioning.lower_style().unwrap();
+        assert!(lower.waist_join > 0.2 && lower.waist_join < 0.8);
+        let waist_in_transition = lower.fit_at(point).waist;
+        assert!(waist_in_transition > waist);
+        assert!(waist_in_transition < shirt_hem_height(point, transitioning.hem));
+        let band_in_transition = waist_in_transition - HALF_WIDTH_METERS * 0.55;
+        let band_weight = at(band_in_transition, transitioning)[Surface::Band as usize];
+        assert!(band_weight > 0.1 && band_weight <= 1.0 - lower.waist_join);
 
         let long_hem = shirt_hem_height(point, covered.hem);
         assert_eq!(at(waistband, covered)[Surface::Shirt as usize], 1.0);
@@ -658,7 +684,8 @@ mod tests {
             let lower = LowerStyle {
                 pants,
                 socks: Some(length),
-                joined_hem: None,
+                hem: 0.0,
+                waist_join: 0.0,
             };
             lower_sample(point, steps, lower).0.weights
         };
@@ -706,6 +733,23 @@ mod tests {
         assert_eq!(touching[Surface::Skin as usize], 0.0);
         assert_eq!(touching[Surface::Band as usize], 0.0);
         assert_eq!(touching[Surface::Thread as usize], 0.0);
+
+        // A six-millimeter unadjusted gap moves the sock edge halfway toward
+        // the pant cuff. The same edge determines the fallback and atlas coverage.
+        let transitional_length = (-short_sock - 0.006) / sock_rise;
+        let fit = LowerFit::at(left, pants, Some(transitional_length));
+        assert!((fit.cuff_separation() - 0.5).abs() < 1e-5);
+        assert!((fit.sock_edge().unwrap().0 + 0.003).abs() < 1e-5);
+        let below_pants = left - 0.0015 * Vec3::Y;
+        let on_sock = left - 0.0045 * Vec3::Y;
+        assert_eq!(sample(below_pants, transitional_length)[Surface::Skin as usize], 1.0);
+        assert_eq!(sample(on_sock, transitional_length)[Surface::Skin as usize], 0.0);
+        let style = TopStyle {
+            socks: Some(transitional_length),
+            ..joined_style
+        };
+        let on_sock_row = Fit::at(on_sock).coverage_row(style, style.lower_style()) as usize;
+        assert_eq!(style.surface_at_row(on_sock_row), Surface::Sock);
     }
 
     #[test]

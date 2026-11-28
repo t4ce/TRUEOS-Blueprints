@@ -226,10 +226,11 @@ fn main() -> Result<()> {
             println!("hair: medium water surface, {} triangles", drawn.triangles);
         } else if let Some(motion) = controls.hair_motion {
             println!(
-                "hair: {}, {} roots, {} strip triangles, {} debug line segments",
+                "hair: {}, {} roots, {} strip triangles, {} tip strokes, {} debug line segments",
                 motion.label(),
                 scene.guide_count(),
                 drawn.triangles,
+                drawn.tip_strokes,
                 drawn.segments,
             );
         } else if controls.layers.field || controls.layers.guides {

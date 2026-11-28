@@ -4,6 +4,7 @@ use std::f32::consts::TAU;
 mod bottom;
 pub(super) mod chart;
 pub(super) mod finish;
+pub(super) mod outfit_motion;
 pub(super) mod trim;
 
 #[cfg(target_os = "trueos")]
@@ -145,23 +146,27 @@ pub(super) struct TopStyle {
     pub socks: Option<f32>,
     pub sock_color: Option<Pastel>,
     pub bottoms: Option<BottomStyle>,
+    pub pants_color: Option<Pastel>,
 }
 
 impl TopStyle {
     pub(super) fn lower_style(self) -> Option<LowerStyle> {
         let pants = self.bottoms?;
-        let joined_hem = (self.color.is_some() && bottom::shirt_joins_waist(self.hem, pants.waist))
-            .then_some(self.hem);
         Some(LowerStyle {
             pants,
             socks: self.socks,
-            joined_hem,
+            hem: self.hem,
+            waist_join: self.color.map_or(0.0, |_| {
+                bottom::shirt_waist_join_strength(self.hem, pants.waist)
+            }),
         })
     }
 
     pub(crate) fn fabric(self) -> Option<[u8; 3]> {
         if self.bottoms.is_some() {
-            Some(BLACK_FABRIC_SRGB)
+            Some(self.pants_color.map_or(BLACK_FABRIC_SRGB, |color| {
+                color.rgb().map(|channel| (f32::from(channel) * 0.82).round() as u8)
+            }))
         } else {
             self.color.map(Pastel::rgb)
         }
@@ -195,6 +200,23 @@ impl TopStyle {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct OutfitAppearance {
+    pub style: TopStyle,
+    pub colors: [[u8; 3]; Surface::ALL.len()],
+    pub opacity: f32,
+}
+
+impl OutfitAppearance {
+    pub(super) fn from_style(style: TopStyle) -> Self {
+        Self {
+            style,
+            colors: Surface::ALL.map(|surface| style.albedo(surface)),
+            opacity: 1.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(super) struct BottomStyle {
     pub left_leg: f32,
@@ -206,15 +228,17 @@ pub(super) struct BottomStyle {
 pub(super) struct LowerStyle {
     pants: BottomStyle,
     socks: Option<f32>,
-    joined_hem: Option<f32>,
+    hem: f32,
+    waist_join: f32,
 }
 
 impl LowerStyle {
     fn fit_at(self, position: Vec3) -> LowerFit {
         let mut fit = LowerFit::at(position, self.pants, self.socks);
-        if let Some(hem) = self.joined_hem {
-            let under_shirt = shirt_hem_height(position, hem) + SHIRT_UNDERLAP_METERS;
-            fit.waist = fit.waist.max(under_shirt - position.y);
+        if self.waist_join > 0.0 {
+            let under_shirt = shirt_hem_height(position, self.hem) + SHIRT_UNDERLAP_METERS;
+            let extension = (under_shirt - position.y - fit.waist).max(0.0);
+            fit.waist += extension * self.waist_join;
         }
         fit
     }
@@ -243,12 +267,22 @@ impl LowerFit {
             .map_or(f32::INFINITY, |(sock, _)| -(self.leg + sock))
     }
 
+    fn cuff_separation(self) -> f32 {
+        smooth((self.gap() - JOIN_GAP_METERS) / PANT_TRIM_FADE_METERS)
+    }
+
+    fn sock_edge(self) -> Option<(f32, f32)> {
+        self.sock.map(|(distance, height)| {
+            let separation = self.cuff_separation();
+            let edge = -self.leg * (1.0 - separation) + distance * separation;
+            (edge, height)
+        })
+    }
+
     fn vertex_row(self) -> f32 {
         let row = if self.waist >= 0.0 && self.leg >= 0.0 {
             PANTS_VERTEX_ROW
-        } else if self.sock.is_some_and(|(distance, _)| distance >= 0.0)
-            || (self.leg < 0.0 && self.gap() <= JOIN_GAP_METERS)
-        {
+        } else if self.sock_edge().is_some_and(|(distance, _)| distance >= 0.0) {
             SOCK_VERTEX_ROW
         } else {
             0

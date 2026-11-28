@@ -1,6 +1,6 @@
 use glam::Vec3;
 
-use crate::hair_rope::{GRAVITY, MAX_SEGMENTS};
+use crate::hair_rope::{GRAVITY, MAX_SEGMENTS, rod_rest_units};
 
 const MAX_POINTS: usize = MAX_SEGMENTS + 1;
 const ANGULAR_DAMPING: f32 = 9.0;
@@ -74,7 +74,7 @@ pub(crate) struct Rod {
 
 impl Rod {
     pub(crate) fn new(positions: &[Vec3]) -> Self {
-        assert!((1..=MAX_POINTS).contains(&positions.len()));
+        assert!((3..=MAX_POINTS).contains(&positions.len()));
         let mut rod = Self {
             positions: [Vec3::ZERO; MAX_POINTS],
             direction_velocity: [Vec3::ZERO; MAX_POINTS],
@@ -91,7 +91,7 @@ impl Rod {
     pub(crate) fn step(
         &mut self,
         anchor: Vec3,
-        length: f32,
+        regular_length: f32,
         dt: f32,
         effects: RodEffects,
         mut project: impl FnMut(usize, Vec3) -> Vec3,
@@ -121,15 +121,20 @@ impl Rod {
                 * (1.0 - smoothstep(0.025, 0.25, anchor_speed));
         }
         let segment_count = self.point_count - 1;
+        let total_rest_units = rod_rest_units(segment_count, segment_count);
+        let mut start_units = 0.0;
         for i in 1..self.point_count {
-            let progress = i as f32 / segment_count as f32;
+            let end_units = rod_rest_units(i, segment_count);
+            let progress = end_units / total_rest_units;
+            let length = regular_length * (end_units - start_units);
+            let trailing_length = regular_length * (total_rest_units - start_units);
+            start_units = end_units;
             let tip_weight = effects.tip_weight * smoothstep(0.5, 1.0, progress);
             let headband = headband_links.and_then(|links| links.get(i - 1));
             let mobility = headband.map_or(1.0, |&(mobility, _, _)| mobility);
             let direction = (before[i] - before[i - 1])
                 .try_normalize()
                 .unwrap_or(Vec3::NEG_Y);
-            let trailing_length = length * (self.point_count - i) as f32;
             let wind_exposure = 0.35 + 0.65 * progress;
             let acceleration = GRAVITY
                 + effects.spread_acceleration[i]
@@ -233,11 +238,41 @@ mod tests {
     use super::*;
 
     const LINK_LENGTH: f32 = 0.075;
+    const LINKS_BEFORE_SPLIT: usize = 8;
+    const SEGMENTS: usize = LINKS_BEFORE_SPLIT + 1;
     const DT: f32 = 1.0 / REFERENCE_HZ;
 
     fn hanging_rod() -> Rod {
-        let points: [Vec3; 9] = std::array::from_fn(|i| Vec3::NEG_Y * LINK_LENGTH * i as f32);
+        let points: [Vec3; SEGMENTS + 1] =
+            std::array::from_fn(|i| Vec3::NEG_Y * (LINK_LENGTH * rod_rest_units(i, SEGMENTS)));
         Rod::new(&points)
+    }
+
+    #[test]
+    fn split_tip_keeps_the_rest_length_under_movement() {
+        let mut rod = hanging_rod();
+        for frame in 0..90 {
+            let phase = frame as f32 * 0.12;
+            let anchor = Vec3::new(0.05 * phase.sin(), 0.02 * phase.cos(), 0.0);
+            let effects = RodEffects {
+                wind_acceleration: Vec3::Z * (4.0 * phase.cos()),
+                ..RodEffects::default()
+            };
+            rod.step(anchor, LINK_LENGTH, DT, effects, |_, point| point);
+            assert_eq!(rod.points()[0], anchor);
+            let mut total = 0.0;
+            for (index, points) in rod.points().windows(2).enumerate() {
+                let length = points[0].distance(points[1]);
+                let fraction = match index {
+                    i if i == SEGMENTS - 2 => 2.0 / 3.0,
+                    i if i == SEGMENTS - 1 => 1.0 / 3.0,
+                    _ => 1.0,
+                };
+                assert!((length - LINK_LENGTH * fraction).abs() < 1e-6);
+                total += length;
+            }
+            assert!((total - LINKS_BEFORE_SPLIT as f32 * LINK_LENGTH).abs() < 1e-6);
+        }
     }
 
     #[test]
@@ -246,7 +281,7 @@ mod tests {
             |settle_damping, wind_acceleration, anchor, [upper_speed, tip_speed]: [f32; 2]| {
                 let mut rod = hanging_rod();
                 rod.direction_velocity[4] = Vec3::X * upper_speed;
-                rod.direction_velocity[8] = Vec3::X * tip_speed;
+                rod.direction_velocity[SEGMENTS] = Vec3::X * tip_speed;
                 rod.step(
                     anchor,
                     LINK_LENGTH,
@@ -265,7 +300,7 @@ mod tests {
         let light = step(0.5, Vec3::ZERO, Vec3::ZERO, small_sway);
         let medium = step(1.0, Vec3::ZERO, Vec3::ZERO, small_sway);
         assert_eq!(off.points()[..=4], medium.points()[..=4]);
-        let tip_delta = |rod: &Rod| (rod.points()[8] - rod.points()[7]).x;
+        let tip_delta = |rod: &Rod| (rod.points()[SEGMENTS] - rod.points()[SEGMENTS - 1]).x;
         assert!(tip_delta(&medium) < 0.8 * tip_delta(&off));
         assert!(tip_delta(&medium) < tip_delta(&light));
         assert!(tip_delta(&light) < tip_delta(&off));
@@ -305,7 +340,7 @@ mod tests {
         let downwind = settled_tip(&mut rod, 37.5);
         let upwind = settled_tip(&mut rod, -37.5);
         let recovered = settled_tip(&mut rod, 0.0);
-        assert!(still.distance(Vec3::NEG_Y * (8.0 * LINK_LENGTH)) < 1e-6);
+        assert!(still.distance(Vec3::NEG_Y * (LINKS_BEFORE_SPLIT as f32 * LINK_LENGTH)) < 1e-6);
         assert!((mild - still).dot(heading) > 0.05);
         assert!((downwind - mild).dot(heading) > 0.05);
         assert!(downwind.distance(Vec3::new(-upwind.x, upwind.y, -upwind.z)) < 1e-5);
@@ -335,7 +370,7 @@ mod tests {
             |_, point| point,
         );
         assert_eq!(baseline.points()[..=4], weighted.points()[..=4]);
-        assert!(weighted.points()[8].x < baseline.points()[8].x);
+        assert!(weighted.points()[SEGMENTS].x < baseline.points()[SEGMENTS].x);
     }
 
     #[test]
@@ -352,9 +387,11 @@ mod tests {
                 },
                 |_, point| point,
             );
-            let directions = rod.points().windows(2).map(|points| {
+            let directions = rod.points().windows(2).enumerate().map(|(index, points)| {
                 let offset = points[1] - points[0];
-                assert!((offset.length() - LINK_LENGTH).abs() < 1e-6);
+                let rest_units =
+                    rod_rest_units(index + 1, SEGMENTS) - rod_rest_units(index, SEGMENTS);
+                assert!((offset.length() - LINK_LENGTH * rest_units).abs() < 1e-6);
                 offset.normalize()
             });
             for (direction, angle) in directions.clone().zip([15.0_f32, 22.5, 30.0]) {

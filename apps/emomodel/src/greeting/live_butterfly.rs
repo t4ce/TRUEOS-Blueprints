@@ -13,15 +13,17 @@ const MAX_OUTLINE_STEPS: usize = 128;
 pub(super) const MAX_TRIANGLES: usize =
     2 * (MAX_PATH_CURVES * MAX_FILL_STEPS + (MAX_PATH_CURVES + 1) * 2 * MAX_OUTLINE_STEPS + 2);
 
-const TIER: usize = 1;
+const BIRTH_TIER: usize = 1;
 const LAST_TIER: usize = 7;
+pub(super) const BUTTERFLIES_PER_SKETCH: usize = 3;
 const FOCAL_LENGTH: f32 = 8_000.0;
 const TIER_MOVE_NS: u64 = 4_400_000_000;
 const DEPARTURE_LEAD_NS: u64 = 2_000_000_000;
 const BIRTH_REST_NS: u64 = 1_500_000_000;
-const RELEASE_DELAY_NS: [u64; 3] = [0, 220_000_000, 460_000_000];
 const CLEARANCE_NS: u64 = 440_000_000;
 const TAKEOFF_NS: u64 = 1_200_000_000;
+pub(super) const GROUP_TAKEOFF_END_NS: u64 =
+    BUTTERFLIES_PER_SKETCH as u64 * BIRTH_REST_NS + TAKEOFF_NS;
 const ORBIT_SECONDS: f32 = 2.5;
 const ORBIT_RAMP: f32 = 0.6;
 const FLAP_HZ: f32 = 0.80;
@@ -94,6 +96,7 @@ pub(super) struct LiveButterfly {
     inset: Curve,
     hinge: Curve,
     started_ns: u64,
+    release_ns: u64,
     birth: Birth,
     takeoff_pixels_per_unit: Option<f32>,
     flight_focal_length: f32,
@@ -149,10 +152,11 @@ impl LiveButterfly {
         let seed = seed & 127;
         let flight_seed = (seed + 47 * lane as u32) & 127;
         let speed_percent = 85 + (flight_seed * 17 + 13) % 31;
+        let release_ns = (lane as u64 + 1) * BIRTH_REST_NS;
         let travel_ns = DEPARTURE_LEAD_NS
-            + (LAST_TIER - TIER + 1) as u64 * TIER_MOVE_NS * 100 / u64::from(speed_percent);
+            + (LAST_TIER - lane) as u64 * TIER_MOVE_NS * 100 / u64::from(speed_percent);
         // Travel through the background at two thirds of the old speed.
-        let duration_ns = BIRTH_REST_NS + RELEASE_DELAY_NS[lane] + TAKEOFF_NS + travel_ns * 3 / 2;
+        let duration_ns = release_ns + TAKEOFF_NS + travel_ns * 3 / 2;
         Self {
             artwork,
             fill: fill_color(seed, artwork),
@@ -160,6 +164,7 @@ impl LiveButterfly {
             inset,
             hinge,
             started_ns,
+            release_ns,
             birth,
             takeoff_pixels_per_unit: None,
             flight_focal_length: FOCAL_LENGTH,
@@ -181,10 +186,6 @@ impl LiveButterfly {
 
     pub(super) fn is_lead(&self) -> bool {
         self.lane == 0
-    }
-
-    fn release_ns(&self) -> u64 {
-        BIRTH_REST_NS + RELEASE_DELAY_NS[self.lane]
     }
 
     pub(super) fn started_ns(&self) -> u64 {
@@ -220,7 +221,7 @@ impl LiveButterfly {
         self.birth.center = center.truncate() * 0.5 + Vec2::splat(0.5);
         self.birth.depth = center.z;
         self.birth.width_pixels = width * half_width;
-        if now_ns.saturating_sub(self.started_ns) >= self.release_ns() + TAKEOFF_NS {
+        if now_ns.saturating_sub(self.started_ns) >= self.release_ns + TAKEOFF_NS {
             self.takeoff_pixels_per_unit = Some(pixels_per_unit);
         }
     }
@@ -237,7 +238,7 @@ impl LiveButterfly {
     }
 
     fn flight(&self, size: Vec2, now_ns: u64) -> FlightSample {
-        let release = self.release_ns();
+        let release = self.release_ns;
         let travel_ns = self.duration_ns - release - TAKEOFF_NS;
         let age_ns = now_ns
             .saturating_sub(self.started_ns)
@@ -252,7 +253,10 @@ impl LiveButterfly {
         let recede_ns = age_ns.saturating_sub(TAKEOFF_NS);
         let progress = smoothstep(recede_ns as f32 / travel_ns as f32);
         let settle = smoothstep(recede_ns as f32 * NANOS_TO_SECONDS);
-        let level = TIER as f32 - takeoff + progress * (LAST_TIER - TIER + 1) as f32;
+        let launch_tier = self.lane;
+        let level = BIRTH_TIER as f32
+            + (launch_tier as f32 - BIRTH_TIER as f32) * takeoff
+            + progress * (LAST_TIER - launch_tier) as f32;
         let start = self.birth.center * size;
         let min_size = size.min_element();
         let birth_width = self.birth.width_pixels.max(1.0);
@@ -265,7 +269,9 @@ impl LiveButterfly {
                 Vec2::new(0.02, 0.09),
             ),
         };
-        let aim = Vec2::new(aim_x, (start.y + up * min_size).clamp(0.0, size.y));
+        let [lo, hi] = panel(size, launch_tier);
+        let inset = (hi - lo) * 0.15;
+        let aim = Vec2::new(aim_x, start.y + up * min_size).clamp(lo + inset, hi - inset);
         // Clear the avatar by one projected wing before turning into the old lanes.
         let clear = start + Vec2::Y * (0.5 * birth_width * clearance);
         let launch =
@@ -293,7 +299,7 @@ impl LiveButterfly {
         // Keep the projection denominator positive even when a wing folds
         // toward the camera at unusually large viewport sizes.
         let birth_depth = 2.0 * half_span * (FOCAL_LENGTH / birth_width).max(2.0);
-        let depth = birth_depth * (level - TIER as f32).exp2();
+        let depth = birth_depth * (level - BIRTH_TIER as f32).exp2();
         let flight_span = (2.0 * half_span).max(top - bottom) * (self.flight_focal_length / depth);
         let birth_span = birth_width.max((top - bottom) * birth_width / (2.0 * half_span));
         let span = birth_span + (flight_span - birth_span) * takeoff;
@@ -334,11 +340,12 @@ impl LiveButterfly {
         if size.min_element() == 0.0 || self.has_departed(now_ns) {
             return None;
         }
-        // A sibling begins rendering beneath the previous actor at the very
-        // instant that actor starts to move, so no separate pop or fade is needed.
-        if !self.is_lead()
-            && now_ns.saturating_sub(self.started_ns)
-                < BIRTH_REST_NS + RELEASE_DELAY_NS[self.lane - 1]
+        // Reveal each sibling at the drawing as the previous one takes off.
+        // Each gets the same full rest at the original size before its turn.
+        if now_ns
+            < self
+                .started_ns
+                .saturating_add(self.release_ns - BIRTH_REST_NS)
         {
             return None;
         }
@@ -709,11 +716,11 @@ mod tests {
     #[test]
     fn second_tier_splits_the_remainder_on_its_longer_axis() {
         assert_eq!(
-            panel(Vec2::new(1920.0, 1080.0), TIER),
+            panel(Vec2::new(1920.0, 1080.0), BIRTH_TIER),
             [Vec2::new(960.0, 540.0), Vec2::new(1920.0, 1080.0)]
         );
         assert_eq!(
-            panel(Vec2::new(800.0, 1200.0), TIER),
+            panel(Vec2::new(800.0, 1200.0), BIRTH_TIER),
             [Vec2::ZERO, Vec2::new(400.0, 600.0)]
         );
         assert_eq!(detail(5.0), (4, 4, 2.0));
@@ -770,9 +777,9 @@ mod tests {
         let size = Vec2::new(1024.0, 720.0);
         let start = TEST_BIRTH.center * size;
         let wing = 0.5 * TEST_BIRTH.width_pixels;
-        for lane in 0..RELEASE_DELAY_NS.len() {
+        for lane in 0..BUTTERFLIES_PER_SKETCH {
             let butterfly = LiveButterfly::new(1, 0, TEST_BIRTH, lane);
-            let release = butterfly.release_ns();
+            let release = butterfly.release_ns;
             let midpoint = butterfly.flight(size, release + CLEARANCE_NS / 2);
             assert_eq!(midpoint.center.x, start.x);
             assert!((midpoint.center.y - (start.y + wing * 0.5)).abs() < 1e-4);
@@ -838,9 +845,9 @@ mod tests {
             assert!(span.is_finite() && span.min_element() > 0.0);
             span
         };
-        for lane in 0..RELEASE_DELAY_NS.len() {
+        for lane in 0..BUTTERFLIES_PER_SKETCH {
             let mut butterfly = LiveButterfly::new(lane as u32, 0, TEST_BIRTH, lane);
-            let takeoff = butterfly.release_ns() + TAKEOFF_NS;
+            let takeoff = butterfly.release_ns + TAKEOFF_NS;
             let now = takeoff + 1_800_000_000;
             butterfly.update_projection(projection(original, pixels_per_unit), original, takeoff);
             let initial = fill_size(&butterfly, original, now);
@@ -868,23 +875,25 @@ mod tests {
     #[test]
     fn background_travel_keeps_the_slower_per_tier_speed_after_growth() {
         for seed in 0..128 {
-            let butterfly = LiveButterfly::new(seed, 0, TEST_BIRTH, 0);
-            let full_speed_travel = DEPARTURE_LEAD_NS
-                + (LAST_TIER - TIER + 1) as u64 * TIER_MOVE_NS * 100
-                    / u64::from(butterfly.speed_percent);
-            assert_eq!(
-                butterfly.duration_ns - BIRTH_REST_NS - TAKEOFF_NS,
-                full_speed_travel * 3 / 2
-            );
-            assert!(butterfly.duration_ns < 9 * 7_000_000_000);
+            for lane in 0..BUTTERFLIES_PER_SKETCH {
+                let butterfly = LiveButterfly::new(seed, 0, TEST_BIRTH, lane);
+                let full_speed_travel = DEPARTURE_LEAD_NS
+                    + (LAST_TIER - lane) as u64 * TIER_MOVE_NS * 100
+                        / u64::from(butterfly.speed_percent);
+                assert_eq!(
+                    butterfly.duration_ns - butterfly.release_ns - TAKEOFF_NS,
+                    full_speed_travel * 3 / 2
+                );
+                assert!(butterfly.duration_ns < 9 * 7_000_000_000);
+            }
         }
     }
 
     #[test]
-    fn siblings_start_coincident_and_peel_along_distinct_curves() {
+    fn siblings_get_the_same_rest_and_take_off_at_successive_tiers() {
         let extent = (1024, 720);
-        let size = Vec2::new(extent.0 as f32, extent.1 as f32);
-        let trio = [0, 1, 2].map(|lane| LiveButterfly::new(7, 0, TEST_BIRTH, lane));
+        let trio: [_; BUTTERFLIES_PER_SKETCH] =
+            std::array::from_fn(|lane| LiveButterfly::new(7, 0, TEST_BIRTH, lane));
         let geometry = |lane: usize, now| {
             let mut result = Vec::new();
             trio[lane].triangles(extent, now, |triangle, outline| {
@@ -892,20 +901,39 @@ mod tests {
             });
             result
         };
-        for lane in 1..trio.len() {
-            let draw_time = trio[lane - 1].release_ns();
-            assert!(geometry(lane, draw_time - 1).is_empty());
-            assert_eq!(geometry(lane, draw_time), geometry(lane - 1, draw_time));
-            let release = trio[lane].release_ns();
-            let takeoff = trio[lane].flight(size, release + 1_000_000);
-            assert!(takeoff.center.distance(TEST_BIRTH.center * size) < 0.01);
+        let drawn = geometry(0, 0);
+        assert!(!drawn.is_empty());
+        for (lane, butterfly) in trio.iter().enumerate() {
+            let reveal = lane as u64 * BIRTH_REST_NS;
+            if lane > 0 {
+                assert!(geometry(lane, reveal - 1).is_empty());
+                assert_eq!(reveal, trio[lane - 1].release_ns);
+            }
+            assert_eq!(butterfly.release_ns - reveal, BIRTH_REST_NS);
+            assert_eq!(geometry(lane, reveal), drawn);
+            assert_eq!(geometry(lane, butterfly.release_ns), drawn);
         }
-        let centers = trio.map(|butterfly| {
-            let peak = butterfly.release_ns() + TAKEOFF_NS;
-            butterfly.flight(size, peak).center
-        });
-        assert!(centers[0].x < centers[1].x && centers[1].x < centers[2].x);
-        assert!(centers[1].y < centers[0].y && centers[0].y < centers[2].y);
+        assert_eq!(
+            trio.last().unwrap().release_ns + TAKEOFF_NS,
+            GROUP_TAKEOFF_END_NS
+        );
+
+        for size in [Vec2::new(1024.0, 720.0), Vec2::new(720.0, 1024.0)] {
+            let mut area = size.x * size.y;
+            let birth_depth = trio[0].flight(size, 0).depth;
+            for (lane, butterfly) in trio.iter().enumerate() {
+                let launched = butterfly.flight(size, butterfly.release_ns + TAKEOFF_NS);
+                let [lo, hi] = panel(size, lane);
+                assert!(launched.center.cmpge(lo).all() && launched.center.cmple(hi).all());
+                assert_eq!(
+                    launched.depth,
+                    birth_depth * (lane as f32 - BIRTH_TIER as f32).exp2()
+                );
+                let span = hi - lo;
+                assert_eq!(span.x * span.y, area * 0.5);
+                area *= 0.5;
+            }
+        }
     }
 
     #[test]

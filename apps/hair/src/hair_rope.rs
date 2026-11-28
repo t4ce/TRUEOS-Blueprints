@@ -12,7 +12,8 @@ use crate::{
 };
 
 pub(crate) const POINTS: usize = 13;
-pub(crate) const MAX_SEGMENTS: usize = 12;
+pub(crate) const MAX_SEGMENTS: usize = 13;
+pub(crate) const TIP_LINK_FRACTION: f32 = 2.0 / 3.0;
 pub(crate) const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
 const FRAME_SECONDS: f32 = 1.0 / 45.0;
 const SUBSTEPS: u32 = 4;
@@ -234,13 +235,22 @@ impl RopeGuides {
                     HairMotion::Rod => rod_segments(rest_length),
                     HairMotion::Rope | HairMotion::Spring => POINTS - 1,
                 };
-                let link_length = rest_length / segments as f32;
+                let split_tip = motion == HairMotion::Rod;
+                let rest_units = (segments - usize::from(split_tip)) as f32;
+                let rest_units_at = |index| {
+                    if split_tip {
+                        rod_rest_units(index, segments)
+                    } else {
+                        index as f32
+                    }
+                };
+                let link_length = rest_length / rest_units;
                 let anchor = rotate_about_head(launch, avatar_to_world);
                 let mut points = [anchor; MAX_SEGMENTS + 1];
                 let points = &mut points[..=segments];
                 for (index, point) in points.iter_mut().enumerate().skip(1) {
                     *point = contact(
-                        anchor - (link_length * index as f32) * Vec3::Y,
+                        anchor - (link_length * rest_units_at(index)) * Vec3::Y,
                         pose,
                         avatar_to_world,
                     );
@@ -251,7 +261,7 @@ impl RopeGuides {
                     link_length,
                     gust_gain: 1.0,
                     spread_weights: std::array::from_fn(|index| {
-                        spread_weight(index as f32 / segments as f32)
+                        spread_weight(rest_units_at(index.min(segments)) / rest_units)
                     }),
                     spread_acceleration: [Vec3::ZERO; MAX_SEGMENTS + 1],
                     chain: Chain::new(motion, points),
@@ -323,19 +333,27 @@ impl RopeGuides {
         };
         // Sample a traveling wave in world space once per guide per frame.
         for strand in &mut self.strands {
-            let point = sample_along(strand.chain.points(), 0.65);
+            let point = sample_split_rod(strand.chain.points(), 0.65);
             strand.gust_gain = gust_gain(self.gust_phase, point, heading);
         }
     }
 
     fn update_spread(&mut self, strength: f32) {
+        let split_tip = self.motion == HairMotion::Rod;
+        let sample_guide = |points: &[Vec3], progress| {
+            if split_tip {
+                sample_split_rod(points, progress)
+            } else {
+                sample_along(points, progress)
+            }
+        };
         // One sample per guide at each arc-length station keeps the density
         // estimate independent of how many simulated links a guide needs.
         for (index, grid) in self.density.iter_mut().enumerate() {
             grid.clear();
             let progress = (index + 1) as f32 / SPREAD_STATIONS as f32;
             for strand in &self.strands {
-                let point = sample_along(strand.chain.points(), progress);
+                let point = sample_guide(strand.chain.points(), progress);
                 let cell = grid.entry(density_cell(point)).or_default();
                 cell.sum += point;
                 cell.guides += 1;
@@ -349,14 +367,18 @@ impl RopeGuides {
                 self.density.iter().zip(&mut stations[1..]).enumerate()
             {
                 let progress = (index + 1) as f32 / SPREAD_STATIONS as f32;
-                *acceleration = density_pressure(grid, sample_along(points, progress)) * strength;
+                *acceleration = density_pressure(grid, sample_guide(points, progress)) * strength;
             }
             let segments = points.len() - 1;
             for (index, acceleration) in strand.spread_acceleration[1..=segments]
                 .iter_mut()
                 .enumerate()
             {
-                let progress = (index + 1) as f32 / segments as f32;
+                let progress = if split_tip {
+                    rod_rest_units(index + 1, segments) / (segments - 1) as f32
+                } else {
+                    (index + 1) as f32 / segments as f32
+                };
                 *acceleration =
                     sample_along(&stations, progress) * strand.spread_weights[index + 1];
             }
@@ -409,9 +431,27 @@ fn smoothstep(low: f32, high: f32, value: f32) -> f32 {
 }
 
 fn sample_along(points: &[Vec3], progress: f32) -> Vec3 {
+    sample_at_link(points, progress * (points.len() - 1) as f32)
+}
+
+fn sample_split_rod(points: &[Vec3], progress: f32) -> Vec3 {
+    let segments = points.len() - 1;
+    let rest_position = progress * (segments - 1) as f32;
+    let tip_start = (segments - 2) as f32;
+    let tip_progress = rest_position - tip_start;
+    let position = if tip_progress <= 0.0 {
+        rest_position
+    } else if tip_progress <= TIP_LINK_FRACTION {
+        tip_start + tip_progress / TIP_LINK_FRACTION
+    } else {
+        tip_start + 1.0 + (tip_progress - TIP_LINK_FRACTION) / (1.0 - TIP_LINK_FRACTION)
+    };
+    sample_at_link(points, position)
+}
+
+fn sample_at_link(points: &[Vec3], position: f32) -> Vec3 {
     let last = points.len() - 1;
-    let position = progress * last as f32;
-    let from = position as usize;
+    let from = (position as usize).min(last);
     points[from].lerp(points[(from + 1).min(last)], position - from as f32)
 }
 
@@ -448,7 +488,18 @@ fn density_pressure(grid: &HashMap<IVec3, DensityCell>, point: Vec3) -> Vec3 {
 
 fn rod_segments(rest_length: f32) -> usize {
     let segments = (rest_length / REFERENCE_LENGTH * REFERENCE_SEGMENTS).round() as usize;
-    segments.clamp(4, MAX_SEGMENTS)
+    segments.clamp(4, MAX_SEGMENTS - 1) + 1
+}
+
+pub(crate) fn rod_rest_units(index: usize, segments: usize) -> f32 {
+    // The last two simulated links share the rest length of one regular link.
+    if index == segments {
+        (segments - 1) as f32
+    } else if index == segments - 1 {
+        (segments - 2) as f32 + TIP_LINK_FRACTION
+    } else {
+        index as f32
+    }
 }
 
 fn contact(point: Vec3, world_to_avatar: Quat, avatar_to_world: Quat) -> Vec3 {
@@ -622,8 +673,33 @@ mod tests {
             let guides =
                 RopeGuides::new(&[root], launch.y - length, Quat::IDENTITY, HairMotion::Rod);
             let strand = &guides.strands[0];
-            assert_eq!(strand.chain.points().len(), segments + 1);
+            assert_eq!(strand.chain.points().len(), segments + 2);
             assert!((strand.link_length * segments as f32 - length).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn splitting_the_tip_adds_a_joint_at_two_thirds_without_changing_the_span() {
+        let root = Vec3::new(0.0, 1.45, -0.5);
+        let launch = downward_head_exit(root, 0.026, CLEARANCE);
+        let guides = RopeGuides::new(
+            &[root],
+            launch.y - REFERENCE_LENGTH,
+            Quat::IDENTITY,
+            HairMotion::Rod,
+        );
+        let strand = &guides.strands[0];
+        let points = strand.chain.points();
+        let [start, split, tip] = points[points.len() - 3..] else {
+            unreachable!();
+        };
+        assert_eq!(points.len(), 10);
+        assert!((points[0].distance(tip) - REFERENCE_LENGTH).abs() < 1e-6);
+        assert!((start.distance(split) - strand.link_length * TIP_LINK_FRACTION).abs() < 1e-6);
+        assert!((split.distance(tip) - strand.link_length / 3.0).abs() < 1e-6);
+        for progress in [0.0, 0.25, 0.65, 0.9, 0.99, 1.0] {
+            let expected = launch - REFERENCE_LENGTH * progress * Vec3::Y;
+            assert!(sample_split_rod(points, progress).distance(expected) < 1e-6);
         }
     }
 
@@ -711,11 +787,8 @@ mod tests {
             let tip = strand.chain.points().len() - 1;
             let force = |index: usize| strand.spread_acceleration[index].length();
             assert!(force(tip / 2) > 0.0 && force(tip / 2) < 0.4 * force(tip));
-            if tip >= 10 {
-                assert!((force(tip) - force(tip - 1)).abs() < 1e-5);
-            } else {
-                assert!(force(tip - 1) < force(tip));
-            }
+            // The added knot lies within the final tenth, even on short rods.
+            assert!((force(tip) - force(tip - 1)).abs() < 1e-5);
         }
     }
 

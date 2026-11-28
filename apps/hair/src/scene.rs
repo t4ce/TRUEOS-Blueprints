@@ -45,6 +45,7 @@ struct Part {
 #[derive(Default)]
 pub(crate) struct DrawCounts {
     pub(crate) triangles: usize,
+    pub(crate) tip_strokes: usize,
     pub(crate) segments: usize,
 }
 
@@ -65,8 +66,9 @@ impl ProceduralHair {
         }
     }
 
-    fn rebuild(&mut self, ropes: &RopeGuides) {
+    fn rebuild(&mut self, ropes: &RopeGuides, camera_scale: f32) {
         self.mesh.clear();
+        let tip_half_width = camera_scale.recip();
         ropes.for_each_curve(|index, points| {
             let scalp_normal = (points[0] - HEAD_CENTER).normalize_or(Vec3::Z);
             points[0] -= ROOT_INSET * scalp_normal;
@@ -77,6 +79,7 @@ impl ProceduralHair {
                 LockProfile {
                     half_width: LOCK_HALF_WIDTH * width_scale,
                     half_depth: LOCK_HALF_DEPTH,
+                    tip_half_width,
                     color_top: self.color_top,
                     color_span: self.color_span,
                 },
@@ -305,7 +308,7 @@ impl Scene {
             if layers.hair
                 && let (Some(hull), Some(ropes)) = (&mut self.hull, &self.ropes)
             {
-                hull.rebuild(ropes);
+                hull.rebuild(ropes, camera.scale);
                 target.flat_mesh(
                     camera,
                     &hull.mesh.vertices,
@@ -313,7 +316,17 @@ impl Scene {
                     &LOCK_MATERIAL,
                     Some(&hull.lock_texture),
                 );
+                for tip in &hull.mesh.tips {
+                    target.hair_tip(
+                        camera,
+                        tip.points,
+                        &hull.lock_texture,
+                        hull.color_top,
+                        hull.color_span,
+                    );
+                }
                 drawn.triangles = hull.mesh.triangles.len();
+                drawn.tip_strokes = 4 * hull.mesh.tips.len();
             }
             if layers.field
                 && let Some(solver) = &self.solver
@@ -563,7 +576,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_guide_draws_two_tapered_strips() {
+    fn each_guide_draws_two_strips_and_a_two_part_tip() {
         let (roots, base) = back_hair_roots(true).unwrap();
         assert_eq!(base, 150);
         assert_eq!(&roots[..base], reference_roots());
@@ -584,8 +597,9 @@ mod tests {
         scene.ropes.as_ref().unwrap().for_each_curve(|_, points| {
             links += points.len() - 1;
         });
-        // Two strips use four triangles per link and two on the tapered last link.
-        assert_eq!(drawn.triangles, 4 * links - 2 * roots.len());
+        // Two tip links each use two strokes, with four strip triangles per body link.
+        assert_eq!(drawn.triangles, 4 * (links - 2 * roots.len()));
+        assert_eq!(drawn.tip_strokes, 4 * roots.len());
         assert_eq!(drawn.segments, 0);
         assert_eq!(scene.guide_count(), roots.len());
     }

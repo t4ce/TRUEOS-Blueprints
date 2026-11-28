@@ -16,7 +16,6 @@ const APPROACH_NS: u64 = 1_650_000_000;
 const RECEDE_NS: u64 = 3_000_000_000;
 const DEPARTURE_ROOM: f32 = 0.25;
 const DEPARTURE_PULLBACK_NS: u64 = 900_000_000;
-const DEPARTURE_HOLD_UNTIL_NS: u64 = 3_500_000_000;
 const DEPARTURE_RETURN_NS: u64 = 1_650_000_000;
 
 pub(super) fn camera_back(yaw: f32) -> Vec3 {
@@ -112,6 +111,7 @@ impl ObserverPose {
 
 struct ButterflyDeparture {
     start_ns: u64,
+    hold_until_ns: u64,
     from: f32,
 }
 
@@ -121,7 +121,7 @@ impl ButterflyDeparture {
         if elapsed < DEPARTURE_PULLBACK_NS {
             self.from + (1.0 - self.from) * ease(elapsed as f32 / DEPARTURE_PULLBACK_NS as f32)
         } else {
-            let returning = elapsed.saturating_sub(DEPARTURE_HOLD_UNTIL_NS);
+            let returning = elapsed.saturating_sub(self.hold_until_ns);
             1.0 - ease((returning as f32 / DEPARTURE_RETURN_NS as f32).min(1.0))
         }
     }
@@ -253,9 +253,15 @@ impl Autobs {
         }
     }
 
-    pub(super) fn butterfly_departure(&mut self, from: ObserverPose, now_ns: u64) {
+    pub(super) fn butterfly_departure(
+        &mut self,
+        from: ObserverPose,
+        now_ns: u64,
+        hold_until_ns: u64,
+    ) {
         self.departure = Some(ButterflyDeparture {
             start_ns: now_ns,
+            hold_until_ns: hold_until_ns.max(DEPARTURE_PULLBACK_NS),
             from: from.departure,
         });
     }
@@ -498,6 +504,7 @@ mod tests {
     #[test]
     fn butterfly_departure_expands_upward_and_keeps_the_bottom_stationary() {
         let start = 50_000_000;
+        let hold_until_ns = 5_700_000_000;
         for framing in [NORMAL, HEART] {
             let mut observer = Autobs::new(REFERENCE, framing, PIXELS_PER_UNIT);
             let parked = observer.pose(start);
@@ -505,15 +512,15 @@ mod tests {
             let clip_to_world = (before.1 * before.0).inverse();
             let bottom = clip_to_world.project_point3(Vec3::new(0.0, -1.0, 0.25));
             let old_top = clip_to_world.project_point3(Vec3::new(0.0, 1.0, 0.25));
-            observer.butterfly_departure(parked, start);
+            observer.butterfly_departure(parked, start, hold_until_ns);
             assert_eq!(observer.matrices(observer.pose(start), REFERENCE), before);
 
             for offset in [
                 1,
                 DEPARTURE_PULLBACK_NS / 2,
                 DEPARTURE_PULLBACK_NS,
-                DEPARTURE_HOLD_UNTIL_NS,
-                DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS / 2,
+                hold_until_ns,
+                hold_until_ns + DEPARTURE_RETURN_NS / 2,
             ] {
                 let (view, projection, _, _) =
                     observer.matrices(observer.pose(start + offset), REFERENCE);
@@ -525,13 +532,16 @@ mod tests {
             }
 
             let expanded = observer.pose(start + DEPARTURE_PULLBACK_NS);
+            assert_eq!(observer.pose(start + hold_until_ns), expanded);
             let (view, projection, eye, forward) = observer.matrices(expanded, REFERENCE);
             assert!(((projection * view).project_point3(old_top).y - 0.6).abs() < 1e-5);
             assert!((projection.x_axis.x / before.1.x_axis.x - 0.8).abs() < 1e-5);
             assert!(
                 (eye - before.2 + forward * (parked.distance * DEPARTURE_ROOM)).length() < 1e-5
             );
-            let returned = observer.pose(start + DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS);
+            let returning = observer.pose(start + hold_until_ns + DEPARTURE_RETURN_NS / 2);
+            assert!(returning.departure < expanded.departure && returning.departure > 0.0);
+            let returned = observer.pose(start + hold_until_ns + DEPARTURE_RETURN_NS);
             assert_eq!(observer.matrices(returned, REFERENCE), before);
         }
     }
@@ -539,12 +549,14 @@ mod tests {
     #[test]
     fn butterfly_departure_composes_with_resize_and_does_not_stack() {
         let mut observer = observer();
-        observer.butterfly_departure(observer.pose(0), 0);
-        let next = DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS / 2;
+        let first_hold_ns = 3_500_000_000;
+        let next_hold_ns = 5_700_000_000;
+        observer.butterfly_departure(observer.pose(0), 0, first_hold_ns);
+        let next = first_hold_ns + DEPARTURE_RETURN_NS / 2;
         let visible = observer.pose(next);
         observer.retarget((950, 840), visible, next);
         assert_eq!(observer.pose(next), visible);
-        observer.butterfly_departure(visible, next);
+        observer.butterfly_departure(visible, next, next_hold_ns);
         assert_eq!(observer.pose(next), visible);
         assert_eq!(
             observer
@@ -552,7 +564,8 @@ mod tests {
                 .departure_scale(),
             1.25
         );
-        let finished = next + DEPARTURE_HOLD_UNTIL_NS + DEPARTURE_RETURN_NS;
+        assert_eq!(observer.pose(next + next_hold_ns).departure_scale(), 1.25);
+        let finished = next + next_hold_ns + DEPARTURE_RETURN_NS;
         assert_eq!(observer.pose(finished), observer.fitted_pose((950, 840)));
     }
 }

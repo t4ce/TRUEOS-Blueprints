@@ -442,17 +442,72 @@ impl<'a> Surface<'a> {
         self.line::<true>(camera.project(start), camera.project(end), color, 0.86);
     }
 
+    pub(crate) fn hair_tip(
+        &mut self,
+        camera: Camera,
+        points: [Vec3; 5],
+        palette: &Texture,
+        color_top: f32,
+        color_span: f32,
+    ) {
+        let projected = points.map(|point| camera.project(point));
+        let heights = points.map(|point| (color_top - point.y) / color_span.max(1e-5));
+        let shade = |index: usize| {
+            let start = heights[index];
+            let span = heights[index + 1] - start;
+            move |progress| {
+                let v = start + span * progress;
+                palette.sample(Vec2::new(0.5, v)).truncate()
+            }
+        };
+        for index in 0..2 {
+            self.stroke::<true, true>(projected[index], projected[index + 1], shade(index), 1.0);
+        }
+        for index in 2..4 {
+            self.stroke::<true, false>(projected[index], projected[index + 1], shade(index), 1.0);
+        }
+    }
+
     fn line<const WRITE_DEPTH: bool>(&mut self, start: Vec3, end: Vec3, color: Vec3, opacity: f32) {
-        let span = (end - start).abs().truncate().max_element();
-        let steps = (span.ceil() as u32).max(1);
+        self.stroke::<WRITE_DEPTH, false>(start, end, |_| color, opacity);
+    }
+
+    fn stroke<const WRITE_DEPTH: bool, const WIDE: bool>(
+        &mut self,
+        start: Vec3,
+        end: Vec3,
+        color_at: impl Fn(f32) -> Vec3,
+        opacity: f32,
+    ) {
+        let span = (end - start).abs().truncate();
+        let steps = (span.max_element().ceil() as u32).max(1);
+        // Center two adjacent pixels across the stroke's dominant screen axis.
+        let half_width = if !WIDE {
+            Vec3::ZERO
+        } else if span.x >= span.y {
+            0.5 * Vec3::Y
+        } else {
+            0.5 * Vec3::X
+        };
         for step in 0..=steps {
-            let p = start.lerp(end, step as f32 / steps as f32);
-            if p.x >= 0.0 && p.x < self.width as f32 && p.y >= 0.0 && p.y < self.height as f32 {
-                let index = p.y as usize * self.width + p.x as usize;
-                if p.z > self.depth[index] {
-                    self.blend(index, color, opacity);
-                    if WRITE_DEPTH {
-                        self.depth[index] = p.z;
+            let progress = step as f32 / steps as f32;
+            let point = start.lerp(end, progress);
+            let mut color = None;
+            for p in [point - half_width, point + half_width]
+                .into_iter()
+                .take(if WIDE { 2 } else { 1 })
+            {
+                if p.x >= 0.0 && p.x < self.width as f32 && p.y >= 0.0 && p.y < self.height as f32 {
+                    let index = p.y as usize * self.width + p.x as usize;
+                    if p.z > self.depth[index] {
+                        self.blend(
+                            index,
+                            *color.get_or_insert_with(|| color_at(progress)),
+                            opacity,
+                        );
+                        if WRITE_DEPTH {
+                            self.depth[index] = p.z;
+                        }
                     }
                 }
             }
@@ -559,6 +614,74 @@ fn rainbow(value: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hair_tip_steps_from_two_pixels_to_one_and_respects_depth() {
+        const WIDTH: usize = 5;
+        const HEIGHT: usize = 15;
+        let camera = Camera {
+            right: Vec3::X,
+            up: Vec3::Y,
+            toward: Vec3::Z,
+            light: Vec3::Z,
+            center: Vec3::ZERO,
+            offset: Vec2::ZERO,
+            scale: 1.0,
+        };
+        let base_color = [76, 62, 98, 255];
+        let tip_color = [103, 86, 126, 255];
+        let edge = [8, 6, 12, 255];
+        let palette = Texture {
+            width: 3,
+            height: 2,
+            pixels: vec![edge, base_color, edge, edge, tip_color, edge],
+        };
+        let mut pixels = [0; WIDTH * HEIGHT * 4];
+        let mut depth = [0.0; WIDTH * HEIGHT];
+        let mut surface = Surface::new(WIDTH as u32, HEIGHT as u32, &mut pixels, &mut depth);
+        surface.clear();
+        surface.depth[5 * WIDTH + 2] = 1.0;
+        surface.hair_tip(
+            camera,
+            [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| Vec3::new(2.0, -y, 0.5)),
+            &palette,
+            -1.0,
+            12.0,
+        );
+        let pixel = |x, y| {
+            let offset = (y * WIDTH + x) * 4;
+            &surface.pixels[offset..offset + 4]
+        };
+        for y in 1..=13 {
+            if y == 5 {
+                assert_eq!(pixel(2, y), BACKGROUND);
+            } else {
+                assert_ne!(pixel(2, y), BACKGROUND);
+                assert_eq!(surface.depth[y * WIDTH + 2], 0.5);
+            }
+            assert_eq!(pixel(1, y) != BACKGROUND, y <= 9);
+            assert_eq!(pixel(3, y), BACKGROUND);
+        }
+        assert_eq!(pixel(2, 1), base_color);
+        assert_eq!(pixel(2, 13), tip_color);
+        assert_eq!(pixel(2, 14), BACKGROUND);
+
+        surface.clear();
+        surface.hair_tip(
+            camera,
+            [1.0, 5.0, 9.0, 11.0, 13.0].map(|y| {
+                let x = if y == 5.0 || y == 11.0 { 4.0 } else { 2.0 };
+                Vec3::new(x, -y, 0.5)
+            }),
+            &palette,
+            -1.0,
+            12.0,
+        );
+        for y in [5, 11] {
+            let offset = (y * WIDTH + 4) * 4;
+            assert_ne!(surface.pixels[offset..offset + 4], BACKGROUND);
+        }
+    }
 
     #[test]
     fn flat_mesh_preserves_texture_color_on_both_faces() {

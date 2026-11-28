@@ -1377,7 +1377,11 @@ async fn play(
             if let Playback::Reel(preview) = &mut *playback
                 && let Some(first) = preview.on_published(pose, finished, camera, extent)
             {
-                observer.butterfly_departure(camera_pose, finished);
+                observer.butterfly_departure(
+                    camera_pose,
+                    finished,
+                    live_butterfly::GROUP_TAKEOFF_END_NS,
+                );
                 if first {
                     match frame.display_bottom_color() {
                         Ok(rgb) => display_backdrop = Some((Backdrop::new(rgb, finished), rgb)),

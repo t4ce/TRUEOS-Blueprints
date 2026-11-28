@@ -19,7 +19,7 @@ use super::{
     hairband::{self, Hairband},
     hand_contact::HandProbe,
     lico_graph::{DanceClueSnapshot, Observer},
-    live_butterfly::{self, Birth, FlightLight, LiveButterfly},
+    live_butterfly::{self, BUTTERFLIES_PER_SKETCH, Birth, FlightLight, LiveButterfly},
     pupil::{self, Stage},
     reel::{GROUND_Y, PlacedPose, Reel},
     reel_draw::{ReelDraw, VERTEX_BYTES},
@@ -71,7 +71,6 @@ const MAX_ATLAS_WIDTH: usize = 1024;
 const ATLAS_WIDTHS: [usize; 2] = [512, MAX_ATLAS_WIDTH];
 const MODE_BLEND_NS: u64 = 400_000_000;
 const BUTTERFLY_HOLD_NS: u64 = 800_000_000;
-const BUTTERFLIES_PER_SKETCH: usize = 3;
 // Reserve nine groups for consecutive sketches with overlapping flights.
 const MAX_LIVE_BUTTERFLIES: usize = 9 * BUTTERFLIES_PER_SKETCH;
 const SKETCH_OUTLINE_SLOT: usize = 3;

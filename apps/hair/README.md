@@ -30,8 +30,9 @@ in the plane of the screen. Move down to tilt her toward the camera or up to
 tilt her back to horizontal. Hold `A` or `D` to orbit the view around the
 avatar's own vertical axis while keeping her simulated pose. Use the window
 close button to exit.
-The bending rod is the default. Guides get 8 segments at the 0.68 m reference
-length, with a minimum of 4 at half that length and a maximum of 12 at 1.5×.
+The bending rod is the default. Guides get 9 segments at the 0.68 m reference
+length, with a minimum of 5 at half that length and a maximum of 13 at 1.5×.
+The last two segments share the rest length of the original last link.
 Rod motion runs at 90% of the original speed.
 
 - Tip weight is fixed at 50%. The lower half retains more momentum when the hair
@@ -54,8 +55,12 @@ The length falls off sharply at the outer sides, where guides are up to 20%
 shorter for the same root-height layer. The upper root layers get a shorter
 cut to stagger the tips.
 
-The two crossed strips start slightly inside the scalp and taper to a shared
-tip. They use the same broad and narrow widths as the previous lock hull.
+The two crossed strips start slightly inside the scalp and taper into
+depth-tested strokes on the final two guide links. The longer link takes
+two-thirds of the original final length and uses two-pixel strokes. The
+shorter link uses one-pixel strokes. Each link uses two line segments to
+approximate a slight curve through the simulated joints. They share the
+strip fill palette.
 The fill uses five colors sampled from the back-hair atlas, projected by
 avatar-local height across the whole haircut. A thin dark edge is built into
 the fill texture and draws in the same pass.

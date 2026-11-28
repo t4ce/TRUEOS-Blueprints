@@ -115,12 +115,14 @@ motion files are installed privately on the rig.
 rolls one of the two `bfly` Key 5 wing shapes and traces it in the current
 camera view. The fingertip trail and live outline share the rolled color, with
 a white spark at the end of the active stroke. When drawing ends, the
-observer pulls back to show 25% more space above the fixed bottom edge. The
-leader holds the drawn position for 1.5 seconds, then clears the avatar by
-roughly one wing span before turning left and growing by one size tier. Two
-followers leave the same spot in quick succession on their own curves. The
-butterflies recede through the background tiers at two thirds of the former
-speed and sometimes orbit with slow, nearly closed wingbeats.
+observer pulls back to show 25% more space above the fixed bottom edge. Each
+butterfly appears at the drawn size, waits 1.5 seconds, and clears the avatar
+before turning. As one takes off, the next appears at the drawing. The leader
+takes the largest flight tier and each follower takes the next smaller tier
+in Bfly's half-area panel layout. The camera holds the wider view through
+the third takeoff. The butterflies recede through the background tiers at
+two thirds of the former speed and sometimes orbit with slow, nearly closed
+wingbeats.
 When the first butterfly appears, EmoModel reads the current opaque display
 color and uses Bfly's easing to settle on the nearest palette swatch. White
 and gray ease toward green. The transparent avatar surface reveals the solid
