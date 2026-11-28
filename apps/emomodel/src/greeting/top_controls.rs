@@ -163,7 +163,11 @@ fn with_entries<T>(
             let label = color.map_or_else(
                 || "Black".to_owned(),
                 |color| {
-                    let pants = if style.pants_color.is_some() { "Dark pants" } else { "Black pants" };
+                    let pants = if style.pants_color.is_some() {
+                        "Dark pants"
+                    } else {
+                        "Black pants"
+                    };
                     format!("{} · {pants}", color.name())
                 },
             );

@@ -57,9 +57,21 @@ impl OutfitMotion {
             }
             let skin = self.from.colors[Surface::Skin as usize];
             for (was_present, fabric, band) in [
-                (self.from.style.bottoms.is_some(), Surface::Fabric, Surface::Band),
-                (self.from.style.socks.is_some(), Surface::Sock, Surface::SockBand),
-                (self.from.style.color.is_some(), Surface::Shirt, Surface::ShirtBand),
+                (
+                    self.from.style.bottoms.is_some(),
+                    Surface::Fabric,
+                    Surface::Band,
+                ),
+                (
+                    self.from.style.socks.is_some(),
+                    Surface::Sock,
+                    Surface::SockBand,
+                ),
+                (
+                    self.from.style.color.is_some(),
+                    Surface::Shirt,
+                    Surface::ShirtBand,
+                ),
             ] {
                 if !was_present {
                     middle.colors[fabric as usize] = skin;
@@ -146,7 +158,10 @@ mod tests {
         let start = motion.sample(20);
         assert!(start.style == minimal(target.style));
         assert_eq!(start.opacity, 0.0);
-        assert_eq!(start.colors[Surface::Fabric as usize], skin.colors[Surface::Skin as usize]);
+        assert_eq!(
+            start.colors[Surface::Fabric as usize],
+            skin.colors[Surface::Skin as usize]
+        );
         for band in [Surface::Band, Surface::SockBand, Surface::ShirtBand] {
             assert_eq!(start.colors[band as usize], target.colors[band as usize]);
         }
