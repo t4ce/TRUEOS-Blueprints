@@ -1,11 +1,13 @@
 use trueos::ui4_scene::{Error, Frame, MenuEntry};
 
-use crate::top::{BottomStyle, Pastel, TopStyle, space_sock_length};
+use crate::top::outfit_motion::OutfitMotion;
+use crate::top::{BottomStyle, OutfitAppearance, Pastel, TopStyle, space_sock_length};
 
 #[derive(Default)]
 pub(super) struct TopControls {
     pub(super) style: TopStyle,
     invocation: Option<(u64, TopStyle)>,
+    motion: Option<OutfitMotion>,
 }
 
 impl TopControls {
@@ -27,14 +29,19 @@ impl TopControls {
             {
                 self.invocation = None;
                 if style.bottoms.is_some() == self.style.bottoms.is_some() {
+                    let prior = self.style;
                     with_entries(style, |entries| event.dispatch(entries, &mut self.style));
+                    if prior != self.style {
+                        self.motion = None;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    pub(super) fn roll_full_outfit(&mut self) {
+    pub(super) fn roll_full_outfit(&mut self, now_ns: u64) {
+        let (current, _) = self.appearance(now_ns);
         let mut roll = trueos::rng::u64();
         let mut style = rolled_top(&mut roll);
         let leg = roll_length(&mut roll);
@@ -45,11 +52,26 @@ impl TopControls {
         };
         style.socks = style.socks.map(|length| space_sock_length(length, bottoms));
         style.sock_color = style.color;
+        if roll % 4 == 0 {
+            style.pants_color = style.color;
+        }
         style.bottoms = Some(bottoms);
         self.style = style;
+        self.motion = Some(OutfitMotion::new(current, style, now_ns));
+    }
+
+    pub(super) fn appearance(&self, now_ns: u64) -> (OutfitAppearance, bool) {
+        if let Some(motion) = &self.motion
+            && motion.is_active(now_ns)
+        {
+            (motion.sample(now_ns), true)
+        } else {
+            (OutfitAppearance::from_style(self.style), false)
+        }
     }
 
     pub(super) fn key(&mut self, key: char) {
+        let prior = self.style;
         if matches!(key, 't' | 'T') {
             let index = self
                 .style
@@ -61,9 +83,7 @@ impl TopControls {
             } else {
                 clear_outfit(&mut self.style);
             }
-            return;
-        }
-        if self.style.bottoms.is_some() || self.style.color.is_some() {
+        } else if self.style.bottoms.is_some() || self.style.color.is_some() {
             match key {
                 '[' => adjust_left::<-10>(&mut self.style),
                 ']' => adjust_left::<10>(&mut self.style),
@@ -73,6 +93,9 @@ impl TopControls {
                 '=' => adjust_height::<10>(&mut self.style),
                 _ => (),
             }
+        }
+        if prior != self.style {
+            self.motion = None;
         }
     }
 
@@ -139,7 +162,10 @@ fn with_entries<T>(
         (Some(bottoms), color) => {
             let label = color.map_or_else(
                 || "Black".to_owned(),
-                |color| format!("{} · Black", color.name()),
+                |color| {
+                    let pants = if style.pants_color.is_some() { "Dark pants" } else { "Black pants" };
+                    format!("{} · {pants}", color.name())
+                },
             );
             format!(
                 "{label}  L{} R{} W{}",
@@ -256,6 +282,7 @@ fn choose_pastel(style: &mut TopStyle, color: Pastel) {
         style.socks = None;
     }
     style.sock_color = None;
+    style.pants_color = None;
     style.color = Some(color);
 }
 
@@ -270,6 +297,7 @@ fn select_bottoms(style: &mut TopStyle) {
     style.color = None;
     style.socks = Some(socks);
     style.sock_color = Some(sock_color);
+    style.pants_color = None;
     style.bottoms = Some(BottomStyle::default());
 }
 
@@ -289,6 +317,7 @@ fn rolled_top(roll: &mut u64) -> TopStyle {
         hem: roll_length(roll),
         socks: Some(roll_length(roll)),
         sock_color: None,
+        pants_color: None,
         bottoms: None,
     }
 }
@@ -303,6 +332,7 @@ fn clear_outfit(style: &mut TopStyle) {
     style.color = None;
     style.socks = None;
     style.sock_color = None;
+    style.pants_color = None;
     style.bottoms = None;
 }
 

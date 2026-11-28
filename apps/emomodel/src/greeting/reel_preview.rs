@@ -36,7 +36,7 @@ use crate::{
     hair_body::BodyBack,
     hair_ribbon, light,
     mesh::Mesh,
-    top::{self, Fit, Surface, TopStyle, finish},
+    top::{self, Fit, OutfitAppearance, Surface, TopStyle, finish},
 };
 
 const LIGHT_SIZE: usize = skin_study::SIZE;
@@ -78,6 +78,7 @@ const LIVE_FILL_SLOT: usize = SKETCH_OUTLINE_SLOT + 1;
 const LIVE_OUTLINE_SLOT: usize = LIVE_FILL_SLOT + MAX_LIVE_BUTTERFLIES;
 const LIVE_VERTICES: usize = MAX_LIVE_BUTTERFLIES * 3 * live_butterfly::MAX_TRIANGLES;
 const FIREFLY_DEPTH_TRAVEL: f32 = 1.6;
+const OUTFIT_FIT_PERIOD_NS: u64 = SECOND_NS / 24;
 
 const _: () = assert!(TOP_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
 const _: () = assert!(DRESS_COLUMN + light::DIFFUSE_WIDTH <= ATLAS_WIDTHS[0]);
@@ -414,7 +415,9 @@ pub(super) struct Preview<'a> {
     dress: Dress,
     dress_ramp: Vec<u8>,
     dress_visible: bool,
-    top_style: TopStyle,
+    top_appearance: OutfitAppearance,
+    top_moving: bool,
+    next_outfit_fit_ns: u64,
     top_fit: Vec<Fit>,
     top_rows: Vec<f32>,
     top_pixels: Vec<u8>,
@@ -632,7 +635,9 @@ impl<'a> Preview<'a> {
             dress,
             dress_ramp: light::diffuse_lookup_rgba(dress::PINK),
             dress_visible: false,
-            top_style: TopStyle::default(),
+            top_appearance: OutfitAppearance::from_style(TopStyle::default()),
+            top_moving: false,
+            next_outfit_fit_ns: 0,
             top_fit,
             top_rows: Vec::new(),
             top_pixels: Vec::new(),
@@ -653,10 +658,23 @@ impl<'a> Preview<'a> {
         }
     }
 
-    pub(super) fn set_top(&mut self, style: TopStyle) -> Result<()> {
-        if style == self.top_style {
+    pub(super) fn set_top(
+        &mut self,
+        mut appearance: OutfitAppearance,
+        moving: bool,
+        now_ns: u64,
+    ) -> Result<()> {
+        let previous = self.top_appearance;
+        let motion_changed = moving != self.top_moving;
+        // The palette advances on each frame even when the fit is waiting
+        // for its next atlas update.
+        if moving && !motion_changed && now_ns < self.next_outfit_fit_ns {
+            appearance.style = previous.style;
+        }
+        if appearance == previous && !motion_changed {
             return Ok(());
         }
+        let style = appearance.style;
         let fit = |style: TopStyle| {
             (
                 style.color.is_some(),
@@ -667,13 +685,13 @@ impl<'a> Preview<'a> {
                 style.bottoms,
             )
         };
-        let fabric = style.fabric();
-        let previous_fabric = self.top_style.fabric();
-        let fit_changed =
-            previous_fabric.is_some() != fabric.is_some() || fit(self.top_style) != fit(style);
+        let has_fabric = style.fabric().is_some();
+        let had_fabric = previous.style.fabric().is_some();
+        let fit_changed = motion_changed || has_fabric != had_fabric || fit(previous.style) != fit(style);
         if fit_changed {
-            let mut finish = if fabric.is_some() {
-                finish::Finish::build(
+            let mut finish = if has_fabric {
+                let build = if moving { finish::Finish::build_motion } else { finish::Finish::build };
+                build(
                     style,
                     &self.top_fit,
                     self.body_start,
@@ -689,7 +707,7 @@ impl<'a> Preview<'a> {
             finish.replace_indices(&mut self.indices, self.geometry_vertices);
             self.top_finish = finish;
             self.top_rows.clear();
-            if fabric.is_some() {
+            if has_fabric {
                 let lower = style.lower_style();
                 self.top_rows.extend(
                     self.top_fit
@@ -697,26 +715,42 @@ impl<'a> Preview<'a> {
                         .map(|fit| fit.coverage_row(style, lower)),
                 );
             }
+            self.next_outfit_fit_ns = now_ns.saturating_add(OUTFIT_FIT_PERIOD_NS);
         }
-        if fabric != previous_fabric
-            || style.color != self.top_style.color
-            || style.sock_color != self.top_style.sock_color
+        if has_fabric != had_fabric
+            || style.bottoms.is_some() != previous.style.bottoms.is_some()
+            || style.color.is_some() != previous.style.color.is_some()
+            || appearance.colors != previous.colors
+            || appearance.opacity != previous.opacity
         {
             self.top_pixels.clear();
-            if fabric.is_some() {
+            if has_fabric {
                 let lighting_ramp = if self.skin_materials.is_some() {
                     skin_study::color_lookup_rgba
                 } else {
                     light::diffuse_lookup_rgba
                 };
-                self.top_ramps = Surface::ALL.map(|surface| lighting_ramp(style.albedo(surface)));
+                self.top_ramps = appearance.colors.map(lighting_ramp);
+                if appearance.opacity < 1.0 {
+                    let [skin, cloth @ ..] = &mut self.top_ramps;
+                    for ramp in cloth {
+                        for (pixel, skin) in ramp.chunks_exact_mut(4).zip(skin.chunks_exact(4)) {
+                            for (channel, &base) in pixel[..3].iter_mut().zip(&skin[..3]) {
+                                let base = f32::from(base);
+                                *channel = (base + (f32::from(*channel) - base) * appearance.opacity)
+                                    .round() as u8;
+                            }
+                        }
+                    }
+                }
                 for row in 0..top::COVERAGE_ROWS {
                     self.top_pixels
                         .extend_from_slice(&self.top_ramps[style.surface_at_row(row) as usize]);
                 }
             }
         }
-        self.top_style = style;
+        self.top_moving = moving;
+        self.top_appearance = appearance;
         Ok(())
     }
 
